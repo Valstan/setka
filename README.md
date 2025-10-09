@@ -110,7 +110,7 @@ python scripts/test_ai_analyzer.py  # (создать)
 ### База данных:
 ```bash
 Database: setka
-User: setka_user
+User: setka_user (see config/config_secure.py for credentials)
 Host: localhost:5432
 ```
 
@@ -118,8 +118,9 @@ Host: localhost:5432
 Хранятся в `config/config_secure.py` и в таблице `vk_tokens`
 
 ### Telegram Bots:
-- **VALSTANBOT:** 489021673:AAH7QDGmqzOMgT0W_wINvzWC1ihfljuFAKI
-- **AFONYA:** 5945194659:AAGIIXBSr3gSwyCSan_oY7l4p0D8LZ_UF4c
+Хранятся в `config/config_secure.py`:
+- **VALSTANBOT** - основной бот
+- **AFONYA** - бот для канала Малмыж Инфо
 
 ---
 

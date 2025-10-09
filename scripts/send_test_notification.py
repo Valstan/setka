@@ -12,8 +12,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modules.monitoring.telegram_notifier import TelegramNotifier
 
 # Configuration
-BOT_TOKEN = "489021673:AAH7QDGmqzOMgT0W_wINvzWC1ihfljuFAKI"
-CHAT_ID = "352096813"  # Валентин Савиных
+# Import from config
+from config.config_secure import TELEGRAM_TOKENS
+BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
+# Import from config
+from config.config_secure import TELEGRAM_ALERT_CHAT_ID
+CHAT_ID = TELEGRAM_ALERT_CHAT_ID
 
 
 async def send_test_messages():

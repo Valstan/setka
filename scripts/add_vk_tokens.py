@@ -16,9 +16,10 @@ from database.models import VKToken
 
 # VK Tokens (from config file)
 TOKENS = {
-    "VK_TOKEN_VALSTAN": "vk1.a.gczp291vx4VkA5hZRP9lwpJVtSCTx-c79D7zGM3pmAub0YszQXL-DIK5mY0xry-XEKWbiTzSiADxNAEQRHfUzCH1XsEh-BoCStWNNOp_TBY_GOOzhkQtPfDxbbntkuVHSBy3Jeunedmp_om-28OvYgZy51IPi2jfyh5yic7-oTutbe8NMVsNdAyhfhpcAUPy8J2wiTOWrR0L0QE8KMudrQ",
-    "VK_TOKEN_OLGA": "vk1.a.YB3vu9mP072pkadsec7VVBDaIjke_VByDUks3QnLaWsbbu28M5SkhDvik6I_97VsdQs9-gSvPQ1U6FBr4a-a866Gu7xcXcPRLWU2UKmThfqAwJXoSS4cfDgap-frRec_Yqg3jZLyl29a-xNcQSsZN74ydv0W7swkFNrr8UHIlkoNQZjiDNJvqB2SxuIuBu3uGU2AiGqdasw9SBN9kDFXAA",
-    "VK_TOKEN_VITA": "vk1.a.h8ZMyCgenUYgB6Ci8MKpi6AFVS9lXy4ndWrVPJu0BT4uncFFM3vmi8qJeUGpW-7X0DBhBWfQHs9qrIzo5CS2LkbpOnNo563B4XtY5DT-JPLYguCRQkmrEdcx7YQQQgzIALlB8bbQeyub32BJtZQvEs12xdcYXBHD85SUxJ2l6cuYjVj0gL5pqMR17xmlbxav3tx83eikViL1JH80Twipdw"
+    # REPLACE WITH YOUR ACTUAL TOKENS FROM config/config_secure.py
+    "VK_TOKEN_VALSTAN": "vk1.a.YOUR_TOKEN_HERE",
+    "VK_TOKEN_OLGA": "vk1.a.YOUR_TOKEN_HERE",
+    "VK_TOKEN_VITA": "vk1.a.YOUR_TOKEN_HERE"
 }
 
 

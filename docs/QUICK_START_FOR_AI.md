@@ -15,17 +15,17 @@
 ## 🔑 Важная информация
 
 ### Пароли и доступы:
-- **Sudo пароль:** Nitro@1941 (настроен sudo без пароля)
+- **Sudo пароль:** [REDACTED] (настроен sudo без пароля)
 - **PostgreSQL:**
   - Database: `setka`
   - User: `setka_user`
-  - Password: `SetkaSecure2025!`
+  - Password: [REDACTED - see config/config_secure.py]
   - Host: `localhost:5432`
 
 ### Токены (в config/config_secure.py):
 - VK токены: VK_TOKEN_VALSTAN, VK_TOKEN_OLGA, VK_TOKEN_VITA
 - Telegram: TELEGA_TOKEN_VALSTANBOT, TELEGA_TOKEN_AFONYA
-- MongoDB старого проекта: mongodb+srv://valstan:nitro2000@postopus.qjxr9.mongodb.net/postopus
+- MongoDB старого проекта: [REDACTED - see config/config_secure.py]
 
 ### Домен:
 - **URL:** 3931b3fe50ab.vps.myjino.ru
@@ -231,11 +231,11 @@ sudo -u postgres psql -d setka < setka_backup_20251008_162528.sql
 ## 📞 Telegram боты
 
 **Для уведомлений:**
-- Token: 489021673:AAH7QDGmqzOMgT0W_wINvzWC1ihfljuFAKI
+- Token: [REDACTED - see config/config_secure.py]
 - Нужен chat_id (получить отправив /start)
 
 **Для поддержки:**
-- Token: 5945194659:AAGIIXBSr3gSwyCSan_oY7l4p0D8LZ_UF4c
+- Token: [REDACTED - see config/config_secure.py]
 
 ---
 

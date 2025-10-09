@@ -14,7 +14,9 @@ from modules.monitoring.health_checker import HealthChecker
 from modules.monitoring.telegram_notifier import TelegramNotifier
 
 # Telegram bot token (from config)
-BOT_TOKEN = "489021673:AAH7QDGmqzOMgT0W_wINvzWC1ihfljuFAKI"
+# Import from config
+from config.config_secure import TELEGRAM_TOKENS
+BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 # You need to get your chat ID by sending /start to your bot
 # and checking https://api.telegram.org/bot<TOKEN>/getUpdates
 CHAT_ID = None  # Set your chat ID here

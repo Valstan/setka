@@ -9,7 +9,9 @@ from datetime import datetime
 from collections import defaultdict
 
 # Подключение к старой БД
-MONGO_URI = "mongodb+srv://valstan:nitro2000@postopus.qjxr9.mongodb.net/postopus?retryWrites=true&w=majority"
+# Import from config
+from config.config_secure import MONGO_CONNECTION
+MONGO_URI = MONGO_CONNECTION["uri"]
 
 def connect_to_mongodb():
     """Подключение к MongoDB"""

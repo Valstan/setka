@@ -1,11 +1,16 @@
 # SETKA Project .gitignore
 
 # Secure configuration files
+config/config_secure.py
 config/config.secure.py
 config/*.env
 config/.env*
 *.key
 *.pem
+
+# Secrets backup file
+SECRETS_BACKUP.txt
+SECRETS*.txt
 
 # Python
 __pycache__/
@@ -43,6 +48,7 @@ logs/
 
 # Backup files
 backup/*.sql
+backup/*.sql.gz
 backup/*.dump
 backup/*.tar.gz
 

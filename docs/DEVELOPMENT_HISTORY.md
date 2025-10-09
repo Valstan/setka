@@ -452,7 +452,7 @@
 - ✅ Fallback работает идеально
 
 **Telegram настроен:**
-- Chat ID: 352096813 (Валентин Савиных, @Valentin_Savinykh)
+- Chat ID: [REDACTED - your personal Telegram chat ID]
 - Сохранён в config/config_secure.py
 - ✅ 4 тестовых сообщения успешно отправлены:
   1. Приветственное сообщение
@@ -541,7 +541,7 @@
 - Fallback работает идеально
 
 ### Telegram:
-- Chat ID: 352096813 (Валентин Савиных)
+- Chat ID: [REDACTED - your personal Telegram chat ID]
 - Уведомления работают ✅
 - Тестовые сообщения отправлены успешно
 
