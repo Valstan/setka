@@ -13,7 +13,9 @@ mkdir -p "$BACKUP_DIR"
 
 # Backup database
 echo "🔄 Creating database backup..."
-PGPASSWORD='SetkaSecure2025!' pg_dump -h localhost -U $DB_USER -d $DB_NAME > "$BACKUP_FILE"
+# Read password from config file
+PGPASSWORD=$(python3 -c "import sys; sys.path.insert(0, '/home/valstan/SETKA'); from config.config_secure import POSTGRES; print(POSTGRES['password'])")
+pg_dump -h localhost -U $DB_USER -d $DB_NAME > "$BACKUP_FILE"
 
 if [ $? -eq 0 ]; then
     # Compress backup
