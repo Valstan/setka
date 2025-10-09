@@ -5,11 +5,11 @@
 Создавать нового **НЕ НУЖНО**. В проекте уже есть 2 бота:
 
 ### 1. VALSTANBOT
-- **Токен:** `489021673:AAH7QDGmqzOMgT0W_wINvzWC1ihfljuFAKI`
+- **Токен:** [REDACTED - see config/config_secure.py]
 - **Использование:** Основные уведомления системы
 
 ### 2. AFONYA (Малмыж Инфо Поддержка Бот)
-- **Токен:** `5945194659:AAGIIXBSr3gSwyCSan_oY7l4p0D8LZ_UF4c`
+- **Токен:** [REDACTED - see config/config_secure.py]
 - **Использование:** Поддержка пользователей
 
 ---
@@ -37,7 +37,7 @@ python scripts/get_telegram_chat_id.py
 2. Отправьте боту `/start`
 3. Откройте в браузере:
    ```
-   https://api.telegram.org/bot489021673:AAH7QDGmqzOMgT0W_wINvzWC1ihfljuFAKI/getUpdates
+   https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
    ```
 4. Найдите в JSON ответе: `"chat":{"id":123456789...}`
 5. Скопируйте это число
@@ -127,7 +127,7 @@ from modules.monitoring.telegram_notifier import TelegramNotifier
 
 # Создать notifier
 notifier = TelegramNotifier(
-    bot_token="489021673:AAH7QDGmqzOMgT0W_wINvzWC1ihfljuFAKI",
+    bot_token=BOT_TOKEN,  # From config/config_secure.py
     chat_id="ваш_chat_id"
 )
 

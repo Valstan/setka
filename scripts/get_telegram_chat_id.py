@@ -6,7 +6,9 @@ Get Telegram chat_id for notifications
 import asyncio
 import httpx
 
-BOT_TOKEN = "489021673:AAH7QDGmqzOMgT0W_wINvzWC1ihfljuFAKI"  # VALSTANBOT
+# Import from config
+from config.config_secure import TELEGRAM_TOKENS
+BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 
 
 async def get_chat_id():

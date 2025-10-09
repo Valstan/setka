@@ -9,7 +9,7 @@ import os
 # Database URL
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://setka_user:SetkaSecure2025!@localhost:5432/setka"
+    "postgresql+asyncpg://setka_user:YOUR_PASSWORD_HERE@localhost:5432/setka"
 )
 
 # Create async engine
