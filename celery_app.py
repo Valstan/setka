@@ -15,7 +15,12 @@ app = Celery(
     include=[
         'tasks.monitoring_tasks',
         'tasks.analysis_tasks',
-        'tasks.publishing_tasks'
+        'tasks.publishing_tasks',
+        'tasks.notification_tasks',  # NEW: Notifications monitoring
+        'tasks.production_workflow_tasks',  # OLD: Production workflow automation
+        'tasks.correct_workflow_tasks',  # NEW: Correct workflow with proper logic
+        'tasks.real_vk_workflow',  # NEW: Real VK workflow
+        'tasks.test_info_tasks'  # NEW: Test-Info 24/7 scheduler
     ]
 )
 
@@ -50,48 +55,82 @@ app.conf.update(
 
 # Periodic task schedule
 app.conf.beat_schedule = {
-    # VK Monitoring - every 5 minutes
-    'monitor-vk-communities': {
-        'task': 'tasks.monitoring_tasks.scan_all_communities',
-        'schedule': 300.0,  # 5 minutes
+    # === CORRECT WORKFLOW (новая правильная логика) ===
+    'correct-workflow': {
+        'task': 'tasks.correct_workflow_tasks.run_correct_workflow',
+        'schedule': crontab(minute=0, hour='7-22'),  # Каждый час с 7:00 до 22:00 MSK
         'options': {
-            'expires': 240,
+            'expires': 3400,  # ~55 минут на выполнение
         }
     },
     
-    # AI Analysis - every 2 minutes
-    'analyze-new-posts': {
-        'task': 'tasks.analysis_tasks.analyze_new_posts',
-        'schedule': 120.0,  # 2 minutes
-        'options': {
-            'expires': 100,
-        }
-    },
+    # === PRODUCTION WORKFLOW (старая логика - отключена) ===
+    # 'production-workflow-carousel': {
+    #     'task': 'tasks.production_workflow_tasks.run_production_workflow_all_regions_sync',
+    #     'schedule': crontab(minute=0, hour='7-22'),  # Каждый час с 7:00 до 22:00 MSK
+    #     'options': {
+    #         'expires': 3400,  # ~55 минут на выполнение
+    #     }
+    # },
     
-    # Publishing - every hour at minute 5
-    'publish-approved-posts': {
-        'task': 'tasks.publishing_tasks.publish_scheduled_posts',
-        'schedule': crontab(minute='5'),
-        'options': {
-            'expires': 3000,
-        }
-    },
-    
-    # Health check - every minute
-    'health-check': {
-        'task': 'tasks.monitoring_tasks.health_check',
-        'schedule': 60.0,  # 1 minute
+    # === TEST TASK (для отладки) ===
+    'test-simple-task': {
+        'task': 'tasks.production_workflow_tasks.test_simple_task',
+        'schedule': 60.0,  # Каждую минуту для тестирования
         'options': {
             'expires': 50,
         }
     },
     
-    # Cleanup old results - daily at 3:30 AM
+    # === REAL VK WORKFLOW (ОТКЛЮЧЕНО - использует неправильную логику) ===
+    # 'real-vk-test': {
+    #     'task': 'tasks.real_vk_workflow.collect_and_publish_test',
+    #     'schedule': 300.0,  # Каждые 5 минут для тестирования
+    #     'options': {
+    #         'expires': 240,
+    #     }
+    # },
+    
+    # === ТЕСТ-ИНФО (ОТКЛЮЧЕНО - использует неправильную логику) ===
+    # 'test-info-schedule': {
+    #     'task': 'tasks.test_info_tasks.execute_test_info_schedule',
+    #     'schedule': 300.0,  # Каждые 5 минут круглосуточно
+    #     'options': {
+    #         'expires': 240,  # ~4 минуты на выполнение
+    #     }
+    # },
+    
+    # === МОНИТОРИНГ (оставить) ===
+    'health-check': {
+        'task': 'tasks.monitoring_tasks.health_check',
+        'schedule': 300.0,  # Каждые 5 минут (было 1 минута - слишком часто)
+        'options': {
+            'expires': 240,
+        }
+    },
+    
+    'check-vk-notifications': {
+        'task': 'tasks.notification_tasks.check_vk_notifications',
+        'schedule': 3600.0,  # Каждый час (оставить как есть)
+        'options': {
+            'expires': 3500,
+        }
+    },
+    
+    # === ОБСЛУЖИВАНИЕ (оставить) ===
     'cleanup-old-data': {
         'task': 'tasks.monitoring_tasks.cleanup_old_data',
-        'schedule': crontab(hour=3, minute=30),
+        'schedule': crontab(hour=3, minute=30),  # Ежедневно в 3:30
     },
+    
+# === УДАЛЕННЫЕ ЗАДАЧИ (дублировались с production workflow) ===
+# 'monitor-vk-communities' - УДАЛЕНО (заменено на production-workflow)
+# 'analyze-new-posts' - УДАЛЕНО (заменено на production-workflow)  
+# 'publish-approved-posts' - УДАЛЕНО (заменено на production-workflow)
 }
+
+# === ЯВНАЯ РЕГИСТРАЦИЯ ЗАДАЧ ===
+# Задача correct-workflow регистрируется автоматически через include
 
 if __name__ == '__main__':
     app.start()

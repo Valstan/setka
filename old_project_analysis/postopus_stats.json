@@ -1,0 +1,87 @@
+{
+  "extraction_date": "2025-10-10T09:51:25.602831",
+  "total_regions": 14,
+  "total_communities": 768,
+  "total_filters": {
+    "blacklist_delete": 1177,
+    "blacklist_clear": 2,
+    "blacklist_fast": 0,
+    "black_ids": 1,
+    "bad_name_groups": 22,
+    "only_main_news": 5,
+    "kirov_words": 27,
+    "tatar_words": 11
+  },
+  "regions_breakdown": {
+    "mi": {
+      "name": "МАЛМЫЖ - ИНФО",
+      "communities_count": 95,
+      "schedules_count": 0
+    },
+    "nolinsk": {
+      "name": "НОЛИНСК - ИНФО",
+      "communities_count": 59,
+      "schedules_count": 0
+    },
+    "arbazh": {
+      "name": "АРБАЖ - ИНФО",
+      "communities_count": 61,
+      "schedules_count": 0
+    },
+    "nema": {
+      "name": "НЕМА - ИНФО",
+      "communities_count": 46,
+      "schedules_count": 0
+    },
+    "ur": {
+      "name": "УРЖУМ -ИНФО",
+      "communities_count": 70,
+      "schedules_count": 0
+    },
+    "verhoshizhem": {
+      "name": "ВЕРХОШИЖЕМЬЕ - ИНФО",
+      "communities_count": 4,
+      "schedules_count": 0
+    },
+    "klz": {
+      "name": "КИЛЬМЕЗЬ - ИНФО",
+      "communities_count": 46,
+      "schedules_count": 0
+    },
+    "pizhanka": {
+      "name": "ПИЖАНКА - ИНФО",
+      "communities_count": 42,
+      "schedules_count": 0
+    },
+    "kukmor": {
+      "name": "КУКМОР - ИНФО",
+      "communities_count": 44,
+      "schedules_count": 0
+    },
+    "sovetsk": {
+      "name": "СОВЕТСК - ИНФО",
+      "communities_count": 68,
+      "schedules_count": 0
+    },
+    "vp": {
+      "name": "ВЯТСКИЕ ПОЛЯНЫ - ИНФО",
+      "communities_count": 64,
+      "schedules_count": 0
+    },
+    "leb": {
+      "name": "ЛЕБЯЖЬЕ - ИНФО",
+      "communities_count": 39,
+      "schedules_count": 0
+    },
+    "dran": {
+      "name": "",
+      "communities_count": 52,
+      "schedules_count": 0
+    },
+    "bal": {
+      "name": "БАЛТАСИ - ИНФО",
+      "communities_count": 78,
+      "schedules_count": 0
+    }
+  }
+}

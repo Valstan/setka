@@ -13,21 +13,8 @@ from config.config_secure import GROQ_API_KEY
 logger = logging.getLogger(__name__)
 
 
-class AsyncTask(Task):
-    """Base task class for async operations"""
-    
-    def __call__(self, *args, **kwargs):
-        """Run async function in event loop"""
-        loop = asyncio.get_event_loop()
-        return loop.run_until_complete(self.run_async(*args, **kwargs))
-    
-    async def run_async(self, *args, **kwargs):
-        """Override this method in child classes"""
-        raise NotImplementedError
-
-
-@app.task(base=AsyncTask, bind=True, name='tasks.analysis_tasks.analyze_new_posts')
-async def analyze_new_posts(self, limit: int = 50):
+@app.task(bind=True, name='tasks.analysis_tasks.analyze_new_posts')
+def analyze_new_posts(self, limit: int = 50):
     """
     Analyze new posts with AI
     
@@ -38,6 +25,20 @@ async def analyze_new_posts(self, limit: int = 50):
     """
     logger.info(f"🤖 Starting AI analysis (limit: {limit})...")
     
+    try:
+        # Запускаем async функцию в event loop
+        result = asyncio.run(_analyze_new_posts_async(limit))
+        
+        logger.info(f"✅ Analysis completed: {result.get('analyzed', 0)} posts analyzed")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Analysis failed: {e}")
+        raise
+
+
+async def _analyze_new_posts_async(limit: int):
     try:
         # Initialize analyzer
         analyzer = PostAnalyzer(groq_api_key=GROQ_API_KEY)
@@ -67,8 +68,8 @@ async def analyze_new_posts(self, limit: int = 50):
         }
 
 
-@app.task(base=AsyncTask, bind=True, name='tasks.analysis_tasks.reanalyze_post')
-async def reanalyze_post(self, post_id: int):
+@app.task(bind=True, name='tasks.analysis_tasks.reanalyze_post')
+def reanalyze_post(self, post_id: int):
     """
     Re-analyze specific post
     
@@ -77,6 +78,20 @@ async def reanalyze_post(self, post_id: int):
     """
     logger.info(f"🤖 Re-analyzing post {post_id}...")
     
+    try:
+        # Запускаем async функцию в event loop
+        result = asyncio.run(_reanalyze_post_async(post_id))
+        
+        logger.info(f"✅ Post {post_id} re-analyzed successfully")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Re-analysis failed: {e}")
+        raise
+
+
+async def _reanalyze_post_async(post_id: int):
     try:
         from database.connection import AsyncSessionLocal
         from database.models import Post

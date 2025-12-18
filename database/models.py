@@ -1,7 +1,7 @@
 """
 SQLAlchemy models for SETKA project
 """
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, Index, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database.connection import Base
@@ -112,6 +112,11 @@ class Post(Base):
     ai_analyzed = Column(Boolean, default=False)
     ai_analysis_date = Column(DateTime, nullable=True)
     
+    # Sentiment Analysis
+    sentiment_label = Column(String(20), nullable=True)  # positive, neutral, negative
+    sentiment_score = Column(Float, nullable=True)  # 0.0-1.0
+    sentiment_emotions = Column(JSON, nullable=True)  # {joy, sadness, anger, fear}
+    
     # Publishing status
     status = Column(String(20), default="new", index=True)  # new, analyzed, approved, published, rejected
     published_at = Column(DateTime, nullable=True)
@@ -176,33 +181,45 @@ class Filter(Base):
 
 
 class VKToken(Base):
-    """VK токены для ротации"""
+    """VK токены для динамического управления"""
     __tablename__ = "vk_tokens"
     
     id = Column(Integer, primary_key=True, index=True)
-    
-    # Token info
-    name = Column(String(50), unique=True, nullable=False)  # VK_TOKEN_VALSTAN
-    token = Column(Text, nullable=False)
-    
-    # Usage
-    usage_type = Column(String(20), nullable=False)  # post, read, repost
-    
-    # Rate limiting
-    requests_count = Column(Integer, default=0)
-    last_request = Column(DateTime, nullable=True)
-    rate_limit_reset = Column(DateTime, nullable=True)
-    
-    # Status
-    is_active = Column(Boolean, default=True)
-    errors_count = Column(Integer, default=0)
-    last_error = Column(Text, nullable=True)
-    
+    name = Column(String(50), unique=True, nullable=False, index=True)  # VALSTAN, OLGA, VITA, etc.
+    token = Column(Text, nullable=False)  # VK API токен
+    is_active = Column(Boolean, default=True, index=True)  # Активен ли токен
+    last_used = Column(DateTime, nullable=True)  # Последнее использование
+    last_validated = Column(DateTime, nullable=True)  # Последняя валидация
+    validation_status = Column(String(20), default='unknown', index=True)  # valid, invalid, unknown
+    error_message = Column(Text)  # Сообщение об ошибке при валидации
+    permissions = Column(JSON)  # Права доступа токена
+    user_info = Column(JSON)  # Информация о пользователе
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def __repr__(self):
-        return f"<VKToken {self.name} ({self.usage_type})>"
+        return f"<VKToken(name='{self.name}', status='{self.validation_status}', active={self.is_active})>"
+    
+    def to_dict(self):
+        """Преобразовать в словарь для API"""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "token": self.token[:20] + "..." if len(self.token) > 20 else self.token,  # Маскируем токен
+            "is_active": self.is_active,
+            "last_used": self.last_used.isoformat() if self.last_used else None,
+            "last_validated": self.last_validated.isoformat() if self.last_validated else None,
+            "validation_status": self.validation_status,
+            "error_message": self.error_message,
+            "permissions": self.permissions if isinstance(self.permissions, list) else (self.permissions.get('permissions', []) if self.permissions else []),
+            "user_info": self.user_info,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None
+        }
+    
+    def get_full_token(self):
+        """Получить полный токен (для внутреннего использования)"""
+        return self.token
 
 
 class PublishSchedule(Base):

@@ -1,242 +1,291 @@
 """
-VK Publisher - publishes content to VK groups
+VK Publisher - публикация дайджестов в VK группы
+
+Из Postopus LESSONS_LEARNED:
+"Публикация в VK - последний и самый важный шаг"
+"Форматирование должно быть идеальным"
+
+Usage:
+    publisher = VKPublisher(vk_token)
+    result = await publisher.publish_digest(text, group_id)
 """
-import asyncio
 import logging
-from typing import Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
+import asyncio
 import vk_api
 from vk_api.upload import VkUpload
-import requests
-from io import BytesIO
-from PIL import Image
+from vk_api.exceptions import ApiError
 
-from database.models import Post
-from modules.publisher.base_publisher import BasePublisher
+if TYPE_CHECKING:
+    from modules.aggregation.aggregator import AggregatedPost
 
 logger = logging.getLogger(__name__)
 
 
-class VKPublisher(BasePublisher):
-    """Publisher for VK platform"""
+class VKPublisher:
+    """Публикация постов в VK группы"""
     
-    def __init__(self, access_token: str):
+    def __init__(self, vk_token: str):
         """
-        Initialize VK Publisher
+        Инициализация VK Publisher
         
         Args:
-            access_token: VK API access token with posting permissions
+            vk_token: VK access token с правами на публикацию в группу
+                     (wall, photos, groups)
         """
-        super().__init__("vk")
-        self.access_token = access_token
-        self.session = None
-        self.api = None
-        self.upload = None
-        self._initialize_session()
-    
-    def _initialize_session(self):
-        """Initialize VK API session"""
         try:
-            self.session = vk_api.VkApi(token=self.access_token)
-            self.api = self.session.get_api()
+            self.session = vk_api.VkApi(token=vk_token)
+            self.vk = self.session.get_api()
             self.upload = VkUpload(self.session)
-            self.logger.info("VK API session initialized successfully")
+            logger.info("VK Publisher initialized successfully")
         except Exception as e:
-            self.logger.error(f"Failed to initialize VK API session: {e}")
+            logger.error(f"Failed to initialize VK Publisher: {e}")
             raise
     
-    async def check_connection(self) -> bool:
-        """Check VK API connection"""
-        try:
-            # Simple API call to check connection
-            result = self.api.users.get()
-            return bool(result)
-        except Exception as e:
-            self.logger.error(f"VK connection check failed: {e}")
-            return False
-    
-    async def publish_post(
+    async def publish_digest(
         self,
-        post: Post,
-        target_id: str,
-        **kwargs
+        text: str,
+        target_group_id: int,
+        attachments: Optional[List[str]] = None,
+        from_group: bool = True
     ) -> Dict[str, Any]:
         """
-        Publish post to VK group
+        Опубликовать дайджест в VK группу
         
         Args:
-            post: Post object to publish
-            target_id: VK group ID (negative integer as string)
-            **kwargs: Additional parameters:
-                - from_group: Post from group (default True)
-                - signed: Add author signature (default False)
-                - copyright: Link to original post
+            text: Текст поста (max 4096 символов для VK)
+            target_group_id: ID группы VK (отрицательное число, например -123456)
+            attachments: Список вложений VK формата (photo123_456, link, etc)
+            from_group: Публиковать от имени группы (True) или пользователя (False)
             
         Returns:
-            Dictionary with publishing results
+            Dict с результатом:
+                - success: bool
+                - post_id: int (если success=True)
+                - url: str (если success=True)
+                - error: str (если success=False)
         """
         try:
-            # Prepare text
-            text = self.format_post_text(
-                post,
-                max_length=15000,  # VK limit
-                add_source=kwargs.get('add_source', True)
-            )
+            # Проверяем длину текста
+            if len(text) > 4096:
+                logger.warning(f"Text too long ({len(text)} chars), truncating to 4096")
+                text = text[:4093] + "..."
             
-            # Extract media
-            media = self.extract_media(post)
+            # Публикация поста в группу
+            logger.info(f"Publishing to group {target_group_id}...")
             
-            # Upload photos if any
-            attachments = []
-            if media['photos']:
-                photo_attachments = await self._upload_photos(
-                    media['photos'],
-                    target_id
-                )
-                attachments.extend(photo_attachments)
-            
-            # Add videos
-            for video in media['videos']:
-                video_str = f"video{video['owner_id']}_{video['video_id']}"
-                attachments.append(video_str)
-            
-            # Prepare post parameters
-            post_params = {
-                'owner_id': int(target_id),
-                'message': text,
-                'from_group': kwargs.get('from_group', 1),
-                'signed': kwargs.get('signed', 0),
-            }
-            
-            # Add attachments if any
-            if attachments:
-                post_params['attachments'] = ','.join(attachments)
-            
-            # Add copyright if specified
-            if kwargs.get('copyright'):
-                post_params['copyright'] = kwargs['copyright']
-            
-            # Publish to wall
-            result = self.api.wall.post(**post_params)
-            
-            self.log_success(post.id, target_id, result)
-            
-            return {
-                'success': True,
-                'platform': 'vk',
-                'post_id': result.get('post_id'),
-                'url': f"https://vk.com/wall{target_id}_{result.get('post_id')}"
-            }
-            
-        except Exception as e:
-            self.log_error(post.id, target_id, e)
-            return {
-                'success': False,
-                'platform': 'vk',
-                'error': str(e)
-            }
-    
-    async def _upload_photos(
-        self,
-        photo_urls: list,
-        group_id: str
-    ) -> list:
-        """
-        Download and upload photos to VK
-        
-        Args:
-            photo_urls: List of photo URLs
-            group_id: VK group ID
-            
-        Returns:
-            List of attachment strings
-        """
-        attachments = []
-        
-        for url in photo_urls[:10]:  # VK limit: 10 photos
-            try:
-                # Download photo
-                response = requests.get(url, timeout=10)
-                response.raise_for_status()
-                
-                # Convert to PIL Image
-                image = Image.open(BytesIO(response.content))
-                
-                # Save to BytesIO
-                img_io = BytesIO()
-                image.save(img_io, format='JPEG', quality=85)
-                img_io.seek(0)
-                
-                # Upload to VK
-                photo = self.upload.photo_wall(
-                    img_io,
-                    group_id=abs(int(group_id))
-                )
-                
-                if photo:
-                    photo = photo[0]
-                    attachment_str = f"photo{photo['owner_id']}_{photo['id']}"
-                    attachments.append(attachment_str)
-                    
-            except Exception as e:
-                self.logger.warning(f"Failed to upload photo {url}: {e}")
-                continue
-        
-        return attachments
-    
-    async def schedule_post(
-        self,
-        post: Post,
-        target_id: str,
-        publish_date: int,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Schedule post for later publishing
-        
-        Args:
-            post: Post object to publish
-            target_id: VK group ID
-            publish_date: Unix timestamp for publishing
-            **kwargs: Additional parameters
-            
-        Returns:
-            Dictionary with scheduling results
-        """
-        try:
-            text = self.format_post_text(post, max_length=15000)
-            media = self.extract_media(post)
-            
-            # Upload photos
-            attachments = []
-            if media['photos']:
-                photo_attachments = await self._upload_photos(
-                    media['photos'],
-                    target_id
-                )
-                attachments.extend(photo_attachments)
-            
-            # Schedule post
-            result = self.api.wall.post(
-                owner_id=int(target_id),
+            result = await asyncio.to_thread(
+                self.vk.wall.post,
+                owner_id=target_group_id,
                 message=text,
                 attachments=','.join(attachments) if attachments else None,
-                from_group=1,
-                publish_date=publish_date
+                from_group=1 if from_group else 0
             )
+            
+            post_id = result['post_id']
+            post_url = f"https://vk.com/wall{target_group_id}_{post_id}"
+            
+            logger.info(f"✅ Successfully published to VK: {post_url}")
             
             return {
                 'success': True,
-                'platform': 'vk',
-                'post_id': result.get('post_id'),
-                'scheduled': True,
-                'publish_date': publish_date
+                'post_id': post_id,
+                'url': post_url,
+                'group_id': target_group_id
             }
             
-        except Exception as e:
-            self.log_error(post.id, target_id, e)
+        except ApiError as e:
+            logger.error(f"VK API Error: {e}")
             return {
                 'success': False,
-                'platform': 'vk',
+                'error': f"VK API Error: {e}",
+                'group_id': target_group_id
+            }
+        except Exception as e:
+            logger.error(f"Failed to publish: {e}", exc_info=True)
+            return {
+                'success': False,
+                'error': str(e),
+                'group_id': target_group_id
+            }
+    
+    async def publish_aggregated_post(
+        self,
+        digest: 'AggregatedPost',
+        target_group_id: int
+    ) -> Dict[str, Any]:
+        """
+        Опубликовать агрегированный пост (дайджест) из NewsAggregator
+        
+        Args:
+            digest: AggregatedPost объект от NewsAggregator
+            target_group_id: ID группы VK (отрицательное число)
+            
+        Returns:
+            Dict с результатом публикации
+        """
+        try:
+            # Используем готовый текст из дайджеста
+            text = digest.aggregated_text
+            
+            # TODO: В будущем добавить загрузку медиа
+            # Можно извлечь фото из source_posts и загрузить
+            attachments = []
+            
+            logger.info(f"Publishing aggregated post")
+            logger.info(f"Digest contains {digest.sources_count} posts")
+            logger.info(f"Total views: {digest.total_views}, likes: {digest.total_likes}")
+            
+            result = await self.publish_digest(
+                text=text,
+                target_group_id=target_group_id,
+                attachments=attachments
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to publish aggregated post: {e}", exc_info=True)
+            return {
+                'success': False,
                 'error': str(e)
             }
+    
+    async def publish_to_region(
+        self,
+        region_code: str,
+        posts: List,
+        target_group_id: int,
+        max_posts: int = 5
+    ) -> Dict[str, Any]:
+        """
+        Создать и опубликовать дайджест для региона из списка постов
+        
+        Args:
+            region_code: Код региона (например, 'mi', 'nolinsk')
+            posts: Список Post объектов
+            target_group_id: ID группы VK
+            max_posts: Максимальное количество постов в дайджесте
+            
+        Returns:
+            Dict с результатом публикации
+        """
+        try:
+            from modules.aggregation.aggregator import NewsAggregator
+            from database.connection import AsyncSessionLocal
+            from database.models import Region
+            from sqlalchemy import select
+            
+            async with AsyncSessionLocal() as session:
+                # Получаем регион
+                result = await session.execute(
+                    select(Region).where(Region.code == region_code)
+                )
+                region = result.scalar_one_or_none()
+                
+                if not region:
+                    return {
+                        'success': False,
+                        'error': f"Region {region_code} not found"
+                    }
+                
+                # Создаем дайджест
+                aggregator = NewsAggregator(max_posts_per_digest=max_posts)
+                
+                title = f"📰 НОВОСТИ {region.name.upper()}"
+                hashtags = [f"#Новости{region.code.upper()}"]
+                
+                digest = await aggregator.aggregate(
+                    posts=posts[:max_posts],
+                    title=title,
+                    hashtags=hashtags
+                )
+                
+                if not digest:
+                    return {
+                        'success': False,
+                        'error': "Failed to create digest"
+                    }
+                
+                # Публикуем
+                return await self.publish_aggregated_post(digest, target_group_id)
+                
+        except Exception as e:
+            logger.error(f"Failed to publish to region: {e}", exc_info=True)
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def get_target_group_id(self, region_code: str, mode: str = 'test') -> int:
+        """
+        Получить ID целевой группы для публикации
+        
+        Args:
+            region_code: Код региона (mi, nolinsk, etc)
+            mode: 'test' - в тестовую группу, 'production' - в группу региона
+            
+        Returns:
+            ID группы VK (отрицательное число)
+        """
+        from modules.region_config import RegionConfigManager
+        
+        if mode == 'test':
+            return RegionConfigManager.get_main_group_id('test')
+        else:
+            return RegionConfigManager.get_main_group_id(region_code)
+    
+    def get_group_info(self, group_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Получить информацию о группе VK
+        
+        Args:
+            group_id: ID группы (может быть положительным или отрицательным)
+            
+        Returns:
+            Dict с информацией о группе или None при ошибке
+        """
+        try:
+            # Убираем минус если есть
+            positive_id = abs(group_id)
+            
+            result = self.vk.groups.getById(group_id=positive_id)
+            
+            if result:
+                group = result[0]
+                return {
+                    'id': group['id'],
+                    'name': group['name'],
+                    'screen_name': group['screen_name'],
+                    'type': group['type'],
+                    'url': f"https://vk.com/{group['screen_name']}"
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get group info: {e}")
+            return None
 
+
+if __name__ == "__main__":
+    # Простой тест (требует токен в переменных окружения)
+    import os
+    
+    async def test():
+        token = os.getenv("VK_TOKEN_PUBLISH")
+        if not token:
+            print("❌ VK_TOKEN_PUBLISH not set")
+            return
+        
+        publisher = VKPublisher(token)
+        
+        # Тестовый пост
+        result = await publisher.publish_digest(
+            text="🧪 Тест публикации из SETKA\n\nЭто тестовый пост.",
+            target_group_id=-123456  # Замените на реальный ID
+        )
+        
+        print(f"Result: {result}")
+    
+    asyncio.run(test())

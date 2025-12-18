@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block title %}Уведомления - SETKA{% endblock %}
+{% block nav_notifications %}active{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>
+                <i class="bi bi-bell"></i> Уведомления VK
+            </h1>
+            <div class="d-flex gap-2">
+                <button class="btn btn-warning" id="check-now-btn" onclick="checkNotificationsNow()">
+                    <i class="bi bi-arrow-clockwise"></i> Проверить сейчас
+                </button>
+                <button class="btn btn-outline-danger" id="clear-btn" onclick="clearNotifications()">
+                    <i class="bi bi-trash"></i> Очистить все
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card border-warning">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="card-subtitle mb-2 text-muted">Предложенных постов</h6>
+                        <h3 class="card-title mb-0" id="suggested-count">
+                            <span class="spinner-border spinner-border-sm"></span>
+                        </h3>
+                    </div>
+                    <i class="bi bi-envelope-paper fs-1 text-warning"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card border-info">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="card-subtitle mb-2 text-muted">Непрочитанных сообщений</h6>
+                        <h3 class="card-title mb-0" id="messages-count">
+                            <span class="spinner-border spinner-border-sm"></span>
+                        </h3>
+                    </div>
+                    <i class="bi bi-chat-dots fs-1 text-info"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card border-secondary">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="card-subtitle mb-2 text-muted">Комментариев за сутки</h6>
+                        <h3 class="card-title mb-0" id="comments-count">
+                            <span class="spinner-border spinner-border-sm"></span>
+                        </h3>
+                    </div>
+                    <i class="bi bi-chat-left-text fs-1 text-secondary"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card border-primary">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="card-subtitle mb-2 text-muted">Всего уведомлений</h6>
+                        <h3 class="card-title mb-0" id="total-count">
+                            <span class="spinner-border spinner-border-sm"></span>
+                        </h3>
+                    </div>
+                    <i class="bi bi-bell-fill fs-1 text-primary"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Last Check Info -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="alert alert-info d-flex justify-content-between align-items-center">
+            <div>
+                <i class="bi bi-clock-history"></i>
+                <strong>Последняя проверка:</strong> <span id="last-check-time">Загрузка...</span>
+            </div>
+            <small class="text-muted">
+                <i class="bi bi-info-circle"></i>
+                Автоматическая проверка каждый час с 8:00 до 22:00
+            </small>
+        </div>
+    </div>
+</div>
+
+<!-- Suggested Posts Section -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-warning">
+            <div class="card-header bg-warning bg-opacity-10">
+                <h5 class="mb-0">
+                    <i class="bi bi-envelope-paper"></i> Предложенные посты
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <div id="suggested-loading" class="text-center py-4">
+                    <div class="spinner-border spinner-border-sm text-warning" role="status">
+                        <span class="visually-hidden">Загрузка...</span>
+                    </div>
+                    <p class="mt-2 text-muted mb-0">Загрузка предложенных постов...</p>
+                </div>
+                
+                <div id="suggested-empty" class="alert alert-success m-3" style="display: none;">
+                    <i class="bi bi-check-circle"></i>
+                    Нет предложенных постов. Все группы проверены!
+                </div>
+                
+                <div id="suggested-list" style="display: none;">
+                    <!-- Suggested posts will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Unread Messages Section -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-info">
+            <div class="card-header bg-info bg-opacity-10">
+                <h5 class="mb-0">
+                    <i class="bi bi-chat-dots"></i> Непрочитанные сообщения
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <div id="messages-loading" class="text-center py-4">
+                    <div class="spinner-border spinner-border-sm text-info" role="status">
+                        <span class="visually-hidden">Загрузка...</span>
+                    </div>
+                    <p class="mt-2 text-muted mb-0">Загрузка непрочитанных сообщений...</p>
+                </div>
+                
+                <div id="messages-empty" class="alert alert-success m-3" style="display: none;">
+                    <i class="bi bi-check-circle"></i>
+                    Нет непрочитанных сообщений. Все проверено!
+                </div>
+                
+                <div id="messages-list" style="display: none;">
+                    <!-- Unread messages will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Comments Section -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-secondary">
+            <div class="card-header bg-secondary bg-opacity-10">
+                <h5 class="mb-0">
+                    <i class="bi bi-chat-left-text"></i> Комментарии за последние 24 часа
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <div id="comments-loading" class="text-center py-4">
+                    <div class="spinner-border spinner-border-sm text-secondary" role="status">
+                        <span class="visually-hidden">Загрузка...</span>
+                    </div>
+                    <p class="mt-2 text-muted mb-0">Загрузка комментариев...</p>
+                </div>
+
+                <div id="comments-empty" class="alert alert-success m-3" style="display: none;">
+                    <i class="bi bi-check-circle"></i>
+                    Нет новых комментариев за сутки.
+                </div>
+
+                <div id="comments-list" style="display: none;">
+                    <!-- Recent comments will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Error Display -->
+<div id="error-alert" class="alert alert-danger" style="display: none;" role="alert">
+    <i class="bi bi-exclamation-triangle"></i>
+    <strong>Ошибка:</strong> <span id="error-text"></span>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+{# Cache-busting: nginx serves /static with long-lived immutable cache headers #}
+<script src="/static/js/notifications.js?v=20251218_2"></script>
+{% endblock %}
+

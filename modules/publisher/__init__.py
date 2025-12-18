@@ -1,16 +1,6 @@
 """
-Publisher module for SETKA project
-Publishes content to VK, Telegram, and WordPress
+Publisher Module
+
+Модуль для публикации дайджестов в социальные сети.
+Поддерживает VK, Telegram (будущее).
 """
-from .publisher import ContentPublisher
-from .vk_publisher import VKPublisher
-from .telegram_publisher import TelegramPublisher
-from .wordpress_publisher import WordPressPublisher
-
-__all__ = [
-    'ContentPublisher',
-    'VKPublisher', 
-    'TelegramPublisher',
-    'WordPressPublisher'
-]
-

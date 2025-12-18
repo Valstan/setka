@@ -17,19 +17,6 @@ from sqlalchemy import select
 logger = logging.getLogger(__name__)
 
 
-class AsyncTask(Task):
-    """Base task class for async operations"""
-    
-    def __call__(self, *args, **kwargs):
-        """Run async function in event loop"""
-        loop = asyncio.get_event_loop()
-        return loop.run_until_complete(self.run_async(*args, **kwargs))
-    
-    async def run_async(self, *args, **kwargs):
-        """Override this method in child classes"""
-        raise NotImplementedError
-
-
 def get_publisher() -> ContentPublisher:
     """Initialize and return ContentPublisher"""
     # Get first available VK token for posting
@@ -49,8 +36,8 @@ def get_publisher() -> ContentPublisher:
     )
 
 
-@app.task(base=AsyncTask, bind=True, name='tasks.publishing_tasks.publish_scheduled_posts')
-async def publish_scheduled_posts(self):
+@app.task(bind=True, name='tasks.publishing_tasks.publish_scheduled_posts')
+def publish_scheduled_posts(self):
     """
     Publish scheduled posts for all regions
     
@@ -58,6 +45,20 @@ async def publish_scheduled_posts(self):
     """
     logger.info("📤 Publishing scheduled posts...")
     
+    try:
+        # Запускаем async функцию в event loop
+        result = asyncio.run(_publish_scheduled_posts_async())
+        
+        logger.info(f"✅ Publishing complete: {result.get('published', 0)} posts published")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Publishing failed: {e}")
+        raise
+
+
+async def _publish_scheduled_posts_async():
     try:
         publisher = get_publisher()
         
@@ -113,8 +114,8 @@ async def publish_scheduled_posts(self):
         }
 
 
-@app.task(base=AsyncTask, bind=True, name='tasks.publishing_tasks.publish_post')
-async def publish_post(
+@app.task(bind=True, name='tasks.publishing_tasks.publish_post')
+def publish_post(
     self,
     post_id: int,
     platforms: List[str],
@@ -130,6 +131,20 @@ async def publish_post(
     """
     logger.info(f"📤 Publishing post {post_id} to {platforms}...")
     
+    try:
+        # Запускаем async функцию в event loop
+        result = asyncio.run(_publish_post_async(post_id, platforms, region_code))
+        
+        logger.info(f"✅ Post {post_id} published successfully")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Publishing failed: {e}")
+        raise
+
+
+async def _publish_post_async(post_id: int, platforms: List[str], region_code: str):
     try:
         publisher = get_publisher()
         
@@ -160,8 +175,8 @@ async def publish_post(
         }
 
 
-@app.task(base=AsyncTask, bind=True, name='tasks.publishing_tasks.publish_region')
-async def publish_region(
+@app.task(bind=True, name='tasks.publishing_tasks.publish_region')
+def publish_region(
     self,
     region_code: str,
     platforms: List[str],
@@ -177,6 +192,20 @@ async def publish_region(
     """
     logger.info(f"📤 Publishing region {region_code}...")
     
+    try:
+        # Запускаем async функцию в event loop
+        result = asyncio.run(_publish_region_async(region_code, platforms, limit))
+        
+        logger.info(f"✅ Region {region_code} published successfully")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Region publishing failed: {e}")
+        raise
+
+
+async def _publish_region_async(region_code: str, platforms: List[str], limit: int):
     try:
         publisher = get_publisher()
         
@@ -200,8 +229,8 @@ async def publish_region(
         }
 
 
-@app.task(base=AsyncTask, bind=True, name='tasks.publishing_tasks.check_publishers')
-async def check_publishers(self):
+@app.task(bind=True, name='tasks.publishing_tasks.check_publishers')
+def check_publishers(self):
     """
     Check all publisher connections
     
@@ -209,6 +238,20 @@ async def check_publishers(self):
     """
     logger.info("🔍 Checking publisher connections...")
     
+    try:
+        # Запускаем async функцию в event loop
+        result = asyncio.run(_check_publishers_async())
+        
+        logger.info("✅ Publisher connections checked")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Publisher check failed: {e}")
+        raise
+
+
+async def _check_publishers_async():
     try:
         publisher = get_publisher()
         results = await publisher.check_all_connections()

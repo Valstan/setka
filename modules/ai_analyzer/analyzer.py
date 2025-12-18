@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.connection import AsyncSessionLocal
 from database.models import Post, Filter
 from modules.ai_analyzer.groq_client import GroqClient
+from modules.ai_analyzer.sentiment_analyzer import SentimentAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class PostAnalyzer:
         """
         self.groq_client = GroqClient(api_key=groq_api_key) if groq_api_key else None
         self.use_fallback = not groq_api_key
+        self.sentiment_analyzer = SentimentAnalyzer()  # NEW: Sentiment analyzer
         
     async def analyze_post(
         self,
@@ -76,6 +78,10 @@ class PostAnalyzer:
         score = self._calculate_score(result, post)
         result['score'] = score
         
+        # NEW: Sentiment analysis
+        sentiment = self.sentiment_analyzer.analyze(post.text)
+        result['sentiment'] = sentiment
+        
         # Update post with analysis
         post.ai_category = result.get('category', 'novost')
         post.ai_relevance = result.get('relevance', 50)
@@ -83,6 +89,11 @@ class PostAnalyzer:
         post.ai_analyzed = True
         post.ai_analysis_date = datetime.utcnow()
         post.is_spam = result.get('is_spam', False)
+        
+        # Update sentiment fields
+        post.sentiment_label = sentiment['label']
+        post.sentiment_score = sentiment['score']
+        post.sentiment_emotions = sentiment['emotions']
         
         # Update status
         if score >= 70:

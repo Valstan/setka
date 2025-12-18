@@ -2,7 +2,7 @@
 Groq AI Client for post analysis
 Free and fast alternative to local AI models
 """
-import httpx
+from groq import Groq
 from typing import Dict, Any, Optional, List
 import logging
 import json
@@ -21,8 +21,16 @@ class GroqClient:
             api_key: Groq API key (get free at https://console.groq.com)
         """
         self.api_key = api_key or "GROQ_API_KEY_HERE"  # Will be set from config
-        self.api_url = "https://api.groq.com/openai/v1/chat/completions"
-        self.model = "llama-3.1-8b-instant"  # Fast and efficient model
+        
+        # Инициализация официального SDK
+        try:
+            self.client = Groq(api_key=self.api_key)
+            # Попробуем другие доступные модели
+            self.model = "llama3-8b-8192"  # Актуальная модель Groq
+            logger.info(f"Groq client initialized with model: {self.model}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Groq client: {e}")
+            self.client = None
         
     async def analyze_post(
         self,
@@ -56,43 +64,37 @@ class GroqClient:
 {{"category": "...", "relevance": 0-100, "is_spam": true/false, "reason": "..."}}"""
         
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    self.api_url,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": self.model,
-                        "messages": [
-                            {"role": "user", "content": prompt}
-                        ],
-                        "temperature": 0.3,
-                        "max_tokens": 200
-                    }
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    content = data['choices'][0]['message']['content']
-                    
-                    # Try to parse JSON response
-                    try:
-                        result = json.loads(content)
-                        return result
-                    except json.JSONDecodeError:
-                        # Fallback if AI didn't return valid JSON
-                        return {
-                            'category': 'novost',
-                            'relevance': 50,
-                            'is_spam': False,
-                            'reason': 'Failed to parse AI response',
-                            'raw_response': content
-                        }
-                else:
-                    logger.error(f"Groq API error: {response.status_code}")
-                    return self._fallback_analysis(text)
+            if not self.client:
+                logger.warning("Groq client not initialized, using fallback")
+                return self._fallback_analysis(text)
+            
+            # Вызов через официальный SDK (синхронный)
+            import asyncio
+            completion = await asyncio.to_thread(
+                self.client.chat.completions.create,
+                model=self.model,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=200
+            )
+            
+            content = completion.choices[0].message.content
+            
+            # Try to parse JSON response
+            try:
+                result = json.loads(content)
+                return result
+            except json.JSONDecodeError:
+                # Fallback if AI didn't return valid JSON
+                return {
+                    'category': 'novost',
+                    'relevance': 50,
+                    'is_spam': False,
+                    'reason': 'Failed to parse AI response',
+                    'raw_response': content
+                }
                     
         except Exception as e:
             logger.error(f"Error calling Groq API: {e}")

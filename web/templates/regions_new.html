@@ -1,0 +1,358 @@
+{% extends "base.html" %}
+
+{% block title %}Регионы - SETKA{% endblock %}
+{% block nav_regions %}active{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="bi bi-geo-alt"></i> Регионы</h1>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addRegionModal">
+                <i class="bi bi-plus-circle"></i> Добавить регион
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Regions Grid -->
+<div id="regions-loading" class="text-center py-5">
+    <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Загрузка...</span>
+    </div>
+    <p class="mt-2 text-muted">Загрузка регионов...</p>
+</div>
+
+<div id="regions-grid" class="row g-4" style="display: none;">
+    <!-- Regions will be loaded here -->
+</div>
+
+<div id="regions-error" class="alert alert-danger" style="display: none;">
+    <i class="bi bi-exclamation-triangle"></i>
+    <strong>Ошибка!</strong> <span id="regions-error-text"></span>
+</div>
+
+<!-- Add Region Modal -->
+<div class="modal fade" id="addRegionModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-plus-circle"></i> Добавить регион</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addRegionForm">
+                    <div class="mb-3">
+                        <label for="regionCode" class="form-label">Код региона *</label>
+                        <input type="text" class="form-control" id="regionCode" required 
+                               placeholder="например: mi, nolinsk"
+                               pattern="[a-z0-9_]+" title="Только строчные буквы, цифры и _">
+                        <small class="form-text text-muted">Уникальный код региона (латиница, строчные)</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="regionName" class="form-label">Название региона *</label>
+                        <input type="text" class="form-control" id="regionName" required
+                               placeholder="например: МАЛМЫЖ - ИНФО">
+                    </div>
+                    <div class="mb-3">
+                        <label for="regionVkGroupId" class="form-label">VK Group ID</label>
+                        <input type="number" class="form-control" id="regionVkGroupId"
+                               placeholder="-123456789">
+                        <small class="form-text text-muted">ID главной группы VK (отрицательное число)</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="regionTelegram" class="form-label">Telegram канал</label>
+                        <input type="text" class="form-control" id="regionTelegram"
+                               placeholder="@malmig_info">
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="regionActive" checked>
+                            <label class="form-check-label" for="regionActive">
+                                Активен
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="addRegion()">
+                    <i class="bi bi-plus-circle"></i> Создать
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Region Modal -->
+<div class="modal fade" id="editRegionModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-pencil"></i> Редактировать регион</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editRegionForm">
+                    <input type="hidden" id="editRegionId">
+                    <div class="mb-3">
+                        <label for="editRegionCode" class="form-label">Код региона</label>
+                        <input type="text" class="form-control" id="editRegionCode" disabled>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editRegionName" class="form-label">Название региона *</label>
+                        <input type="text" class="form-control" id="editRegionName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editRegionVkGroupId" class="form-label">VK Group ID</label>
+                        <input type="number" class="form-control" id="editRegionVkGroupId"
+                               placeholder="-123456789">
+                    </div>
+                    <div class="mb-3">
+                        <label for="editRegionTelegram" class="form-label">Telegram канал</label>
+                        <input type="text" class="form-control" id="editRegionTelegram"
+                               placeholder="@malmig_info">
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="editRegionActive">
+                            <label class="form-check-label" for="editRegionActive">
+                                Активен
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="saveRegion()">
+                    <i class="bi bi-save"></i> Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentRegions = [];
+
+// Load regions
+async function loadRegions() {
+    const loading = document.getElementById('regions-loading');
+    const grid = document.getElementById('regions-grid');
+    const error = document.getElementById('regions-error');
+    const errorText = document.getElementById('regions-error-text');
+    
+    try {
+        const regions = await apiClient.getRegions();
+        currentRegions = regions;
+        
+        if (regions.length === 0) {
+            grid.innerHTML = `
+                <div class="col-12">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        Регионы не найдены. Добавьте первый регион!
+                    </div>
+                </div>
+            `;
+        } else {
+            grid.innerHTML = regions.map(region => renderRegionCard(region)).join('');
+        }
+        
+        loading.style.display = 'none';
+        grid.style.display = 'flex';
+    } catch (err) {
+        console.error('Error loading regions:', err);
+        errorText.textContent = err.message;
+        loading.style.display = 'none';
+        error.style.display = 'block';
+    }
+}
+
+// Render region card
+function renderRegionCard(region) {
+    const vkButton = region.vk_group_id ? `
+        <a href="https://vk.com/club${Math.abs(region.vk_group_id)}" 
+           target="_blank" 
+           class="btn btn-sm btn-outline-primary w-100 mb-2">
+            <i class="bi bi-link-45deg"></i> VK Группа
+        </a>
+    ` : `
+        <button class="btn btn-sm btn-outline-secondary w-100 mb-2" disabled>
+            <i class="bi bi-link-45deg"></i> VK не настроена
+        </button>
+    `;
+    
+    return `
+        <div class="col-md-4">
+            <div class="card h-100 hover-shadow">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-geo-alt-fill text-primary"></i>
+                            ${region.name}
+                        </h5>
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-link text-secondary p-0" 
+                                    data-bs-toggle="dropdown">
+                                <i class="bi bi-three-dots-vertical"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item" href="#" onclick="editRegion(${region.id})">
+                                    <i class="bi bi-pencil"></i> Редактировать
+                                </a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item text-danger" href="#" 
+                                       onclick="deleteRegion(${region.id}, '${region.name}')">
+                                    <i class="bi bi-trash"></i> Удалить
+                                </a></li>
+                            </ul>
+                        </div>
+                    </div>
+                    <p class="card-text">
+                        <span class="badge bg-secondary">${region.code}</span>
+                        ${region.is_active ? 
+                            '<span class="badge bg-success">Активен</span>' : 
+                            '<span class="badge bg-warning">Неактивен</span>'}
+                    </p>
+                    ${vkButton}
+                    <hr>
+                    <div class="row text-center">
+                        <div class="col-6">
+                            <h6 class="text-muted mb-0">Сообществ</h6>
+                            <h4 class="mb-0">${region.communities_count || 0}</h4>
+                        </div>
+                        <div class="col-6">
+                            <h6 class="text-muted mb-0">Постов</h6>
+                            <h4 class="mb-0">${region.posts_count || 0}</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer bg-white">
+                    <small class="text-muted">
+                        <i class="bi bi-clock"></i>
+                        Создан: ${new Date(region.created_at).toLocaleDateString('ru-RU')}
+                    </small>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Add region
+async function addRegion() {
+    const code = document.getElementById('regionCode').value.trim();
+    const name = document.getElementById('regionName').value.trim();
+    const vk_group_id = document.getElementById('regionVkGroupId').value.trim();
+    const telegram_channel = document.getElementById('regionTelegram').value.trim();
+    const is_active = document.getElementById('regionActive').checked;
+    
+    if (!code || !name) {
+        alert('Заполните обязательные поля!');
+        return;
+    }
+    
+    try {
+        const data = {
+            code: code.toLowerCase(),
+            name,
+            is_active
+        };
+        
+        if (vk_group_id) data.vk_group_id = parseInt(vk_group_id);
+        if (telegram_channel) data.telegram_channel = telegram_channel;
+        
+        await fetch('/api/regions/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        // Close modal and reload
+        bootstrap.Modal.getInstance(document.getElementById('addRegionModal')).hide();
+        document.getElementById('addRegionForm').reset();
+        await loadRegions();
+        
+        alert('Регион успешно создан!');
+    } catch (err) {
+        alert('Ошибка при создании региона: ' + err.message);
+    }
+}
+
+// Edit region
+async function editRegion(regionId) {
+    const region = currentRegions.find(r => r.id === regionId);
+    if (!region) return;
+    
+    document.getElementById('editRegionId').value = region.id;
+    document.getElementById('editRegionCode').value = region.code;
+    document.getElementById('editRegionName').value = region.name;
+    document.getElementById('editRegionVkGroupId').value = region.vk_group_id || '';
+    document.getElementById('editRegionTelegram').value = region.telegram_channel || '';
+    document.getElementById('editRegionActive').checked = region.is_active;
+    
+    new bootstrap.Modal(document.getElementById('editRegionModal')).show();
+}
+
+// Save region
+async function saveRegion() {
+    const regionId = document.getElementById('editRegionId').value;
+    const name = document.getElementById('editRegionName').value.trim();
+    const vk_group_id = document.getElementById('editRegionVkGroupId').value.trim();
+    const telegram_channel = document.getElementById('editRegionTelegram').value.trim();
+    const is_active = document.getElementById('editRegionActive').checked;
+    
+    if (!name) {
+        alert('Название региона обязательно!');
+        return;
+    }
+    
+    try {
+        const data = { name, is_active };
+        if (vk_group_id) data.vk_group_id = parseInt(vk_group_id);
+        if (telegram_channel) data.telegram_channel = telegram_channel;
+        
+        await fetch(`/api/regions/${regionId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        // Close modal and reload
+        bootstrap.Modal.getInstance(document.getElementById('editRegionModal')).hide();
+        await loadRegions();
+        
+        alert('Регион успешно обновлен!');
+    } catch (err) {
+        alert('Ошибка при обновлении региона: ' + err.message);
+    }
+}
+
+// Delete region
+async function deleteRegion(regionId, regionName) {
+    if (!confirm(`Удалить регион "${regionName}"?\n\nВНИМАНИЕ: Будут удалены все связанные сообщества и посты!`)) {
+        return;
+    }
+    
+    try {
+        await fetch(`/api/regions/${regionId}`, {
+            method: 'DELETE'
+        });
+        
+        await loadRegions();
+        alert('Регион успешно удален!');
+    } catch (err) {
+        alert('Ошибка при удалении региона: ' + err.message);
+    }
+}
+
+// Load on page load
+document.addEventListener('DOMContentLoaded', loadRegions);
+</script>
+{% endblock %}
+

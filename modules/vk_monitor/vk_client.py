@@ -194,6 +194,93 @@ class VKClient:
             'comments': post.get('comments', {}).get('count', 0)
         }
     
+    async def get_user_info(self) -> Optional[Dict[str, Any]]:
+        """
+        Get current user information
+        
+        Returns:
+            User info or None
+        """
+        try:
+            response = self.vk.users.get()
+            if response:
+                return response[0]
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user info: {e}")
+            return None
+    
+    async def get_posts(
+        self, 
+        owner_id: int, 
+        count: int = 10,
+        offset: int = 0,
+        extended: int = 0
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get posts from VK wall (async wrapper)
+        
+        Args:
+            owner_id: VK group ID (negative for communities)
+            count: Number of posts to fetch (max 100)
+            offset: Offset for pagination
+            extended: Extended information
+            
+        Returns:
+            Posts data or None
+        """
+        try:
+            response = self.vk.wall.get(
+                owner_id=owner_id,
+                count=min(count, 100),
+                offset=offset,
+                extended=extended
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Error getting posts from {owner_id}: {e}")
+            return None
+    
+    async def get_groups(self, count: int = 10, extended: int = 1) -> Optional[Dict[str, Any]]:
+        """
+        Get user's groups
+        
+        Args:
+            count: Number of groups to fetch
+            extended: Extended information
+            
+        Returns:
+            Groups data or None
+        """
+        try:
+            response = self.vk.groups.get(
+                count=count,
+                extended=extended
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Error getting groups: {e}")
+            return None
+    
+    async def get_messages(self, count: int = 10) -> Optional[Dict[str, Any]]:
+        """
+        Get user's messages
+        
+        Args:
+            count: Number of messages to fetch
+            
+        Returns:
+            Messages data or None
+        """
+        try:
+            response = self.vk.messages.get(
+                count=count
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Error getting messages: {e}")
+            return None
+    
     async def check_token_validity(self) -> bool:
         """
         Check if token is still valid
@@ -203,8 +290,8 @@ class VKClient:
         """
         try:
             # Try to fetch user info
-            self.vk.users.get()
-            return True
+            user_info = await self.get_user_info()
+            return user_info is not None
         except Exception as e:
             logger.error(f"Token validation failed: {e}")
             return False

@@ -1,0 +1,507 @@
+{% extends "base.html" %}
+
+{% block title %}SETKA - Управление VK Токенами{% endblock %}
+
+{% block nav_tokens %}active{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-primary">
+                <div class="card-header bg-primary bg-opacity-10">
+                    <h2 class="mb-0">
+                        <i class="bi bi-key"></i> Управление VK Токенами
+                    </h2>
+                    <p class="mb-0 mt-2">Управление токенами доступа к VK API</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Token Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-success">
+                <div class="card-body text-center">
+                    <h5 class="card-title">🔑 Главные токены</h5>
+                    <h3 class="text-success" id="main-tokens-count">-</h3>
+                    <small class="text-muted">Полные права</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-warning">
+                <div class="card-body text-center">
+                    <h5 class="card-title">🔧 Вспомогательные</h5>
+                    <h3 class="text-warning" id="aux-tokens-count">-</h3>
+                    <small class="text-muted">Только чтение</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-danger">
+                <div class="card-body text-center">
+                    <h5 class="card-title">❌ Неактивные</h5>
+                    <h3 class="text-danger" id="broken-tokens-count">-</h3>
+                    <small class="text-muted">Требуют внимания</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-info">
+                <div class="card-body text-center">
+                    <h5 class="card-title">📊 Всего токенов</h5>
+                    <h3 class="text-info" id="total-tokens-count">-</h3>
+                    <small class="text-muted">В системе</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Token Form -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">➕ Добавить новый токен</h5>
+                </div>
+                <div class="card-body">
+                    <form id="add-token-form">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <label for="token-name" class="form-label">Название токена</label>
+                                <input type="text" class="form-control" id="token-name" placeholder="Например: VALSTAN" required>
+                            </div>
+                            <div class="col-md-5">
+                                <label for="token-value" class="form-label">Токен доступа</label>
+                                <input type="text" class="form-control" id="token-value" placeholder="vk1.a.xxx..." required>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="token-type" class="form-label">Тип токена</label>
+                                <select class="form-select" id="token-type" required>
+                                    <option value="main">Главный</option>
+                                    <option value="auxiliary">Вспомогательный</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label">&nbsp;</label>
+                                <button type="submit" class="btn btn-success w-100">
+                                    <i class="bi bi-plus-circle"></i> Добавить
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tokens Grid -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">🔑 Все токены</h5>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-primary btn-sm" onclick="refreshTokens()">
+                            <i class="bi bi-arrow-clockwise"></i> Обновить
+                        </button>
+                        <button class="btn btn-outline-success btn-sm" onclick="validateAllTokens()">
+                            <i class="bi bi-check-circle"></i> Проверить все
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="tokens-grid" class="row">
+                        <div class="col-12 text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Загрузка токенов...</span>
+                            </div>
+                            <p class="mt-2 text-muted">Загрузка токенов...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Token Modal -->
+<div class="modal fade" id="tokenModal" tabindex="-1" aria-labelledby="tokenModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="tokenModalLabel">Редактировать токен</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-token-form">
+                    <input type="hidden" id="edit-token-id">
+                    <div class="mb-3">
+                        <label for="edit-token-name" class="form-label">Название токена</label>
+                        <input type="text" class="form-control" id="edit-token-name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit-token-value" class="form-label">Токен доступа</label>
+                        <input type="text" class="form-control" id="edit-token-value" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit-token-type" class="form-label">Тип токена</label>
+                        <select class="form-select" id="edit-token-type" required>
+                            <option value="main">Главный</option>
+                            <option value="auxiliary">Вспомогательный</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="edit-token-active">
+                            <label class="form-check-label" for="edit-token-active">
+                                Активный
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="updateToken()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Success/Error Messages -->
+<div id="success-message" class="alert alert-success alert-dismissible fade" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999;">
+    <i class="bi bi-check-circle"></i>
+    <span id="success-text"></span>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+
+<div id="error-message" class="alert alert-danger alert-dismissible fade" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999;">
+    <i class="bi bi-exclamation-triangle"></i>
+    <span id="error-text"></span>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+
+<style>
+.token-card {
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 15px;
+    margin-bottom: 20px;
+    transition: all 0.3s ease;
+}
+
+.token-card:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.token-card.main {
+    border-color: #198754;
+    background: linear-gradient(135deg, #d1e7dd 0%, #f8f9fa 100%);
+}
+
+.token-card.auxiliary {
+    border-color: #fd7e14;
+    background: linear-gradient(135deg, #ffeaa7 0%, #f8f9fa 100%);
+}
+
+.token-card.broken {
+    border-color: #dc3545;
+    background: linear-gradient(135deg, #f8d7da 0%, #f8f9fa 100%);
+}
+
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-working {
+    background: #198754;
+    color: white;
+}
+
+.status-broken {
+    background: #dc3545;
+    color: white;
+}
+
+.token-info {
+    font-size: 14px;
+    color: #6c757d;
+}
+
+.token-actions {
+    margin-top: 10px;
+}
+
+.token-actions .btn {
+    margin-right: 5px;
+    margin-bottom: 5px;
+}
+</style>
+
+<script>
+// Load initial data
+document.addEventListener('DOMContentLoaded', function() {
+    loadTokens();
+    
+    // Add token form
+    document.getElementById('add-token-form').addEventListener('submit', addToken);
+});
+
+async function loadTokens() {
+    try {
+        const response = await fetch('/api/tokens/all');
+        const data = await response.json();
+        
+        if (data.success) {
+            displayTokens(data.data);
+            updateStatistics(data.data);
+        } else {
+            showError('Ошибка загрузки токенов');
+        }
+    } catch (error) {
+        console.error('Error loading tokens:', error);
+        showError('Ошибка загрузки токенов: ' + error.message);
+    }
+}
+
+function displayTokens(tokens) {
+    const container = document.getElementById('tokens-grid');
+    
+    if (!tokens || tokens.length === 0) {
+        container.innerHTML = '<div class="col-12 text-center text-muted">Нет токенов</div>';
+        return;
+    }
+    
+    container.innerHTML = tokens.map(token => `
+        <div class="col-md-6 col-lg-4">
+            <div class="token-card ${token.type}">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <h6 class="mb-0">${token.name}</h6>
+                    <span class="status-badge ${token.status === 'working' ? 'status-working' : 'status-broken'}">
+                        ${token.status === 'working' ? 'Работает' : 'Ошибка'}
+                    </span>
+                </div>
+                
+                <div class="token-info">
+                    <div><strong>Тип:</strong> ${token.type === 'main' ? 'Главный' : 'Вспомогательный'}</div>
+                    <div><strong>ID:</strong> ${token.user_id || 'Неизвестно'}</div>
+                    <div><strong>Токен:</strong> ${token.token.substring(0, 20)}...</div>
+                    ${token.admin_groups ? `<div><strong>Групп:</strong> ${token.admin_groups}</div>` : ''}
+                </div>
+                
+                <div class="token-actions">
+                    <button class="btn btn-sm btn-outline-primary" onclick="editToken(${token.id})">
+                        <i class="bi bi-pencil"></i> Редактировать
+                    </button>
+                    <button class="btn btn-sm btn-outline-success" onclick="validateToken(${token.id})">
+                        <i class="bi bi-check-circle"></i> Проверить
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteToken(${token.id})">
+                        <i class="bi bi-trash"></i> Удалить
+                    </button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function updateStatistics(tokens) {
+    const mainTokens = tokens.filter(t => t.type === 'main').length;
+    const auxTokens = tokens.filter(t => t.type === 'auxiliary').length;
+    const brokenTokens = tokens.filter(t => t.status !== 'working').length;
+    const totalTokens = tokens.length;
+    
+    document.getElementById('main-tokens-count').textContent = mainTokens;
+    document.getElementById('aux-tokens-count').textContent = auxTokens;
+    document.getElementById('broken-tokens-count').textContent = brokenTokens;
+    document.getElementById('total-tokens-count').textContent = totalTokens;
+}
+
+async function addToken(event) {
+    event.preventDefault();
+    
+    const name = document.getElementById('token-name').value;
+    const token = document.getElementById('token-value').value;
+    const type = document.getElementById('token-type').value;
+    
+    try {
+        const response = await fetch('/api/tokens/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                name: name,
+                token_str: token,
+                token_type: type
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('Токен добавлен успешно');
+            document.getElementById('add-token-form').reset();
+            loadTokens();
+        } else {
+            showError(data.message || 'Ошибка добавления токена');
+        }
+    } catch (error) {
+        showError('Ошибка добавления токена: ' + error.message);
+    }
+}
+
+async function editToken(tokenId) {
+    try {
+        const response = await fetch(`/api/tokens/${tokenId}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            const token = data.data;
+            document.getElementById('edit-token-id').value = tokenId;
+            document.getElementById('edit-token-name').value = token.name;
+            document.getElementById('edit-token-value').value = token.token;
+            document.getElementById('edit-token-type').value = token.type;
+            document.getElementById('edit-token-active').checked = token.status === 'working';
+            
+            const modal = new bootstrap.Modal(document.getElementById('tokenModal'));
+            modal.show();
+        } else {
+            showError('Ошибка загрузки токена');
+        }
+    } catch (error) {
+        showError('Ошибка загрузки токена: ' + error.message);
+    }
+}
+
+async function updateToken() {
+    const tokenId = document.getElementById('edit-token-id').value;
+    const name = document.getElementById('edit-token-name').value;
+    const token = document.getElementById('edit-token-value').value;
+    const type = document.getElementById('edit-token-type').value;
+    const isActive = document.getElementById('edit-token-active').checked;
+    
+    try {
+        const response = await fetch(`/api/tokens/update/${tokenId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                name: name,
+                token_str: token,
+                token_type: type,
+                is_active: isActive
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('Токен обновлён успешно');
+            bootstrap.Modal.getInstance(document.getElementById('tokenModal')).hide();
+            loadTokens();
+        } else {
+            showError(data.message || 'Ошибка обновления токена');
+        }
+    } catch (error) {
+        showError('Ошибка обновления токена: ' + error.message);
+    }
+}
+
+async function deleteToken(tokenId) {
+    if (!confirm('Вы уверены, что хотите удалить этот токен?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/tokens/delete/${tokenId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('Токен удалён успешно');
+            loadTokens();
+        } else {
+            showError(data.message || 'Ошибка удаления токена');
+        }
+    } catch (error) {
+        showError('Ошибка удаления токена: ' + error.message);
+    }
+}
+
+async function validateToken(tokenId) {
+    try {
+        const response = await fetch(`/api/tokens/validate/${tokenId}`, {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('Токен проверен успешно');
+            loadTokens();
+        } else {
+            showError(data.message || 'Ошибка проверки токена');
+        }
+    } catch (error) {
+        showError('Ошибка проверки токена: ' + error.message);
+    }
+}
+
+async function validateAllTokens() {
+    try {
+        showSuccess('Начинаем проверку всех токенов...');
+        
+        const response = await fetch('/api/tokens/validate-all', {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('Все токены проверены');
+            loadTokens();
+        } else {
+            showError(data.message || 'Ошибка проверки токенов');
+        }
+    } catch (error) {
+        showError('Ошибка проверки токенов: ' + error.message);
+    }
+}
+
+async function refreshTokens() {
+    await loadTokens();
+}
+
+function showSuccess(message) {
+    const alert = document.getElementById('success-message');
+    document.getElementById('success-text').textContent = message;
+    alert.classList.add('show');
+    
+    setTimeout(() => {
+        alert.classList.remove('show');
+    }, 5000);
+}
+
+function showError(message) {
+    const alert = document.getElementById('error-message');
+    document.getElementById('error-text').textContent = message;
+    alert.classList.add('show');
+    
+    setTimeout(() => {
+        alert.classList.remove('show');
+    }, 5000);
+}
+</script>
+{% endblock %}

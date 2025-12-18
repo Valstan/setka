@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+
+{% block title %}Посты - SETKA{% endblock %}
+{% block nav_posts %}active{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="bi bi-newspaper"></i> Посты</h1>
+            <div>
+                <button class="btn btn-outline-secondary" id="refresh-posts">
+                    <i class="bi bi-arrow-clockwise"></i> Обновить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Регион</label>
+                        <select class="form-select" id="filter-region">
+                            <option value="">Все регионы</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Статус</label>
+                        <select class="form-select" id="filter-status">
+                            <option value="">Все статусы</option>
+                            <option value="new">Новый</option>
+                            <option value="analyzed">Проанализирован</option>
+                            <option value="published">Опубликован</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Поиск</label>
+                        <input type="text" class="form-control" id="filter-search" placeholder="Поиск по тексту...">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Posts Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div id="posts-loading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Загрузка...</span>
+                    </div>
+                    <p class="mt-2 text-muted">Загрузка постов...</p>
+                </div>
+                
+                <div id="posts-table" style="display: none;">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th style="width: 5%">ID</th>
+                                    <th style="width: 10%">Регион</th>
+                                    <th style="width: 35%">Текст</th>
+                                    <th style="width: 15%">Источник</th>
+                                    <th style="width: 10%">Категория</th>
+                                    <th style="width: 10%">Дата</th>
+                                    <th style="width: 10%">Статус</th>
+                                    <th style="width: 5%">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="posts-table-body">
+                                <!-- Posts will be loaded here -->
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Pagination -->
+                    <nav aria-label="Posts pagination">
+                        <ul class="pagination justify-content-center" id="pagination">
+                            <!-- Pagination will be rendered here -->
+                        </ul>
+                    </nav>
+                </div>
+                
+                <div id="posts-error" class="alert alert-danger" style="display: none;">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Ошибка!</strong> <span id="posts-error-text"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Post Detail Modal -->
+<div class="modal fade" id="postModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Детали поста</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="post-modal-body">
+                <!-- Post details will be loaded here -->
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentPage = 1;
+let currentFilters = {};
+
+document.addEventListener('DOMContentLoaded', async () => {
+    // Load regions for filter
+    try {
+        const regions = await apiClient.getRegions();
+        const regionFilter = document.getElementById('filter-region');
+        regions.forEach(region => {
+            const option = document.createElement('option');
+            option.value = region.id;
+            option.textContent = region.name;
+            regionFilter.appendChild(option);
+        });
+    } catch (err) {
+        console.error('Error loading regions for filter:', err);
+    }
+    
+    // Load posts
+    await loadPosts();
+    
+    // Refresh button
+    document.getElementById('refresh-posts').addEventListener('click', () => loadPosts());
+    
+    // Filter changes
+    ['filter-region', 'filter-status', 'filter-search'].forEach(id => {
+        document.getElementById(id).addEventListener('change', () => {
+            currentPage = 1;
+            loadPosts();
+        });
+    });
+});
+
+async function loadPosts() {
+    const loading = document.getElementById('posts-loading');
+    const table = document.getElementById('posts-table');
+    const error = document.getElementById('posts-error');
+    const errorText = document.getElementById('posts-error-text');
+    const tbody = document.getElementById('posts-table-body');
+    
+    loading.style.display = 'block';
+    table.style.display = 'none';
+    error.style.display = 'none';
+    
+    try {
+        const params = {
+            page: currentPage,
+            limit: 20
+        };
+        
+        const regionFilter = document.getElementById('filter-region').value;
+        if (regionFilter) params.region_id = regionFilter;
+        
+        const posts = await apiClient.getPosts(params);
+        
+        if (posts.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="text-center text-muted py-4">
+                        <i class="bi bi-inbox fs-1"></i>
+                        <p class="mt-2">Постов не найдено</p>
+                    </td>
+                </tr>
+            `;
+        } else {
+            tbody.innerHTML = posts.map(post => `
+                <tr>
+                    <td>${post.id}</td>
+                    <td><span class="badge bg-secondary">${post.region_code || 'N/A'}</span></td>
+                    <td>
+                        <div class="text-truncate" style="max-width: 300px;" title="${post.text || ''}">
+                            ${post.text ? post.text.substring(0, 100) + '...' : 'Нет текста'}
+                        </div>
+                    </td>
+                    <td>
+                        <a href="${post.source_url}" target="_blank" class="text-decoration-none">
+                            <i class="bi bi-link-45deg"></i> VK
+                        </a>
+                    </td>
+                    <td>
+                        ${post.category ? `<span class="badge bg-info">${post.category}</span>` : '-'}
+                    </td>
+                    <td>
+                        <small>${new Date(post.created_at).toLocaleDateString('ru-RU')}</small>
+                    </td>
+                    <td>
+                        <span class="badge ${getStatusColor(post.status)}">
+                            ${post.status || 'new'}
+                        </span>
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" onclick="viewPost(${post.id})">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        loading.style.display = 'none';
+        table.style.display = 'block';
+    } catch (err) {
+        console.error('Error loading posts:', err);
+        errorText.textContent = err.message;
+        loading.style.display = 'none';
+        error.style.display = 'block';
+    }
+}
+
+function getStatusColor(status) {
+    const colors = {
+        'new': 'bg-secondary',
+        'analyzed': 'bg-info',
+        'published': 'bg-success'
+    };
+    return colors[status] || 'bg-secondary';
+}
+
+async function viewPost(postId) {
+    const modal = new bootstrap.Modal(document.getElementById('postModal'));
+    const modalBody = document.getElementById('post-modal-body');
+    
+    modalBody.innerHTML = '<div class="text-center py-3"><div class="spinner-border"></div></div>';
+    modal.show();
+    
+    try {
+        const post = await apiClient.getPost(postId);
+        modalBody.innerHTML = `
+            <div class="mb-3">
+                <strong>ID:</strong> ${post.id}<br>
+                <strong>Регион:</strong> ${post.region_code || 'N/A'}<br>
+                <strong>Источник:</strong> <a href="${post.source_url}" target="_blank">${post.source_url}</a><br>
+                <strong>Категория:</strong> ${post.category || 'N/A'}<br>
+                <strong>Дата:</strong> ${new Date(post.created_at).toLocaleString('ru-RU')}
+            </div>
+            <hr>
+            <div class="mb-3">
+                <strong>Текст:</strong>
+                <p>${post.text || 'Нет текста'}</p>
+            </div>
+            ${post.media_urls && post.media_urls.length > 0 ? `
+                <hr>
+                <div class="mb-3">
+                    <strong>Медиа:</strong>
+                    <div class="row g-2 mt-2">
+                        ${post.media_urls.map(url => `
+                            <div class="col-4">
+                                <img src="${url}" class="img-fluid rounded" alt="Media">
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : ''}
+        `;
+    } catch (err) {
+        modalBody.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="bi bi-exclamation-triangle"></i>
+                Ошибка загрузки: ${err.message}
+            </div>
+        `;
+    }
+}
+</script>
+{% endblock %}
+
