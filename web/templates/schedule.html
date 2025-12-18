@@ -1,0 +1,664 @@
+{% extends "base.html" %}
+
+{% block title %}SETKA - Управление расписанием{% endblock %}
+
+{% block nav_schedule %}active{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-primary">
+                <div class="card-header bg-primary bg-opacity-10">
+                    <h2 class="mb-0">
+                        <i class="bi bi-calendar-event"></i> Управление расписанием публикаций
+                    </h2>
+                    <p class="mb-0 mt-2">Настройка времени и тематики публикаций для каждого региона</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-success">
+                <div class="card-body text-center">
+                    <h5 class="card-title">📅 Всего расписаний</h5>
+                    <h3 class="text-success" id="total-schedules">-</h3>
+                    <small class="text-muted">Элементов</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-info">
+                <div class="card-body text-center">
+                    <h5 class="card-title">🌍 Регионов</h5>
+                    <h3 class="text-info" id="total-regions">-</h3>
+                    <small class="text-muted">С расписанием</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-warning">
+                <div class="card-body text-center">
+                    <h5 class="card-title">⏰ Активных</h5>
+                    <h3 class="text-warning" id="active-schedules">-</h3>
+                    <small class="text-muted">Расписаний</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-secondary">
+                <div class="card-body text-center">
+                    <h5 class="card-title">📊 Тематик</h5>
+                    <h3 class="text-secondary" id="total-categories">-</h3>
+                    <small class="text-muted">Категорий</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">🎛️ Управление</h5>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-success btn-sm" onclick="showAddScheduleModal()">
+                            <i class="bi bi-plus-circle"></i> Добавить
+                        </button>
+                        <button class="btn btn-primary btn-sm" onclick="generateDefaultSchedule()">
+                            <i class="bi bi-magic"></i> Создать по умолчанию
+                        </button>
+                        <button class="btn btn-outline-primary btn-sm" onclick="refreshSchedules()">
+                            <i class="bi bi-arrow-clockwise"></i> Обновить
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Region Filter -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-3">
+                            <label for="region-filter" class="form-label">Фильтр по региону:</label>
+                            <select class="form-select" id="region-filter" onchange="filterByRegion()">
+                                <option value="">Все регионы</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="category-filter" class="form-label">Фильтр по тематике:</label>
+                            <select class="form-select" id="category-filter" onchange="filterByCategory()">
+                                <option value="">Все тематики</option>
+                                <option value="novost">Новости</option>
+                                <option value="kultura">Культура</option>
+                                <option value="sport">Спорт</option>
+                                <option value="reklama">Реклама</option>
+                                <option value="administratsiya">Администрация</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="time-filter" class="form-label">Фильтр по времени:</label>
+                            <select class="form-select" id="time-filter" onchange="filterByTime()">
+                                <option value="">Все время</option>
+                                <option value="morning">Утро (6:00-12:00)</option>
+                                <option value="afternoon">День (12:00-18:00)</option>
+                                <option value="evening">Вечер (18:00-24:00)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">&nbsp;</label>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-outline-secondary btn-sm" onclick="clearFilters()">
+                                    <i class="bi bi-x-circle"></i> Сбросить
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Schedule Table -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">📅 Расписание публикаций</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Время</th>
+                                    <th>Регион</th>
+                                    <th>Тематика</th>
+                                    <th>Дни недели</th>
+                                    <th>Статус</th>
+                                    <th>Последний запуск</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="schedule-table-body">
+                                <tr>
+                                    <td colspan="7" class="text-center">
+                                        <div class="spinner-border" role="status">
+                                            <span class="visually-hidden">Загрузка...</span>
+                                        </div>
+                                        <p class="mt-2 text-muted">Загрузка расписания...</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Schedule Modal -->
+<div class="modal fade" id="scheduleModal" tabindex="-1" aria-labelledby="scheduleModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="scheduleModalLabel">Добавить расписание</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="schedule-form">
+                    <input type="hidden" id="schedule-id">
+                    <div class="mb-3">
+                        <label for="schedule-region" class="form-label">Регион</label>
+                        <select class="form-select" id="schedule-region" required>
+                            <option value="">Выберите регион</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="schedule-category" class="form-label">Тематика</label>
+                        <select class="form-select" id="schedule-category" required>
+                            <option value="novost">Новости</option>
+                            <option value="kultura">Культура</option>
+                            <option value="sport">Спорт</option>
+                            <option value="reklama">Реклама</option>
+                            <option value="administratsiya">Администрация</option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="schedule-hour" class="form-label">Час</label>
+                                <select class="form-select" id="schedule-hour" required>
+                                    <option value="">Час</option>
+                                    <option value="0">00</option>
+                                    <option value="1">01</option>
+                                    <option value="2">02</option>
+                                    <option value="3">03</option>
+                                    <option value="4">04</option>
+                                    <option value="5">05</option>
+                                    <option value="6">06</option>
+                                    <option value="7">07</option>
+                                    <option value="8">08</option>
+                                    <option value="9">09</option>
+                                    <option value="10">10</option>
+                                    <option value="11">11</option>
+                                    <option value="12">12</option>
+                                    <option value="13">13</option>
+                                    <option value="14">14</option>
+                                    <option value="15">15</option>
+                                    <option value="16">16</option>
+                                    <option value="17">17</option>
+                                    <option value="18">18</option>
+                                    <option value="19">19</option>
+                                    <option value="20">20</option>
+                                    <option value="21">21</option>
+                                    <option value="22">22</option>
+                                    <option value="23">23</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="schedule-minute" class="form-label">Минута</label>
+                                <select class="form-select" id="schedule-minute" required>
+                                    <option value="">Минута</option>
+                                    <option value="0">00</option>
+                                    <option value="15">15</option>
+                                    <option value="30">30</option>
+                                    <option value="45">45</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="schedule-days" class="form-label">Дни недели</label>
+                        <div class="form-check-group">
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="day-0" value="0">
+                                <label class="form-check-label" for="day-0">Пн</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="day-1" value="1">
+                                <label class="form-check-label" for="day-1">Вт</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="day-2" value="2">
+                                <label class="form-check-label" for="day-2">Ср</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="day-3" value="3">
+                                <label class="form-check-label" for="day-3">Чт</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="day-4" value="4">
+                                <label class="form-check-label" for="day-4">Пт</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="day-5" value="5">
+                                <label class="form-check-label" for="day-5">Сб</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="day-6" value="6">
+                                <label class="form-check-label" for="day-6">Вс</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="schedule-active" checked>
+                            <label class="form-check-label" for="schedule-active">
+                                Активно
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="saveSchedule()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Success/Error Messages -->
+<div id="success-message" class="alert alert-success alert-dismissible fade" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999;">
+    <i class="bi bi-check-circle"></i>
+    <span id="success-text"></span>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+
+<div id="error-message" class="alert alert-danger alert-dismissible fade" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999;">
+    <i class="bi bi-exclamation-triangle"></i>
+    <span id="error-text"></span>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+
+<style>
+.category-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.category-novost { background: #e3f2fd; color: #1976d2; }
+.category-kultura { background: #f3e5f5; color: #7b1fa2; }
+.category-sport { background: #e8f5e8; color: #388e3c; }
+.category-reklama { background: #fff3e0; color: #f57c00; }
+.category-administratsiya { background: #fce4ec; color: #c2185b; }
+
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.status-active { background: #d1e7dd; color: #0f5132; }
+.status-inactive { background: #f8d7da; color: #842029; }
+
+.time-cell {
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    color: #495057;
+}
+</style>
+
+<script>
+let allSchedules = [];
+let filteredSchedules = [];
+
+// Load initial data
+document.addEventListener('DOMContentLoaded', function() {
+    loadSchedules();
+    loadRegions();
+    
+    // Form submission
+    document.getElementById('schedule-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        saveSchedule();
+    });
+});
+
+async function loadSchedules() {
+    try {
+        const response = await fetch('/api/schedule/all');
+        const data = await response.json();
+        
+        if (data.success) {
+            allSchedules = data.data;
+            filteredSchedules = [...allSchedules];
+            displaySchedules();
+            updateStatistics();
+        } else {
+            showError('Ошибка загрузки расписания');
+        }
+    } catch (error) {
+        console.error('Error loading schedules:', error);
+        showError('Ошибка загрузки расписания: ' + error.message);
+    }
+}
+
+async function loadRegions() {
+    try {
+        const response = await fetch('/api/regions/');
+        const data = await response.json();
+        
+        if (data.success) {
+            const regionSelect = document.getElementById('region-filter');
+            const scheduleRegionSelect = document.getElementById('schedule-region');
+            
+            // Clear existing options
+            regionSelect.innerHTML = '<option value="">Все регионы</option>';
+            scheduleRegionSelect.innerHTML = '<option value="">Выберите регион</option>';
+            
+            data.data.forEach(region => {
+                const option1 = new Option(region.name, region.code);
+                const option2 = new Option(region.name, region.id);
+                regionSelect.add(option1);
+                scheduleRegionSelect.add(option2);
+            });
+        }
+    } catch (error) {
+        console.error('Error loading regions:', error);
+    }
+}
+
+function displaySchedules() {
+    const tbody = document.getElementById('schedule-table-body');
+    
+    if (filteredSchedules.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Нет расписаний</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = filteredSchedules.map(schedule => `
+        <tr>
+            <td class="time-cell">${schedule.time}</td>
+            <td>${schedule.region_name}</td>
+            <td><span class="category-badge category-${schedule.category}">${getCategoryName(schedule.category)}</span></td>
+            <td>${getDaysOfWeekText(schedule.days_of_week)}</td>
+            <td><span class="status-badge ${schedule.is_active ? 'status-active' : 'status-inactive'}">${schedule.is_active ? 'Активно' : 'Неактивно'}</span></td>
+            <td>${schedule.last_run ? new Date(schedule.last_run).toLocaleString('ru-RU') : 'Никогда'}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" onclick="editSchedule(${schedule.id})">
+                    <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteSchedule(${schedule.id})">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function updateStatistics() {
+    const totalSchedules = allSchedules.length;
+    const totalRegions = new Set(allSchedules.map(s => s.region_id)).size;
+    const activeSchedules = allSchedules.filter(s => s.is_active).length;
+    const totalCategories = new Set(allSchedules.map(s => s.category)).size;
+    
+    document.getElementById('total-schedules').textContent = totalSchedules;
+    document.getElementById('total-regions').textContent = totalRegions;
+    document.getElementById('active-schedules').textContent = activeSchedules;
+    document.getElementById('total-categories').textContent = totalCategories;
+}
+
+function getCategoryName(category) {
+    const names = {
+        'novost': 'Новости',
+        'kultura': 'Культура',
+        'sport': 'Спорт',
+        'reklama': 'Реклама',
+        'administratsiya': 'Администрация'
+    };
+    return names[category] || category;
+}
+
+function getDaysOfWeekText(daysStr) {
+    const days = daysStr.split(',').map(d => parseInt(d));
+    const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+    return days.map(d => dayNames[d]).join(', ');
+}
+
+function filterByRegion() {
+    const regionCode = document.getElementById('region-filter').value;
+    if (regionCode) {
+        filteredSchedules = allSchedules.filter(s => s.region_code === regionCode);
+    } else {
+        filteredSchedules = [...allSchedules];
+    }
+    displaySchedules();
+}
+
+function filterByCategory() {
+    const category = document.getElementById('category-filter').value;
+    if (category) {
+        filteredSchedules = filteredSchedules.filter(s => s.category === category);
+    } else {
+        filteredSchedules = [...allSchedules];
+        filterByRegion(); // Reapply region filter
+    }
+    displaySchedules();
+}
+
+function filterByTime() {
+    const timeFilter = document.getElementById('time-filter').value;
+    if (timeFilter) {
+        let startHour, endHour;
+        switch (timeFilter) {
+            case 'morning': startHour = 6; endHour = 12; break;
+            case 'afternoon': startHour = 12; endHour = 18; break;
+            case 'evening': startHour = 18; endHour = 24; break;
+        }
+        filteredSchedules = filteredSchedules.filter(s => s.hour >= startHour && s.hour < endHour);
+    } else {
+        filteredSchedules = [...allSchedules];
+        filterByRegion(); // Reapply region filter
+    }
+    displaySchedules();
+}
+
+function clearFilters() {
+    document.getElementById('region-filter').value = '';
+    document.getElementById('category-filter').value = '';
+    document.getElementById('time-filter').value = '';
+    filteredSchedules = [...allSchedules];
+    displaySchedules();
+}
+
+function showAddScheduleModal() {
+    document.getElementById('scheduleModalLabel').textContent = 'Добавить расписание';
+    document.getElementById('schedule-form').reset();
+    document.getElementById('schedule-id').value = '';
+    
+    // Check all days by default
+    for (let i = 0; i < 7; i++) {
+        document.getElementById(`day-${i}`).checked = true;
+    }
+    
+    const modal = new bootstrap.Modal(document.getElementById('scheduleModal'));
+    modal.show();
+}
+
+function editSchedule(scheduleId) {
+    const schedule = allSchedules.find(s => s.id === scheduleId);
+    if (!schedule) return;
+    
+    document.getElementById('scheduleModalLabel').textContent = 'Редактировать расписание';
+    document.getElementById('schedule-id').value = schedule.id;
+    document.getElementById('schedule-region').value = schedule.region_id;
+    document.getElementById('schedule-category').value = schedule.category;
+    document.getElementById('schedule-hour').value = schedule.hour;
+    document.getElementById('schedule-minute').value = schedule.minute;
+    document.getElementById('schedule-active').checked = schedule.is_active;
+    
+    // Set days of week
+    const days = schedule.days_of_week.split(',').map(d => parseInt(d));
+    for (let i = 0; i < 7; i++) {
+        document.getElementById(`day-${i}`).checked = days.includes(i);
+    }
+    
+    const modal = new bootstrap.Modal(document.getElementById('scheduleModal'));
+    modal.show();
+}
+
+async function saveSchedule() {
+    const scheduleId = document.getElementById('schedule-id').value;
+    const regionId = parseInt(document.getElementById('schedule-region').value);
+    const category = document.getElementById('schedule-category').value;
+    const hour = parseInt(document.getElementById('schedule-hour').value);
+    const minute = parseInt(document.getElementById('schedule-minute').value);
+    const isActive = document.getElementById('schedule-active').checked;
+    
+    // Get selected days
+    const selectedDays = [];
+    for (let i = 0; i < 7; i++) {
+        if (document.getElementById(`day-${i}`).checked) {
+            selectedDays.push(i);
+        }
+    }
+    
+    if (selectedDays.length === 0) {
+        showError('Выберите хотя бы один день недели');
+        return;
+    }
+    
+    const daysOfWeek = selectedDays.join(',');
+    
+    try {
+        const url = scheduleId ? `/api/schedule/update/${scheduleId}` : '/api/schedule/add';
+        const method = scheduleId ? 'PUT' : 'POST';
+        
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                region_id: regionId,
+                category: category,
+                hour: hour,
+                minute: minute,
+                days_of_week: daysOfWeek,
+                is_active: isActive
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess(data.message);
+            bootstrap.Modal.getInstance(document.getElementById('scheduleModal')).hide();
+            loadSchedules();
+        } else {
+            showError(data.message || 'Ошибка сохранения расписания');
+        }
+    } catch (error) {
+        showError('Ошибка сохранения расписания: ' + error.message);
+    }
+}
+
+async function deleteSchedule(scheduleId) {
+    if (!confirm('Вы уверены, что хотите удалить это расписание?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/schedule/delete/${scheduleId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('Расписание удалено');
+            loadSchedules();
+        } else {
+            showError(data.message || 'Ошибка удаления расписания');
+        }
+    } catch (error) {
+        showError('Ошибка удаления расписания: ' + error.message);
+    }
+}
+
+async function generateDefaultSchedule() {
+    if (!confirm('Создать расписание по умолчанию для всех регионов? Это добавит новые элементы расписания.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/schedule/generate-default', {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess(data.message);
+            loadSchedules();
+        } else {
+            showError(data.message || 'Ошибка создания расписания');
+        }
+    } catch (error) {
+        showError('Ошибка создания расписания: ' + error.message);
+    }
+}
+
+async function refreshSchedules() {
+    await loadSchedules();
+}
+
+function showSuccess(message) {
+    const alert = document.getElementById('success-message');
+    document.getElementById('success-text').textContent = message;
+    alert.classList.add('show');
+    
+    setTimeout(() => {
+        alert.classList.remove('show');
+    }, 5000);
+}
+
+function showError(message) {
+    const alert = document.getElementById('error-message');
+    document.getElementById('error-text').textContent = message;
+    alert.classList.add('show');
+    
+    setTimeout(() => {
+        alert.classList.remove('show');
+    }, 5000);
+}
+</script>
+{% endblock %}

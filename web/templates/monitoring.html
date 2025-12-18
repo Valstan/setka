@@ -1,0 +1,597 @@
+{% extends "base.html" %}
+
+{% block title %}SETKA - Мониторинг работы системы{% endblock %}
+
+{% block nav_monitoring %}active{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-success">
+                <div class="card-header bg-success bg-opacity-10">
+                    <h2 class="mb-0">
+                        <i class="bi bi-activity"></i> Мониторинг работы системы SETKA
+                    </h2>
+                    <p class="mb-0 mt-2">Мониторинг работы системы в реальном времени</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-primary">
+                <div class="card-body text-center">
+                    <h5 class="card-title">📊 Статус системы</h5>
+                    <div id="monitoring-system-status">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                        <small class="text-muted ms-2">Загрузка...</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-info">
+                <div class="card-body text-center">
+                    <h5 class="card-title">🌍 Активные регионы</h5>
+                    <div id="active-regions">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-warning">
+                <div class="card-body text-center">
+                    <h5 class="card-title">📝 Посты сегодня</h5>
+                    <div id="posts-today">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-secondary">
+                <div class="card-body text-center">
+                    <h5 class="card-title">🔔 Уведомлений</h5>
+                    <div id="notifications-count">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Resources -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card border-success">
+                <div class="card-body text-center">
+                    <h5 class="card-title">💻 CPU</h5>
+                    <div id="cpu-usage">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                    </div>
+                    <div class="progress mt-2" style="height: 8px;">
+                        <div id="cpu-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-info">
+                <div class="card-body text-center">
+                    <h5 class="card-title">🧠 Память</h5>
+                    <div id="memory-usage">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                    </div>
+                    <div class="progress mt-2" style="height: 8px;">
+                        <div id="memory-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-warning">
+                <div class="card-body text-center">
+                    <h5 class="card-title">💾 Диск</h5>
+                    <div id="disk-usage">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                    </div>
+                    <div class="progress mt-2" style="height: 8px;">
+                        <div id="disk-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Current Operations -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">🔄 Текущие операции</h5>
+                </div>
+                <div class="card-body">
+                    <div id="current-operations">
+                        <div class="text-center text-muted">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Загрузка операций...</span>
+                            </div>
+                            <p class="mt-2">Загрузка операций...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Regions Status -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">🌍 Статус регионов</h5>
+                </div>
+                <div class="card-body">
+                    <div id="regions-status">
+                        <div class="text-center text-muted">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Загрузка регионов...</span>
+                            </div>
+                            <p class="mt-2">Загрузка регионов...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Success/Error Messages -->
+<div id="success-message" class="alert alert-success alert-dismissible fade" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999;">
+    <i class="bi bi-check-circle"></i>
+    <span id="success-text"></span>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+
+<div id="error-message" class="alert alert-danger alert-dismissible fade" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999;">
+    <i class="bi bi-exclamation-triangle"></i>
+    <span id="error-text"></span>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+
+<style>
+</style>
+
+<script>
+
+// Load initial data
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, starting monitoring...');
+    
+    // Wait a bit for all elements to be ready
+    setTimeout(() => {
+        // Test API connection first
+        testApiConnection().then(() => {
+            loadAllMonitoringData();
+        }).catch((error) => {
+            console.error('API connection test failed:', error);
+            showErrorInStatus('monitoring-system-status', 'Не удается подключиться к API');
+            
+            // Fallback: show basic status
+            setTimeout(() => {
+                const statusElement = document.getElementById('monitoring-system-status');
+                if (statusElement && statusElement.innerHTML.includes('spinner')) {
+                    statusElement.innerHTML = '<span class="badge bg-warning">⚠️ Проверьте подключение</span>';
+                }
+            }, 2000);
+        });
+    }, 100);
+});
+
+async function testApiConnection() {
+    try {
+        console.log('Отправляем запрос к /api/monitoring/stats...');
+        const response = await fetch('/api/monitoring/stats');
+        console.log('Получен ответ:', response.status, response.statusText);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log('Данные получены:', data);
+        
+        if (!data.success) {
+            throw new Error('API returned success: false');
+        }
+        
+        console.log('✅ API connection test successful');
+        return data;
+    } catch (error) {
+        console.error('❌ API connection test failed:', error);
+        throw error;
+    }
+}
+
+async function loadAllMonitoringData() {
+    try {
+        console.log('Loading all monitoring data...');
+        
+        // Load all monitoring data
+        const [statsResponse, operationsResponse, regionsResponse] = await Promise.all([
+            fetch('/api/monitoring/stats'),
+            fetch('/api/monitoring/operations'),
+            fetch('/api/monitoring/regions-status')
+        ]);
+        
+        console.log('Responses received:', {
+            stats: statsResponse.status,
+            operations: operationsResponse.status,
+            regions: regionsResponse.status
+        });
+        
+        const statsData = await statsResponse.json();
+        const operationsData = await operationsResponse.json();
+        const regionsData = await regionsResponse.json();
+        
+        console.log('Data parsed:', {
+            stats: statsData.success,
+            operations: operationsData.success,
+            regions: regionsData.success
+        });
+        
+        if (statsData.success) {
+            updateSystemStats(statsData.data);
+        } else {
+            console.error('Stats API error:', statsData);
+            showErrorInStatus('monitoring-system-status', 'Ошибка загрузки статистики');
+        }
+        
+        if (operationsData.success) {
+            updateCurrentOperations(operationsData.data);
+        } else {
+            console.error('Operations API error:', operationsData);
+            showErrorInStatus('current-operations', 'Ошибка загрузки операций');
+        }
+        
+        if (regionsData.success) {
+            updateRegionsStatus(regionsData.data);
+        } else {
+            console.error('Regions API error:', regionsData);
+            showErrorInStatus('regions-status', 'Ошибка загрузки регионов');
+        }
+        
+        console.log('All monitoring data loaded successfully');
+        
+    } catch (error) {
+        console.error('Error loading monitoring data:', error);
+        showErrorInStatus('monitoring-system-status', 'Ошибка подключения к серверу');
+    }
+}
+
+function showErrorInStatus(elementId, message) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.innerHTML = `<span class="text-danger">❌ ${message}</span>`;
+    }
+}
+
+function updateSystemStats(stats) {
+    console.log('Updating system stats:', stats);
+    
+    // Update system status
+    const statusElement = document.getElementById('monitoring-system-status');
+    if (!statusElement) {
+        console.error('Element monitoring-system-status not found');
+        return;
+    }
+    
+    let statusBadge = '';
+    if (stats.system_status === 'healthy') {
+        statusBadge = '<span class="badge bg-success">🟢 Здорова</span>';
+    } else if (stats.system_status === 'warning') {
+        statusBadge = '<span class="badge bg-warning">🟡 Предупреждение</span>';
+    } else if (stats.system_status === 'critical') {
+        statusBadge = '<span class="badge bg-danger">🔴 Критично</span>';
+    } else {
+        statusBadge = '<span class="badge bg-secondary">⚪ Неизвестно</span>';
+    }
+    statusElement.innerHTML = statusBadge;
+    
+    // Update active regions
+    const activeRegionsElement = document.getElementById('active-regions');
+    if (activeRegionsElement) {
+        activeRegionsElement.innerHTML = 
+            `<span class="badge bg-info">${stats.active_regions_count}/${stats.total_regions_count}</span>`;
+    }
+    
+    // Update posts today
+    const postsTodayElement = document.getElementById('posts-today');
+    if (postsTodayElement) {
+        postsTodayElement.innerHTML = 
+            `<span class="badge bg-warning">${stats.posts_today}</span>`;
+    }
+    
+    // Update system resources
+    const cpuElement = document.getElementById('cpu-usage');
+    if (cpuElement) {
+        cpuElement.innerHTML = `${stats.cpu_usage}%`;
+    }
+    
+    const memoryElement = document.getElementById('memory-usage');
+    if (memoryElement) {
+        memoryElement.innerHTML = `${stats.memory_usage}%`;
+    }
+    
+    const diskElement = document.getElementById('disk-usage');
+    if (diskElement) {
+        diskElement.innerHTML = `${stats.disk_usage}%`;
+    }
+    
+    // Update progress bars
+    updateProgressBar('cpu-progress', stats.cpu_usage);
+    updateProgressBar('memory-progress', stats.memory_usage);
+    updateProgressBar('disk-progress', stats.disk_usage);
+}
+
+function updateProgressBar(elementId, value) {
+    const progressBar = document.getElementById(elementId);
+    if (!progressBar) {
+        console.error(`Progress bar element ${elementId} not found`);
+        return;
+    }
+    
+    progressBar.style.width = `${value}%`;
+    
+    // Change color based on value
+    if (value > 80) {
+        progressBar.className = 'progress-bar bg-danger';
+    } else if (value > 60) {
+        progressBar.className = 'progress-bar bg-warning';
+    } else {
+        progressBar.className = 'progress-bar bg-success';
+    }
+}
+
+function updateCurrentOperations(operationsData) {
+    const container = document.getElementById('current-operations');
+    
+    if (!operationsData.operations || operationsData.operations.length === 0) {
+        container.innerHTML = '<div class="text-center text-muted">Нет активных операций</div>';
+        return;
+    }
+    
+    // Separate active and completed operations
+    const activeOps = operationsData.operations.filter(op => op.status === 'active');
+    const completedOps = operationsData.operations.filter(op => op.status !== 'active');
+    
+    let html = '';
+    
+    // Show active operations first
+    if (activeOps.length > 0) {
+        html += '<div class="mb-3">';
+        html += '<h6 class="text-success mb-2"><i class="bi bi-play-circle"></i> Активные операции</h6>';
+        html += activeOps.map(operation => `
+            <div class="card mb-2 border-success">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="card-title mb-1">
+                                <span class="badge ${getOperationBadgeClass(operation.status)}">${operation.type}</span>
+                                ${operation.description}
+                            </h6>
+                            <small class="text-muted">Начато: ${formatTimestamp(operation.timestamp)}</small>
+                            ${operation.region ? `<br><small class="text-info">Регион: ${operation.region}</small>` : ''}
+                        </div>
+                        <div class="text-end">
+                            <span class="badge ${getStatusBadgeClass(operation.status)}">${operation.status}</span>
+                        </div>
+                    </div>
+                    ${operation.details && Object.keys(operation.details).length > 0 ? `
+                        <div class="mt-2">
+                            <small class="text-muted">
+                                ${Object.entries(operation.details).map(([key, value]) => 
+                                    `${key}: ${value}`
+                                ).join(', ')}
+                            </small>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `).join('');
+        html += '</div>';
+    }
+    
+    // Show recent completed operations
+    if (completedOps.length > 0) {
+        html += '<div>';
+        html += '<h6 class="text-secondary mb-2"><i class="bi bi-clock-history"></i> История операций</h6>';
+        html += completedOps.slice(0, 10).map(operation => `
+            <div class="card mb-2 border-light">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="card-title mb-1">
+                                <span class="badge ${getOperationBadgeClass(operation.status)}">${operation.type}</span>
+                                ${operation.description}
+                            </h6>
+                            <small class="text-muted">
+                                ${operation.end_time ? 
+                                    `Завершено: ${formatTimestamp(operation.end_time)}` : 
+                                    `Начато: ${formatTimestamp(operation.timestamp)}`
+                                }
+                            </small>
+                            ${operation.region ? `<br><small class="text-info">Регион: ${operation.region}</small>` : ''}
+                            ${operation.duration ? `<br><small class="text-success">Длительность: ${formatDuration(operation.duration)}</small>` : ''}
+                        </div>
+                        <div class="text-end">
+                            <span class="badge ${getStatusBadgeClass(operation.status)}">${operation.status}</span>
+                        </div>
+                    </div>
+                    ${operation.details && Object.keys(operation.details).length > 0 ? `
+                        <div class="mt-2">
+                            <small class="text-muted">
+                                ${Object.entries(operation.details).map(([key, value]) => 
+                                    `${key}: ${value}`
+                                ).join(', ')}
+                            </small>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `).join('');
+        html += '</div>';
+    }
+    
+    // Add summary
+    html = `
+        <div class="mb-3">
+            <div class="row">
+                <div class="col-md-6">
+                    <span class="badge bg-success">Активных: ${activeOps.length}</span>
+                </div>
+                <div class="col-md-6">
+                    <span class="badge bg-secondary">Всего: ${operationsData.total_operations}</span>
+                </div>
+            </div>
+        </div>
+    ` + html;
+    
+    container.innerHTML = html;
+}
+
+function updateRegionsStatus(regionsData) {
+    const container = document.getElementById('regions-status');
+    
+    if (!regionsData.regions || regionsData.regions.length === 0) {
+        container.innerHTML = '<div class="text-center text-muted">Нет регионов</div>';
+        return;
+    }
+    
+    container.innerHTML = `
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <span class="badge bg-primary">Всего регионов: ${regionsData.total_regions}</span>
+            </div>
+            <div class="col-md-6">
+                <span class="badge bg-success">Активных: ${regionsData.active_regions}</span>
+            </div>
+        </div>
+        <div class="row">
+            ${regionsData.regions.map(region => `
+                <div class="col-md-6 col-lg-4 mb-3">
+                    <div class="card ${region.is_active ? 'border-success' : 'border-secondary'}">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h6 class="card-title mb-1">${region.name}</h6>
+                                    <small class="text-muted">${region.code}</small>
+                                </div>
+                                <span class="badge ${region.is_active ? 'bg-success' : 'bg-secondary'}">
+                                    ${region.is_active ? 'Активен' : 'На паузе'}
+                                </span>
+                            </div>
+                            <div class="mt-2">
+                                <small class="text-muted">
+                                    Сообществ: ${region.communities_count} | 
+                                    Постов сегодня: ${region.posts_today}
+                                </small>
+                                ${region.last_activity ? `
+                                    <br><small class="text-info">
+                                        Последняя активность: ${formatTimestamp(region.last_activity)}
+                                    </small>
+                                ` : ''}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function getOperationBadgeClass(status) {
+    switch(status) {
+        case 'active': return 'bg-success';
+        case 'scheduled': return 'bg-primary';
+        case 'paused': return 'bg-warning';
+        case 'error': return 'bg-danger';
+        default: return 'bg-secondary';
+    }
+}
+
+function getStatusBadgeClass(status) {
+    switch(status) {
+        case 'active': return 'bg-success';
+        case 'scheduled': return 'bg-primary';
+        case 'paused': return 'bg-warning';
+        case 'error': return 'bg-danger';
+        default: return 'bg-secondary';
+    }
+}
+
+function formatTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleString('ru-RU', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+function formatDuration(seconds) {
+    if (seconds < 60) {
+        return `${Math.round(seconds)}с`;
+    } else if (seconds < 3600) {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = Math.round(seconds % 60);
+        return `${minutes}м ${remainingSeconds}с`;
+    } else {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        return `${hours}ч ${minutes}м`;
+    }
+}
+
+
+
+function showSuccess(message) {
+    const alert = document.getElementById('success-message');
+    document.getElementById('success-text').textContent = message;
+    alert.classList.add('show');
+    
+    setTimeout(() => {
+        alert.classList.remove('show');
+    }, 5000);
+}
+
+function showError(message) {
+    const alert = document.getElementById('error-message');
+    document.getElementById('error-text').textContent = message;
+    alert.classList.add('show');
+    
+    setTimeout(() => {
+        alert.classList.remove('show');
+    }, 5000);
+}
+</script>
+{% endblock %}

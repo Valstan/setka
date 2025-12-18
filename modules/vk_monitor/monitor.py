@@ -10,13 +10,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import AsyncSessionLocal
 from database.models import Community, Post, Region
-from modules.vk_monitor.vk_client import VKClient, VKTokenRotator
+from modules.vk_monitor.vk_client_async import VKClientAsync, VKTokenRotatorAsync
 from modules.deduplication import (
     create_lip_fingerprint,
     create_media_fingerprint,
     create_text_fingerprint,
     create_text_core_fingerprint,
     DuplicationDetector
+)
+from modules.module_activity_notifier import (
+    notify_vk_scan_started,
+    notify_vk_scan_completed,
+    notify_vk_posts_found
 )
 
 logger = logging.getLogger(__name__)
@@ -32,7 +37,7 @@ class VKMonitor:
         Args:
             vk_tokens: List of VK API tokens
         """
-        self.token_rotator = VKTokenRotator(vk_tokens)
+        self.token_rotator = VKTokenRotatorAsync(vk_tokens)
         self.running = False
     
     async def scan_community(
@@ -50,7 +55,7 @@ class VKMonitor:
         Returns:
             Number of new posts found
         """
-        client = self.token_rotator.get_client()
+        client = await self.token_rotator.get_client()
         if not client:
             logger.error("No VK client available")
             return 0
@@ -58,87 +63,94 @@ class VKMonitor:
         try:
             logger.info(f"Scanning community: {community.name} (ID: {community.vk_id})")
             
-            # Fetch posts from VK
-            posts = client.get_wall_posts(
-                owner_id=community.vk_id,
-                count=10  # Get last 10 posts
-            )
-            
-            new_posts_count = 0
-            
-            for vk_post in posts:
-                post_id = vk_post.get('id')
+            # Use client in async context manager to ensure proper cleanup
+            async with client:
+                # Fetch posts from VK (async)
+                posts = await client.get_wall_posts(
+                    owner_id=community.vk_id,
+                    count=10  # Get last 10 posts
+                )
                 
-                # Check if post already exists
-                result = await session.execute(
-                    select(Post).where(
-                        and_(
-                            Post.vk_owner_id == community.vk_id,
-                            Post.vk_post_id == post_id
+                new_posts_count = 0
+                
+                for vk_post in posts:
+                    post_id = vk_post.get('id')
+                    
+                    # Check if post already exists
+                    result = await session.execute(
+                        select(Post).where(
+                            and_(
+                                Post.vk_owner_id == community.vk_id,
+                                Post.vk_post_id == post_id
+                            )
                         )
                     )
-                )
-                existing_post = result.scalar_one_or_none()
+                    existing_post = result.scalar_one_or_none()
+                    
+                    if existing_post:
+                        # Post already exists, update stats
+                        stats = VKClientAsync.extract_post_stats(vk_post)
+                        existing_post.views = stats['views']
+                        existing_post.likes = stats['likes']
+                        existing_post.reposts = stats['reposts']
+                        existing_post.comments = stats['comments']
+                        existing_post.updated_at = datetime.utcnow()
+                        continue
+                    
+                    # Create new post
+                    text = vk_post.get('text', '')
+                    attachments = VKClientAsync.parse_attachments(vk_post)
+                    stats = VKClientAsync.extract_post_stats(vk_post)
+                    
+                    # Get post date
+                    date_timestamp = vk_post.get('date', 0)
+                    date_published = datetime.fromtimestamp(date_timestamp) if date_timestamp else datetime.utcnow()
+                    
+                    # Create fingerprints (inspired by Postopus)
+                    fingerprint_lip = create_lip_fingerprint(community.vk_id, post_id)
+                    fingerprint_media = create_media_fingerprint(attachments) if attachments else None
+                    fingerprint_text = create_text_fingerprint(text) if text else None
+                    fingerprint_text_core = create_text_core_fingerprint(text) if text else None
+                    
+                    new_post = Post(
+                        region_id=community.region_id,
+                        community_id=community.id,
+                        vk_post_id=post_id,
+                        vk_owner_id=community.vk_id,
+                        text=text,
+                        attachments=attachments,
+                        date_published=date_published,
+                        views=stats['views'],
+                        likes=stats['likes'],
+                        reposts=stats['reposts'],
+                        comments=stats['comments'],
+                        status='new',
+                        # Fingerprints for deduplication
+                        fingerprint_lip=fingerprint_lip,
+                        fingerprint_media=fingerprint_media,
+                        fingerprint_text=fingerprint_text,
+                        fingerprint_text_core=fingerprint_text_core
+                    )
+                    
+                    session.add(new_post)
+                    new_posts_count += 1
+                    logger.info(f"New post found: {community.vk_id}_{post_id}")
                 
-                if existing_post:
-                    # Post already exists, update stats
-                    stats = client.extract_post_stats(vk_post)
-                    existing_post.views = stats['views']
-                    existing_post.likes = stats['likes']
-                    existing_post.reposts = stats['reposts']
-                    existing_post.comments = stats['comments']
-                    existing_post.updated_at = datetime.utcnow()
-                    continue
+                # Уведомляем о найденных постах
+                if new_posts_count > 0:
+                    notify_vk_posts_found(community.region.code if community.region else "unknown", 
+                                        new_posts_count, community.name)
                 
-                # Create new post
-                text = vk_post.get('text', '')
-                attachments = client.parse_attachments(vk_post)
-                stats = client.extract_post_stats(vk_post)
+                # Update community stats
+                community.last_checked = datetime.utcnow()
+                if posts:
+                    community.last_post_id = posts[0].get('id')
+                community.posts_count += new_posts_count
                 
-                # Get post date
-                date_timestamp = vk_post.get('date', 0)
-                date_published = datetime.fromtimestamp(date_timestamp) if date_timestamp else datetime.utcnow()
+                await session.commit()
                 
-                # Create fingerprints (inspired by Postopus)
-                fingerprint_lip = create_lip_fingerprint(community.vk_id, post_id)
-                fingerprint_media = create_media_fingerprint(attachments) if attachments else None
-                fingerprint_text = create_text_fingerprint(text) if text else None
-                fingerprint_text_core = create_text_core_fingerprint(text) if text else None
-                
-                new_post = Post(
-                    region_id=community.region_id,
-                    community_id=community.id,
-                    vk_post_id=post_id,
-                    vk_owner_id=community.vk_id,
-                    text=text,
-                    attachments=attachments,
-                    date_published=date_published,
-                    views=stats['views'],
-                    likes=stats['likes'],
-                    reposts=stats['reposts'],
-                    comments=stats['comments'],
-                    status='new',
-                    # Fingerprints for deduplication
-                    fingerprint_lip=fingerprint_lip,
-                    fingerprint_media=fingerprint_media,
-                    fingerprint_text=fingerprint_text,
-                    fingerprint_text_core=fingerprint_text_core
-                )
-                
-                session.add(new_post)
-                new_posts_count += 1
-                logger.info(f"New post found: {community.vk_id}_{post_id}")
-            
-            # Update community stats
-            community.last_checked = datetime.utcnow()
-            if posts:
-                community.last_post_id = posts[0].get('id')
-            community.posts_count += new_posts_count
-            
-            await session.commit()
-            
-            logger.info(f"Community {community.name}: {new_posts_count} new posts")
-            return new_posts_count
+                logger.info(f"Community {community.name}: {new_posts_count} new posts")
+                return new_posts_count
             
         except Exception as e:
             logger.error(f"Error scanning community {community.name}: {e}")
@@ -183,6 +195,9 @@ class VKMonitor:
                 logger.warning(f"No active communities found for region {region_code}")
                 return {'communities': 0, 'new_posts': 0}
             
+            # Уведомляем о начале сканирования
+            notify_vk_scan_started(region_code, len(communities))
+            
             total_new_posts = 0
             scanned_communities = 0
             
@@ -193,6 +208,9 @@ class VKMonitor:
                 
                 # Small delay between requests to avoid rate limits
                 await asyncio.sleep(0.5)
+            
+            # Уведомляем о завершении сканирования
+            notify_vk_scan_completed(region_code, total_new_posts, scanned_communities, 0.0)
             
             return {
                 'region': region_code,

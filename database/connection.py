@@ -3,21 +3,25 @@ Database connection configuration
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.pool import NullPool
+from contextlib import asynccontextmanager
 import os
 
 # Database URL
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://setka_user:YOUR_PASSWORD_HERE@localhost:5432/setka"
+    "postgresql+asyncpg://setka_user:SetkaSecure2025!@localhost:5432/setka"
 )
 
 # Create async engine
+# Для асинхронного движка используем NullPool или не указываем poolclass
+# (по умолчанию будет использован правильный пул для async)
+from sqlalchemy.pool import NullPool
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,  # Set to True for SQL logging
-    poolclass=NullPool,  # For simplicity, can be changed to QueuePool
-    future=True
+    poolclass=NullPool,  # NullPool для async движка (или можно убрать poolclass)
+    pool_pre_ping=True,  # Проверка подключений перед использованием
 )
 
 # Session maker
@@ -42,6 +46,18 @@ async def get_db_session():
             yield session
         finally:
             await session.close()
+
+
+@asynccontextmanager
+async def get_db_session_context():
+    """
+    Context manager for getting async database session
+    """
+    session = AsyncSessionLocal()
+    try:
+        yield session
+    finally:
+        await session.close()
 
 
 async def init_db():

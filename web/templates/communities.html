@@ -1,0 +1,522 @@
+{% extends "base.html" %}
+
+{% block title %}Сообщества - SETKA{% endblock %}
+{% block nav_communities %}active{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="bi bi-people"></i> VK Сообщества</h1>
+            <div>
+                <button class="btn btn-secondary me-2" onclick="testModal()">
+                    <i class="bi bi-bug"></i> Тест
+                </button>
+                <button class="btn btn-primary" onclick="showAddCommunityModal()">
+                    <i class="bi bi-plus-circle"></i> Добавить сообщество
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Регион</label>
+                        <select class="form-select" id="filter-region">
+                            <option value="">Все регионы</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Категория</label>
+                        <select class="form-select" id="filter-category">
+                            <option value="">Все категории</option>
+                            <option value="admin">Администрация</option>
+                            <option value="novost">Новости</option>
+                            <option value="kultura">Культура</option>
+                            <option value="sport">Спорт</option>
+                            <option value="reklama">Реклама</option>
+                            <option value="other">Другое</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Статус</label>
+                        <select class="form-select" id="filter-active">
+                            <option value="">Все</option>
+                            <option value="true">Активные</option>
+                            <option value="false">Неактивные</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Communities List -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div id="communities-loading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Загрузка...</span>
+                    </div>
+                    <p class="mt-2 text-muted">Загрузка сообществ...</p>
+                </div>
+                
+                <div id="communities-table" style="display: none;">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th style="width: 5%">ID</th>
+                                    <th style="width: 25%">Название</th>
+                                    <th style="width: 15%">VK ID</th>
+                                    <th style="width: 10%">Регион</th>
+                                    <th style="width: 10%">Категория</th>
+                                    <th style="width: 10%">Статус</th>
+                                    <th style="width: 10%">Постов</th>
+                                    <th style="width: 15%">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="communities-table-body">
+                                <!-- Communities will be loaded here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <div id="communities-error" class="alert alert-danger" style="display: none;">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Ошибка!</strong> <span id="communities-error-text"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Community Modal -->
+<div class="modal fade" id="addCommunityModal" tabindex="-1" aria-labelledby="addCommunityModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addCommunityModalLabel">Добавить новое сообщество</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addCommunityForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="communityRegion" class="form-label">Регион <span class="text-danger">*</span></label>
+                                <select class="form-select" id="communityRegion" required>
+                                    <option value="">Выберите регион</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="communityCategory" class="form-label">Категория <span class="text-danger">*</span></label>
+                                <select class="form-select" id="communityCategory" required>
+                                    <option value="">Выберите категорию</option>
+                                    <option value="admin">Администрация</option>
+                                    <option value="novost">Новости</option>
+                                    <option value="kultura">Культура</option>
+                                    <option value="sport">Спорт</option>
+                                    <option value="reklama">Реклама</option>
+                                    <option value="other">Другое</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="communityVkId" class="form-label">URL или ID сообщества <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="communityVkId" placeholder="Например: https://vk.com/43admmalmyzh43" required>
+                        <div class="form-text">
+                            <strong>Поддерживаемые форматы:</strong><br>
+                            • <strong>URL:</strong> https://vk.com/43admmalmyzh43<br>
+                            • <strong>Короткое имя:</strong> 43admmalmyzh43<br>
+                            • <strong>Числовой ID:</strong> -123456789 или 123456789<br>
+                            <span class="text-success"><i class="bi bi-check-circle"></i> Система автоматически получит данные сообщества из VK</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="communityActive" checked>
+                            <label class="form-check-label" for="communityActive">
+                                Активировать сообщество для мониторинга
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div id="communityPreview" class="mt-3" style="display: none;">
+                        <div class="alert alert-info">
+                            <h6><i class="bi bi-info-circle"></i> Предварительный просмотр:</h6>
+                            <div id="communityPreviewContent"></div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="addCommunity()">
+                    <span id="addCommunitySpinner" class="spinner-border spinner-border-sm" style="display: none;"></span>
+                    Добавить сообщество
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    // Load regions for filter and modal
+    try {
+        const regions = await apiClient.getRegions();
+        
+        // Populate filter dropdown
+        const regionFilter = document.getElementById('filter-region');
+        if (regionFilter) {
+            regions.forEach(region => {
+                const option = document.createElement('option');
+                option.value = region.id;
+                option.textContent = region.name;
+                regionFilter.appendChild(option);
+            });
+        }
+        
+        // Populate modal dropdown
+        const communityRegionSelect = document.getElementById('communityRegion');
+        if (communityRegionSelect) {
+            regions.forEach(region => {
+                const option = document.createElement('option');
+                option.value = region.id;
+                option.textContent = region.name;
+                communityRegionSelect.appendChild(option);
+            });
+        }
+    } catch (err) {
+        console.error('Error loading regions:', err);
+    }
+    
+    // Load communities
+    await loadCommunities();
+    
+    // Filter changes
+    ['filter-region', 'filter-category', 'filter-active'].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.addEventListener('change', () => loadCommunities());
+        }
+    });
+    
+    // VK ID input change for preview
+    const vkIdInput = document.getElementById('communityVkId');
+    if (vkIdInput) {
+        vkIdInput.addEventListener('input', updateCommunityPreview);
+    }
+});
+
+async function loadCommunities() {
+    const loading = document.getElementById('communities-loading');
+    const table = document.getElementById('communities-table');
+    const error = document.getElementById('communities-error');
+    const errorText = document.getElementById('communities-error-text');
+    const tbody = document.getElementById('communities-table-body');
+    
+    loading.style.display = 'block';
+    table.style.display = 'none';
+    error.style.display = 'none';
+    
+    try {
+        const params = {};
+        
+        const regionFilter = document.getElementById('filter-region').value;
+        if (regionFilter) params.region_id = regionFilter;
+        
+        const categoryFilter = document.getElementById('filter-category').value;
+        if (categoryFilter) params.category = categoryFilter;
+        
+        const activeFilter = document.getElementById('filter-active').value;
+        if (activeFilter) params.is_active = activeFilter === 'true';
+        
+        const communities = await apiClient.getCommunities(params);
+        
+        if (communities.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="text-center text-muted py-4">
+                        <i class="bi bi-inbox fs-1"></i>
+                        <p class="mt-2">Сообщества не найдены</p>
+                        <small>Импортируйте данные из старого проекта или добавьте вручную</small>
+                    </td>
+                </tr>
+            `;
+        } else {
+            tbody.innerHTML = communities.map(community => `
+                <tr>
+                    <td>${community.id}</td>
+                    <td>
+                        <strong>${community.name || 'Без названия'}</strong>
+                    </td>
+                    <td>
+                        <a href="https://vk.com/club${Math.abs(community.vk_id)}" target="_blank" class="text-decoration-none">
+                            <i class="bi bi-link-45deg"></i> ${community.vk_id}
+                        </a>
+                    </td>
+                    <td>
+                        <span class="badge bg-secondary">${community.region_code || 'N/A'}</span>
+                    </td>
+                    <td>
+                        ${community.category ? `<span class="badge ${getCategoryColor(community.category)}">${getCategoryLabel(community.category)}</span>` : '-'}
+                    </td>
+                    <td>
+                        <span class="badge ${community.is_active ? 'bg-success' : 'bg-secondary'}">
+                            ${community.is_active ? 'Активно' : 'Неактивно'}
+                        </span>
+                    </td>
+                    <td>${community.posts_count || 0}</td>
+                    <td>
+                        <div class="btn-group btn-group-sm" role="group">
+                            <a href="https://vk.com/club${Math.abs(community.vk_id)}" target="_blank" class="btn btn-outline-primary" title="Открыть в VK">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                            <button class="btn btn-outline-secondary" onclick="toggleActive(${community.id}, ${!community.is_active})" title="${community.is_active ? 'Деактивировать' : 'Активировать'}">
+                                <i class="bi ${community.is_active ? 'bi-pause' : 'bi-play'}"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        loading.style.display = 'none';
+        table.style.display = 'block';
+    } catch (err) {
+        console.error('Error loading communities:', err);
+        errorText.textContent = err.message;
+        loading.style.display = 'none';
+        error.style.display = 'block';
+    }
+}
+
+function getCategoryColor(category) {
+    const colors = {
+        'admin': 'bg-primary',
+        'novost': 'bg-info',
+        'kultura': 'bg-warning',
+        'sport': 'bg-success',
+        'reklama': 'bg-danger',
+        'other': 'bg-secondary'
+    };
+    return colors[category] || 'bg-secondary';
+}
+
+function getCategoryLabel(category) {
+    const labels = {
+        'admin': 'Админ',
+        'novost': 'Новости',
+        'kultura': 'Культура',
+        'sport': 'Спорт',
+        'reklama': 'Реклама',
+        'other': 'Другое'
+    };
+    return labels[category] || category;
+}
+
+async function toggleActive(communityId, newStatus) {
+    if (!confirm(`Вы уверены, что хотите ${newStatus ? 'активировать' : 'деактивировать'} это сообщество?`)) {
+        return;
+    }
+    
+    try {
+        // TODO: Implement API endpoint for updating community status
+        alert('Функция находится в разработке');
+        // await apiClient.updateCommunity(communityId, { is_active: newStatus });
+        // await loadCommunities();
+    } catch (err) {
+        alert('Ошибка: ' + err.message);
+    }
+}
+
+// Test function
+window.testModal = function() {
+    console.log('testModal called');
+    alert('Тест работает!');
+    
+    // Check if modal exists
+    const modalElement = document.getElementById('addCommunityModal');
+    if (modalElement) {
+        console.log('Modal element found');
+        alert('Модальное окно найдено!');
+    } else {
+        console.error('Modal element not found');
+        alert('Модальное окно НЕ найдено!');
+    }
+}
+
+// Add Community Modal Functions
+window.showAddCommunityModal = function() {
+    console.log('showAddCommunityModal called');
+    
+    // Reset form
+    const form = document.getElementById('addCommunityForm');
+    if (form) {
+        form.reset();
+        console.log('Form reset');
+    } else {
+        console.error('Form not found');
+    }
+    
+    const activeCheckbox = document.getElementById('communityActive');
+    if (activeCheckbox) {
+        activeCheckbox.checked = true;
+        console.log('Active checkbox set');
+    } else {
+        console.error('Active checkbox not found');
+    }
+    
+    const preview = document.getElementById('communityPreview');
+    if (preview) {
+        preview.style.display = 'none';
+        console.log('Preview hidden');
+    } else {
+        console.error('Preview not found');
+    }
+    
+    // Show modal
+    const modalElement = document.getElementById('addCommunityModal');
+    if (modalElement) {
+        console.log('Modal element found, showing modal');
+        const modal = new bootstrap.Modal(modalElement);
+        modal.show();
+    } else {
+        console.error('Modal element not found');
+    }
+}
+
+function updateCommunityPreview() {
+    const vkIdInput = document.getElementById('communityVkId');
+    const preview = document.getElementById('communityPreview');
+    const previewContent = document.getElementById('communityPreviewContent');
+    
+    if (!vkIdInput || !preview || !previewContent) {
+        return;
+    }
+    
+    const vkId = vkIdInput.value;
+    
+    if (vkId && Math.abs(vkId) > 0) {
+        previewContent.innerHTML = `
+            <div class="row">
+                <div class="col-md-6">
+                    <strong>VK ID:</strong> ${vkId}<br>
+                    <strong>Ссылка:</strong> <a href="https://vk.com/club${Math.abs(vkId)}" target="_blank">vk.com/club${Math.abs(vkId)}</a>
+                </div>
+                <div class="col-md-6">
+                    <strong>Статус:</strong> <span class="badge bg-info">Будет получено из VK API</span>
+                </div>
+            </div>
+        `;
+        preview.style.display = 'block';
+    } else {
+        preview.style.display = 'none';
+    }
+}
+
+window.addCommunity = async function() {
+    const regionSelect = document.getElementById('communityRegion');
+    const categorySelect = document.getElementById('communityCategory');
+    const vkIdInput = document.getElementById('communityVkId');
+    const activeCheckbox = document.getElementById('communityActive');
+    const spinner = document.getElementById('addCommunitySpinner');
+    
+    if (!regionSelect || !categorySelect || !vkIdInput || !activeCheckbox || !spinner) {
+        alert('Ошибка: не найдены элементы формы');
+        return;
+    }
+    
+    const regionId = regionSelect.value;
+    const category = categorySelect.value;
+    const vkId = vkIdInput.value.trim();
+    const isActive = activeCheckbox.checked;
+    const addBtn = spinner.parentElement;
+    
+    // Validation
+    if (!regionId) {
+        alert('Выберите регион');
+        return;
+    }
+    
+    if (!category) {
+        alert('Выберите категорию');
+        return;
+    }
+    
+    if (!vkId) {
+        alert('Введите URL, короткое имя или ID сообщества');
+        return;
+    }
+    
+    try {
+        addBtn.disabled = true;
+        spinner.style.display = 'inline-block';
+        
+        const communityData = {
+            region_id: parseInt(regionId),
+            vk_id: vkId,  // Send as string, backend will parse it
+            category: category,
+            is_active: isActive
+        };
+        
+        const response = await fetch('/api/communities/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(communityData)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+        
+        const result = await response.json();
+        
+        // Show success message with community details
+        alert(`✅ Сообщество "${result.name}" успешно добавлено!\n\nVK ID: ${result.vk_id}\nКороткое имя: ${result.screen_name || 'N/A'}`);
+        
+        // Close modal
+        const modalElement = document.getElementById('addCommunityModal');
+        if (modalElement) {
+            const modal = bootstrap.Modal.getInstance(modalElement);
+            if (modal) {
+                modal.hide();
+            }
+        }
+        
+        // Reload communities list
+        await loadCommunities();
+        
+    } catch (err) {
+        alert('❌ Ошибка при добавлении сообщества:\n\n' + err.message);
+    } finally {
+        addBtn.disabled = false;
+        spinner.style.display = 'none';
+    }
+}
+</script>
+{% endblock %}
+

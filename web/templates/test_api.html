@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+</head>
+<body>
+    <h1>API Test</h1>
+    <div id="results"></div>
+    
+    <script>
+        async function testAPI() {
+            const results = document.getElementById('results');
+            
+            try {
+                // Test basic stats
+                const regions = await fetch('/api/regions/').then(r => r.json());
+                const posts = await fetch('/api/posts/?limit=1000').then(r => r.json());
+                const communities = await fetch('/api/communities/?limit=1000').then(r => r.json());
+                
+                results.innerHTML = `
+                    <h2>Basic Stats:</h2>
+                    <p>Regions: ${regions.length}</p>
+                    <p>Posts: ${posts.length}</p>
+                    <p>Communities: ${communities.length}</p>
+                `;
+                
+                // Test VK stats
+                const vkStats = await fetch('/api/vk/stats').then(r => r.json());
+                results.innerHTML += `
+                    <h2>VK Stats:</h2>
+                    <p>Requests today: ${vkStats.requests_today}</p>
+                    <p>Requests per hour: ${vkStats.requests_per_hour}</p>
+                    <p>Active tokens: ${vkStats.active_tokens}</p>
+                    <p>Last scan: ${vkStats.last_scan || 'Never'}</p>
+                    <p>Current load: ${vkStats.current_load}</p>
+                `;
+                
+            } catch (error) {
+                results.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+            }
+        }
+        
+        testAPI();
+    </script>
+</body>
+</html>

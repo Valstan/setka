@@ -1,4 +1,5 @@
 """
-Celery tasks for SETKA project
-"""
+Tasks package
 
+Celery tasks для автоматизации SETKA
+"""

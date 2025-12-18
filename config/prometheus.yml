@@ -1,0 +1,35 @@
+# Prometheus configuration for SETKA monitoring
+
+global:
+  scrape_interval: 15s  # Scrape metrics every 15 seconds
+  evaluation_interval: 15s  # Evaluate rules every 15 seconds
+  external_labels:
+    cluster: 'setka-production'
+    environment: 'production'
+
+# Scrape configurations
+scrape_configs:
+  # SETKA API metrics
+  - job_name: 'setka-api'
+    static_configs:
+      - targets: ['localhost:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    
+  # System metrics (node_exporter, if installed)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['localhost:9100']
+    scrape_interval: 30s
+
+# Alerting rules (optional)
+rule_files:
+  # - 'alerts.yml'
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['localhost:9093']
+

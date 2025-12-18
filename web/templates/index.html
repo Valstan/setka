@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - SETKA{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">
+            <i class="bi bi-speedometer2"></i> Dashboard
+        </h1>
+    </div>
+</div>
+
+<!-- Notifications Section -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-warning">
+            <div class="card-header bg-warning bg-opacity-10">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-bell"></i> Уведомления о предложенных постах
+                    </h5>
+                    <div class="d-flex align-items-center gap-2">
+                        <small class="text-muted" id="notifications-timestamp">
+                            Обновление...
+                        </small>
+                        <button class="btn btn-sm btn-warning" id="check-suggested-btn" onclick="checkSuggestedNow()">
+                            <i class="bi bi-arrow-clockwise"></i> Проверить сейчас
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div id="notifications-loading" class="text-center py-4">
+                    <div class="spinner-border spinner-border-sm text-warning" role="status">
+                        <span class="visually-hidden">Загрузка...</span>
+                    </div>
+                    <p class="mt-2 text-muted mb-0">Загрузка уведомлений...</p>
+                </div>
+                
+                <div id="notifications-empty" class="alert alert-success m-3" style="display: none;">
+                    <i class="bi bi-check-circle"></i>
+                    Нет предложенных постов. Все группы проверены!
+                </div>
+                
+                <div id="notifications-list" style="display: none;">
+                    <!-- Notifications will be loaded here -->
+                </div>
+                
+                <div id="notifications-error" class="alert alert-warning m-3" style="display: none;">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <span id="notifications-error-text"></span>
+                </div>
+            </div>
+            <div class="card-footer bg-white">
+                <small class="text-muted">
+                    <i class="bi bi-info-circle"></i>
+                    Автоматическая проверка каждый час с 8:00 до 22:00
+                </small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- System Monitoring Section -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-success">
+            <div class="card-header bg-success bg-opacity-10">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-activity"></i> Мониторинг работы системы
+                    </h5>
+                    <a href="/monitoring" class="btn btn-success btn-sm">
+                        <i class="bi bi-arrow-right"></i> Открыть мониторинг
+                    </a>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="card-text">Отслеживайте работу системы SETKA в реальном времени</p>
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6><i class="bi bi-info-circle"></i> Что показывает мониторинг:</h6>
+                        <ul class="list-unstyled">
+                            <li><i class="bi bi-check text-success"></i> Запуск регионов</li>
+                            <li><i class="bi bi-check text-success"></i> Выбор тем</li>
+                            <li><i class="bi bi-check text-success"></i> Сканирование сообществ</li>
+                            <li><i class="bi bi-check text-success"></i> Фильтрация постов</li>
+                            <li><i class="bi bi-check text-success"></i> Публикация в соцсети</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h6><i class="bi bi-gear"></i> Управление:</h6>
+                        <div class="d-grid gap-2">
+                            <a href="/monitoring" class="btn btn-outline-success">
+                                <i class="bi bi-activity"></i> Открыть мониторинг
+                            </a>
+                            <a href="/tokens" class="btn btn-outline-primary">
+                                <i class="bi bi-key"></i> Управление токенами
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- VK API Monitoring Statistics -->
+<div class="row">
+    <div class="col-12">
+        <div class="card border-info">
+            <div class="card-header bg-info bg-opacity-10">
+                <h5 class="mb-0">
+                    <i class="bi bi-graph-up"></i> Мониторинг VK API
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 class="text-primary" id="vk-requests-today">-</h4>
+                            <small class="text-muted">Запросов сегодня</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 class="text-success" id="vk-requests-per-hour">-</h4>
+                            <small class="text-muted">Запросов/час</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 class="text-warning" id="vk-tokens-active">-</h4>
+                            <small class="text-muted">Активных токенов</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 class="text-info" id="vk-last-scan">-</h4>
+                            <small class="text-muted">Последний опрос</small>
+                        </div>
+                    </div>
+                </div>
+                
+                <hr>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6><i class="bi bi-clock"></i> Частота опросов</h6>
+                        <div class="progress mb-2" style="height: 20px;">
+                            <div class="progress-bar bg-success" role="progressbar" id="scan-frequency-bar" style="width: 0%">
+                                <small id="scan-frequency-text">Загрузка...</small>
+                            </div>
+                        </div>
+                        <small class="text-muted">Оптимальная частота: 1 раз в час (карусель по регионам)</small>
+                    </div>
+                    <div class="col-md-6">
+                        <h6><i class="bi bi-shield-check"></i> Статус токенов</h6>
+                        <div id="tokens-status">
+                            <div class="spinner-border spinner-border-sm" role="status">
+                                <span class="visually-hidden">Проверка...</span>
+                            </div>
+                            <small class="text-muted ms-2">Проверка токенов...</small>
+                        </div>
+                        <div class="mt-2">
+                            <button class="btn btn-sm btn-outline-primary" onclick="refreshTokens()">
+                                <i class="bi bi-arrow-clockwise"></i> Обновить
+                            </button>
+                            <button class="btn btn-sm btn-outline-success" onclick="validateAllTokens()">
+                                <i class="bi bi-check-circle"></i> Проверить все
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <hr>
+                
+                <div class="row">
+                    <div class="col-12">
+                        <h6><i class="bi bi-info-circle"></i> Информация о лимитах VK API</h6>
+                        <div class="alert alert-light">
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <strong>Лимиты по токенам:</strong><br>
+                                    <small>
+                                        • VALSTAN: 20 запросов/сек<br>
+                                        • OLGA: 20 запросов/сек<br>
+                                        • VITA: 20 запросов/сек<br>
+                                        • Общий лимит: 60 запросов/сек
+                                    </small>
+                                </div>
+                                <div class="col-md-4">
+                                    <strong>Стратегия распределения:</strong><br>
+                                    <small>
+                                        • Сбор данных: все токены<br>
+                                        • Публикация: только VALSTAN<br>
+                                        • Карусель: 1 регион/час<br>
+                                        • Задержка: 3 сек между запросами
+                                    </small>
+                                </div>
+                                <div class="col-md-4">
+                                    <strong>Мониторинг нагрузки:</strong><br>
+                                    <small>
+                                        • Текущая нагрузка: <span id="current-load" class="text-success">Низкая</span><br>
+                                        • Использование лимитов: <span id="limit-usage">0%</span><br>
+                                        • Следующий опрос: <span id="next-scan">Через 45 мин</span>
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">
+                        <i class="bi bi-gear"></i>
+                        Автоматическая оптимизация нагрузки включена
+                    </small>
+                    <button class="btn btn-sm btn-outline-info" onclick="refreshVKStats()">
+                        <i class="bi bi-arrow-clockwise"></i> Обновить
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Token Management Modal -->
+<div class="modal fade" id="tokenModal" tabindex="-1" aria-labelledby="tokenModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="tokenModalLabel">Управление токеном</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="tokenForm">
+                    <div class="mb-3">
+                        <label for="tokenName" class="form-label">Название токена</label>
+                        <input type="text" class="form-control" id="tokenName" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label for="tokenValue" class="form-label">VK API Токен</label>
+                        <textarea class="form-control" id="tokenValue" rows="3" placeholder="Введите новый токен VK API..."></textarea>
+                        <div class="form-text">Токен должен начинаться с "vk1.a."</div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="validateToken" checked>
+                            <label class="form-check-label" for="validateToken">
+                                Проверить токен после сохранения
+                            </label>
+                        </div>
+                    </div>
+                </form>
+                <div id="tokenValidationResult" class="mt-3" style="display: none;">
+                    <!-- Результат валидации будет показан здесь -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="saveToken()">
+                    <span id="saveTokenSpinner" class="spinner-border spinner-border-sm" style="display: none;"></span>
+                    Сохранить токен
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/dashboard.js"></script>
+{% endblock %}
+
