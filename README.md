@@ -8,11 +8,10 @@
 
 ## 🚀 ДЛЯ AI АССИСТЕНТА: НАЧНИ ЗДЕСЬ!
 
-**Если ты AI помощник в новой сессии, прочитай этот файл:**
+**Если ты AI помощник в новой сессии, начни с документации:**
 
-👉 **`AI_CONTEXT.md`** 👈
-
-Там вся информация о текущем состоянии проекта, архитектуре и что делать дальше!
+- `docs/ai/START_HERE.md`
+- `docs/README.md`
 
 ---
 
@@ -76,7 +75,7 @@ source venv/bin/activate
 python main.py
 
 # Production mode
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
 ### Тестирование модулей:
@@ -122,17 +121,15 @@ python scripts/test_ai_analyzer.py  # (создать)
 ### База данных:
 ```bash
 Database: setka
-User: setka_user (see config/config_secure.py for credentials)
+User: setka_user
 Host: localhost:5432
 ```
 
 ### VK Tokens:
-Хранятся в `config/config_secure.py` и в таблице `vk_tokens`
+Хранятся в env (`VK_TOKEN_*`) и/или в таблице `vk_tokens` (см. `docs/features/token_management.md`)
 
 ### Telegram Bots:
-Хранятся в `config/config_secure.py`:
-- **VALSTANBOT** - основной бот
-- **AFONYA** - бот для канала Малмыж Инфо
+Настраиваются через env (`TELEGRAM_TOKEN_*`, `TELEGRAM_ALERT_CHAT_ID`) — см. `docs/ops/configuration.md`
 
 ---
 
@@ -205,20 +202,19 @@ SETKA/
 
 ## 📚 Документация
 
-### Для AI ассистентов:
-- **`AI_CONTEXT.md`** ⭐ - Полный контекст проекта для AI (начни отсюда!)
-- **`docs/QUICK_START_FOR_AI.md`** - Быстрый старт
+Единый вход в документацию: `docs/README.md`
 
-### Техническая документация:
-- **`WORK_HOURS_CONFIG.md`** - Конфигурация рабочих часов
-- **`REFACTORING_2025_01_REPORT.md`** - Последний отчёт о рефакторинге
-- **`docs/VK_NOTIFICATIONS_SYSTEM.md`** - Система уведомлений VK
-- **`docs/TOKEN_MANAGEMENT_SYSTEM.md`** - Управление токенами
-- **`docs/PROMETHEUS_GRAFANA_SETUP.md`** - Настройка мониторинга
-- **`docs/VK_API_OPTIMIZATION.md`** - Оптимизация VK API
-- **`docs/PERFORMANCE_OPTIMIZATION.md`** - Оптимизация производительности
-- **`docs/COMMUNITY_URL_PARSER.md`** - Парсер URL сообществ
-- **`docs/TELEGRAM_SETUP.md`** - Настройка Telegram
+Для AI/новой сессии: `docs/ai/START_HERE.md`
+
+Ops/runbook:
+- `docs/ops/configuration.md`
+- `docs/ops/run_local.md`
+- `docs/ops/nginx.md`
+- `docs/ops/monitoring.md`
+- `docs/ops/troubleshooting.md`
+
+Фичи:
+- `docs/features/*`
 
 ---
 

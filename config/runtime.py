@@ -1,7 +1,7 @@
 """
 Runtime configuration (NO secrets in git).
 
-This module replaces direct imports from `config/config_secure.py`.
+This module replaces legacy direct imports from `config/config_secure.py` (secrets file is not part of the repo).
 All values must come from environment (recommended: /etc/setka/setka.env loaded by systemd).
 """
 
