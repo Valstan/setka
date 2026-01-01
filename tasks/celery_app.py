@@ -185,7 +185,7 @@ def check_suggested_posts():
         from database.models import Region
         from modules.notifications.vk_suggested_checker import VKSuggestedChecker
         from modules.notifications.storage import NotificationsStorage
-        from config.config_secure import VK_TOKENS, TELEGRAM_TOKENS
+        from config.runtime import VK_TOKENS, TELEGRAM_TOKENS
         from sqlalchemy import select
         import requests
         
@@ -320,7 +320,7 @@ def check_unread_messages():
         from database.models import Region
         from modules.notifications.vk_messages_checker import VKMessagesChecker
         from modules.notifications.storage import NotificationsStorage
-        from config.config_secure import VK_TOKENS
+        from config.runtime import VK_TOKENS
         from sqlalchemy import select
 
         async def check():
@@ -422,7 +422,7 @@ def check_recent_comments():
         from database.models import Region
         from modules.notifications.vk_comments_checker import VKCommentsChecker
         from modules.notifications.storage import NotificationsStorage
-        from config.config_secure import VK_TOKENS
+        from config.runtime import VK_TOKENS
         from sqlalchemy import select
 
         cutoff_dt = datetime.utcnow() - timedelta(hours=24)

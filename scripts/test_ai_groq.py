@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import Groq API key from config
-from config.config_secure import GROQ_API_KEY
+from config.runtime import GROQ_API_KEY
 
 from modules.ai_analyzer.groq_client import GroqClient
 

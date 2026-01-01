@@ -11,7 +11,7 @@ import redis
 from celery import Celery
 from celery.result import AsyncResult
 
-from config.config_secure import REDIS
+from config.runtime import REDIS
 from utils.timezone import now_moscow, format_moscow_time
 
 logger = logging.getLogger(__name__)

@@ -12,7 +12,7 @@ sys.path.insert(0, '/home/valstan/SETKA')
 
 from modules.vk_monitor.vk_client import VKClient
 from modules.vk_monitor.vk_client_async import VKClientAsync
-from config.config_secure import VK_TOKENS
+from config.runtime import VK_TOKENS
 
 
 async def test_sync_client(token: str, test_communities: list, iterations: int = 3):

@@ -7,7 +7,7 @@ import asyncio
 import httpx
 
 # Import from config
-from config.config_secure import TELEGRAM_TOKENS
+from config.runtime import TELEGRAM_TOKENS
 BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 
 

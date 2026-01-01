@@ -11,7 +11,7 @@ import pytz
 
 from celery import Task
 from celery_app import app
-from config.config_secure import VK_TOKENS, PRODUCTION_WORKFLOW_CONFIG
+from config.runtime import VK_TOKENS, PRODUCTION_WORKFLOW_CONFIG
 from utils.timezone import is_work_hours_for_region
 
 logger = logging.getLogger(__name__)

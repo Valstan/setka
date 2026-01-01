@@ -350,7 +350,7 @@ curl http://localhost:8000/api/notifications/messages
 ```python
 import asyncio
 from modules.notifications.unified_checker import UnifiedNotificationsChecker
-from config.config_secure import VK_TOKENS
+from config.runtime import VK_TOKENS
 
 async def test():
     checker = UnifiedNotificationsChecker(VK_TOKENS["VALSTAN"])

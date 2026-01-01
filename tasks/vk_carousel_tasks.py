@@ -11,7 +11,7 @@ from typing import Dict, List
 
 from modules.vk_monitor.carousel_manager import carousel_manager
 from database.connection import get_db_session
-from config.config_secure import VK_TOKENS
+from config.runtime import VK_TOKENS
 
 logger = logging.getLogger(__name__)
 

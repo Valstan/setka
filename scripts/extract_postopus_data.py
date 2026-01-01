@@ -16,7 +16,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.config_secure import MONGO_CONNECTION
+from config.runtime import MONGO_CONNECTION
 MONGO_URI = MONGO_CONNECTION["uri"]
 
 OUTPUT_DIR = "/home/valstan/SETKA/old_project_analysis"

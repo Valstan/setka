@@ -13,7 +13,7 @@ import asyncio
 
 from database.connection import get_db_session
 from database.models import Region, Community, Post, VKToken
-from config.config_secure import PRODUCTION_WORKFLOW_CONFIG
+from config.runtime import PRODUCTION_WORKFLOW_CONFIG
 from modules.operation_tracking import operation_tracker
 from utils.cache import cache
 from utils.timezone import now_moscow, get_moscow_hour, is_work_hours_moscow, format_moscow_time, moscow_to_utc

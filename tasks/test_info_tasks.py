@@ -10,7 +10,7 @@ import pytz
 from celery_app import app
 from modules.test_info_scheduler import test_info_scheduler
 from utils.timezone import now_moscow, is_work_hours_for_region
-from config.config_secure import VK_MAIN_TOKENS
+from config.runtime import VK_MAIN_TOKENS
 
 logger = logging.getLogger(__name__)
 

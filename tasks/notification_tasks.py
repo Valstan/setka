@@ -13,7 +13,7 @@ from typing import List, Dict, Any
 from celery import Task
 
 from celery_app import app
-from config.config_secure import VK_TOKENS, TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID, SERVER
+from config.runtime import VK_TOKENS, TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID, SERVER
 from modules.notifications.unified_checker import UnifiedNotificationsChecker
 from database.connection import AsyncSessionLocal
 from database.models import Region

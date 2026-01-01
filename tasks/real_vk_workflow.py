@@ -10,7 +10,7 @@ import pytz
 from celery_app import app
 from modules.vk_monitor.vk_client import VKClient
 from modules.publisher.vk_publisher import VKPublisher
-from config.config_secure import VK_MAIN_TOKENS
+from config.runtime import VK_MAIN_TOKENS
 from utils.timezone import is_work_hours_for_region
 
 logger = logging.getLogger(__name__)

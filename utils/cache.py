@@ -10,7 +10,7 @@ from typing import Any, Optional, Callable
 import hashlib
 import json
 
-from config.config_secure import REDIS
+from config.runtime import REDIS
 
 logger = logging.getLogger(__name__)
 

@@ -171,7 +171,7 @@ def get_telegram_notifier() -> Optional[TelegramNotifier]:
         TelegramNotifier или None если конфигурация не найдена
     """
     try:
-        from config.config_secure import TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID
+        from config.runtime import TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID
         
         bot_token = TELEGRAM_TOKENS.get("VALSTANBOT")
         chat_id = TELEGRAM_ALERT_CHAT_ID

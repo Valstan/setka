@@ -16,7 +16,7 @@ import asyncio
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.config_secure import VK_TOKENS
+from config.runtime import VK_TOKENS
 from modules.notifications.vk_suggested_checker import VKSuggestedChecker
 from modules.notifications.vk_messages_checker import VKMessagesChecker
 from modules.notifications.unified_checker import UnifiedNotificationsChecker

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from modules.vk_monitor.monitor import VKMonitor
 from modules.monitoring.health_checker import HealthChecker
-from config.config_secure import VK_TOKENS
+from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Post
 from sqlalchemy import select, and_

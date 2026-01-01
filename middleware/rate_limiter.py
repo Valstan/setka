@@ -9,7 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from typing import Dict, Optional
 import logging
 
-from config.config_secure import REDIS
+from config.runtime import REDIS
 
 logger = logging.getLogger(__name__)
 

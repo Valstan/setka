@@ -15,7 +15,7 @@ os.chdir(project_root)
 
 from modules.scheduler.scheduler import ContentScheduler
 from modules.publisher.publisher import ContentPublisher
-from config.config_secure import VK_TOKENS, TELEGRAM_TOKENS, GROQ_API_KEY
+from config.runtime import VK_TOKENS, TELEGRAM_TOKENS, GROQ_API_KEY
 
 # Setup logging
 logging.basicConfig(

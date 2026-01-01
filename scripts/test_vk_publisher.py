@@ -31,7 +31,7 @@ from modules.aggregation.aggregator import NewsAggregator
 from database.connection import get_db_session_context
 from database.models import Post, Community, Region
 from sqlalchemy import select, and_
-from config.config_secure import VK_MAIN_TOKENS, VK_TEST_GROUP_ID
+from config.runtime import VK_MAIN_TOKENS, VK_TEST_GROUP_ID
 
 
 async def test_vk_publisher_initialization():

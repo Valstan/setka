@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from modules.scheduler.scheduler import ContentScheduler
 from modules.publisher.publisher import ContentPublisher
-from config.config_secure import VK_TOKENS, TELEGRAM_TOKENS, GROQ_API_KEY
+from config.runtime import VK_TOKENS, TELEGRAM_TOKENS, GROQ_API_KEY
 
 router = APIRouter(prefix="/api/workflow", tags=["workflow"])
 

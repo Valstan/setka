@@ -14,7 +14,7 @@ from sqlalchemy import select, update
 
 from database.connection import get_db_session
 from database.models import Region, Community, Post
-from config.config_secure import VK_TOKENS, VK_TOKEN_CONFIG
+from config.runtime import VK_TOKENS, VK_TOKEN_CONFIG
 from modules.vk_monitor.vk_client import VKClient
 
 logger = logging.getLogger(__name__)

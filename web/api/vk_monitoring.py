@@ -12,7 +12,7 @@ import logging
 
 from database.connection import get_db_session
 from database.models import Post, Region, Community, VKToken
-from config.config_secure import VK_TOKENS, VK_TOKEN_CONFIG
+from config.runtime import VK_TOKENS, VK_TOKEN_CONFIG
 from modules.vk_monitor.vk_client import VKClient
 
 router = APIRouter()

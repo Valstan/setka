@@ -15,7 +15,7 @@ from database.connection import AsyncSessionLocal
 from database.models import Region
 from modules.notifications.vk_suggested_checker import VKSuggestedChecker
 from modules.notifications.storage import NotificationsStorage
-from config.config_secure import VK_TOKENS
+from config.runtime import VK_TOKENS
 from sqlalchemy import select
 
 logging.basicConfig(

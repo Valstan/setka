@@ -13,10 +13,10 @@ from modules.monitoring.telegram_notifier import TelegramNotifier
 
 # Configuration
 # Import from config
-from config.config_secure import TELEGRAM_TOKENS
+from config.runtime import TELEGRAM_TOKENS
 BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 # Import from config
-from config.config_secure import TELEGRAM_ALERT_CHAT_ID
+from config.runtime import TELEGRAM_ALERT_CHAT_ID
 CHAT_ID = TELEGRAM_ALERT_CHAT_ID
 
 

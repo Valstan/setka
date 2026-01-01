@@ -10,7 +10,7 @@ from collections import defaultdict
 
 # Подключение к старой БД
 # Import from config
-from config.config_secure import MONGO_CONNECTION
+from config.runtime import MONGO_CONNECTION
 MONGO_URI = MONGO_CONNECTION["uri"]
 
 def connect_to_mongodb():

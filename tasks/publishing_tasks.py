@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import List
 
 from modules.publisher.publisher import ContentPublisher
-from config.config_secure import VK_TOKENS, TELEGRAM_TOKENS
+from config.runtime import VK_TOKENS, TELEGRAM_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Region
 from sqlalchemy import select

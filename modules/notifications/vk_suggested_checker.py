@@ -145,7 +145,7 @@ if __name__ == "__main__":
     from datetime import datetime
     
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    from config.config_secure import VK_TOKENS
+    from config.runtime import VK_TOKENS
     
     async def test():
         vk_token = VK_TOKENS.get("VALSTAN")

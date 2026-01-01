@@ -8,7 +8,7 @@ from celery_app import app
 from datetime import datetime
 
 from modules.ai_analyzer.analyzer import PostAnalyzer
-from config.config_secure import GROQ_API_KEY
+from config.runtime import GROQ_API_KEY
 
 logger = logging.getLogger(__name__)
 

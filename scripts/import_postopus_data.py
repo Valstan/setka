@@ -278,7 +278,7 @@ async def import_vk_tokens():
     print("\n🔑 Импорт VK токенов...")
     
     try:
-        from config.config_secure import VK_TOKENS
+        from config.runtime import VK_TOKENS
     except ImportError:
         print("  ⚠️  config_secure.VK_TOKENS не найден, пропуск")
         return

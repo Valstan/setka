@@ -12,7 +12,7 @@ import re
 
 from database.connection import get_db_session
 from database.models import Community, Region, VKToken
-from config.config_secure import VK_TOKENS
+from config.runtime import VK_TOKENS
 from utils.cache import cache, invalidate_cache
 
 router = APIRouter()

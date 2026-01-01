@@ -8,7 +8,7 @@ from enum import Enum
 import asyncio
 
 from utils.timezone import now_moscow, get_moscow_hour, is_work_hours_moscow, is_work_hours_for_region
-from config.config_secure import PRODUCTION_WORKFLOW_CONFIG
+from config.runtime import PRODUCTION_WORKFLOW_CONFIG
 from modules.celery_task_monitor import celery_task_monitor
 from modules.service_notifications import service_notifications, NotificationType, ServiceNotification
 

@@ -17,7 +17,7 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import vk_api
-from config.config_secure import VK_TOKENS
+from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Region
 from sqlalchemy import select, update

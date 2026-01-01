@@ -18,7 +18,7 @@ from modules.ai_analyzer.analyzer import PostAnalyzer
 from database.connection import AsyncSessionLocal
 from database.models import Community, Region, Post
 from sqlalchemy import select
-from config.config_secure import VK_MAIN_TOKENS
+from config.runtime import VK_MAIN_TOKENS
 
 logger = logging.getLogger(__name__)
 

@@ -141,7 +141,7 @@ async def check_all_now():
     from database.models import Region
     from modules.notifications.unified_checker import UnifiedNotificationsChecker
     from modules.notifications.storage import NotificationsStorage
-    from config.config_secure import VK_TOKENS, TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID, SERVER
+    from config.runtime import VK_TOKENS, TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID, SERVER
     from sqlalchemy import select
     from datetime import datetime
     

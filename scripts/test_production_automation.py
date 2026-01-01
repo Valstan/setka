@@ -89,7 +89,7 @@ async def test_production_workflow():
         
         # Тест 3: Проверка конфигурации
         logger.info("\n⚙️ Test 3: Checking configuration")
-        from config.config_secure import (
+        from config.runtime import (
             VK_TEST_GROUP_ID, 
             VK_PRODUCTION_GROUPS, 
             PRODUCTION_WORKFLOW_CONFIG
@@ -149,7 +149,7 @@ async def test_vk_publisher():
     
     try:
         from modules.publisher.vk_publisher import VKPublisher
-        from config.config_secure import VK_TOKENS, VK_TEST_GROUP_ID
+        from config.runtime import VK_TOKENS, VK_TEST_GROUP_ID
         
         publisher = VKPublisher(VK_TOKENS["VALSTAN"])
         

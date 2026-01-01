@@ -20,7 +20,7 @@ class VKTokenManager:
     def load_tokens(self):
         """Load tokens from config"""
         try:
-            from config.config_secure import VK_MAIN_TOKENS, VK_AUXILIARY_TOKENS
+            from config.runtime import VK_MAIN_TOKENS, VK_AUXILIARY_TOKENS
             self.main_tokens = VK_MAIN_TOKENS.copy()
             self.auxiliary_tokens = VK_AUXILIARY_TOKENS.copy()
             logger.info(f"Loaded {len(self.main_tokens)} main tokens and {len(self.auxiliary_tokens)} auxiliary tokens")

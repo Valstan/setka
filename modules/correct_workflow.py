@@ -22,7 +22,7 @@ from modules.vk_monitor.monitor import VKMonitor
 from modules.ai_analyzer.analyzer import PostAnalyzer
 from modules.aggregation.aggregator import NewsAggregator
 from modules.publisher.publisher import ContentPublisher
-from config.config_secure import VK_TOKENS
+from config.runtime import VK_TOKENS
 from modules.service_activity_notifier import (
     notify_post_collection_start,
     notify_post_collection_complete,

@@ -15,7 +15,7 @@ from modules.publisher.vk_publisher import VKPublisher
 from modules.aggregation.aggregator import NewsAggregator
 from sqlalchemy import select, and_
 from datetime import datetime, timedelta
-from config.config_secure import VK_MAIN_TOKENS, VK_TEST_GROUP_ID, VK_PRODUCTION_GROUPS
+from config.runtime import VK_MAIN_TOKENS, VK_TEST_GROUP_ID, VK_PRODUCTION_GROUPS
 
 logger = logging.getLogger(__name__)
 

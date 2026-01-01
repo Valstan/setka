@@ -13,7 +13,7 @@ from modules.monitoring.telegram_notifier import TelegramNotifier
 
 # Конфигурация
 # Import from config
-from config.config_secure import TELEGRAM_TOKENS
+from config.runtime import TELEGRAM_TOKENS
 BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 CHAT_ID = input("Введите ваш chat_id (число): ").strip()
 

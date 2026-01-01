@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple
 # Добавить путь к проекту
 sys.path.append('/home/valstan/SETKA')
 
-from config.config_secure import VK_TOKENS
+from config.runtime import VK_TOKENS
 from modules.vk_monitor.vk_client import VKClient
 
 # Настройка логирования

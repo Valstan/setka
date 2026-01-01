@@ -5,7 +5,7 @@ Handles background tasks: monitoring, analysis, publishing
 import os
 from celery import Celery
 from celery.schedules import crontab
-from config.config_secure import REDIS
+from config.runtime import REDIS
 
 # Initialize Celery app
 app = Celery(

@@ -15,7 +15,7 @@ from modules.monitoring.telegram_notifier import TelegramNotifier
 
 # Telegram bot token (from config)
 # Import from config
-from config.config_secure import TELEGRAM_TOKENS
+from config.runtime import TELEGRAM_TOKENS
 BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 # You need to get your chat ID by sending /start to your bot
 # and checking https://api.telegram.org/bot<TOKEN>/getUpdates
