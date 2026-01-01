@@ -15,12 +15,21 @@ from sqlalchemy import select
 from database.connection import AsyncSessionLocal
 from database.models import Region, Community, Filter, VKToken
 
-# Import VK tokens from secure config
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config'))
-try:
-    from config_secure import VK_TOKENS
-except ImportError:
-    VK_TOKENS = {}
+def _collect_prefixed_env(prefix: str) -> dict[str, str]:
+    """
+    Collect env vars like VK_TOKEN_VALSTAN=... -> {"VALSTAN": "..."}.
+    """
+    out: dict[str, str] = {}
+    for k, v in os.environ.items():
+        if not k.startswith(prefix):
+            continue
+        if not v or len(v.strip()) < 10:
+            continue
+        name = k[len(prefix) :].strip("_")
+        if not name:
+            continue
+        out[name.upper()] = v.strip()
+    return out
 
 
 async def import_regions():
@@ -175,6 +184,11 @@ async def import_communities():
 async def import_vk_tokens():
     """Import VK tokens"""
     print("\n🔑 Importing VK tokens...")
+
+    VK_TOKENS = _collect_prefixed_env("VK_TOKEN_")
+    if not VK_TOKENS:
+        print("  ⚠️  No VK_TOKEN_* env vars found, skipping token import")
+        return
     
     async with AsyncSessionLocal() as session:
         imported_count = 0
@@ -193,18 +207,9 @@ async def import_vk_tokens():
                 print(f"  ⏭️  Token {name} already exists")
                 continue
             
-            # Determine usage type
-            if 'VALSTAN' in name:
-                usage_type = 'post'
-            elif 'DRAN' in name:
-                usage_type = 'read'
-            else:
-                usage_type = 'read'
-            
             vk_token = VKToken(
                 name=name,
                 token=token,
-                usage_type=usage_type,
                 is_active=True
             )
             

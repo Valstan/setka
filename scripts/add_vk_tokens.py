@@ -14,24 +14,36 @@ from sqlalchemy import select
 from database.connection import AsyncSessionLocal
 from database.models import VKToken
 
-# VK Tokens (from config file)
-TOKENS = {
-    # REPLACE WITH YOUR ACTUAL TOKENS FROM config/config_secure.py
-    "VK_TOKEN_VALSTAN": "vk1.a.YOUR_TOKEN_HERE",
-    "VK_TOKEN_OLGA": "vk1.a.YOUR_TOKEN_HERE",
-    "VK_TOKEN_VITA": "vk1.a.YOUR_TOKEN_HERE"
-}
+def _collect_prefixed_env(prefix: str) -> dict[str, str]:
+    """
+    Collect env vars like VK_TOKEN_VALSTAN=... -> {"VALSTAN": "..."}.
+    """
+    out: dict[str, str] = {}
+    for k, v in os.environ.items():
+        if not k.startswith(prefix):
+            continue
+        if not v or len(v.strip()) < 10:
+            continue
+        name = k[len(prefix) :].strip("_")
+        if not name:
+            continue
+        out[name.upper()] = v.strip()
+    return out
 
 
 async def main():
     print("🔑 Adding VK tokens to database...")
+
+    tokens = _collect_prefixed_env("VK_TOKEN_")
+    if not tokens:
+        print("❌ No VK_TOKEN_* env vars found.")
+        print("💡 See: config/setka.env.example")
+        return 1
     
     async with AsyncSessionLocal() as session:
         added_count = 0
         
-        for name, token in TOKENS.items():
-            if not token:
-                continue
+        for name, token in tokens.items():
             
             # Check if exists
             result = await session.execute(
@@ -43,16 +55,9 @@ async def main():
                 print(f"  ⏭️  Token {name} already exists")
                 continue
             
-            # Determine usage type
-            if 'VALSTAN' in name:
-                usage_type = 'post'
-            else:
-                usage_type = 'read'
-            
             vk_token = VKToken(
                 name=name,
                 token=token,
-                usage_type=usage_type,
                 is_active=True
             )
             
@@ -62,8 +67,9 @@ async def main():
         
         await session.commit()
         print(f"\n✅ Added {added_count} VK tokens")
+        return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))
 

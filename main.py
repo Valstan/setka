@@ -14,7 +14,7 @@ from pathlib import Path
 
 from database.connection import get_db_session, init_db, close_db
 from modules.module_activity_notifier import notify_system_startup
-from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, tokens, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher
+from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher
 
 # Setup logging
 logging.basicConfig(
@@ -96,7 +96,6 @@ app.include_router(notifications.router, prefix="/api/notifications", tags=["Not
 app.include_router(scheduler.router, prefix="/api/scheduler", tags=["Smart Scheduler"])
 app.include_router(vk_monitoring.router, prefix="/api/vk", tags=["VK Monitoring"])
 app.include_router(token_management.router, prefix="/api/tokens", tags=["Token Management"])
-app.include_router(tokens.router, tags=["Tokens"])
 app.include_router(service_notifications.router, tags=["Service Notifications"])
 app.include_router(test_workflow.router, tags=["Test Workflow"])
 app.include_router(schedule_management.router, tags=["Schedule Management"])

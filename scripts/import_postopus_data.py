@@ -280,7 +280,7 @@ async def import_vk_tokens():
     try:
         from config.runtime import VK_TOKENS
     except ImportError:
-        print("  ⚠️  config_secure.VK_TOKENS не найден, пропуск")
+        print("  ⚠️  VK_TOKENS недоступен, пропуск")
         return
     
     async with AsyncSessionLocal() as session:
@@ -302,26 +302,15 @@ async def import_vk_tokens():
                 skipped_count += 1
                 continue
             
-            # Determine usage type based on name
-            if 'VALSTAN' in name.upper():
-                usage_type = 'post'
-            elif 'DRAN' in name.upper():
-                usage_type = 'read'
-            elif 'OLGA' in name.upper() or 'VITA' in name.upper():
-                usage_type = 'read'
-            else:
-                usage_type = 'read'
-            
             vk_token = VKToken(
                 name=name,
                 token=token,
-                usage_type=usage_type,
                 is_active=True
             )
             
             session.add(vk_token)
             imported_count += 1
-            print(f"  ✅ Импортирован: {name} ({usage_type})")
+            print(f"  ✅ Импортирован: {name}")
         
         await session.commit()
         print(f"\n✅ Импортировано токенов: {imported_count}")

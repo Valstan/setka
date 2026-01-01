@@ -4,7 +4,7 @@ API для управления токенами VK через веб-интер
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -36,8 +36,16 @@ class TokenResponse(BaseModel):
 
 class TokenUpdateRequest(BaseModel):
     """Запрос на обновление токена"""
-    token: str = Field(..., min_length=10, description="VK API токен")
+    token: str | None = Field(None, min_length=10, description="VK API токен (опционально)")
     validate_token: bool = Field(True, description="Валидировать токен после обновления")
+    is_active: bool | None = Field(None, description="Включить/выключить токен (опционально)")
+
+
+class TokenCreateRequest(BaseModel):
+    """Запрос на создание токена"""
+    name: str = Field(..., min_length=2, max_length=50, description="Имя токена (например VALSTAN)")
+    token: str = Field(..., min_length=10, description="VK API токен")
+    validate_token: bool = Field(True, description="Валидировать токен после создания")
 
 
 class TokenValidationResponse(BaseModel):
@@ -102,10 +110,15 @@ async def update_token(
         if not token:
             raise HTTPException(status_code=404, detail=f"Token {token_name} not found")
         
-        # Обновить токен
-        token.token = request.token
-        token.validation_status = 'unknown'
-        token.error_message = None
+        # Обновить флаг активности (если передан)
+        if request.is_active is not None:
+            token.is_active = request.is_active
+
+        # Обновить токен (если передан)
+        if request.token is not None and request.token.strip() != "":
+            token.token = request.token.strip()
+            token.validation_status = 'unknown'
+            token.error_message = None
         
         # Валидировать токен если требуется
         if request.validate_token:
@@ -126,6 +139,72 @@ async def update_token(
         raise
     except Exception as e:
         logger.error(f"Error updating token {token_name}: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/add", response_model=TokenResponse)
+async def add_token(request: TokenCreateRequest, db: AsyncSession = Depends(get_db_session)):
+    """Создать новый токен"""
+    try:
+        token_name = request.name.strip().upper()
+        if not token_name:
+            raise HTTPException(status_code=400, detail="Token name is required")
+
+        # Check duplicate
+        existing = await db.execute(select(VKToken).where(VKToken.name == token_name))
+        if existing.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=409, detail=f"Token {token_name} already exists")
+
+        vk_token = VKToken(
+            name=token_name,
+            token=request.token.strip(),
+            is_active=True,
+            validation_status="unknown",
+            error_message=None,
+            permissions=None,
+            user_info=None,
+        )
+
+        if request.validate_token:
+            validation_result = await validate_single_token(vk_token.token)
+            vk_token.validation_status = 'valid' if validation_result['is_valid'] else 'invalid'
+            vk_token.error_message = validation_result.get('error_message')
+            vk_token.user_info = validation_result.get('user_info')
+            vk_token.permissions = validation_result.get('permissions')
+            vk_token.last_validated = datetime.now()
+
+        db.add(vk_token)
+        await db.commit()
+        await db.refresh(vk_token)
+        return TokenResponse(**vk_token.to_dict())
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding token: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{token_name}")
+async def delete_token(token_name: str, db: AsyncSession = Depends(get_db_session)):
+    """Удалить токен"""
+    try:
+        token_name = token_name.strip().upper()
+        result = await db.execute(select(VKToken).where(VKToken.name == token_name))
+        token = result.scalar_one_or_none()
+        if not token:
+            raise HTTPException(status_code=404, detail=f"Token {token_name} not found")
+
+        await db.execute(delete(VKToken).where(VKToken.name == token_name))
+        await db.commit()
+        return {"success": True, "name": token_name}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting token {token_name}: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 

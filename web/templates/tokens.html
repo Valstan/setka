@@ -78,14 +78,7 @@
                                 <label for="token-value" class="form-label">Токен доступа</label>
                                 <input type="text" class="form-control" id="token-value" placeholder="vk1.a.xxx..." required>
                             </div>
-                            <div class="col-md-2">
-                                <label for="token-type" class="form-label">Тип токена</label>
-                                <select class="form-select" id="token-type" required>
-                                    <option value="main">Главный</option>
-                                    <option value="auxiliary">Вспомогательный</option>
-                                </select>
-                            </div>
-                            <div class="col-md-2">
+                            <div class="col-md-4">
                                 <label class="form-label">&nbsp;</label>
                                 <button type="submit" class="btn btn-success w-100">
                                     <i class="bi bi-plus-circle"></i> Добавить
@@ -147,13 +140,7 @@
                         <label for="edit-token-value" class="form-label">Токен доступа</label>
                         <input type="text" class="form-control" id="edit-token-value" required>
                     </div>
-                    <div class="mb-3">
-                        <label for="edit-token-type" class="form-label">Тип токена</label>
-                        <select class="form-select" id="edit-token-type" required>
-                            <option value="main">Главный</option>
-                            <option value="auxiliary">Вспомогательный</option>
-                        </select>
-                    </div>
+                    <!-- Тип токена сейчас не хранится в БД, поэтому поле убрано -->
                     <div class="mb-3">
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="edit-token-active">
@@ -257,15 +244,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function loadTokens() {
     try {
-        const response = await fetch('/api/tokens/all');
-        const data = await response.json();
-        
-        if (data.success) {
-            displayTokens(data.data);
-            updateStatistics(data.data);
-        } else {
-            showError('Ошибка загрузки токенов');
+        const response = await fetch('/api/tokens/');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
         }
+
+        const tokens = await response.json();
+        displayTokens(tokens);
+        updateStatistics(tokens);
     } catch (error) {
         console.error('Error loading tokens:', error);
         showError('Ошибка загрузки токенов: ' + error.message);
@@ -282,30 +268,28 @@ function displayTokens(tokens) {
     
     container.innerHTML = tokens.map(token => `
         <div class="col-md-6 col-lg-4">
-            <div class="token-card ${token.type}">
+            <div class="token-card ${getTokenCardClass(token)}">
                 <div class="d-flex justify-content-between align-items-start mb-2">
                     <h6 class="mb-0">${token.name}</h6>
-                    <span class="status-badge ${token.status === 'working' ? 'status-working' : 'status-broken'}">
-                        ${token.status === 'working' ? 'Работает' : 'Ошибка'}
+                    <span class="status-badge ${getTokenStatusBadgeClass(token)}">
+                        ${getTokenStatusText(token)}
                     </span>
                 </div>
                 
                 <div class="token-info">
-                    <div><strong>Тип:</strong> ${token.type === 'main' ? 'Главный' : 'Вспомогательный'}</div>
-                    <div><strong>ID:</strong> ${token.user_id || 'Неизвестно'}</div>
-                    <div><strong>Токен:</strong> ${token.token.substring(0, 20)}...</div>
-                    ${token.admin_groups ? `<div><strong>Групп:</strong> ${token.admin_groups}</div>` : ''}
+                    <div><strong>ID:</strong> ${token.id}</div>
+                    <div><strong>Активен:</strong> ${token.is_active ? 'Да' : 'Нет'}</div>
+                    <div><strong>Статус:</strong> ${token.validation_status || 'unknown'}</div>
+                    <div><strong>Токен:</strong> ${escapeHtml(token.token || '')}</div>
+                    ${token.user_info && (token.user_info.first_name || token.user_info.last_name) ? `<div><strong>Пользователь:</strong> ${escapeHtml((token.user_info.first_name || '') + ' ' + (token.user_info.last_name || ''))}</div>` : ''}
                 </div>
                 
                 <div class="token-actions">
-                    <button class="btn btn-sm btn-outline-primary" onclick="editToken(${token.id})">
+                    <button class="btn btn-sm btn-outline-primary" onclick="editToken('${token.name}')">
                         <i class="bi bi-pencil"></i> Редактировать
                     </button>
-                    <button class="btn btn-sm btn-outline-success" onclick="validateToken(${token.id})">
+                    <button class="btn btn-sm btn-outline-success" onclick="validateToken('${token.name}')">
                         <i class="bi bi-check-circle"></i> Проверить
-                    </button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteToken(${token.id})">
-                        <i class="bi bi-trash"></i> Удалить
                     </button>
                 </div>
             </div>
@@ -314,9 +298,10 @@ function displayTokens(tokens) {
 }
 
 function updateStatistics(tokens) {
-    const mainTokens = tokens.filter(t => t.type === 'main').length;
-    const auxTokens = tokens.filter(t => t.type === 'auxiliary').length;
-    const brokenTokens = tokens.filter(t => t.status !== 'working').length;
+    // Token type is not stored in DB model; keep placeholders for counters
+    const mainTokens = 0;
+    const auxTokens = 0;
+    const brokenTokens = tokens.filter(t => (t.validation_status || 'unknown') !== 'valid').length;
     const totalTokens = tokens.length;
     
     document.getElementById('main-tokens-count').textContent = mainTokens;
@@ -330,7 +315,6 @@ async function addToken(event) {
     
     const name = document.getElementById('token-name').value;
     const token = document.getElementById('token-value').value;
-    const type = document.getElementById('token-type').value;
     
     try {
         const response = await fetch('/api/tokens/add', {
@@ -340,120 +324,92 @@ async function addToken(event) {
             },
             body: JSON.stringify({
                 name: name,
-                token_str: token,
-                token_type: type
+                token: token,
+                validate_token: true
             })
         });
         
-        const data = await response.json();
-        
-        if (data.success) {
-            showSuccess('Токен добавлен успешно');
-            document.getElementById('add-token-form').reset();
-            loadTokens();
-        } else {
-            showError(data.message || 'Ошибка добавления токена');
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
         }
+
+        showSuccess('Токен добавлен успешно');
+        document.getElementById('add-token-form').reset();
+        loadTokens();
     } catch (error) {
         showError('Ошибка добавления токена: ' + error.message);
     }
 }
 
-async function editToken(tokenId) {
+async function editToken(tokenName) {
     try {
-        const response = await fetch(`/api/tokens/${tokenId}`);
-        const data = await response.json();
-        
-        if (data.success) {
-            const token = data.data;
-            document.getElementById('edit-token-id').value = tokenId;
-            document.getElementById('edit-token-name').value = token.name;
-            document.getElementById('edit-token-value').value = token.token;
-            document.getElementById('edit-token-type').value = token.type;
-            document.getElementById('edit-token-active').checked = token.status === 'working';
-            
-            const modal = new bootstrap.Modal(document.getElementById('tokenModal'));
-            modal.show();
-        } else {
-            showError('Ошибка загрузки токена');
+        const response = await fetch(`/api/tokens/${encodeURIComponent(tokenName)}`);
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
         }
+
+        const token = await response.json();
+        document.getElementById('edit-token-id').value = tokenName;
+        document.getElementById('edit-token-name').value = token.name;
+        // Never prefill the (full) token. User must paste a new one.
+        document.getElementById('edit-token-value').value = '';
+        document.getElementById('edit-token-active').checked = !!token.is_active;
+        
+        const modal = new bootstrap.Modal(document.getElementById('tokenModal'));
+        modal.show();
     } catch (error) {
         showError('Ошибка загрузки токена: ' + error.message);
     }
 }
 
 async function updateToken() {
-    const tokenId = document.getElementById('edit-token-id').value;
-    const name = document.getElementById('edit-token-name').value;
+    const tokenName = document.getElementById('edit-token-id').value;
     const token = document.getElementById('edit-token-value').value;
-    const type = document.getElementById('edit-token-type').value;
     const isActive = document.getElementById('edit-token-active').checked;
     
     try {
-        const response = await fetch(`/api/tokens/update/${tokenId}`, {
+        if (!token || token.trim().length < 10) {
+            showError('Введите новый токен (минимум 10 символов)');
+            return;
+        }
+
+        const response = await fetch(`/api/tokens/${encodeURIComponent(tokenName)}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                name: name,
-                token_str: token,
-                token_type: type,
+                token: token,
+                validate_token: true,
                 is_active: isActive
             })
         });
         
-        const data = await response.json();
-        
-        if (data.success) {
-            showSuccess('Токен обновлён успешно');
-            bootstrap.Modal.getInstance(document.getElementById('tokenModal')).hide();
-            loadTokens();
-        } else {
-            showError(data.message || 'Ошибка обновления токена');
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
         }
+
+        showSuccess('Токен обновлён успешно');
+        bootstrap.Modal.getInstance(document.getElementById('tokenModal')).hide();
+        loadTokens();
     } catch (error) {
         showError('Ошибка обновления токена: ' + error.message);
     }
 }
 
-async function deleteToken(tokenId) {
-    if (!confirm('Вы уверены, что хотите удалить этот токен?')) {
-        return;
-    }
-    
+async function validateToken(tokenName) {
     try {
-        const response = await fetch(`/api/tokens/delete/${tokenId}`, {
-            method: 'DELETE'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showSuccess('Токен удалён успешно');
-            loadTokens();
-        } else {
-            showError(data.message || 'Ошибка удаления токена');
+        const response = await fetch(`/api/tokens/${encodeURIComponent(tokenName)}/validate`, { method: 'POST' });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
         }
-    } catch (error) {
-        showError('Ошибка удаления токена: ' + error.message);
-    }
-}
 
-async function validateToken(tokenId) {
-    try {
-        const response = await fetch(`/api/tokens/validate/${tokenId}`, {
-            method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showSuccess('Токен проверен успешно');
-            loadTokens();
-        } else {
-            showError(data.message || 'Ошибка проверки токена');
-        }
+        showSuccess('Токен проверен');
+        loadTokens();
     } catch (error) {
         showError('Ошибка проверки токена: ' + error.message);
     }
@@ -463,18 +419,14 @@ async function validateAllTokens() {
     try {
         showSuccess('Начинаем проверку всех токенов...');
         
-        const response = await fetch('/api/tokens/validate-all', {
-            method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showSuccess('Все токены проверены');
-            loadTokens();
-        } else {
-            showError(data.message || 'Ошибка проверки токенов');
+        const response = await fetch('/api/tokens/validate-all', { method: 'POST' });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
         }
+
+        showSuccess('Проверка токенов выполнена');
+        loadTokens();
     } catch (error) {
         showError('Ошибка проверки токенов: ' + error.message);
     }
@@ -482,6 +434,34 @@ async function validateAllTokens() {
 
 async function refreshTokens() {
     await loadTokens();
+}
+
+function getTokenCardClass(token) {
+    if (!token.is_active) return 'broken';
+    if ((token.validation_status || 'unknown') === 'valid') return 'main';
+    if ((token.validation_status || 'unknown') === 'invalid') return 'broken';
+    return 'auxiliary';
+}
+
+function getTokenStatusBadgeClass(token) {
+    if (!token.is_active) return 'status-broken';
+    return (token.validation_status || 'unknown') === 'valid' ? 'status-working' : 'status-broken';
+}
+
+function getTokenStatusText(token) {
+    if (!token.is_active) return 'Отключён';
+    if ((token.validation_status || 'unknown') === 'valid') return 'Валиден';
+    if ((token.validation_status || 'unknown') === 'invalid') return 'Невалиден';
+    return 'Неизвестно';
+}
+
+function escapeHtml(str) {
+    return String(str || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
 }
 
 function showSuccess(message) {
