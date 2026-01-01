@@ -128,7 +128,7 @@ SETKA/
 
 ### Подключение:
 ```python
-DATABASE_URL = "postgresql+asyncpg://setka_user:SetkaSecure2025!@localhost:5432/setka"
+DATABASE_URL = os.environ["DATABASE_URL"]  # stored server-side, not in git
 ```
 
 ---
