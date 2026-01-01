@@ -35,7 +35,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Создаем Celery app
-app = Celery('setka')
+# IMPORTANT: keep a single Celery runtime and explicitly include tasks that are scheduled by beat.
+app = Celery('setka', include=['tasks.correct_workflow_tasks'])
 app.config_from_object('config.celery_config')
 
 
@@ -540,9 +541,9 @@ def cleanup_old_posts():
 
 # Расписания (Beat Schedule)
 app.conf.beat_schedule = {
-    # VK мониторинг каждый час в X:05
+    # Основной workflow каждый час в X:05
     'monitoring-hourly': {
-        'task': 'tasks.celery_app.run_vk_monitoring',
+        'task': 'tasks.correct_workflow_tasks.run_correct_workflow',
         'schedule': crontab(minute=5),  # Каждый час на 5-й минуте
         'options': {
             'expires': 3000,  # Task expires after 50 minutes
