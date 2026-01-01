@@ -34,7 +34,8 @@ class RedisCache:
     async def get_client(self) -> redis.Redis:
         """Get or create Redis client"""
         if self._client is None:
-            self._client = await redis.from_url(
+            # NOTE: redis.asyncio.from_url returns a client; it is not awaitable.
+            self._client = redis.from_url(
                 self.redis_url,
                 encoding="utf-8",
                 decode_responses=False  # We'll use pickle

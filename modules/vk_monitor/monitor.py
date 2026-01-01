@@ -72,20 +72,25 @@ class VKMonitor:
                 )
                 
                 new_posts_count = 0
+
+                # Batch-load existing posts to avoid 1 query per post
+                vk_post_ids = [p.get("id") for p in posts if p.get("id") is not None]
+                existing_posts_by_id = {}
+                if vk_post_ids:
+                    existing_result = await session.execute(
+                        select(Post).where(
+                            and_(
+                                Post.vk_owner_id == community.vk_id,
+                                Post.vk_post_id.in_(vk_post_ids),
+                            )
+                        )
+                    )
+                    existing_posts_by_id = {p.vk_post_id: p for p in existing_result.scalars().all()}
                 
                 for vk_post in posts:
                     post_id = vk_post.get('id')
                     
-                    # Check if post already exists
-                    result = await session.execute(
-                        select(Post).where(
-                            and_(
-                                Post.vk_owner_id == community.vk_id,
-                                Post.vk_post_id == post_id
-                            )
-                        )
-                    )
-                    existing_post = result.scalar_one_or_none()
+                    existing_post = existing_posts_by_id.get(post_id)
                     
                     if existing_post:
                         # Post already exists, update stats

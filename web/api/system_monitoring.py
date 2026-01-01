@@ -91,7 +91,8 @@ async def get_system_stats(db: AsyncSession = Depends(get_db_session)):
         vk_tokens_active = active_vk_tokens_result.scalar() or 0
         
         # Get system resources
-        cpu_usage = psutil.cpu_percent(interval=1)
+        # Avoid blocking the event loop; interval=0 returns last computed value (non-blocking).
+        cpu_usage = psutil.cpu_percent(interval=0)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
         

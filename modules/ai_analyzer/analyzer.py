@@ -4,6 +4,7 @@ Uses Groq API (free tier) for AI analysis
 """
 import asyncio
 import logging
+import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from sqlalchemy import select, and_
@@ -15,6 +16,10 @@ from modules.ai_analyzer.groq_client import GroqClient
 from modules.ai_analyzer.sentiment_analyzer import SentimentAnalyzer
 
 logger = logging.getLogger(__name__)
+
+_BLACKLIST_CACHE_TTL_SECONDS = 300
+_blacklist_cache_ts: float = 0.0
+_blacklist_cache_patterns: list[str] = []
 
 
 class PostAnalyzer:
@@ -116,22 +121,27 @@ class PostAnalyzer:
         Returns:
             (is_spam, reason)
         """
-        # Get active blacklist filters
-        result = await session.execute(
-            select(Filter).where(
-                and_(
-                    Filter.type == 'blacklist_word',
-                    Filter.is_active == True
+        global _blacklist_cache_ts, _blacklist_cache_patterns
+
+        # Cache active blacklist patterns to avoid repeated DB reads on every post
+        now = time.monotonic()
+        if not _blacklist_cache_patterns or (now - _blacklist_cache_ts) > _BLACKLIST_CACHE_TTL_SECONDS:
+            result = await session.execute(
+                select(Filter.pattern).where(
+                    and_(
+                        Filter.type == 'blacklist_word',
+                        Filter.is_active == True
+                    )
                 )
             )
-        )
-        filters = result.scalars().all()
+            _blacklist_cache_patterns = [p for p in result.scalars().all() if p]
+            _blacklist_cache_ts = now
         
         text_lower = text.lower()
         
-        for filter_obj in filters:
-            if filter_obj.pattern.lower() in text_lower:
-                return True, f"Blacklist: {filter_obj.pattern}"
+        for pattern in _blacklist_cache_patterns:
+            if pattern.lower() in text_lower:
+                return True, f"Blacklist: {pattern}"
         
         return False, None
     
