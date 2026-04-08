@@ -163,7 +163,11 @@ def _maybe_send_telegram_notifications_alert() -> None:
 
 # Создаем Celery app
 # IMPORTANT: keep a single Celery runtime and explicitly include tasks that are scheduled by beat.
-app = Celery('setka', include=['tasks.correct_workflow_tasks', 'tasks.parsing_tasks'])
+app = Celery('setka', include=[
+    'tasks.correct_workflow_tasks',
+    'tasks.parsing_tasks',
+    'tasks.parsing_scheduler_tasks',  # Postopus migration
+])
 app.config_from_object('config.celery_config')
 
 
