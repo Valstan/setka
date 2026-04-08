@@ -73,6 +73,7 @@ async def init_db():
     async with engine.begin() as conn:
         # Import all models before creating tables
         from database import models  # noqa: F401
+        from database import models_extended  # noqa: F401 (Postopus migration tables)
 
         await conn.run_sync(Base.metadata.create_all)
 
@@ -149,6 +150,7 @@ async def init_db():
     async with engine.begin() as conn:
         # Import all models before creating tables
         from database import models  # noqa
+        from database import models_extended  # noqa: F401 (Postopus migration tables)
         await conn.run_sync(Base.metadata.create_all)
 
 

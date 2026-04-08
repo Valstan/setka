@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+
+{% block title %}SETKA - Статистика парсинга{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h1 class="h3 mb-0">
+                <i class="bi bi-graph-up me-2"></i>Статистика парсинга
+            </h1>
+            <p class="text-muted">Статистика работы парсера из Postopus</p>
+        </div>
+        <div class="col-auto">
+            <select id="daysFilter" class="form-select">
+                <option value="1">Последние 24 часа</option>
+                <option value="7" selected>Последние 7 дней</option>
+                <option value="14">Последние 14 дней</option>
+                <option value="30">Последние 30 дней</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row g-3 mb-4" id="summaryCards">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-shrink-0">
+                            <i class="bi bi-file-earmark-text fs-1 text-primary"></i>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h6 class="mb-0 text-muted">Всего запусков</h6>
+                            <h2 class="mb-0" id="totalRuns">-</h2>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-shrink-0">
+                            <i class="bi bi-check-circle fs-1 text-success"></i>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h6 class="mb-0 text-muted">Успешных</h6>
+                            <h2 class="mb-0 text-success" id="successfulRuns">-</h2>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-shrink-0">
+                            <i class="bi bi-newspaper fs-1 text-info"></i>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h6 class="mb-0 text-muted">Постов опубликовано</h6>
+                            <h2 class="mb-0 text-info" id="postsPublished">-</h2>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-shrink-0">
+                            <i class="bi bi-percent fs-1 text-warning"></i>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h6 class="mb-0 text-muted">Успешность</h6>
+                            <h2 class="mb-0 text-warning" id="successRate">-</h2>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Регион</label>
+                    <select id="regionFilter" class="form-select">
+                        <option value="">Все регионы</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Тема</label>
+                    <select id="themeFilter" class="form-select">
+                        <option value="">Все темы</option>
+                        <option value="novost">Новости</option>
+                        <option value="kultura">Культура</option>
+                        <option value="sport">Спорт</option>
+                        <option value="reklama">Реклама</option>
+                        <option value="sosed">Соседи</option>
+                        <option value="admin">Админ</option>
+                        <option value="union">Объединение</option>
+                        <option value="detsad">Детсад</option>
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button class="btn btn-primary w-100" onclick="loadStats()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Обновить
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats Table -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white">
+            <h6 class="mb-0">Детальная статистика</h6>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0" id="statsTable">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Дата</th>
+                            <th>Регион</th>
+                            <th>Тема</th>
+                            <th>Статус</th>
+                            <th>Просмотрено</th>
+                            <th>Опубликовано</th>
+                            <th>Отфильтровано</th>
+                            <th>Длительность</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td colspan="8" class="text-center py-4 text-muted">
+                                Загрузка данных...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Load stats on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadStats();
+    loadRegions();
+});
+
+function loadStats() {
+    const days = document.getElementById('daysFilter').value;
+    const region = document.getElementById('regionFilter').value;
+    const theme = document.getElementById('themeFilter').value;
+    
+    let url = `/api/parsing-stats/?days=${days}`;
+    if (region) url += `&region_code=${region}`;
+    if (theme) url += `&theme=${theme}`;
+    
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            updateSummaryCards(data.aggregates);
+            updateStatsTable(data.stats);
+        })
+        .catch(error => {
+            console.error('Error loading stats:', error);
+            showToast('Ошибка загрузки статистики', 'error');
+        });
+}
+
+function loadRegions() {
+    fetch('/api/regions/')
+        .then(response => response.json())
+        .then(regions => {
+            const select = document.getElementById('regionFilter');
+            regions.forEach(region => {
+                const option = document.createElement('option');
+                option.value = region.code;
+                option.textContent = region.name;
+                select.appendChild(option);
+            });
+        })
+        .catch(error => console.error('Error loading regions:', error));
+}
+
+function updateSummaryCards(aggregates) {
+    if (!aggregates) return;
+    
+    document.getElementById('totalRuns').textContent = aggregates.total_runs || 0;
+    document.getElementById('successfulRuns').textContent = aggregates.successful_runs || 0;
+    document.getElementById('postsPublished').textContent = aggregates.total_posts_published || 0;
+    document.getElementById('successRate').textContent = 
+        aggregates.success_rate ? `${aggregates.success_rate.toFixed(1)}%` : '0%';
+}
+
+function updateStatsTable(stats) {
+    const tbody = document.querySelector('#statsTable tbody');
+    
+    if (!stats || stats.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-muted">Нет данных</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = stats.map(stat => `
+        <tr>
+            <td>${formatDate(stat.run_date)}</td>
+            <td><strong>${stat.region_code}</strong></td>
+            <td><span class="badge bg-secondary">${stat.theme}</span></td>
+            <td>${stat.success ? 
+                '<span class="badge bg-success">✓ Успешно</span>' : 
+                '<span class="badge bg-danger">✗ Ошибка</span>'}</td>
+            <td>${stat.total_posts_scanned || 0}</td>
+            <td>${stat.posts_final_count || 0}</td>
+            <td>${getFilteredCount(stat)}</td>
+            <td>${stat.duration_seconds ? stat.duration_seconds.toFixed(1) + 's' : '-'}</td>
+        </tr>
+    `).join('');
+}
+
+function getFilteredCount(stat) {
+    return (stat.posts_filtered_old || 0) +
+           (stat.posts_filtered_duplicate_lip || 0) +
+           (stat.posts_filtered_duplicate_text || 0) +
+           (stat.posts_filtered_duplicate_foto || 0) +
+           (stat.posts_filtered_advertisement || 0) +
+           (stat.posts_filtered_black_id || 0);
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return date.toLocaleString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+</script>
+{% endblock %}

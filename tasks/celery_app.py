@@ -651,7 +651,7 @@ app.conf.beat_schedule = {
             'expires': 3000,  # Task expires after 50 minutes
         }
     },
-    
+
     # Проверка предложенных постов каждый час с 8:00 до 22:00 в X:15
     'check-suggested-hourly': {
         'task': 'tasks.celery_app.check_suggested_posts',
@@ -678,7 +678,7 @@ app.conf.beat_schedule = {
             'expires': 3000,
         }
     },
-    
+
     # Дневной дайджест в 18:00
     'digest-daily': {
         'task': 'tasks.celery_app.create_daily_digest',
@@ -687,7 +687,7 @@ app.conf.beat_schedule = {
             'expires': 3000,
         }
     },
-    
+
     # Очистка старых постов в 03:00
     'cleanup-daily': {
         'task': 'tasks.celery_app.cleanup_old_posts',
@@ -695,6 +695,211 @@ app.conf.beat_schedule = {
         'options': {
             'expires': 3000,
         }
+    },
+
+    # ========================================================================
+    # POSTOPUS MIGRATION: Crontab replacement → Celery Beat
+    # Original crontab entries migrated from old_postopus
+    # ========================================================================
+
+    # Reklama (ads): 5 10,14,19 * * *
+    'postopus-reklama-10': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=5, hour=10),
+        'args': ('reklama',),
+        'options': {'expires': 3600},
+    },
+    'postopus-reklama-14': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=5, hour=14),
+        'args': ('reklama',),
+        'options': {'expires': 3600},
+    },
+    'postopus-reklama-19': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=5, hour=19),
+        'args': ('reklama',),
+        'options': {'expires': 3600},
+    },
+
+    # Sosed (neighbor news): 15 10,20 * * *
+    'postopus-sosed-10': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=10),
+        'args': ('sosed',),
+        'options': {'expires': 3600},
+    },
+    'postopus-sosed-20': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=20),
+        'args': ('sosed',),
+        'options': {'expires': 3600},
+    },
+
+    # Novost (news): 40 6,11,12,16,18,20 * * *
+    'postopus-novost-6': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=40, hour=6),
+        'args': ('novost',),
+        'options': {'expires': 3600},
+    },
+    'postopus-novost-11': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=40, hour=11),
+        'args': ('novost',),
+        'options': {'expires': 3600},
+    },
+    'postopus-novost-12': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=40, hour=12),
+        'args': ('novost',),
+        'options': {'expires': 3600},
+    },
+    'postopus-novost-16': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=40, hour=16),
+        'args': ('novost',),
+        'options': {'expires': 3600},
+    },
+    'postopus-novost-18': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=40, hour=18),
+        'args': ('novost',),
+        'options': {'expires': 3600},
+    },
+    'postopus-novost-20': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=40, hour=20),
+        'args': ('novost',),
+        'options': {'expires': 3600},
+    },
+
+    # Kultura (culture): 20 7,13,16,19,21 * * *
+    'postopus-kultura-7': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=7),
+        'args': ('kultura',),
+        'options': {'expires': 3600},
+    },
+    'postopus-kultura-13': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=13),
+        'args': ('kultura',),
+        'options': {'expires': 3600},
+    },
+    'postopus-kultura-16': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=16),
+        'args': ('kultura',),
+        'options': {'expires': 3600},
+    },
+    'postopus-kultura-19': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=19),
+        'args': ('kultura',),
+        'options': {'expires': 3600},
+    },
+    'postopus-kultura-21': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=21),
+        'args': ('kultura',),
+        'options': {'expires': 3600},
+    },
+
+    # Sport: 30 12,19 * * *
+    'postopus-sport-12': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=30, hour=12),
+        'args': ('sport',),
+        'options': {'expires': 3600},
+    },
+    'postopus-sport-19': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=30, hour=19),
+        'args': ('sport',),
+        'options': {'expires': 3600},
+    },
+
+    # Admin: 20 8,12,20 * * *
+    'postopus-admin-8': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=8),
+        'args': ('admin',),
+        'options': {'expires': 3600},
+    },
+    'postopus-admin-12': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=12),
+        'args': ('admin',),
+        'options': {'expires': 3600},
+    },
+    'postopus-admin-20': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=20),
+        'args': ('admin',),
+        'options': {'expires': 3600},
+    },
+
+    # Union: 30 11,17 * * *
+    'postopus-union-11': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=30, hour=11),
+        'args': ('union',),
+        'options': {'expires': 3600},
+    },
+    'postopus-union-17': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=30, hour=17),
+        'args': ('union',),
+        'options': {'expires': 3600},
+    },
+
+    # Detsad: 30 13 * * *
+    'postopus-detsad-13': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=30, hour=13),
+        'args': ('detsad',),
+        'options': {'expires': 3600},
+    },
+
+    # Addons (roulette): 20 6,11,18,22 * * *
+    'postopus-addons-6': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=6),
+        'args': ('addons',),
+        'options': {'expires': 3600},
+    },
+    'postopus-addons-11': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=11),
+        'args': ('addons',),
+        'options': {'expires': 3600},
+    },
+    'postopus-addons-18': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=18),
+        'args': ('addons',),
+        'options': {'expires': 3600},
+    },
+    'postopus-addons-22': {
+        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
+        'schedule': crontab(minute=20, hour=22),
+        'args': ('addons',),
+        'options': {'expires': 3600},
+    },
+
+    # Copy Setka (network repost): 7,37 * * * *
+    'postopus-copy-setka-07': {
+        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
+        'schedule': crontab(minute=7),
+        'kwargs': {'region_code': 'copy', 'theme': 'setka'},
+        'options': {'expires': 1800},
+    },
+    'postopus-copy-setka-37': {
+        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
+        'schedule': crontab(minute=37),
+        'kwargs': {'region_code': 'copy', 'theme': 'setka'},
+        'options': {'expires': 1800},
     },
 }
 
