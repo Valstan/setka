@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import ast
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 from urllib.parse import urlparse
@@ -36,7 +37,37 @@ def _load_json_env(name: str, default: Any) -> Any:
     try:
         return json.loads(raw)
     except Exception as e:
-        raise RuntimeError(f"Invalid JSON in env var {name}: {e}") from e
+        # Be forgiving in production: some deployments store python-literal dicts
+        # in env vars (single quotes) instead of strict JSON. Try to parse those too.
+        try:
+            return ast.literal_eval(raw)
+        except Exception:
+            # Another real-world case: systemd EnvironmentFile strips quotes, turning JSON into:
+            # {key:value,other_key:123} (keys and string values become unquoted).
+            # Try a best-effort repair for simple dict-like payloads.
+            try:
+                repaired = raw.strip()
+                if repaired.startswith("{") and repaired.endswith("}"):
+                    # Quote keys: {foo:1,bar:baz} -> {"foo":1,"bar":baz}
+                    repaired = re.sub(r'([{,])\s*([A-Za-z0-9_]+)\s*:', r'\1"\2":', repaired)
+                    # Quote bareword string values (but keep numbers/bools/null unquoted).
+                    def _quote_bare_value(m: re.Match[str]) -> str:
+                        val = m.group(1)
+                        tail = m.group(2)
+                        low = val.lower()
+                        if low in ("true", "false", "null"):
+                            return f":{low}{tail}"
+                        # number?
+                        if re.fullmatch(r"-?\\d+(\\.\\d+)?", val):
+                            return f":{val}{tail}"
+                        return f":\"{val}\"{tail}"
+
+                    repaired = re.sub(r':\s*([A-Za-z_][A-Za-z0-9_\-]*)\s*([,}])', _quote_bare_value, repaired)
+                    return json.loads(repaired)
+            except Exception:
+                pass
+
+            raise RuntimeError(f"Invalid JSON in env var {name}: {e}") from e
 
 
 def _collect_prefixed_tokens(prefix: str) -> Dict[str, str]:

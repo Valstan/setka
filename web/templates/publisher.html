@@ -44,15 +44,26 @@
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-        <div class="container">
-            <a class="navbar-brand" href="/">
-                <i class="fas fa-broadcast-tower me-2"></i>SETKA Publisher
-            </a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="/">Dashboard</a>
-                <a class="nav-link" href="/regions">Regions</a>
-                <a class="nav-link" href="/posts">Posts</a>
-                <a class="nav-link active" href="/publisher">Publisher</a>
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">SETKA</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto gap-2">
+                    <li class="nav-item"><a class="nav-link btn btn-sm btn-outline-light" href="/">Dashboard</a></li>
+                    <li class="nav-item"><a class="nav-link btn btn-sm btn-outline-light" href="/regions">Регионы</a></li>
+                    <li class="nav-item"><a class="nav-link btn btn-sm btn-outline-light" href="/posts">Посты</a></li>
+                    <li class="nav-item"><a class="nav-link btn btn-sm btn-outline-light" href="/communities">Сообщества</a></li>
+                    <li class="nav-item"><a class="nav-link btn btn-sm btn-outline-light" href="/notifications">Уведомления</a></li>
+                    <li class="nav-item"><a class="nav-link btn btn-sm btn-outline-light" href="/monitoring">Мониторинг</a></li>
+                    <li class="nav-item"><a class="nav-link btn btn-sm btn-outline-light" href="/tokens">Токены</a></li>
+                    <li class="nav-item"><a class="nav-link btn btn-sm btn-outline-light" href="/schedule">Расписание</a></li>
+                    <li class="nav-item"><a class="nav-link btn btn-sm btn-outline-light" href="/parsing">Парсинг</a></li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item"><a class="nav-link btn btn-sm btn-outline-light" href="/api/docs" target="_blank">API Docs</a></li>
+                </ul>
             </div>
         </div>
     </nav>

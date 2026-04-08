@@ -26,6 +26,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from celery import Celery
 from celery.schedules import crontab
 import asyncio
+import hashlib
+import json
+
+from utils.celery_asyncio import run_coro
 
 # Setup logging
 logging.basicConfig(
@@ -34,9 +38,132 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# --- Telegram alerts for Notifications ---
+
+def _pick_telegram_bot_token(telegram_tokens: dict) -> str | None:
+    # Prefer historically used names, then fall back to any configured token.
+    for key in ("VALSTANBOT", "ALERT", "AFONYA"):
+        token = telegram_tokens.get(key)
+        if token:
+            return token
+    # Any token is better than none
+    return next(iter(telegram_tokens.values()), None)
+
+
+def _compute_notifications_signature(payload: dict) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _maybe_send_telegram_notifications_alert() -> None:
+    """
+    Send Telegram alert if there are any notifications and the payload is NEW.
+
+    Triggered from `check_recent_comments` (last task in the hourly chain),
+    so that suggested/messages/comments are aggregated into a single alert.
+    """
+    try:
+        from modules.notifications.storage import NotificationsStorage
+        from config.runtime import TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID
+        import requests
+
+        storage = NotificationsStorage()
+        data = storage.get_all_notifications()
+
+        # Nothing to notify about.
+        if (data.get("total_count") or 0) <= 0:
+            return
+
+        bot_token = _pick_telegram_bot_token(TELEGRAM_TOKENS)
+        chat_id = TELEGRAM_ALERT_CHAT_ID
+        if not bot_token or not chat_id:
+            logger.warning("Telegram credentials not configured; skipping notifications alert")
+            return
+
+        # Dedupe: do not spam the same alert every hour.
+        signature_payload = {
+            "suggested_posts": data.get("suggested_posts", []),
+            "unread_messages": data.get("unread_messages", []),
+            "recent_comments": data.get("recent_comments", []),
+        }
+        signature = _compute_notifications_signature(signature_payload)
+        last_sig_key = f"{storage.key_prefix}:last_telegram_signature"
+        last_sig = storage.redis_client.get(last_sig_key)
+        if last_sig == signature:
+            return
+        storage.redis_client.setex(last_sig_key, 86400, signature)
+
+        suggested = data.get("suggested_posts") or []
+        messages = data.get("unread_messages") or []
+        comments = data.get("recent_comments") or []
+
+        # Build a compact message (HTML).
+        lines: list[str] = []
+        lines.append("<b>📬 Новые уведомления SETKA</b>")
+        lines.append("")
+        lines.append(f"📝 Предложенных постов: <b>{len(suggested)}</b>")
+        for n in suggested[:5]:
+            name = n.get("region_name", "?")
+            cnt = n.get("suggested_count", 0)
+            url = n.get("url", "")
+            if url:
+                lines.append(f"  • {name}: {cnt} — <a href='{url}'>проверить</a>")
+            else:
+                lines.append(f"  • {name}: {cnt}")
+        if len(suggested) > 5:
+            lines.append(f"  …и ещё {len(suggested) - 5} регион(ов)")
+
+        lines.append("")
+        lines.append(f"💬 Непрочитанных сообщений: <b>{len(messages)}</b>")
+        for n in messages[:5]:
+            name = n.get("region_name", "?")
+            cnt = n.get("unread_count", 0)
+            url = n.get("url", "")
+            if url:
+                lines.append(f"  • {name}: {cnt} — <a href='{url}'>открыть</a>")
+            else:
+                lines.append(f"  • {name}: {cnt}")
+        if len(messages) > 5:
+            lines.append(f"  …и ещё {len(messages) - 5} регион(ов)")
+
+        lines.append("")
+        lines.append(f"💭 Комментариев за сутки: <b>{len(comments)}</b>")
+        for c in comments[:5]:
+            name = c.get("region_name", "?")
+            text = (c.get("text") or "").strip().replace("<", "&lt;").replace(">", "&gt;")
+            post_url = c.get("post_url", "")
+            preview = (text[:120] + "…") if len(text) > 120 else text
+            if post_url:
+                lines.append(f"  • {name}: {preview} — <a href='{post_url}'>пост</a>")
+            else:
+                lines.append(f"  • {name}: {preview}")
+        if len(comments) > 5:
+            lines.append(f"  …и ещё {len(comments) - 5} комментариев")
+
+        message = "\n".join(lines)
+
+        resp = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.warning(f"Telegram sendMessage failed: {resp.status_code} {resp.text[:300]}")
+        else:
+            logger.info("Telegram notifications alert sent")
+
+    except Exception as e:
+        logger.warning(f"Failed to send Telegram notifications alert: {e}")
+
+
 # Создаем Celery app
 # IMPORTANT: keep a single Celery runtime and explicitly include tasks that are scheduled by beat.
-app = Celery('setka', include=['tasks.correct_workflow_tasks'])
+app = Celery('setka', include=['tasks.correct_workflow_tasks', 'tasks.parsing_tasks'])
 app.config_from_object('config.celery_config')
 
 
@@ -58,7 +185,7 @@ def run_vk_monitoring():
         
         # Создаем и запускаем workflow
         workflow = ProductionWorkflow()
-        result = asyncio.run(workflow.run())
+        result = run_coro(workflow.run())
         
         logger.info("VK monitoring completed successfully!")
         logger.info(f"Result: {result}")
@@ -147,7 +274,7 @@ def create_daily_digest():
                 
                 return digests
         
-        digests = asyncio.run(create_digest())
+        digests = run_coro(create_digest())
         
         logger.info(f"Daily digest completed! Created {len(digests)} digests")
         
@@ -186,9 +313,8 @@ def check_suggested_posts():
         from database.models import Region
         from modules.notifications.vk_suggested_checker import VKSuggestedChecker
         from modules.notifications.storage import NotificationsStorage
-        from config.runtime import VK_TOKENS, TELEGRAM_TOKENS
+        from config.runtime import VK_TOKENS
         from sqlalchemy import select
-        import requests
         
         async def check():
             # Получаем все регионы с главными группами
@@ -196,7 +322,7 @@ def check_suggested_posts():
                 result = await session.execute(
                     select(Region).where(
                         Region.vk_group_id.isnot(None),
-                        Region.is_active == True
+                        # Уведомления должны проверяться независимо от статуса "пауза" региона.
                     )
                 )
                 regions = list(result.scalars())
@@ -233,37 +359,9 @@ def check_suggested_posts():
                 
                 logger.info(f"Found {len(notifications)} groups with suggested posts")
                 
-                # Отправляем в Telegram если есть уведомления
-                if notifications:
-                    telegram_token = TELEGRAM_TOKENS.get("AFONYA")
-                    telegram_chat_id = "-4512545012"  # ID чата для уведомлений
-                    
-                    if telegram_token:
-                        message = "📬 *Предложенные посты в группах:*\n\n"
-                        
-                        for notif in notifications:
-                            message += f"📍 *{notif['region_name']}*\n"
-                            message += f"   Постов: {notif['suggested_count']}\n"
-                            message += f"   🔗 [Проверить]({notif['url']})\n\n"
-                        
-                        try:
-                            requests.post(
-                                f"https://api.telegram.org/bot{telegram_token}/sendMessage",
-                                json={
-                                    'chat_id': telegram_chat_id,
-                                    'text': message,
-                                    'parse_mode': 'Markdown',
-                                    'disable_web_page_preview': True
-                                },
-                                timeout=10
-                            )
-                            logger.info("Telegram notification sent")
-                        except Exception as e:
-                            logger.error(f"Failed to send Telegram notification: {e}")
-                
                 return notifications
         
-        notifications = asyncio.run(check())
+        notifications = run_coro(check())
         
         return {
             'success': True,
@@ -330,7 +428,7 @@ def check_unread_messages():
                 result = await session.execute(
                     select(Region).where(
                         Region.vk_group_id.isnot(None),
-                        Region.is_active == True
+                        # Уведомления должны проверяться независимо от статуса "пауза" региона.
                     )
                 )
                 regions = list(result.scalars())
@@ -365,7 +463,7 @@ def check_unread_messages():
                 logger.info(f"Found {len(notifications)} groups with unread messages")
                 return notifications
 
-        notifications = asyncio.run(check())
+        notifications = run_coro(check())
 
         return {
             'success': True,
@@ -440,7 +538,7 @@ def check_recent_comments():
                 rows = await session.execute(
                     select(Region.id, Region.code, Region.name, Region.vk_group_id)
                     .where(
-                        Region.is_active == True,
+                        # Уведомления должны проверяться независимо от статуса "пауза" региона.
                         Region.vk_group_id.isnot(None),
                     )
                     .order_by(Region.id)
@@ -471,7 +569,11 @@ def check_recent_comments():
                 logger.info(f"Found {len(notifications)} recent comments (main INFO groups only)")
                 return notifications
 
-        notifications = asyncio.run(check())
+        notifications = run_coro(check())
+
+        # После обновления всех ключей (suggested/messages/comments) отправляем агрегированное
+        # Telegram-уведомление (если есть новые элементы).
+        _maybe_send_telegram_notifications_alert()
 
         return {
             'success': True,
@@ -520,7 +622,7 @@ def cleanup_old_posts():
                 
                 return deleted_count
         
-        deleted_count = asyncio.run(cleanup())
+        deleted_count = run_coro(cleanup())
         
         logger.info(f"Cleanup completed! Deleted {deleted_count} old posts")
         

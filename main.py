@@ -10,15 +10,16 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
 import logging
+import os
 from pathlib import Path
 
 from database.connection import get_db_session, init_db, close_db
 from modules.module_activity_notifier import notify_system_startup
-from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher
+from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher, parsing
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, os.getenv("LOG_LEVEL", "WARNING").upper(), logging.WARNING),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('/home/valstan/SETKA/logs/app.log'),
@@ -103,6 +104,7 @@ app.include_router(workflow.router, tags=["Workflow"])
 app.include_router(system_monitoring.router, tags=["System Monitoring"])
 app.include_router(task_monitoring.router, tags=["Task Monitoring"])
 app.include_router(publisher.router, prefix="/api/publisher", tags=["VK Publisher"])
+app.include_router(parsing.router, tags=["Parsing"])
 
 
 @app.get("/")
@@ -173,6 +175,12 @@ async def diagnostic_monitoring_page(request: Request):
 async def schedule_page(request: Request):
     """Schedule management page"""
     return templates.TemplateResponse("schedule.html", {"request": request})
+
+
+@app.get("/parsing")
+async def parsing_page(request: Request):
+    """VK parsing page"""
+    return templates.TemplateResponse("parsing.html", {"request": request})
 
 
 @app.get("/favicon.ico")

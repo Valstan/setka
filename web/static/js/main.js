@@ -14,23 +14,23 @@ async function updateSystemStatus() {
     if (!statusElement) return;
     
     const statusText = statusElement.querySelector('.status-text');
-    const statusIcon = statusElement.querySelector('i');
     
     try {
         const health = await apiClient.getHealth();
         
+        statusElement.classList.remove('text-success', 'text-warning', 'text-danger');
         if (health.status === 'healthy') {
-            statusIcon.className = 'bi bi-circle-fill text-success';
-            statusText.textContent = 'Система';
+            statusElement.classList.add('text-success');
+            statusText.textContent = 'Система: OK';
             statusElement.title = 'Система работает нормально';
         } else {
-            statusIcon.className = 'bi bi-circle-fill text-warning';
-            statusText.textContent = 'Предупреждение';
+            statusElement.classList.add('text-warning');
+            statusText.textContent = 'Система: WARN';
             statusElement.title = 'Система работает с предупреждениями';
         }
     } catch (error) {
-        statusIcon.className = 'bi bi-circle-fill text-danger';
-        statusText.textContent = 'Ошибка';
+        statusElement.classList.add('text-danger');
+        statusText.textContent = 'Система: OFF';
         statusElement.title = 'Система недоступна: ' + error.message;
         console.error('Failed to check system status:', error);
     }

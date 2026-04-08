@@ -18,6 +18,7 @@ import pytz
 from celery import Task
 from celery_app import app
 from modules.correct_workflow import correct_workflow_manager
+from utils.celery_asyncio import run_coro
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ def run_correct_workflow(self: Task):
         logger.info(f"✅ Inside work hours: {current_hour}:00 MSK")
         
         # Запускаем async функцию в event loop
-        result = asyncio.run(correct_workflow_manager.process_all_regions_by_schedule())
+        result = run_coro(correct_workflow_manager.process_all_regions_by_schedule())
         
         logger.info("="*80)
         logger.info("📊 CORRECT WORKFLOW COMPLETE")
@@ -94,7 +95,7 @@ def test_single_region(self: Task, region_code: str = "test"):
     
     try:
         # Запускаем async функцию в event loop
-        result = asyncio.run(correct_workflow_manager.process_region_by_schedule(region_code))
+        result = run_coro(correct_workflow_manager.process_region_by_schedule(region_code))
         
         logger.info("="*60)
         logger.info("📊 SINGLE REGION TEST COMPLETE")

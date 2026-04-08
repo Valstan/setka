@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}Парсинг - SETKA{% endblock %}
+{% block nav_parsing %}active{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="h4 mb-3">Парсинг VK постов</h1>
+            <p class="text-muted">Выгрузка постов из сообществ и личных страниц с безопасным темпом запросов.</p>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-body">
+                    <form id="parsing-form">
+                        <div class="mb-3">
+                            <label for="sourceInput" class="form-label">Адрес сообщества или страницы</label>
+                            <input type="text" class="form-control" id="sourceInput" placeholder="https://vk.com/club123 или vk.com/id123" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Формат</label>
+                            <div class="form-text">В ZIP будут оба файла: HTML и TXT.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Что скачивать</label>
+                            <div class="row g-2" id="includeOptions">
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="includeText" checked>
+                                        <label class="form-check-label" for="includeText">Текст</label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="includePhotos" checked>
+                                        <label class="form-check-label" for="includePhotos">Фото</label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="includeVideos">
+                                        <label class="form-check-label" for="includeVideos">Видео</label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="includeAudio">
+                                        <label class="form-check-label" for="includeAudio">Аудио</label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="includeLinks">
+                                        <label class="form-check-label" for="includeLinks">Ссылки</label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="includeDocs">
+                                        <label class="form-check-label" for="includeDocs">Документы</label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="includePolls">
+                                        <label class="form-check-label" for="includePolls">Опросы</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="downloadAttachments" checked>
+                                <label class="form-check-label" for="downloadAttachments">Скачивать вложения файлами</label>
+                            </div>
+                            <div class="form-text">Если выключено — в HTML останутся только ссылки на вложения.</div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-6">
+                                <label for="dateFrom" class="form-label">Дата начала</label>
+                                <input type="date" class="form-control" id="dateFrom">
+                            </div>
+                            <div class="col-6">
+                                <label for="dateTo" class="form-label">Дата окончания</label>
+                                <input type="date" class="form-control" id="dateTo">
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="limitInput" class="form-label">Количество постов</label>
+                            <input type="number" class="form-control" id="limitInput" min="1" max="5000" value="200">
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100" id="startParsingBtn">Начать парсинг</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-body">
+                    <h6 class="mb-3">Статус</h6>
+                    <div class="progress mb-2" style="height: 18px;">
+                        <div class="progress-bar" id="parsingProgress" role="progressbar" style="width: 0%;">0%</div>
+                    </div>
+                    <div class="small text-muted mb-3" id="parsingStatus">Ожидание запуска.</div>
+
+                    <div class="alert alert-danger d-none" id="parsingError"></div>
+
+                    <div class="mt-3 d-none" id="videoLimitBlock">
+                        <h6 class="mb-2">Лимит видео</h6>
+                        <div class="progress" style="height: 10px;">
+                            <div class="progress-bar" id="videoLimitProgress" style="width: 0%;"></div>
+                        </div>
+                        <div class="small text-muted" id="videoLimitText"></div>
+                    </div>
+
+                    <div class="mt-3 d-none" id="videoDownloads">
+                        <h6 class="mb-2">Видео</h6>
+                        <div id="videoList" class="small"></div>
+                    </div>
+                    <div class="mt-3 d-none" id="videoReport">
+                        <h6 class="mb-2">Отчет по видео</h6>
+                        <ul class="small text-muted mb-0" id="videoReportList"></ul>
+                        <div class="mt-2">
+                            <a class="small" id="videoReportLink" href="#" target="_blank">Открыть полный отчет</a>
+                        </div>
+                    </div>
+
+                    <div class="mt-3 d-none" id="downloadBlock">
+                        <a class="btn btn-success w-100" id="downloadLink" href="#" target="_blank">Скачать ZIP</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-body">
+                    <h6 class="mb-2">Замечания</h6>
+                    <ul class="small text-muted mb-0">
+                        <li>Парсинг идет медленно, чтобы не превышать лимиты VK API.</li>
+                        <li>TXT сохраняет только текст постов.</li>
+                        <li>Результат выдаётся в ZIP-архиве (HTML + TXT + вложения).</li>
+                        <li>Файлы доступны 7 дней, затем автоматически удаляются.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/parsing.js"></script>
+{% endblock %}
