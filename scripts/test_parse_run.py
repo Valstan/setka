@@ -45,10 +45,11 @@ async def main():
     async with AsyncSessionLocal() as session:
         # 1. Проверяем регион
         logger.info('\n[ШАГ 1] Проверка региона и настроек')
+        from sqlalchemy import select
         result = await session.execute(
-            Region.__table__.select().where(Region.code == 'test')
+            select(Region).where(Region.code == 'test')
         )
-        region = result.scalar_one_or_none()
+        region = result.scalars().first()
         if not region:
             logger.error('❌ Регион test не найден в БД!')
             return {'success': False, 'error': 'Region not found'}
@@ -57,15 +58,14 @@ async def main():
         # 2. Проверяем сообщества
         logger.info('\n[ШАГ 2] Проверка сообществ для парсинга')
         result = await session.execute(
-            Community.__table__.select().where(
+            select(Community).where(
                 Community.region_id == region.id,
                 Community.is_active == True
             ).order_by(Community.category)
         )
-        communities = result.fetchall()
+        communities = result.scalars().all()
         logger.info(f'Найдено {len(communities)} сообществ:')
-        for comm in communities:
-            c = comm[0]
+        for c in communities:
             logger.info(f'  - {c.name:40s} | category={c.category:20s} | vk_id={c.vk_id}')
 
         if not communities:
@@ -92,12 +92,12 @@ async def main():
         # 4. Загружаем work table для отслеживания опубликованного
         logger.info('\n[ШАГ 4] Загрузка work table (дубликаты)')
         result = await session.execute(
-            WorkTable.__table__.select().where(
+            select(WorkTable).where(
                 WorkTable.region_code == 'test',
                 WorkTable.theme == 'novost'
             )
         )
-        work_table = result.scalar_one_or_none()
+        work_table = result.scalars().first()
         if work_table:
             logger.info(f'Work table найден: {len(work_table.lip or [])} LIP записей, {len(work_table.hash or [])} hash записей')
         else:
@@ -107,7 +107,7 @@ async def main():
             await session.commit()
 
         # 5. Берём сообщества категории 'news' или первые 5 для теста
-        test_communities = [c[0] for c in communities[:5]]  # Ограничим 5 для теста
+        test_communities = communities[:5]  # Ограничим 5 для теста
         logger.info(f'\n[ШАГ 5] Парсинг {len(test_communities)} сообществ')
 
         # Собираем vk_id

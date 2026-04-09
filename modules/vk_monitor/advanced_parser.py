@@ -163,9 +163,18 @@ class AdvancedVKParser:
         """Fetch posts from a single VK community."""
         # Use VK client to get wall posts
         # Implementation depends on your VK client setup
-        
+
         if hasattr(self.vk_client, 'get_wall_posts'):
-            return await self.vk_client.get_wall_posts(community_id, count)
+            # VKClient is synchronous, run in thread
+            import asyncio
+            posts = await asyncio.to_thread(
+                self.vk_client.get_wall_posts, -abs(community_id), count
+            )
+            # Add owner_id to each post (VK API may not include it for wall.get)
+            for post in posts:
+                if 'owner_id' not in post:
+                    post['owner_id'] = -abs(community_id)
+            return posts
         elif hasattr(self.vk_client, 'api_call'):
             response = await self.vk_client.api_call('wall.get', {
                 'owner_id': -abs(community_id),  # Negative for groups
