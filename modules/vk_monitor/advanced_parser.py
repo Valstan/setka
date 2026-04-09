@@ -39,7 +39,7 @@ class AdvancedVKParser:
     Returns filtered posts ready for digest building.
     """
     
-    def __init__(self, vk_client: VKAPIClient):
+    def __init__(self, vk_client: VKClient):
         """
         Args:
             vk_client: VK API client instance
