@@ -195,7 +195,7 @@ class DigestBuilder:
         
         def get_score(post_data):
             return post_popularity(
-                views=post_data.get('views', 0),
+                views=post_data.get('views', {}).get('count', 0) if isinstance(post_data.get('views'), dict) else post_data.get('views', 0),
                 likes=post_data.get('likes', {}).get('count', 0),
                 comments=post_data.get('comments', {}).get('count', 0),
                 reposts=post_data.get('reposts', {}).get('count', 0),

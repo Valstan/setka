@@ -142,7 +142,7 @@ class AdvancedVKParser:
         # Sort by popularity
         all_posts.sort(
             key=lambda p: post_popularity(
-                views=p.get('views', 0),
+                views=p.get('views', {}).get('count', 0) if isinstance(p.get('views'), dict) else p.get('views', 0),
                 likes=p.get('likes', {}).get('count', 0),
                 comments=p.get('comments', {}).get('count', 0),
                 reposts=p.get('reposts', {}).get('count', 0),

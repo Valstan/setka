@@ -214,7 +214,15 @@ class VKPublisher:
         # Use vk_client to make API call
         # This will handle token rotation automatically
         if hasattr(self.vk_client, 'api_call'):
-            response = await self.vk_client.api_call(method, params)
+            import asyncio, inspect
+            api_call_method = getattr(self.vk_client, 'api_call')
+            if inspect.iscoroutinefunction(api_call_method):
+                response = await api_call_method(method, params)
+            else:
+                # Sync method - run in thread
+                response = await asyncio.get_event_loop().run_in_executor(
+                    None, api_call_method, method, params
+                )
         elif hasattr(self.vk_client, 'method'):
             response = self.vk_client.method(method, params)
         else:

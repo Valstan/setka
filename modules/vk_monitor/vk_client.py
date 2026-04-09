@@ -284,7 +284,7 @@ class VKClient:
     async def check_token_validity(self) -> bool:
         """
         Check if token is still valid
-        
+
         Returns:
             True if token is valid, False otherwise
         """
@@ -295,6 +295,27 @@ class VKClient:
         except Exception as e:
             logger.error(f"Token validation failed: {e}")
             return False
+
+    def api_call(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Make a synchronous VK API call (for use with VKPublisher).
+
+        Args:
+            method: VK API method name (e.g., 'wall.post', 'photos.getWallUploadServer')
+            params: Method parameters
+
+        Returns:
+            VK API response dict
+        """
+        try:
+            response = self.session.method(method, params)
+            return response
+        except vk_api.exceptions.ApiError as e:
+            logger.error(f"VK API error ({method}): {e}")
+            return {'error': {'error_msg': str(e)}}
+        except Exception as e:
+            logger.error(f"Unexpected error in {method}: {e}")
+            return {'error': {'error_msg': str(e)}}
 
 
 class VKTokenRotator:
