@@ -12,7 +12,7 @@ import random
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
-from modules.vk_monitor.vk_client import VKAPIClient
+from modules.vk_monitor.vk_client import VKClient
 from modules.filters.base import FilterResult
 from utils.post_utils import lip_of_post, clear_copy_history, post_popularity
 from utils.vk_attachments import extract_vk_attachments, has_attachments
