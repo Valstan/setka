@@ -78,71 +78,66 @@ class AdvertisementFilter(BaseFilter):
     async def apply(self, post_data: dict, context: dict) -> FilterResult:
         """
         Check if post is advertisement.
-        
+
         Args:
             post_data: VK post data
             context: Filter context (includes theme, region, etc.)
-        
+
         Returns:
             FilterResult with accept/reject decision
         """
         theme = context.get('theme', '')
         text = post_data.get('text', '') or ''
         marked_as_ads = post_data.get('marked_as_ads', False)
-        
+
         # Skip ad detection for reklama theme
         if theme == 'reklama':
-            return FilterResult.accept(self.name)
-        
+            self.update_stats(FilterResult(passed=True))
+            return FilterResult(passed=True, metadata={'score': 0})
+
         # Level 1: VK API flag
         if marked_as_ads:
-            self.stats['rejected'] += 1
-            return FilterResult.reject(
-                self.name,
-                reason="VK API marked as ads",
-                severity='high'
-            )
-        
+            result = FilterResult(passed=False, reason="VK API marked as ads")
+            self.update_stats(result)
+            return result
+
         # Level 2: Legal advertising markers
         text_lower = text.lower()
         for marker in self.LEGAL_MARKERS:
             if marker.lower() in text_lower:
-                self.stats['rejected'] += 1
-                return FilterResult.reject(
-                    self.name,
-                    reason=f"Legal ad marker found: '{marker}'",
-                    severity='high'
-                )
-        
+                result = FilterResult(passed=False, reason=f"Legal ad marker found: '{marker}'")
+                self.update_stats(result)
+                return result
+
         # Level 3: Commercial patterns scoring
         score = self._calculate_commercial_score(text_lower)
-        
+
         if score >= self.SCORE_THRESHOLD:
-            self.stats['rejected'] += 1
-            return FilterResult.reject(
-                self.name,
+            result = FilterResult(
+                passed=False,
                 reason=f"Commercial score too high: {score} (threshold: {self.SCORE_THRESHOLD})",
-                severity='medium',
                 metadata={'score': score}
             )
-        
+            self.update_stats(result)
+            return result
+
         # Level 4: Suspicious links
         for link in self.SUSPICIOUS_LINKS:
             if link in text_lower:
                 score += 1
-        
+
         if score >= self.SCORE_THRESHOLD:
-            self.stats['rejected'] += 1
-            return FilterResult.reject(
-                self.name,
+            result = FilterResult(
+                passed=False,
                 reason=f"Suspicious ads links found, score: {score}",
-                severity='medium',
                 metadata={'score': score}
             )
-        
+            self.update_stats(result)
+            return result
+
         # Not an ad
-        self.stats['accepted'] += 1
-        return FilterResult.accept(self.name, metadata={'score': score})
+        self.update_stats(FilterResult(passed=True))
+        return FilterResult(passed=True, metadata={'score': score})
     
     def _calculate_commercial_score(self, text_lower: str) -> int:
         """Calculate commercial patterns score."""
