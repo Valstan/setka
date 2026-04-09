@@ -15,6 +15,27 @@
 
 ---
 
+## ✅ Статус настройки MCP (обновлено: 2026-04-09)
+
+**MCP серверы настроены и протестированы:**
+
+| Сервер | Статус | Описание |
+|--------|--------|----------|
+| `setka-vps` | ✅ Работает | Основной сервер SETKA |
+| `sshmatricarmz` | ✅ Работает | Matrix ARMZ VPS |
+| `gonba-vps` | ✅ Работает | GONBA VPS |
+| `karman-vps` | ✅ Работает | KARMAN VPS |
+
+**Конфигурация:** `c:\Users\valstan\.qwen\settings.json`
+
+**Результаты тестов:**
+- ✅ SSH подключение ко всем серверам работает
+- ✅ Сервисы SETKA активны (setka, setka-celery-worker, setka-celery-beat)
+- ✅ Health check проходит: `{"status":"healthy","service":"SETKA"}`
+- ✅ vps-manage.sh скрипт работает (команды: status, health, disk, logs, и др.)
+
+---
+
 ## Настройка на Windows + VS Code (Qwen Code / Cline / Roo Code)
 
 ### Шаг 1: Убедитесь, что Node.js установлен
@@ -33,21 +54,23 @@ node --version
 ssh-keygen -t ed25519 -C "valstan@vscode-windows"
 ```
 
-Нажмите Enter для пути по умолчанию (`C:\Users\ВашеИмя\.ssh\id_ed25519`). Пароль можно не ставить.
+Нажмите Enter для пути по умолчанию (`C:\Users\valstan\.ssh\id_ed25519`). Пароль можно не ставить.
 
 Затем скопируйте публичный ключ на VPS:
 ```powershell
-type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh valstan@81.177.6.46 "cat >> ~/.ssh/authorized_keys"
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh valstan@3931b3fe50ab.vps.myjino.ru -p 49237 "cat >> ~/.ssh/authorized_keys"
 ```
 
 Проверьте, что вход по ключу работает без пароля:
 ```powershell
-ssh valstan@81.177.6.46 "echo OK"
+ssh setka "echo OK"
 ```
 
 ### Шаг 3: Настройте MCP-сервер в VS Code
 
 > **Важно**: Настройка зависит от того, какое AI-расширение вы используете в VS Code.
+>
+> **✅ Уже настроено**: MCP серверы добавлены в `c:\Users\valstan\.qwen\settings.json`
 
 ---
 
@@ -222,15 +245,24 @@ help            - Показать справку
 
 ---
 
-## Информация о сервере
+## Информация о серверах
 
-- **IP адрес**: 81.177.6.46
+### Основной сервер: SETKA VPS
+
 - **Домен**: 3931b3fe50ab.vps.myjino.ru
 - **HTTPS**: https://3931b3fe50ab.vps.myjino.ru
 - **Пользователь**: valstan
-- **Порт SSH**: 22
+- **Порт SSH**: 49237
 - **Проект**: SETKA
 - **Директория проекта**: `/home/valstan/SETKA`
+
+### Дополнительные серверы
+
+| Имя | Домен | Порт | Описание |
+|-----|-------|------|----------|
+| `sshmatricarmz` | a6fd55b8e0ae.vps.myjino.ru | 49412 | Matrix ARMZ VPS |
+| `gonba-vps` | 831d0ce99bdf.vps.myjino.ru | 22 | GONBA VPS |
+| `karman-vps` | 4ce93c2b59f9.vps.myjino.ru | 49366 | KARMAN VPS |
 
 ### Сервисы
 
