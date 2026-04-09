@@ -12,9 +12,9 @@ from utils.post_utils import (
     lip_of_post,
     url_of_post,
     extract_source_attribution,
-    truncate_text,
     format_post_stats,
 )
+from utils.text_utils import truncate_text
 from utils.vk_attachments import (
     extract_vk_attachments,
     build_attachments_list,
