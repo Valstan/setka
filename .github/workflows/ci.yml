@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+
+      - name: Lint with flake8
+        run: |
+          flake8 . --max-line-length=100 --extend-ignore=E203,W503 \
+            --exclude=venv,build,dist,.git
+
+      - name: Check formatting with black
+        run: |
+          black --check --line-length 100 .
+
+      - name: Check import order with isort
+        run: |
+          isort --check-only --profile black --line-length 100 .
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -q --cov=modules --cov=tasks --cov=config \
+            --cov-report=xml --cov-report=term-missing
+        env:
+          # Provide dummy values so config/runtime.py doesn't crash
+          DATABASE_URL: "postgresql+asyncpg://test:test@localhost/test"
+          REDIS_URL: "redis://localhost:6379/0"
+
+      - name: Upload coverage to GitHub
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
