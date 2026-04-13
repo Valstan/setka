@@ -148,6 +148,41 @@ if isinstance(VK_TOKENS_JSON, dict):
         if v:
             VK_TOKENS[str(k).upper()] = str(v)
 
+# ============================================================================
+# VK Token Roles: PARSE vs PUBLISH
+# ============================================================================
+# All VK_TOKENS can be used for parsing (reading posts from VK).
+# Only explicitly designated tokens can be used for PUBLISHING.
+#
+# Configuration (env vars):
+#   VK_PUBLISH_TOKEN_NAME=VALSTAN  # Which token name is allowed to publish
+#   If not set, defaults to "VALSTAN" if present in VK_TOKENS, else first token.
+
+VK_PUBLISH_TOKEN_NAME = _getenv("VK_PUBLISH_TOKEN_NAME", "VALSTAN")
+
+def get_publish_token() -> Optional[str]:
+    """Get the VK token designated for publishing."""
+    if VK_PUBLISH_TOKEN_NAME and VK_PUBLISH_TOKEN_NAME.upper() in VK_TOKENS:
+        return VK_TOKENS[VK_PUBLISH_TOKEN_NAME.upper()]
+    # Fallback: first available token
+    if VK_TOKENS:
+        return next(iter(VK_TOKENS.values()))
+    return None
+
+def validate_publish_token(token: str, token_name: str = "") -> bool:
+    """
+    Validate that a token is allowed to publish.
+    Only the designated publish token can publish.
+    """
+    publish_token = get_publish_token()
+    if publish_token is None:
+        return False
+    return token == publish_token
+
+def get_parse_tokens() -> Dict[str, str]:
+    """Get all VK tokens (all can be used for parsing)."""
+    return dict(VK_TOKENS)
+
 # Some code expects MAIN/AUX split; map everything to MAIN by default
 VK_MAIN_TOKENS = {name: {"token": token} for name, token in VK_TOKENS.items()}
 VK_AUXILIARY_TOKENS: Dict[str, Dict[str, str]] = {}

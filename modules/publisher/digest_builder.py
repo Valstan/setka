@@ -63,9 +63,12 @@ class DigestBuilder:
     # VK limits
     MAX_TEXT_LENGTH = 4096  # VK post text limit
     MAX_ATTACHMENTS = 10    # VK wall.post media limit
-    
+
     # Default header
     DEFAULT_HEADER = "📰 Дайджест новостей"
+
+    # Post separator emoji (from old_postopus style)
+    POST_MARKER = "✍ "
     
     def __init__(
         self,
@@ -96,79 +99,90 @@ class DigestBuilder:
     ) -> DigestResult:
         """
         Build digest from list of posts.
-        
+
+        Format (old_postopus style):
+            {HEADER}
+
+            ✍ {post_text_1}
+
+            @https://vk.com/wall-... (source_name)
+
+            ✍ {post_text_2}
+
+            @https://vk.com/wall-... (source_name)
+
+            #hashtag1 #hashtag2
+
+        IMPORTANT: Posts that don't fit entirely are SKIPPED (not truncated).
+        They will be included in the next iteration.
+
         Args:
             posts: List of VK post data dicts
             group_names: Dict mapping community_vk_id -> group display name
-        
+
         Returns:
             DigestResult with formatted text and attachments
         """
         if group_names is None:
             group_names = {}
-        
+
         # Sort posts by popularity
         sorted_posts = self._sort_by_popularity(posts)
-        
+
         # Build digest text and collect attachments
         digest_parts = []
         all_attachments = []
         posts_included = []
-        
+
         # Add header
         digest_parts.append(self.header)
-        digest_parts.append("")  # Empty line
-        
+        digest_parts.append("")  # Empty line after header
+
+        # Calculate static content that must always fit
+        hashtag_text = self._build_hashtag_text()
+        hashtag_overhead = len(hashtag_text) + 2 if hashtag_text else 2  # +2 for newlines
+
         for post_data in sorted_posts:
             # Extract post info
             owner_id = post_data.get('owner_id', post_data.get('from_id', 0))
             post_id = post_data.get('id', 0)
             post_text = post_data.get('text', '') or ''
-            
+
             # Get group name
             community_vk_id = post_data.get('community_vk_id', owner_id)
             group_name = group_names.get(str(community_vk_id), group_names.get(str(owner_id), ''))
-            
-            # Create post entry
-            if self.repost_mode:
-                # Repost mode: just add repost link
-                digest_parts.append(url_of_post(owner_id, post_id))
-            else:
-                # Copy mode: add attribution + text
-                attribution = extract_source_attribution(post_data, group_name)
-                
-                # Truncate text if needed (leave room for other posts)
-                available_length = self._available_length(digest_parts, len(posts_included) + 1)
-                truncated_text = truncate_text(post_text, available_length)
-                
-                digest_parts.append(attribution)
-                if truncated_text:
-                    digest_parts.append(truncated_text)
-                
-            digest_parts.append("")  # Separator
-            
+
+            # Build the complete post entry
+            post_entry = self._format_post_entry(post_data, post_text, owner_id, post_id, group_name)
+
+            # Calculate total length if we add this post
+            current_length = sum(len(part) for part in digest_parts)
+            new_total = current_length + len(post_entry) + hashtag_overhead
+
+            # Check if the FULL post fits (no truncation allowed)
+            if new_total > self.max_text_length:
+                # Skip this post — it will be included in the next iteration
+                continue
+
+            # Add the post
+            digest_parts.append(post_entry)
+            digest_parts.append("")  # Empty line separator
+
             # Track lip
             lip = lip_of_post(owner_id, post_id)
             posts_included.append(lip)
-            
+
             # Extract attachments
             attachments = extract_vk_attachments(post_data)
             all_attachments.append(attachments)
-        
+
         # Add hashtags at the end
-        hashtag_text = self._build_hashtag_text()
         if hashtag_text:
             digest_parts.append(hashtag_text)
-        
-        # Join all parts
+
+        # Join all parts — NO final truncation
         full_text = "\n".join(digest_parts)
-        
-        # Truncate if exceeds limit
-        max_exceeded = False
-        if len(full_text) > self.max_text_length:
-            full_text = truncate_text(full_text, self.max_text_length, "\n\n...")
-            max_exceeded = True
-        
+
         # Build attachments list (max 10)
         flat_attachments = []
         for attachments in all_attachments:
@@ -176,19 +190,63 @@ class DigestBuilder:
             if len(flat_attachments) >= self.MAX_ATTACHMENTS:
                 flat_attachments = flat_attachments[:self.MAX_ATTACHMENTS]
                 break
-        
+
         max_attachments_exceeded = len(flat_attachments) > self.MAX_ATTACHMENTS
-        
+
         return DigestResult(
             text=full_text,
             attachments_list=flat_attachments[:self.MAX_ATTACHMENTS],
             post_count=len(posts_included),
             total_length=len(full_text),
             posts_included=posts_included,
-            max_length_exceeded=max_exceeded,
+            max_length_exceeded=False,  # No truncation — posts that don't fit are skipped
             max_attachments_exceeded=max_attachments_exceeded,
         )
-    
+
+    def _format_post_entry(
+        self,
+        post_data: Dict[str, Any],
+        post_text: str,
+        owner_id: int,
+        post_id: int,
+        group_name: str,
+    ) -> str:
+        """
+        Format a single post entry with ✍ marker, text, and source attribution.
+
+        Format:
+            ✍ {post_text}
+
+            @https://vk.com/wall{owner_id}_{post_id} (group_name)
+
+        Args:
+            post_data: Raw post data dict
+            post_text: Post text content
+            owner_id: VK owner_id
+            post_id: VK post ID
+            group_name: Source group display name
+
+        Returns:
+            Formatted post entry string
+        """
+        parts = []
+
+        # Post marker + text
+        if post_text:
+            parts.append(f"{self.POST_MARKER}{post_text}")
+        else:
+            # Text-only post with marker
+            parts.append(f"{self.POST_MARKER}[без текста]")
+
+        # Empty line between text and attribution
+        parts.append("")
+
+        # Source attribution
+        attribution = extract_source_attribution(post_data, group_name)
+        parts.append(attribution)
+
+        return "\n".join(parts)
+
     def _sort_by_popularity(self, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Sort posts by popularity score (descending)."""
         from utils.post_utils import post_popularity

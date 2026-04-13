@@ -100,75 +100,118 @@ def parse_and_publish_theme(
                 )
                 
                 parser_stats = parser.get_stats()
-                
-                # Build digest
+
+                # Build digests
                 header = (region_config.zagolovki or {}).get(theme, f"📰 {theme.title()}")
                 hashtags = []
                 heshteg = region_config.heshteg or {}
                 if theme in heshteg:
                     hashtags.append(heshteg[theme])
-                
-                local_hashtag = ""
+
                 heshteg_local = region_config.heshteg_local or {}
                 local_hashtag = f"#{heshteg_local.get('raicentr', '')}" if heshteg_local else ""
-                
-                builder = DigestBuilder(
-                    header=header,
-                    hashtags=hashtags,
-                    local_hashtag=local_hashtag,
-                    max_text_length=region_config.text_post_maxsize_simbols or 4096,
-                    repost_mode=region_config.setka_regim_repost,
-                )
-                
-                if not posts:
-                    logger.info(f"No posts to publish for {region_code}/{theme}")
-                    return {
-                        'success': True,
-                        'posts_published': 0,
-                        'stats': parser_stats,
-                    }
-                
-                digest_result = builder.build_digest(posts)
-                
-                # Publish
-                vk_publisher = VKPublisher(
-                    vk_client,
-                    test_polygon_mode=test_mode,
-                )
-                
-                # Get target group ID
-                from database.models import Region
-                region_result = await session.execute(
-                    Region.__table__.select().where(Region.code == region_code)
-                )
-                region = region_result.scalar_one_or_none()
-                
-                if not region or not region.vk_group_id:
-                    return {'success': False, 'error': 'No VK group ID for region'}
-                
-                publish_result = await vk_publisher.publish_digest(
-                    group_id=region.vk_group_id,
-                    text=digest_result.text,
-                    attachments=digest_result.attachments_list,
-                )
-                
-                # Update work table lip
-                if publish_result.get('success') and work_table:
+
+                # Split posts by sentiment
+                from modules.publisher.digest_splitter import DigestSplitter
+                splitter = DigestSplitter()
+                mourning_posts, regular_posts = splitter.split_posts(posts)
+                logger.info(f"Split: {len(mourning_posts)} mourning, {len(regular_posts)} regular")
+
+                results = []
+
+                # Build and publish regular digest
+                if regular_posts:
+                    builder = DigestBuilder(
+                        header=header,
+                        hashtags=hashtags,
+                        local_hashtag=local_hashtag,
+                        max_text_length=region_config.text_post_maxsize_simbols or 4096,
+                        repost_mode=region_config.setka_regim_repost,
+                    )
+                    digest_result = builder.build_digest(regular_posts)
+
+                    # Publish
+                    vk_publisher = VKPublisher(
+                        vk_client,
+                        test_polygon_mode=test_mode,
+                    )
+
+                    # Get target group ID
+                    from database.models import Region
+                    region_result = await session.execute(
+                        Region.__table__.select().where(Region.code == region_code)
+                    )
+                    region = region_result.scalar_one_or_none()
+
+                    if not region or not region.vk_group_id:
+                        return {'success': False, 'error': 'No VK group ID for region'}
+
+                    publish_result = await vk_publisher.publish_digest(
+                        group_id=region.vk_group_id,
+                        text=digest_result.text,
+                        attachments=digest_result.attachments_list,
+                    )
+                    results.append(('regular', digest_result, publish_result))
+
+                # Build and publish mourning digest (separate)
+                if mourning_posts:
+                    mourning_builder = DigestBuilder(
+                        header='🕯 Скорбим',
+                        hashtags=[],
+                        local_hashtag='',
+                        max_text_length=region_config.text_post_maxsize_simbols or 4096,
+                        repost_mode=False,
+                    )
+                    mourning_digest = mourning_builder.build_digest(mourning_posts)
+
+                    vk_publisher_mourning = VKPublisher(
+                        vk_client,
+                        test_polygon_mode=test_mode,
+                    )
+
+                    from database.models import Region
+                    region_result2 = await session.execute(
+                        Region.__table__.select().where(Region.code == region_code)
+                    )
+                    region2 = region_result2.scalar_one_or_none()
+
+                    if region2 and region2.vk_group_id:
+                        mourning_publish = await vk_publisher_mourning.publish_digest(
+                            group_id=region2.vk_group_id,
+                            text=mourning_digest.text,
+                            attachments=mourning_digest.attachments_list,
+                        )
+                        results.append(('mourning', mourning_digest, mourning_publish))
+
+                # Update work table lip (all published posts)
+                all_included = []
+                for _, d, _ in results:
+                    all_included.extend(d.posts_included)
+                    if d.post_count > 0:
+                        logger.info(f"Published {d.post_count} posts ({d.__class__.__name__}), URL: {d.posts_included[:3]}...")
+
+                if all_included and work_table:
                     existing_lip = work_table.lip or []
-                    existing_lip.extend(digest_result.posts_included)
-                    
+                    existing_lip.extend(all_included)
+
                     # Trim to reasonable size (keep last 30)
                     if len(existing_lip) > 30:
                         existing_lip = existing_lip[-30:]
-                    
+
                     work_table.lip = existing_lip
                     await session.commit()
-                
+
                 # Prepare stats
+                total_published = sum(d.post_count for _, d, _ in results)
+                first_url = results[0][2].get('url') if results else None
+
                 return {
-                    'success': publish_result.get('success', False),
-                    'posts_published': digest_result.post_count,
-                    'published_url': publish_result.get('url'),
+                    'success': all(r[2].get('success', False) for r in results) if results else True,
+                    'posts_published': total_published,
+                    'published_url': first_url,
+                    'mourning_posts': len(mourning_posts),
+                    'regular_posts': len(regular_posts),
+                    'digests_count': len(results),
                     'stats': parser_stats,
                 }
         

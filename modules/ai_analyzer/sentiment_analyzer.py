@@ -41,7 +41,6 @@ class SentimentAnalyzer:
         'плохо', 'ужасно', 'страшно', 'опасно', 'тревожно',
         'проблема', 'беда', 'несчастье', 'трагедия', 'катастрофа',
         'авария', 'дтп', 'пожар', 'затопление', 'разрушение',
-        'смерть', 'погиб', 'умер', 'скончался', 'жертва',
         'криминал', 'преступление', 'кража', 'грабёж', 'убийство',
         'болезнь', 'эпидемия', 'заражение',
         # Негативные эмоции
@@ -51,6 +50,21 @@ class SentimentAnalyzer:
         # Проблемы инфраструктуры
         'закрыто', 'отменено', 'запрещено', 'остановка', 'ремонт',
         'не работает', 'поломка', 'авария'
+    }
+
+    # Маркеры траурных новостей (смерть, гибель) — выделяются в отдельную категорию
+    MOURNING_MARKERS = {
+        # Гибель, смерть
+        'погиб', 'погибла', 'погибли',
+        'умер', 'умерла', 'умерли',
+        'скончался', 'скончалась', 'скончались',
+        'смерть', 'смерти', 'гибель',
+        # Траур, прощание
+        'траур', 'прощание', 'соболезнования', 'скорбим',
+        'поминки', 'похороны', 'захоронение', 'кладбище',
+        # СВО
+        'в ходе сво погиб', 'в ходе специальной военной операции погиб',
+        'специальной военной операции', 'сво погиб',
     }
     
     NEUTRAL_WORDS = {
@@ -92,29 +106,51 @@ class SentimentAnalyzer:
     def analyze(self, text: str) -> Dict:
         """
         Анализ sentiment текста
-        
+
+        Priority:
+        1. Check for mourning markers FIRST (death, loss)
+        2. Then regular positive/negative/neutral analysis
+
         Args:
             text: Текст для анализа
-            
+
         Returns:
             Dict с результатами:
-            - label: 'positive', 'neutral', 'negative'
+            - label: 'mourning', 'positive', 'neutral', 'negative'
             - score: 0.0-1.0 (уверенность)
             - emotions: dict с scores для emotions
         """
         if not text:
             return self._default_result()
-        
+
         text_lower = text.lower()
-        
-        # Подсчёт слов каждой категории
+
+        # PRIORITY 1: Check for mourning markers
+        mourning_count = sum(1 for marker in self.MOURNING_MARKERS if marker in text_lower)
+        if mourning_count >= 1:
+            # Definitively mourning — check emotions
+            emotions = self._analyze_emotions(text_lower)
+            emotions['sadness'] = max(emotions.get('sadness', 0.0), 0.7)  # High sadness
+            return {
+                'label': 'mourning',
+                'score': min(0.7 + (mourning_count * 0.1), 1.0),
+                'emotions': emotions,
+                'word_counts': {
+                    'positive': 0,
+                    'negative': 0,
+                    'neutral': 0,
+                    'mourning': mourning_count,
+                }
+            }
+
+        # PRIORITY 2: Regular sentiment analysis
         positive_count = sum(1 for word in self.POSITIVE_WORDS if word in text_lower)
         negative_count = sum(1 for word in self.NEGATIVE_WORDS if word in text_lower)
         neutral_count = sum(1 for word in self.NEUTRAL_WORDS if word in text_lower)
-        
-        # Определение sentiment
+
+        # Определить доминирующий sentiment
         total = positive_count + negative_count + neutral_count
-        
+
         if total == 0:
             # Нет ключевых слов - нейтральный
             label = 'neutral'
@@ -130,10 +166,10 @@ class SentimentAnalyzer:
             else:
                 label = 'neutral'
                 score = 0.5 + (neutral_count / max(total, 1)) * 0.3
-        
+
         # Анализ эмоций
         emotions = self._analyze_emotions(text_lower)
-        
+
         return {
             'label': label,
             'score': round(score, 2),
@@ -141,7 +177,8 @@ class SentimentAnalyzer:
             'word_counts': {
                 'positive': positive_count,
                 'negative': negative_count,
-                'neutral': neutral_count
+                'neutral': neutral_count,
+                'mourning': 0,
             }
         }
     

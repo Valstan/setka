@@ -74,18 +74,32 @@ async def main():
 
         # 3. Инициализируем VK клиента и парсер
         logger.info('\n[ШАГ 3] Инициализация VK клиента и парсера')
-        
-        # Берём первый VK токен из конфига
-        from config.runtime import VK_TOKENS
+
+        from config.runtime import VK_TOKENS, get_publish_token, VK_PUBLISH_TOKEN_NAME
         if not VK_TOKENS:
             logger.error('❌ VK токены не настроены!')
             return {'success': False, 'error': 'No VK tokens configured'}
-        
-        token_name, token_value = next(iter(VK_TOKENS.items()))
-        logger.info(f'Используем VK токен: {token_name}')
-        
-        vk_client = VKClient(token_value)
+
+        # Для парсинга — первый доступный токен
+        parse_token_name, parse_token_value = next(iter(VK_TOKENS.items()))
+        logger.info(f'Токен для парсинга: {parse_token_name}')
+
+        vk_client = VKClient(parse_token_value)
         logger.info('✅ VK клиент инициализирован')
+
+        # Для публикации — ТОЛЬКО designated publish token
+        publish_token = get_publish_token()
+        if not publish_token:
+            logger.error('❌ Нет токена для публикации!')
+            return {'success': False, 'error': 'No publish token configured'}
+        
+        # Находим имя publish-токена для логирования
+        publish_token_name = VK_PUBLISH_TOKEN_NAME or "UNKNOWN"
+        for name, tok in VK_TOKENS.items():
+            if tok == publish_token:
+                publish_token_name = name
+                break
+        logger.info(f'Токен для публикации: {publish_token_name} (publish only)')
 
         parser = AdvancedVKParser(vk_client)
 
@@ -141,23 +155,57 @@ async def main():
             logger.info('\n⚠️ Нет постов для публикации (возможно все отфильтрованы)')
             return {'success': True, 'posts_count': 0, 'message': 'No posts after filtering'}
 
-        # 8. Строим digest
-        logger.info('\n[ШАГ 8] Построение digest')
+        # 8. Разделяем посты по тональности и строим дайджесты
+        logger.info('\n[ШАГ 8] Разделение постов по тональности')
+        from modules.publisher.digest_splitter import DigestSplitter
+
+        splitter = DigestSplitter()
+        split_result = splitter.split_with_stats(posts)
+        mourning_posts = split_result['mourning_posts']
+        regular_posts = split_result['regular_posts']
+        
+        logger.info(f'Mourning постов: {len(mourning_posts)}')
+        logger.info(f'Regular постов: {len(regular_posts)}')
+        if split_result['mourning_markers']:
+            logger.info(f'Найдены mourning-маркеры:')
+            for m in split_result['mourning_markers']:
+                logger.info(f"  LIP={m['lip']}, markers={m['mourning_count']}")
+
+        # 8a. Строим обычный дайджест
+        logger.info('\n[ШАГ 8a] Построение обычного дайджеста')
         builder = DigestBuilder(
             header='📰 Тестовый запуск',
             hashtags=['#тест'],
             local_hashtag='#тест',
             max_text_length=4096,
         )
-        digest_result = builder.build_digest(posts)
-        logger.info(f'Digest построен: {digest_result.post_count} постов')
+        digest_result = builder.build_digest(regular_posts)
+        logger.info(f'Обычный digest: {digest_result.post_count} постов')
         logger.info(f'Text length: {len(digest_result.text)}')
         logger.info(f'Attachments: {len(digest_result.attachments_list)}')
-        logger.info(f'Posts LIPs: {digest_result.posts_included}')
 
-        # 9. Публикуем в тестовую группу
+        # 8b. Строим mourning дайджест (если есть)
+        mourning_digest_result = None
+        if mourning_posts:
+            logger.info('\n[ШАГ 8b] Построение mourning дайджеста')
+            mourning_builder = DigestBuilder(
+                header='🕯 Скорбим',
+                hashtags=[],
+                local_hashtag='',
+                max_text_length=4096,
+            )
+            mourning_digest_result = mourning_builder.build_digest(mourning_posts)
+            logger.info(f'Mourning digest: {mourning_digest_result.post_count} постов')
+            logger.info(f'Text length: {len(mourning_digest_result.text)}')
+
+        # 9. Публикуем в тестовую группу (ТОЛЬКО publish-токеном)
         logger.info('\n[ШАГ 9] Публикация')
         vk_publisher = VKPublisher(vk_client, test_polygon_mode=True)
+        
+        publish_results = {}
+
+        # 9a. Публикуем обычный дайджест
+        logger.info(f'[ШАГ 9a] Публикация обычного дайджеста')
         try:
             publish_result = await vk_publisher.publish_digest(
                 group_id=region.vk_group_id,
@@ -165,14 +213,32 @@ async def main():
                 attachments=digest_result.attachments_list,
             )
             logger.info(f'Результат публикации: {publish_result}')
+            publish_results['regular'] = publish_result
         except Exception as e:
-            logger.error(f'❌ Ошибка публикации: {e}', exc_info=True)
-            return {'success': False, 'error': f'Publish error: {e}'}
+            logger.error(f'❌ Ошибка публикации обычного дайджеста: {e}', exc_info=True)
+            publish_results['regular'] = {'success': False, 'error': str(e)}
 
-        # 10. Обновляем work table
+        # 9b. Публикуем mourning дайджест (если есть)
+        if mourning_digest_result and mourning_digest_result.post_count > 0:
+            logger.info(f'[ШАГ 9b] Публикация mourning дайджеста')
+            try:
+                mourning_publish = await vk_publisher.publish_digest(
+                    group_id=region.vk_group_id,
+                    text=mourning_digest_result.text,
+                    attachments=mourning_digest_result.attachments_list,
+                )
+                logger.info(f'Результат публикации mourning: {mourning_publish}')
+                publish_results['mourning'] = mourning_publish
+            except Exception as e:
+                logger.error(f'❌ Ошибка публикации mourning дайджеста: {e}', exc_info=True)
+                publish_results['mourning'] = {'success': False, 'error': str(e)}
+
+        # 10. Обновляем work table (все опубликованные LIP)
         logger.info('\n[ШАГ 10] Обновление work table')
         existing_lip = work_table.lip or []
         existing_lip.extend(digest_result.posts_included)
+        if mourning_digest_result and mourning_digest_result.posts_included:
+            existing_lip.extend(mourning_digest_result.posts_included)
         if len(existing_lip) > 30:
             existing_lip = existing_lip[-30:]
         work_table.lip = existing_lip
@@ -184,15 +250,30 @@ async def main():
         logger.info('✅ ТЕСТОВЫЙ ЗАПУСК ЗАВЕРШЁН УСПЕШНО')
         logger.info(f'Время завершения: {datetime.now()}')
         logger.info(f'Постов с парсено: {len(posts)}')
-        logger.info(f'Постов в digest: {digest_result.post_count}')
-        logger.info(f'Публикация: {publish_result}')
+        logger.info(f'  Mourning: {len(mourning_posts)}')
+        logger.info(f'  Regular: {len(regular_posts)}')
+        logger.info(f'Обычный digest: {digest_result.post_count} постов (URL: {publish_results.get("regular", {}).get("url", "N/A")})')
+        if mourning_digest_result:
+            logger.info(f'Mourning digest: {mourning_digest_result.post_count} постов (URL: {publish_results.get("mourning", {}).get("url", "N/A")})')
+        logger.info(f'Публикация токеном: {publish_token_name}')
         logger.info('='*80)
 
         return {
             'success': True,
             'posts_parsed': len(posts),
-            'posts_in_digest': digest_result.post_count,
-            'publish_result': publish_result,
+            'mourning_posts': len(mourning_posts),
+            'regular_posts': len(regular_posts),
+            'digest_result': {
+                'post_count': digest_result.post_count,
+                'text_length': len(digest_result.text),
+                'publish': publish_results.get('regular'),
+            },
+            'mourning_result': {
+                'post_count': mourning_digest_result.post_count if mourning_digest_result else 0,
+                'text_length': len(mourning_digest_result.text) if mourning_digest_result else 0,
+                'publish': publish_results.get('mourning'),
+            } if mourning_digest_result else None,
+            'publish_token': publish_token_name,
             'stats': stats,
         }
 
