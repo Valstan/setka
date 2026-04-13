@@ -71,8 +71,13 @@ def parse_and_publish_theme(
                 work_table = result.scalar_one_or_none()
                 
                 # Initialize parser
-                from modules.vk_monitor.vk_client import VKAPIClient
-                vk_client = VKAPIClient()
+                from modules.vk_monitor.vk_client import VKClient
+                from config.runtime import get_parse_tokens
+                parse_tokens = get_parse_tokens()
+                parse_token = next(iter(parse_tokens.values())) if parse_tokens else None
+                if not parse_token:
+                    return {'success': False, 'error': 'No VK tokens configured'}
+                vk_client = VKClient(parse_token)
                 parser = AdvancedVKParser(vk_client)
                 
                 # Get community IDs for this theme
@@ -130,11 +135,8 @@ def parse_and_publish_theme(
                     )
                     digest_result = builder.build_digest(regular_posts)
 
-                    # Publish
-                    vk_publisher = VKPublisher(
-                        vk_client,
-                        test_polygon_mode=test_mode,
-                    )
+                    # Publish — VKPublisher creates its own client with publish token
+                    vk_publisher = VKPublisher(test_polygon_mode=test_mode)
 
                     # Get target group ID
                     from database.models import Region
@@ -164,10 +166,7 @@ def parse_and_publish_theme(
                     )
                     mourning_digest = mourning_builder.build_digest(mourning_posts)
 
-                    vk_publisher_mourning = VKPublisher(
-                        vk_client,
-                        test_polygon_mode=test_mode,
-                    )
+                    vk_publisher_mourning = VKPublisher(test_polygon_mode=test_mode)
 
                     from database.models import Region
                     region_result2 = await session.execute(

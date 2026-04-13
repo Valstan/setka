@@ -198,9 +198,9 @@ async def main():
             logger.info(f'Mourning digest: {mourning_digest_result.post_count} постов')
             logger.info(f'Text length: {len(mourning_digest_result.text)}')
 
-        # 9. Публикуем в тестовую группу (ТОЛЬКО publish-токеном)
+        # 9. Публикуем в тестовую группу (VKPublisher создаёт свой клиент с publish токеном)
         logger.info('\n[ШАГ 9] Публикация')
-        vk_publisher = VKPublisher(vk_client, test_polygon_mode=True)
+        vk_publisher = VKPublisher(test_polygon_mode=True)
         
         publish_results = {}
 

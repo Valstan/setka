@@ -53,18 +53,20 @@ class SentimentAnalyzer:
     }
 
     # Маркеры траурных новостей (смерть, гибель) — выделяются в отдельную категорию
+    # ТОЛЬКО прямые маркеры смерти/гибели. Никаких общих слов.
     MOURNING_MARKERS = {
-        # Гибель, смерть
-        'погиб', 'погибла', 'погибли',
-        'умер', 'умерла', 'умерли',
-        'скончался', 'скончалась', 'скончались',
-        'смерть', 'смерти', 'гибель',
-        # Траур, прощание
-        'траур', 'прощание', 'соболезнования', 'скорбим',
-        'поминки', 'похороны', 'захоронение', 'кладбище',
-        # СВО
-        'в ходе сво погиб', 'в ходе специальной военной операции погиб',
-        'специальной военной операции', 'сво погиб',
+        # Прямая гибель/смерть
+        'погиб ', 'погибла ', 'погибли ',  # с пробелом — чтобы не было "погибших"
+        'умер ', 'умерла ', 'умерли ',
+        'скончался ', 'скончалась ', 'скончались ',
+        'смерть ', 'гибель ',
+    }
+
+    # Контекстные маркеры: если один из них + MOURNING_MARKERS → точно mourning
+    MOURNING_CONTEXT = {
+        'прощание', 'траур', 'соболезнования',
+        'похороны', 'захоронение', 'кладбище',
+        'поми',  # поминки
     }
     
     NEUTRAL_WORDS = {
@@ -126,20 +128,28 @@ class SentimentAnalyzer:
         text_lower = text.lower()
 
         # PRIORITY 1: Check for mourning markers
-        mourning_count = sum(1 for marker in self.MOURNING_MARKERS if marker in text_lower)
-        if mourning_count >= 1:
+        # Требуется: прямой маркер смерти (погиб, умер, скончался, смерть, гибель)
+        # + хотя бы один контекстный маркер (прощание, траур, соболезнования...)
+        # ИЛИ 2+ прямых маркера
+        death_markers = sum(1 for marker in self.MOURNING_MARKERS if marker in text_lower)
+        context_markers = sum(1 for marker in self.MOURNING_CONTEXT if marker in text_lower)
+
+        is_mourning = (death_markers >= 1 and context_markers >= 1) or (death_markers >= 2)
+
+        if is_mourning:
             # Definitively mourning — check emotions
             emotions = self._analyze_emotions(text_lower)
             emotions['sadness'] = max(emotions.get('sadness', 0.0), 0.7)  # High sadness
+            total_mourning = death_markers + context_markers
             return {
                 'label': 'mourning',
-                'score': min(0.7 + (mourning_count * 0.1), 1.0),
+                'score': min(0.7 + (total_mourning * 0.05), 1.0),
                 'emotions': emotions,
                 'word_counts': {
                     'positive': 0,
                     'negative': 0,
                     'neutral': 0,
-                    'mourning': mourning_count,
+                    'mourning': total_mourning,
                 }
             }
 

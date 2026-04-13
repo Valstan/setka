@@ -18,34 +18,43 @@ logger = logging.getLogger(__name__)
 class VKPublisher:
     """
     Publishes posts to VK groups.
-    
-    Migrated from old_postopus posting system.
-    Features:
-    - wall.post API wrapper
-    - Copyright attribution
-    - Attachment handling
-    - Error handling with retries
-    - Token rotation support
-    - Test polygon mode
+
+    IMPORTANT: This class creates its OWN VK client with the PUBLISH token.
+    Never reuse a parsing client for publishing.
     """
-    
+
     # VK API limits
     POSTS_PER_DAY_LIMIT = 50  # Per group
     POST_INTERVAL_SECONDS = 5  # Minimum interval between posts
-    
+
     def __init__(
         self,
-        vk_client,
+        vk_client=None,
         test_polygon_mode: bool = False,
         test_polygon_group_id: int = -137760500,
     ):
         """
         Args:
-            vk_client: VK API client (from modules/vk_monitor/vk_client.py)
+            vk_client: Optional VK API client. If None, creates one with the publish token.
             test_polygon_mode: If True, post to test group instead
             test_polygon_group_id: Test polygon VK group ID
         """
-        self.vk_client = vk_client
+        from modules.vk_monitor.vk_client import VKClient
+        from config.runtime import get_publish_token
+
+        if vk_client is not None:
+            # Use provided client (for tests that already set up correctly)
+            self.vk_client = vk_client
+        else:
+            # Create own client with PUBLISH token
+            publish_token = get_publish_token()
+            if not publish_token:
+                raise RuntimeError(
+                    "No VK publish token configured. Set VK_PUBLISH_TOKEN_NAME=VALSTAN in env."
+                )
+            self.vk_client = VKClient(publish_token)
+            logger.info("VKPublisher: created own client with publish token")
+
         self.test_polygon_mode = test_polygon_mode
         self.test_polygon_group_id = test_polygon_group_id
         self._last_post_time = {}  # group_id -> datetime

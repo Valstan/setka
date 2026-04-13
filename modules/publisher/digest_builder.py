@@ -14,7 +14,6 @@ from utils.post_utils import (
     extract_source_attribution,
     format_post_stats,
 )
-from utils.text_utils import truncate_text
 from utils.vk_attachments import (
     extract_vk_attachments,
     build_attachments_list,
@@ -63,6 +62,7 @@ class DigestBuilder:
     # VK limits
     MAX_TEXT_LENGTH = 4096  # VK post text limit
     MAX_ATTACHMENTS = 10    # VK wall.post media limit
+    MAX_POSTS_PER_DIGEST = 3  # Maximum number of posts in a single digest
 
     # Default header
     DEFAULT_HEADER = "📰 Дайджест новостей"
@@ -131,7 +131,7 @@ class DigestBuilder:
 
         # Build digest text and collect attachments
         digest_parts = []
-        all_attachments = []
+        flat_attachments = []
         posts_included = []
 
         # Add header
@@ -143,10 +143,18 @@ class DigestBuilder:
         hashtag_overhead = len(hashtag_text) + 2 if hashtag_text else 2  # +2 for newlines
 
         for post_data in sorted_posts:
+            # Stop if we've reached max posts
+            if len(posts_included) >= self.MAX_POSTS_PER_DIGEST:
+                break
+
             # Extract post info
             owner_id = post_data.get('owner_id', post_data.get('from_id', 0))
             post_id = post_data.get('id', 0)
             post_text = post_data.get('text', '') or ''
+
+            # Skip posts with no text (problem 3)
+            if not post_text.strip():
+                continue
 
             # Get group name
             community_vk_id = post_data.get('community_vk_id', owner_id)
@@ -154,6 +162,10 @@ class DigestBuilder:
 
             # Build the complete post entry
             post_entry = self._format_post_entry(post_data, post_text, owner_id, post_id, group_name)
+
+            # Extract attachments to check if they fit
+            attachments = extract_vk_attachments(post_data)
+            post_attachments = build_attachments_list(attachments)
 
             # Calculate total length if we add this post
             current_length = sum(len(part) for part in digest_parts)
@@ -164,6 +176,13 @@ class DigestBuilder:
                 # Skip this post — it will be included in the next iteration
                 continue
 
+            # Check if attachments fit (problem 5: if text fits but media doesn't — skip)
+            current_attachment_count = len(flat_attachments)
+            remaining_attachment_slots = self.MAX_ATTACHMENTS - current_attachment_count
+            if len(post_attachments) > remaining_attachment_slots and post_attachments:
+                # Post has media but no room — skip
+                continue
+
             # Add the post
             digest_parts.append(post_entry)
             digest_parts.append("")  # Empty line separator
@@ -172,9 +191,8 @@ class DigestBuilder:
             lip = lip_of_post(owner_id, post_id)
             posts_included.append(lip)
 
-            # Extract attachments
-            attachments = extract_vk_attachments(post_data)
-            all_attachments.append(attachments)
+            # Collect attachments
+            flat_attachments.extend(post_attachments)
 
         # Add hashtags at the end
         if hashtag_text:
@@ -183,13 +201,9 @@ class DigestBuilder:
         # Join all parts — NO final truncation
         full_text = "\n".join(digest_parts)
 
-        # Build attachments list (max 10)
-        flat_attachments = []
-        for attachments in all_attachments:
-            flat_attachments.extend(build_attachments_list(attachments))
-            if len(flat_attachments) >= self.MAX_ATTACHMENTS:
-                flat_attachments = flat_attachments[:self.MAX_ATTACHMENTS]
-                break
+        # Truncate attachments to VK limit
+        if len(flat_attachments) > self.MAX_ATTACHMENTS:
+            flat_attachments = flat_attachments[:self.MAX_ATTACHMENTS]
 
         max_attachments_exceeded = len(flat_attachments) > self.MAX_ATTACHMENTS
 
