@@ -34,11 +34,12 @@ def parse_and_publish_theme(
         Execution result dict
     """
     from database.models_extended import ParsingStats, RegionConfig, WorkTable
-    from database.connection import async_session_maker
+    from database.connection import AsyncSessionLocal
     from modules.vk_monitor.advanced_parser import AdvancedVKParser
     from modules.publisher.digest_builder import DigestBuilder
     from modules.publisher.vk_publisher_extended import VKPublisher
     from utils.post_utils import lip_of_post
+    from sqlalchemy import select
     
     import asyncio
     
@@ -48,28 +49,28 @@ def parse_and_publish_theme(
     try:
         async def _execute():
             """Execute parsing and publishing pipeline."""
-            async with async_session_maker() as session:
+            async with AsyncSessionLocal() as session:
                 # Get region config
                 result = await session.execute(
-                    RegionConfig.__table__.select().where(
+                    select(RegionConfig).where(
                         RegionConfig.region_code == region_code
                     )
                 )
-                region_config = result.scalar_one_or_none()
-                
+                region_config = result.scalars().first()
+
                 if not region_config:
                     logger.error(f"Region config not found for {region_code}")
                     return {'success': False, 'error': 'Region config not found'}
-                
+
                 # Get work table
                 result = await session.execute(
-                    WorkTable.__table__.select().where(
+                    select(WorkTable).where(
                         WorkTable.region_code == region_code,
                         WorkTable.theme == theme
                     )
                 )
-                work_table = result.scalar_one_or_none()
-                
+                work_table = result.scalars().first()
+
                 # Initialize parser
                 from modules.vk_monitor.vk_client import VKClient
                 from config.runtime import get_parse_tokens
@@ -79,16 +80,23 @@ def parse_and_publish_theme(
                     return {'success': False, 'error': 'No VK tokens configured'}
                 vk_client = VKClient(parse_token)
                 parser = AdvancedVKParser(vk_client)
-                
-                # Get community IDs for this theme
-                # This would query the communities table
-                communities_result = await session.execute(
-                    # Simplified - would need actual community fetching
-                    f"SELECT vk_id FROM communities WHERE region_id IN "
-                    f"(SELECT id FROM regions WHERE code='{region_code}') "
-                    f"AND category='{theme}' AND is_active=true"
+
+                # Get community IDs for this theme from communities table
+                from database.models import Community, Region
+                region_obj = await session.execute(
+                    select(Region).where(Region.code == region_code)
                 )
-                # This is pseudocode - actual implementation depends on DB structure
+                region_obj = region_obj.scalars().first()
+                if not region_obj:
+                    return {'success': False, 'error': f'Region {region_code} not found'}
+
+                communities_result = await session.execute(
+                    select(Community.vk_id).where(
+                        Community.region_id == region_obj.id,
+                        Community.category == theme,
+                        Community.is_active == True
+                    )
+                )
                 community_ids = [row[0] for row in communities_result.fetchall()]
                 
                 if not community_ids:
@@ -219,7 +227,7 @@ def parse_and_publish_theme(
         
         # Record stats
         async def _save_stats():
-            async with async_session_maker() as session:
+            async with AsyncSessionLocal() as session:
                 stats_record = ParsingStats(
                     region_code=region_code,
                     theme=theme,
@@ -253,7 +261,7 @@ def parse_and_publish_theme(
         # Save failure stats
         try:
             async def _save_failure():
-                async with async_session_maker() as session:
+                async with AsyncSessionLocal() as session:
                     stats_record = ParsingStats(
                         region_code=region_code,
                         theme=theme,
@@ -308,15 +316,16 @@ def parse_sosed(region_code: str):
 def run_all_regions_theme(theme: str):
     """Run parsing for specific theme across all regions."""
     from database.models import Region
-    from database.connection import async_session_maker
+    from database.connection import AsyncSessionLocal
+    from sqlalchemy import select
     import asyncio
-    
+
     async def _get_regions():
-        async with async_session_maker() as session:
+        async with AsyncSessionLocal() as session:
             result = await session.execute(
-                Region.__table__.select().where(Region.is_active == True)
+                select(Region).where(Region.is_active == True)
             )
-            return [row.code for row in result.fetchall()]
+            return [row.code for row in result.scalars().all()]
     
     regions = asyncio.run(_get_regions())
     
