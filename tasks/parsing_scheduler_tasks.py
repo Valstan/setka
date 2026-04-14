@@ -178,14 +178,32 @@ def parse_and_publish_theme(
                 'stats': parser_stats,
             }
 
+    from concurrent.futures import ThreadPoolExecutor
+    import concurrent.futures
+
     def _run_async(coro):
-        """Run async coroutine in Celery-compatible way (always new event loop)."""
-        loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
+        """Run async coroutine in a SEPARATE THREAD with its own event loop."""
+        result = [None]
+        error = [None]
+        
+        def _thread_target():
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                result[0] = loop.run_until_complete(coro)
+            except Exception as e:
+                error[0] = e
+            finally:
+                loop.close()
+        
+        t = __import__('threading').Thread(target=_thread_target)
+        t.start()
+        t.join(timeout=300)
+        if error[0]:
+            raise error[0]
+        if t.is_alive():
+            raise TimeoutError("Async task timed out after 300s")
+        return result[0]
 
     try:
         result = _run_async(_execute())
