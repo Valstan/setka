@@ -208,53 +208,10 @@ def parse_and_publish_theme(
     try:
         result = _run_async(_execute())
 
-        # Save stats (sync-friendly)
-        try:
-            async def _save_stats():
-                async with AsyncSessionLocal() as session:
-                    record = ParsingStats(
-                        region_code=region_code, theme=theme,
-                        run_date=start_time, run_type='scheduled',
-                        duration_seconds=(datetime.now() - start_time).total_seconds(),
-                        success=result.get('success', False),
-                        total_groups_checked=result.get('stats', {}).get('total_groups_checked', 0),
-                        total_posts_scanned=result.get('stats', {}).get('total_posts_scanned', 0),
-                        posts_filtered_old=result.get('stats', {}).get('posts_filtered_old', 0),
-                        posts_filtered_duplicate_lip=result.get('stats', {}).get('posts_filtered_duplicate_lip', 0),
-                        posts_filtered_duplicate_text=result.get('stats', {}).get('posts_filtered_duplicate_text', 0),
-                        posts_filtered_duplicate_foto=result.get('stats', {}).get('posts_filtered_duplicate_foto', 0),
-                        posts_filtered_black_id=result.get('stats', {}).get('posts_filtered_black_id', 0),
-                        posts_filtered_no_region_words=result.get('stats', {}).get('posts_filtered_no_region_words', 0),
-                        posts_filtered_advertisement=result.get('stats', {}).get('posts_filtered_advertisement', 0),
-                        posts_filtered_no_attachments=result.get('stats', {}).get('posts_filtered_no_attachments', 0),
-                        posts_final_count=result.get('stats', {}).get('posts_final_count', 0),
-                        published_to_test_polygon=test_mode,
-                    )
-                    session.add(record)
-                    await session.commit()
-            _run_async(_save_stats())
-        except Exception as stats_err:
-            logger.warning(f"Failed to save stats: {stats_err}")
-
         return result
 
     except Exception as e:
         logger.error(f"Task failed for {region_code}/{theme}: {e}")
-        # Save failure stats
-        try:
-            async def _save_failure():
-                async with AsyncSessionLocal() as session:
-                    record = ParsingStats(
-                        region_code=region_code, theme=theme,
-                        run_date=start_time, run_type='scheduled',
-                        duration_seconds=(datetime.now() - start_time).total_seconds(),
-                        success=False, error_message=str(e),
-                    )
-                    session.add(record)
-                    await session.commit()
-            _run_async(_save_failure())
-        except:
-            pass
         raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
 
 
