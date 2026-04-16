@@ -41,6 +41,12 @@ def parse_and_publish_theme(
     async def _execute():
         """Execute parsing and publishing pipeline."""
         async with AsyncSessionLocal() as session:
+            # Псевдо-регион «copy» + тема «setka» — отдельный сетевой хаб (env COPY_SETKA_*), без RegionConfig.
+            if region_code == "copy" and theme == "setka":
+                from modules.copy_setka_network import execute_copy_setka_network
+
+                return await execute_copy_setka_network(session, test_mode=test_mode)
+
             # 1. Get region config
             result = await session.execute(
                 select(RegionConfig).where(RegionConfig.region_code == region_code)

@@ -32,8 +32,9 @@ engine = create_async_engine(
     DATABASE_URL,
     echo=os.getenv("SQLALCHEMY_ECHO", "0") == "1",
     pool_pre_ping=True,
-    pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
-    max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "10")),
+    pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "3600")),
+    pool_size=int(os.getenv("DB_POOL_SIZE", "3")),
+    max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "5")),
 )
 
 
