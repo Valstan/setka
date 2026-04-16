@@ -1,25 +1,57 @@
 """
-Сетевой «хаб» SETKA: чтение одной группы-источника и раскладка по региональным стенам.
+Сетевой «хаб» SETKA: группа copy_by_setka → главные стены регионов.
 
-Не использует RegionConfig для псевдо-региона `copy` — всё задаётся через env (секреты на сервере).
+Правила (текст поста на стене источника — главное поле text):
+- Если в text есть слово «репост» (без учёта регистра) — на региональные стены
+  уходит VK wall.repost прикреплённого поста (copy_history[0] или attachment type=wall).
+- Иначе — копия содержимого: при repost-цепочке (copy_history) берётся исходный пост
+  целиком (текст + вложения); иначе — сам пост. Публикация wall.post по регионам.
+
+За один запуск обрабатывается не больше одного нового поста; wall.get — последние 10;
+история дублей (lip) — не больше 10 идентификаторов.
 """
 from __future__ import annotations
 
 import asyncio
+import copy as copy_lib
 import logging
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
+WALL_FETCH_COUNT = 10
+LIP_HISTORY_MAX = 10
 
-def _parse_int_list(raw: Optional[str]) -> Optional[Set[str]]:
-    if not raw or not raw.strip():
-        return None
-    return {x.strip().lower() for x in raw.split(",") if x.strip()}
+
+def _text_has_repost_keyword(text: str) -> bool:
+    return "репост" in (text or "").lower()
+
+
+def _resolve_repost_target(post: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+    """Кого репостить: внутренний пост из copy_history или wall-вложение."""
+    ch = post.get("copy_history") or []
+    if ch:
+        o = ch[0]
+        try:
+            return int(o["owner_id"]), int(o["id"])
+        except (KeyError, TypeError, ValueError):
+            pass
+    for att in post.get("attachments") or []:
+        if att.get("type") != "wall":
+            continue
+        w = att.get("wall") or {}
+        oid = w.get("from_id", w.get("owner_id"))
+        pid = w.get("id")
+        if oid is not None and pid is not None:
+            try:
+                return int(oid), int(pid)
+            except (TypeError, ValueError):
+                continue
+    return None
 
 
 async def execute_copy_setka_network(
@@ -27,38 +59,31 @@ async def execute_copy_setka_network(
     *,
     test_mode: bool = False,
 ) -> Dict[str, Any]:
-    """
-    1) wall.get у группы-источника (несколько последних записей).
-    2) Берём самую свежую запись, которой ещё нет в WorkTable lip и которая не старше порога.
-    3) Для каждого активного региона (кроме copy) с vk_group_id — repost или копия текста+вложений на главную стену региона.
-    """
     from config.runtime import (
+        copy_setka_disabled,
         get_copy_setka_max_post_age_hours,
         get_copy_setka_repost_message,
         get_copy_setka_source_owner_id,
         get_copy_setka_target_region_codes,
         get_parse_tokens,
-        copy_setka_use_repost,
     )
     from database.models import Region
     from database.models_extended import WorkTable
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_monitor.vk_client import VKClient
-    from utils.post_utils import lip_of_post
+    from utils.post_utils import clear_copy_history, lip_of_post
     from utils.vk_attachments import build_attachments_list, extract_vk_attachments
 
-    source_owner_id = get_copy_setka_source_owner_id()
-    if source_owner_id is None:
-        logger.warning(
-            "COPY_SETKA_SOURCE_GROUP_ID не задан — сетевое копирование отключено. "
-            "Задайте в /etc/setka/setka.env отрицательный ID группы-источника."
-        )
+    if copy_setka_disabled():
+        logger.info("COPY_SETKA_DISABLED — сетевой хаб пропущен")
         return {
             "success": False,
             "skipped": True,
-            "error": "COPY_SETKA_SOURCE_GROUP_ID not configured",
+            "error": "COPY_SETKA_DISABLED",
             "stats": _empty_stats(),
         }
+
+    source_owner_id = get_copy_setka_source_owner_id()
 
     parse_tokens = get_parse_tokens()
     if not parse_tokens:
@@ -83,7 +108,7 @@ async def execute_copy_setka_network(
     known: Set[str] = set(wt.lip or [])
 
     posts: List[Dict[str, Any]] = await asyncio.to_thread(
-        vk.get_wall_posts, source_owner_id, 15, 0
+        vk.get_wall_posts, source_owner_id, WALL_FETCH_COUNT, 0
     )
     if not posts:
         return {
@@ -107,7 +132,7 @@ async def execute_copy_setka_network(
         if lip in known:
             continue
         post_date = int(p.get("date") or 0)
-        if now_ts - post_date > max_age:
+        if max_age > 0 and now_ts - post_date > max_age:
             continue
         candidate = p
         break
@@ -123,6 +148,8 @@ async def execute_copy_setka_network(
     src_oid = int(candidate.get("owner_id", source_owner_id))
     src_pid = int(candidate["id"])
     src_lip = lip_of_post(src_oid, src_pid)
+    body_text = candidate.get("text") or ""
+    use_api_repost = _text_has_repost_keyword(body_text)
 
     region_filter = get_copy_setka_target_region_codes()
     rq = select(Region).where(
@@ -142,34 +169,50 @@ async def execute_copy_setka_network(
             "stats": _empty_stats(),
         }
 
-    use_repost = copy_setka_use_repost()
     msg_suffix = get_copy_setka_repost_message()
     publisher = VKPublisher(test_polygon_mode=test_mode)
+
+    repost_pair: Optional[Tuple[int, int]] = None
+    copy_text: str = ""
+    copy_attachments: List[str] = []
+
+    if use_api_repost:
+        repost_pair = _resolve_repost_target(candidate)
+        if repost_pair is None:
+            logger.warning(
+                "copy-setka: в тексте есть «репост», но не найден вложенный пост (copy_history/wall)"
+            )
+            return {
+                "success": False,
+                "error": "repost keyword but no inner wall post to repost",
+                "source_lip": src_lip,
+                "stats": _empty_stats(),
+            }
+    else:
+        raw = copy_lib.deepcopy(candidate)
+        effective = clear_copy_history(raw)
+        copy_text = effective.get("text") or ""
+        att_dict = extract_vk_attachments(effective)
+        copy_attachments = build_attachments_list(att_dict, max_items=10)
 
     successes = 0
     errors: List[str] = []
     for reg in regions:
         gid = int(reg.vk_group_id)
         try:
-            if use_repost:
+            if use_api_repost and repost_pair:
+                ro, rp = repost_pair
                 out = await publisher.publish_repost(
                     group_id=gid,
-                    source_owner_id=src_oid,
-                    source_post_id=src_pid,
+                    source_owner_id=ro,
+                    source_post_id=rp,
                     message=msg_suffix,
                 )
             else:
-                full = await asyncio.to_thread(vk.get_post_by_id, src_oid, src_pid)
-                if not full:
-                    errors.append(f"{reg.code}: get_post_by_id failed")
-                    continue
-                text = full.get("text") or ""
-                att = extract_vk_attachments(full)
-                att_list = build_attachments_list(att, max_items=10)
                 out = await publisher.publish_digest(
                     group_id=gid,
-                    text=text,
-                    attachments=att_list,
+                    text=copy_text,
+                    attachments=copy_attachments,
                 )
             if out.get("success"):
                 successes += 1
@@ -181,17 +224,16 @@ async def execute_copy_setka_network(
             errors.append(f"{reg.code}: {e}")
 
     if successes > 0:
-        lip_list = list(known)
-        lip_list.append(src_lip)
-        if len(lip_list) > 200:
-            lip_list = lip_list[-200:]
-        wt.lip = lip_list
+        prev = list(wt.lip or [])
+        prev.append(src_lip)
+        wt.lip = prev[-LIP_HISTORY_MAX:]
         await session.commit()
 
     return {
         "success": successes > 0,
         "posts_published": successes,
         "source_lip": src_lip,
+        "mode": "wall.repost" if use_api_repost else "wall.post copy",
         "targets": len(regions),
         "errors": errors[:20],
         "stats": {
