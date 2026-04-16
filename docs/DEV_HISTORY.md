@@ -1,5 +1,25 @@
 # История разработки SETKA
 
+## 2026-04-16 — Прод: парсинг/постинг не шли (Celery + БД)
+
+### Симптомы
+- По расписанию шли задачи (beat в порядке), но пайплайн парсинг → фильтр → постинг фактически не выполнялся.
+- В `celery-worker.log`: `asyncpg.exceptions.TooManyConnectionsError` и `Future ... attached to a different loop` в `run_all_regions_theme` / SQLAlchemy.
+
+### Причины
+1. **`run_all_regions_theme`** создавал **новый event loop** на каждый запуск, тогда как остальные Celery-задачи используют **`run_coro`** (один loop на процесс воркера). Глобальный async engine/asyncpg оказывался привязан к другому loop → ошибка цикла и некорректное закрытие соединений.
+2. **`parse_and_publish_theme`** после прошлого рефакторинга гонял async в **отдельном потоке** с отдельным loop — тот же конфликт с общим пулом соединений.
+3. В **`database/connection.py`** был продублирован блок создания engine (мертвый код, риск путаницы при правках).
+
+### Решения
+- Все async-вызовы в `tasks/parsing_scheduler_tasks.py` переведены на **`run_coro`** (как в `correct_workflow_tasks` и `celery_app`).
+- Удалён дубликат конфигурации в **`database/connection.py`**.
+
+### Прод-деплой
+- `git pull` на VPS, `systemctl restart setka setka-celery-worker setka-celery-beat`.
+
+---
+
 ## 2026-04-13 — Исправления дайджеста: форматирование, токены, mourning
 
 ### Проблемы

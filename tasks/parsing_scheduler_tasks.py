@@ -9,6 +9,8 @@ import logging
 from typing import Dict, Any, List
 from datetime import datetime
 
+from utils.celery_asyncio import run_coro
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,9 +23,8 @@ def parse_and_publish_theme(
 ) -> Dict[str, Any]:
     """
     Main parsing and publishing task for a region/theme.
-    Celery-compatible: uses new event loop per invocation.
+    Celery-compatible: uses run_coro (one event loop per worker process).
     """
-    import asyncio
     from database.models_extended import ParsingStats, RegionConfig, WorkTable
     from database.connection import AsyncSessionLocal
     from database.models import Community, Region
@@ -33,7 +34,6 @@ def parse_and_publish_theme(
     from modules.publisher.digest_splitter import DigestSplitter
     from modules.publisher.vk_publisher_extended import VKPublisher
     from config.runtime import get_parse_tokens
-    from utils.post_utils import lip_of_post
     from sqlalchemy import select
 
     start_time = datetime.now()
@@ -178,35 +178,9 @@ def parse_and_publish_theme(
                 'stats': parser_stats,
             }
 
-    from concurrent.futures import ThreadPoolExecutor
-    import concurrent.futures
-
-    def _run_async(coro):
-        """Run async coroutine in a SEPARATE THREAD with its own event loop."""
-        result = [None]
-        error = [None]
-        
-        def _thread_target():
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                result[0] = loop.run_until_complete(coro)
-            except Exception as e:
-                error[0] = e
-            finally:
-                loop.close()
-        
-        t = __import__('threading').Thread(target=_thread_target)
-        t.start()
-        t.join(timeout=300)
-        if error[0]:
-            raise error[0]
-        if t.is_alive():
-            raise TimeoutError("Async task timed out after 300s")
-        return result[0]
-
     try:
-        result = _run_async(_execute())
+        # Same persistent loop as other Celery tasks (see utils/celery_asyncio).
+        result = run_coro(_execute())
 
         # Save stats (sync-friendly)
         try:
@@ -232,7 +206,7 @@ def parse_and_publish_theme(
                     )
                     session.add(record)
                     await session.commit()
-            _run_async(_save_stats())
+            run_coro(_save_stats())
         except Exception as stats_err:
             logger.warning(f"Failed to save stats: {stats_err}")
 
@@ -252,8 +226,8 @@ def parse_and_publish_theme(
                     )
                     session.add(record)
                     await session.commit()
-            _run_async(_save_failure())
-        except:
+            run_coro(_save_failure())
+        except Exception:
             pass
         raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
 
@@ -285,15 +259,6 @@ def run_all_regions_theme(theme: str):
     from database.models import Region
     from database.connection import AsyncSessionLocal
     from sqlalchemy import select
-    import asyncio
-
-    def _run_async(coro):
-        loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
 
     async def _get_regions():
         async with AsyncSessionLocal() as session:
@@ -302,7 +267,7 @@ def run_all_regions_theme(theme: str):
             )
             return [row.code for row in result.scalars().all()]
 
-    regions = _run_async(_get_regions())
+    regions = run_coro(_get_regions())
     results = []
     for rc in regions:
         r = parse_and_publish_theme.delay(rc, theme)
