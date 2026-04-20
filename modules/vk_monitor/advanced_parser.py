@@ -9,15 +9,24 @@ applies all filters, and returns cleaned posts ready for digest building.
 """
 import logging
 import random
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Set
 from datetime import datetime, timezone
 
 from modules.vk_monitor.vk_client import VKClient
 from utils.post_utils import lip_of_post, clear_copy_history, post_popularity
 from utils.vk_attachments import extract_vk_attachments, has_attachments
 from utils.text_utils import is_advertisement, check_blacklist
+from modules.deduplication.fingerprints import (
+    create_text_fingerprint,
+    create_text_core_fingerprint,
+    create_media_fingerprint,
+    text_to_rafinad,
+)
 
 logger = logging.getLogger(__name__)
+
+# Не считать «ядро» текста для near-dup, если rafinad слишком короткий (меньше ложных срабатываний)
+_MIN_RAFINAD_LEN_FOR_CORE_DEDUP = 50
 
 # Дайджесты: не брать посты старше 72 часов с момента публикации (оригинала при репосте)
 DIGEST_MAX_POST_AGE_HOURS = 72
@@ -45,12 +54,9 @@ class AdvancedVKParser:
     Advanced VK post parser with full filtering pipeline.
     
     Migrated from old_postopus parser.py with all filtering logic:
-    1. Duplicate lip check
-    2. Unwrap reposts (clear_copy_history)
-    3. Возраст поста (не старше 72 ч для дайджеста)
-    4. Black ID check
-    5. Advertisement filter
-    6. Прочие фильтры (blacklist, вложения, темы)
+    1. Unwrap репостов, возраст, дедуп lip (work_table + батч)
+    2. Фильтры black_id, реклама, blacklist, вложения, темы
+    3. Дедуп текста и медиа внутри одного прогона
     
     Returns filtered posts ready for digest building.
     """
@@ -114,7 +120,15 @@ class AdvancedVKParser:
             work_table_hash = []
         if recent_text_fingerprints is None:
             recent_text_fingerprints = []
-        
+        recent_text_set: Set[str] = set(recent_text_fingerprints) if recent_text_fingerprints else set()
+        work_hash_set: Set[str] = set(work_table_hash or [])
+
+        # Дедупликация внутри одного вызова parse_posts_from_communities
+        self._batch_lips: Set[str] = set()
+        self._batch_text_fps: Set[str] = set()
+        self._batch_core_fps: Set[str] = set()
+        self._batch_media_sigs: Set[str] = set()
+
         # Shuffle communities (randomize fetch order)
         if shuffle_communities:
             random.shuffle(community_ids)
@@ -144,8 +158,8 @@ class AdvancedVKParser:
                         theme=theme,
                         region_config=region_config,
                         work_table_lip=work_table_lip,
-                        work_table_hash=work_table_hash,
-                        recent_text_fingerprints=recent_text_fingerprints,
+                        work_hash_set=work_hash_set,
+                        recent_text_fingerprints=recent_text_set,
                     )
                     
                     if filtered:
@@ -206,28 +220,22 @@ class AdvancedVKParser:
         theme: str,
         region_config: Any,
         work_table_lip: List[str],
-        work_table_hash: List[str],
-        recent_text_fingerprints: List[str],
+        work_hash_set: Set[str],
+        recent_text_fingerprints: Set[str],
     ) -> Optional[Dict[str, Any]]:
         """
         Apply full filtering pipeline to a single post.
-        
-        Returns filtered post or None if rejected.
+
+        Важно: сначала unwrap репоста, иначе lip разный у одного и того же оригинала на разных стенах.
         """
-        owner_id = post_data.get('owner_id', post_data.get('from_id', 0))
-        post_id = post_data.get('id', 0)
-        text = post_data.get('text', '') or ''
-        
-        # 1. Duplicate lip check
-        lip = lip_of_post(owner_id, post_id)
-        if lip in work_table_lip:
-            self.stats['posts_filtered_duplicate_lip'] += 1
-            return None
-        
-        # 2. Unwrap reposts (clear_copy_history) — дальше используем дату оригинала
+        # 1. Развернуть репост → owner_id/post_id/text от оригинала
         post_data = clear_copy_history(post_data)
 
-        # 3. Возраст публикации: только посты не старше DIGEST_MAX_POST_AGE_HOURS
+        owner_id = post_data.get("owner_id", post_data.get("from_id", 0))
+        post_id = post_data.get("id", 0)
+        text = (post_data.get("text") or "").strip()
+
+        # 2. Возраст публикации
         age_h = _post_age_hours_utc(post_data)
         if age_h is None:
             self.stats["posts_filtered_old"] += 1
@@ -235,49 +243,94 @@ class AdvancedVKParser:
         if age_h > DIGEST_MAX_POST_AGE_HOURS:
             self.stats["posts_filtered_old"] += 1
             return None
-        
-        # 4. Black ID check
+
+        # 3. Lip: уже в дайджестах / уже отобран в этом прогоне (один оригинал = один раз)
+        lip = lip_of_post(owner_id, post_id)
+        if lip in work_table_lip or lip in self._batch_lips:
+            self.stats["posts_filtered_duplicate_lip"] += 1
+            return None
+
+        # 4. Black ID
         if region_config and region_config.black_id:
             if abs(owner_id) in [abs(x) for x in region_config.black_id]:
-                self.stats['posts_filtered_black_id'] += 1
+                self.stats["posts_filtered_black_id"] += 1
                 return None
-        
+
         # 5. Advertisement filter
-        is_reklama_theme = (theme == 'reklama')
+        is_reklama_theme = theme == "reklama"
         if is_advertisement(text, skip_for_reklama=is_reklama_theme, theme=theme):
             if not is_reklama_theme:
-                self.stats['posts_filtered_advertisement'] += 1
+                self.stats["posts_filtered_advertisement"] += 1
                 return None
-        
-        # 6. Blacklist text check
+
+        # 6. Blacklist text
         if region_config and region_config.delete_msg_blacklist:
             matched = check_blacklist(text, region_config.delete_msg_blacklist)
             if matched:
-                self.stats['posts_filtered_blacklist_text'] += 1
+                self.stats["posts_filtered_blacklist_text"] += 1
                 return None
-        
-        # 7. Region words filter (for specific communities)
+
+        # 7. Region words filter (placeholder)
         if region_config and region_config.filter_group_by_region_words:
-            community_vk_id = post_data.get('community_vk_id', owner_id)
-            if str(abs(community_vk_id)) in {str(abs(x)) for x in region_config.filter_group_by_region_words.keys()}:
-                # This community requires region words - check in post filter
-                # This would be handled by RegionWordsFilter in the new system
-                pass  # Placeholder - would use RegionWordsFilter
-        
+            community_vk_id = post_data.get("community_vk_id", owner_id)
+            if str(abs(community_vk_id)) in {
+                str(abs(x)) for x in region_config.filter_group_by_region_words.keys()
+            }:
+                pass
+
         # 8. No-attachments filter (for non-novost/non-reklama themes)
-        if theme not in ('novost', 'reklama'):
+        if theme not in ("novost", "reklama"):
             attachments = extract_vk_attachments(post_data)
             if not has_attachments(attachments):
-                self.stats['posts_filtered_no_attachments'] += 1
+                self.stats["posts_filtered_no_attachments"] += 1
                 return None
-        
+
         # 9. Theme-specific filters
-        if theme == 'sosed':
-            # Must have #Новости hashtag
-            if '#новости' not in text.lower():
+        if theme == "sosed":
+            if "#новости" not in text.lower():
                 return None
-        
-        # Post passed all filters
+
+        # 10. Дедуп по медиа (набор id вложений в этом прогоне + известные hash из work_table)
+        raw_atts = post_data.get("attachments")
+        if not isinstance(raw_atts, list):
+            raw_atts = []
+        media_ids = create_media_fingerprint(raw_atts)
+        media_sig = ",".join(sorted(media_ids)) if media_ids else ""
+        if media_ids:
+            if any(mid in work_hash_set for mid in media_ids):
+                self.stats["posts_filtered_duplicate_foto"] += 1
+                return None
+            if media_sig in self._batch_media_sigs:
+                self.stats["posts_filtered_duplicate_foto"] += 1
+                return None
+
+        # 11. Дедуп по тексту (полный hash и «ядро» для похожих формулировок)
+        if text:
+            fp = create_text_fingerprint(text)
+            if fp:
+                if fp in self._batch_text_fps or fp in recent_text_fingerprints:
+                    self.stats["posts_filtered_duplicate_text"] += 1
+                    return None
+                rlen = len(text_to_rafinad(text))
+                if rlen >= _MIN_RAFINAD_LEN_FOR_CORE_DEDUP:
+                    cfp = create_text_core_fingerprint(text)
+                    if cfp and cfp in self._batch_core_fps:
+                        self.stats["posts_filtered_duplicate_text"] += 1
+                        return None
+
+        # Регистрируем отобранный пост в батч-дедупе
+        self._batch_lips.add(lip)
+        if media_sig:
+            self._batch_media_sigs.add(media_sig)
+        if text:
+            fp = create_text_fingerprint(text)
+            if fp:
+                self._batch_text_fps.add(fp)
+                if len(text_to_rafinad(text)) >= _MIN_RAFINAD_LEN_FOR_CORE_DEDUP:
+                    cfp = create_text_core_fingerprint(text)
+                    if cfp:
+                        self._batch_core_fps.add(cfp)
+
         return post_data
     
     def get_stats(self) -> Dict[str, Any]:
