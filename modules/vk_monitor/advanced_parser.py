@@ -203,7 +203,70 @@ class AdvancedVKParser:
         )
         
         return all_posts
-    
+
+    async def filter_posts_list(
+        self,
+        posts: List[Dict[str, Any]],
+        theme: str,
+        region_config: Any,
+        work_table_lip: List[str],
+        work_table_hash: List[str],
+        recent_text_fingerprints: Optional[List[str]] = None,
+        pipeline_settings: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Тот же пайплайн _filter_post, что и при обходе сообществ, но для уже загруженных постов
+        (например областной дайджест из ссылок на источники в районных дайджестах).
+        """
+        if work_table_lip is None:
+            work_table_lip = []
+        if work_table_hash is None:
+            work_table_hash = []
+        recent_text_set: Set[str] = set(recent_text_fingerprints or [])
+        work_hash_set: Set[str] = set(work_table_hash or [])
+
+        self._batch_lips = set()
+        self._batch_text_fps = set()
+        self._batch_core_fps = set()
+        self._batch_media_sigs = set()
+
+        if pipeline_settings is None:
+            self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
+            self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
+        else:
+            self._max_post_age_hours = float(
+                pipeline_settings.get("max_post_age_hours", DIGEST_MAX_POST_AGE_HOURS)
+            )
+            self._min_rafinad_core = int(
+                pipeline_settings.get("min_rafinad_len_core_dedup", _MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
+            )
+
+        all_posts: List[Dict[str, Any]] = []
+        for post_data in posts:
+            self.stats["total_posts_scanned"] += 1
+            filtered = await self._filter_post(
+                post_data,
+                theme=theme,
+                region_config=region_config,
+                work_table_lip=work_table_lip,
+                work_hash_set=work_hash_set,
+                recent_text_fingerprints=recent_text_set,
+            )
+            if filtered:
+                all_posts.append(filtered)
+
+        all_posts.sort(
+            key=lambda p: post_popularity(
+                views=p.get("views", {}).get("count", 0) if isinstance(p.get("views"), dict) else p.get("views", 0),
+                likes=p.get("likes", {}).get("count", 0),
+                comments=p.get("comments", {}).get("count", 0),
+                reposts=p.get("reposts", {}).get("count", 0),
+            ),
+            reverse=True,
+        )
+        self.stats["posts_final_count"] = len(all_posts)
+        return all_posts
+
     async def _fetch_community_posts(self, community_id: int, count: int) -> List[Dict]:
         """Fetch posts from a single VK community."""
         # Use VK client to get wall posts
@@ -293,8 +356,8 @@ class AdvancedVKParser:
             }:
                 pass
 
-        # 8. No-attachments filter (for non-novost/non-reklama themes)
-        if theme not in ("novost", "reklama"):
+        # 8. No-attachments filter (for non-novost/non-reklama themes; oblast = как новости)
+        if theme not in ("novost", "reklama", "oblast"):
             attachments = extract_vk_attachments(post_data)
             if not has_attachments(attachments):
                 self.stats["posts_filtered_no_attachments"] += 1

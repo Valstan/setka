@@ -26,3 +26,11 @@ def test_resolve_hashtags_fallback_combined_and_local():
     assert "спорт" in tags[0].lower() or "спорт" in tags[0]
     assert "лебяжье" in tags[0].lower()
     assert loc == "#лебяжье"
+
+
+def test_resolve_header_oblast_fallback():
+    rc = SimpleNamespace(zagolovki={}, heshteg_local={"raicentr": "киров"})
+    region = SimpleNamespace(name="Кировская область", code="kirov_obl")
+    h = resolve_digest_header(rc, "oblast", region)
+    assert "Главное в области" in h
+    assert "Кировская область" in h

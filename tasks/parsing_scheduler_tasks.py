@@ -53,6 +53,17 @@ def parse_and_publish_theme(
 
                 return await execute_copy_setka_network(session, test_mode=test_mode)
 
+            # Кировская область: дайджест из ссылок на источники в постах районных групп (тема oblast).
+            if region_code == "kirov_obl" and theme == "oblast":
+                from modules.kirov_oblast_digest import run_kirov_oblast_digest
+
+                return await run_kirov_oblast_digest(
+                    session,
+                    region_code=region_code,
+                    theme=theme,
+                    test_mode=test_mode,
+                )
+
             # 1. Get region config
             result = await session.execute(
                 select(RegionConfig).where(RegionConfig.region_code == region_code)
@@ -327,6 +338,7 @@ def run_all_regions_theme(theme: str):
                 select(Region.code).where(
                     Region.is_active == True,
                     Region.vk_group_id.isnot(None),
+                    Region.code != "kirov_obl",
                     exists().where(RegionConfig.region_code == Region.code),
                     (has_theme_communities | has_any_communities),
                 )

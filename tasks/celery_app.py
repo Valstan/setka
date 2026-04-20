@@ -778,6 +778,44 @@ app.conf.beat_schedule = {
         'options': {'expires': 3600},
     },
 
+    # Кировская область (областной дайджест из ссылок в районных постах): 45 мин — после волн novost :40
+    'postopus-kirov-oblast-6': {
+        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
+        'schedule': crontab(minute=45, hour=6),
+        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
+        'options': {'expires': 3600},
+    },
+    'postopus-kirov-oblast-11': {
+        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
+        'schedule': crontab(minute=45, hour=11),
+        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
+        'options': {'expires': 3600},
+    },
+    'postopus-kirov-oblast-12': {
+        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
+        'schedule': crontab(minute=45, hour=12),
+        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
+        'options': {'expires': 3600},
+    },
+    'postopus-kirov-oblast-16': {
+        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
+        'schedule': crontab(minute=45, hour=16),
+        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
+        'options': {'expires': 3600},
+    },
+    'postopus-kirov-oblast-18': {
+        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
+        'schedule': crontab(minute=45, hour=18),
+        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
+        'options': {'expires': 3600},
+    },
+    'postopus-kirov-oblast-20': {
+        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
+        'schedule': crontab(minute=45, hour=20),
+        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
+        'options': {'expires': 3600},
+    },
+
     # Kultura (culture): 20 7,13,16,19,21 * * *
     'postopus-kultura-7': {
         'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',

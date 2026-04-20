@@ -66,6 +66,33 @@ class VKClient:
             logger.error(f"Unexpected error fetching posts from {owner_id}: {e}")
             return []
     
+    def get_posts_by_ids(self, refs: List[tuple]) -> List[Dict[str, Any]]:
+        """
+        Пакетная загрузка постов wall.getById (до 100 за запрос).
+
+        Args:
+            refs: список (owner_id, post_id)
+
+        Returns:
+            Список постов в порядке ответа API (может быть короче refs при ошибках)
+        """
+        if not refs:
+            return []
+        out: List[Dict[str, Any]] = []
+        batch_size = 100
+        for i in range(0, len(refs), batch_size):
+            chunk = refs[i : i + batch_size]
+            posts_str = ",".join(f"{oid}_{pid}" for oid, pid in chunk)
+            try:
+                resp = self.vk.wall.getById(posts=posts_str)
+                if resp:
+                    out.extend(resp)
+            except vk_api.exceptions.ApiError as e:
+                logger.error(f"VK wall.getById batch error: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected getById batch error: {e}")
+        return out
+
     def get_post_by_id(self, owner_id: int, post_id: int) -> Optional[Dict[str, Any]]:
         """
         Get specific post by ID
