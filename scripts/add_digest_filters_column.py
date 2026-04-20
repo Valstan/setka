@@ -16,8 +16,7 @@ async def main() -> None:
     if not raw:
         print("DATABASE_URL not set", file=sys.stderr)
         sys.exit(1)
-    u = raw.replace("+asyncpg", "")
-    eng = create_async_engine(u)
+    eng = create_async_engine(raw)
     async with eng.begin() as conn:
         await conn.execute(
             text(
