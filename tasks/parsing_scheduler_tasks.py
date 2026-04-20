@@ -37,6 +37,7 @@ def parse_and_publish_theme(
         resolve_digest_header,
         resolve_digest_hashtags,
     )
+    from modules.digest_pipeline_settings import get_effective_pipeline_settings
     from modules.publisher.vk_publisher_extended import VKPublisher
     from config.runtime import get_parse_tokens
     from sqlalchemy import select
@@ -71,6 +72,7 @@ def parse_and_publish_theme(
                     filter_group_by_region_words={},
                     text_post_maxsize_simbols=4096,
                     setka_regim_repost=False,
+                    digest_filters=None,
                 )
 
             # 2. Get work table
@@ -132,6 +134,7 @@ def parse_and_publish_theme(
                 return {'success': False, 'error': 'No VK tokens configured'}
             vk_client = VKClient(parse_token)
             parser = AdvancedVKParser(vk_client)
+            pipeline_eff = get_effective_pipeline_settings(region_config, theme)
 
             posts = await parser.parse_posts_from_communities(
                 community_ids=community_ids,
@@ -140,6 +143,7 @@ def parse_and_publish_theme(
                 work_table_lip=work_table.lip or [],
                 work_table_hash=work_table.hash or [],
                 count_per_community=20,
+                pipeline_settings=pipeline_eff,
             )
             parser_stats = parser.get_stats()
 
@@ -162,6 +166,7 @@ def parse_and_publish_theme(
                     local_hashtag=local_hashtag,
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
                     repost_mode=region_config.setka_regim_repost,
+                    max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
                 )
                 digest = builder.build_digest(regular_posts, group_names=group_names)
 
@@ -180,6 +185,7 @@ def parse_and_publish_theme(
                     hashtags=list(theme_tags),
                     local_hashtag=local_hashtag,
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
+                    max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
                 )
                 mourning_digest = mourning_builder.build_digest(mourning_posts, group_names=group_names)
 

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from database.connection import get_db_session, init_db, close_db
 from modules.module_activity_notifier import notify_system_startup
-from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher, parsing, parsing_stats
+from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher, parsing, parsing_stats, filtration
 
 # Setup logging
 logging.basicConfig(
@@ -106,6 +106,7 @@ app.include_router(task_monitoring.router, tags=["Task Monitoring"])
 app.include_router(publisher.router, prefix="/api/publisher", tags=["VK Publisher"])
 app.include_router(parsing.router, tags=["Parsing"])
 app.include_router(parsing_stats.router, tags=["Parsing Stats"])  # Postopus migration
+app.include_router(filtration.router, prefix="/api/filtration", tags=["Filtration"])
 
 
 @app.get("/")
@@ -188,6 +189,12 @@ async def parsing_page(request: Request):
 async def parsing_stats_page(request: Request):
     """Parsing statistics page (Postopus migration)"""
     return templates.TemplateResponse("parsing_stats.html", {"request": request})
+
+
+@app.get("/filtration")
+async def filtration_page(request: Request):
+    """Настройки фильтрации дайджестов и правил отбора постов"""
+    return templates.TemplateResponse("filtration.html", {"request": request})
 
 
 @app.get("/favicon.ico")

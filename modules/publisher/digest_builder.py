@@ -77,6 +77,7 @@ class DigestBuilder:
         local_hashtag: str = "",
         max_text_length: int = MAX_TEXT_LENGTH,
         repost_mode: bool = False,
+        max_posts_per_digest: Optional[int] = None,
     ):
         """
         Args:
@@ -85,6 +86,7 @@ class DigestBuilder:
             local_hashtag: Local region hashtag
             max_text_length: Maximum text length
             repost_mode: True = VK repost, False = copy with attribution
+            max_posts_per_digest: Сколько новостей максимум в одном дайджесте (из настроек региона)
         """
         # Пустая строка = без заголовка (например траурный дайджест); None = дефолтный заголовок
         if header is None:
@@ -95,6 +97,10 @@ class DigestBuilder:
         self.local_hashtag = local_hashtag
         self.max_text_length = max_text_length
         self.repost_mode = repost_mode
+        self.max_posts_per_digest = (
+            int(max_posts_per_digest) if max_posts_per_digest is not None else self.MAX_POSTS_PER_DIGEST
+        )
+        self.max_posts_per_digest = max(1, min(self.max_posts_per_digest, 10))
     
     def build_digest(
         self,
@@ -149,7 +155,7 @@ class DigestBuilder:
 
         for post_data in sorted_posts:
             # Stop if we've reached max posts
-            if len(posts_included) >= self.MAX_POSTS_PER_DIGEST:
+            if len(posts_included) >= self.max_posts_per_digest:
                 break
 
             # Extract post info
@@ -345,7 +351,7 @@ class DigestBuilder:
         posts_by_attachments = self.MAX_ATTACHMENTS // max(avg_attachments, 1)
         
         # Take minimum
-        return min(posts_by_text, posts_by_attachments)
+        return min(posts_by_text, posts_by_attachments, self.max_posts_per_digest)
 
 
 class TextOnlyDigestBuilder(DigestBuilder):

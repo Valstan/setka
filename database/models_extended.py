@@ -120,8 +120,11 @@ class RegionConfig(Base):
     region_words = Column(JSON, nullable=True)  # {"kirov": ["слово1", ...], "tatar": [...]}
     only_main_news = Column(JSON, nullable=True)  # [group_id1, group_id2, ...]
     
-    # Age thresholds
+    # Age thresholds (legacy / другие пайплайны)
     time_old_post = Column(JSON, nullable=True)  # {"hard": 86400, "medium": 172800, "light": 604800}
+
+    # Пайплайн дайджеста: defaults + by_topic (см. modules/digest_pipeline_settings.py)
+    digest_filters = Column(JSON, nullable=True)
     
     # Post limits
     text_post_maxsize_simbols = Column(Integer, default=4096)
@@ -164,6 +167,7 @@ class RegionConfig(Base):
             "region_words": self.region_words,
             "only_main_news": self.only_main_news,
             "time_old_post": self.time_old_post,
+            "digest_filters": self.digest_filters,
             "text_post_maxsize_simbols": self.text_post_maxsize_simbols,
             "delete_msg_blacklist": self.delete_msg_blacklist,
             "fast_del_msg_blacklist": self.fast_del_msg_blacklist,

@@ -67,7 +67,9 @@ class AdvancedVKParser:
             vk_client: VK API client instance
         """
         self.vk_client = vk_client
-        
+        self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
+        self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
+
         # Parsing statistics (stat_mode)
         self.stats = {
             'total_groups_checked': 0,
@@ -95,6 +97,7 @@ class AdvancedVKParser:
         recent_text_fingerprints: List[str] = None,
         count_per_community: int = 20,
         shuffle_communities: bool = True,
+        pipeline_settings: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Parse posts from multiple communities with full filtering.
@@ -110,6 +113,7 @@ class AdvancedVKParser:
             recent_text_fingerprints: Recent text fingerprints (for dedup)
             count_per_community: Posts to fetch per community
             shuffle_communities: Randomize community order
+            pipeline_settings: Слитые настройки из digest_filters (возраст, дедуп, лимит fetch)
         
         Returns:
             List of filtered post data dicts
@@ -129,6 +133,17 @@ class AdvancedVKParser:
         self._batch_core_fps: Set[str] = set()
         self._batch_media_sigs: Set[str] = set()
 
+        if pipeline_settings is None:
+            self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
+            self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
+            effective_count = count_per_community
+        else:
+            self._max_post_age_hours = float(pipeline_settings.get("max_post_age_hours", DIGEST_MAX_POST_AGE_HOURS))
+            self._min_rafinad_core = int(
+                pipeline_settings.get("min_rafinad_len_core_dedup", _MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
+            )
+            effective_count = int(pipeline_settings.get("posts_per_community_fetch", count_per_community))
+
         # Shuffle communities (randomize fetch order)
         if shuffle_communities:
             random.shuffle(community_ids)
@@ -141,7 +156,7 @@ class AdvancedVKParser:
             
             try:
                 # Fetch posts from VK
-                posts = await self._fetch_community_posts(community_id, count_per_community)
+                posts = await self._fetch_community_posts(community_id, effective_count)
                 
                 if not posts:
                     continue
@@ -240,7 +255,7 @@ class AdvancedVKParser:
         if age_h is None:
             self.stats["posts_filtered_old"] += 1
             return None
-        if age_h > DIGEST_MAX_POST_AGE_HOURS:
+        if age_h > self._max_post_age_hours:
             self.stats["posts_filtered_old"] += 1
             return None
 
@@ -312,7 +327,7 @@ class AdvancedVKParser:
                     self.stats["posts_filtered_duplicate_text"] += 1
                     return None
                 rlen = len(text_to_rafinad(text))
-                if rlen >= _MIN_RAFINAD_LEN_FOR_CORE_DEDUP:
+                if rlen >= self._min_rafinad_core:
                     cfp = create_text_core_fingerprint(text)
                     if cfp and cfp in self._batch_core_fps:
                         self.stats["posts_filtered_duplicate_text"] += 1
@@ -326,7 +341,7 @@ class AdvancedVKParser:
             fp = create_text_fingerprint(text)
             if fp:
                 self._batch_text_fps.add(fp)
-                if len(text_to_rafinad(text)) >= _MIN_RAFINAD_LEN_FOR_CORE_DEDUP:
+                if len(text_to_rafinad(text)) >= self._min_rafinad_core:
                     cfp = create_text_core_fingerprint(text)
                     if cfp:
                         self._batch_core_fps.add(cfp)

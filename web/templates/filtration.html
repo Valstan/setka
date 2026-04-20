@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+
+{% block title %}Фильтрация - SETKA{% endblock %}
+{% block nav_filtration %}active{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <h1 class="mb-3"><i class="bi bi-funnel"></i> Фильтрация</h1>
+    <p class="text-muted">Настройки отбора постов в дайджесты по регионам и темам. Изменения сохраняются в <code>region_configs</code> (поле <code>digest_filters</code> и связанные списки).</p>
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-4">
+            <label class="form-label">Регион</label>
+            <select id="regionSelect" class="form-select" onchange="loadFiltration()">
+                <option value="">— выберите —</option>
+            </select>
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+            <button type="button" class="btn btn-primary" id="saveBtn" onclick="saveFiltration()" disabled>
+                <i class="bi bi-save"></i> Сохранить
+            </button>
+        </div>
+    </div>
+
+    <div id="filtrationAlert" class="alert d-none" role="alert"></div>
+    <div id="filtrationLoading" class="text-center py-4 d-none">
+        <div class="spinner-border text-primary"></div>
+    </div>
+
+    <div id="filtrationForm" style="display:none;">
+        <ul class="nav nav-tabs" role="tablist">
+            <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-pipeline" type="button">Пайплайн дайджеста</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-by-theme" type="button">По темам</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-lists" type="button">Списки и лимиты</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-json" type="button">JSON (продвинуто)</button></li>
+        </ul>
+        <div class="tab-content border border-top-0 p-3 bg-white rounded-bottom">
+            <div class="tab-pane fade show active" id="tab-pipeline">
+                <h5>Общие значения по умолчанию</h5>
+                <p class="small text-muted">Применяются ко всем темам, если для темы нет переопределения.</p>
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <label class="form-label">Макс. возраст поста (часы)</label>
+                        <input type="number" step="0.5" min="1" max="8760" class="form-control" id="def_max_age" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Макс. новостей в дайджесте</label>
+                        <input type="number" min="1" max="10" class="form-control" id="def_max_posts" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Мин. длина текста для дедуп «ядра»</label>
+                        <input type="number" min="10" max="500" class="form-control" id="def_min_rafinad" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Постов с сообщества за запрос</label>
+                        <input type="number" min="1" max="100" class="form-control" id="def_fetch" />
+                    </div>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="tab-by-theme">
+                <h5>Переопределения по тематикам</h5>
+                <p class="small text-muted">Пустое поле — наследовать из «Общих». Темы совпадают с расписанием Celery (novost, sport, …).</p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle" id="themeTable">
+                        <thead><tr><th>Тема</th><th>Возраст (ч)</th><th>Новостей в дайджесте</th><th>Дедуп ядра</th><th>Fetch</th></tr></thead>
+                        <tbody id="themeTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="tab-lists">
+                <div class="mb-3">
+                    <label class="form-label">Чёрный список ID источников (owner_id, по одному в строке)</label>
+                    <textarea class="form-control font-monospace" id="black_id" rows="4" placeholder="-123456789"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Чёрный список фраз в тексте (по одной в строке)</label>
+                    <textarea class="form-control" id="delete_msg_blacklist" rows="4"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Слова в репостах (дисквалификация)</label>
+                    <textarea class="form-control" id="repost_words_blacklist" rows="2"></textarea>
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-md-4">
+                        <label>time_old_post hard (сек)</label>
+                        <input type="number" class="form-control" id="to_hard" />
+                    </div>
+                    <div class="col-md-4">
+                        <label>medium (сек)</label>
+                        <input type="number" class="form-control" id="to_medium" />
+                    </div>
+                    <div class="col-md-4">
+                        <label>light (сек)</label>
+                        <input type="number" class="form-control" id="to_light" />
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Макс. длина текста поста (символы)</label>
+                    <input type="number" min="500" max="8192" class="form-control" id="text_post_maxsize" />
+                </div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="setka_regim_repost" />
+                    <label class="form-check-label" for="setka_regim_repost">Режим репоста (setka_regim_repost)</label>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">filter_group_by_region_words (JSON)</label>
+                    <textarea class="form-control font-monospace small" id="filter_group_json" rows="6" placeholder='{"12345": ["слово"]}'></textarea>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="tab-json">
+                <label class="form-label">digest_filters (сырой JSON)</label>
+                <textarea class="form-control font-monospace small" id="digest_filters_raw" rows="18"></textarea>
+                <p class="small text-muted mt-2">После правки здесь нажмите «Сохранить» — объект будет отправлен как есть (с нормализацией defaults на сервере).</p>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header">Итоговые значения по темам (предпросмотр после сохранения)</div>
+            <div class="card-body p-0">
+                <pre id="previewJson" class="small mb-0 p-3 bg-light" style="max-height:280px;overflow:auto;"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const THEME_KEYS = ['novost','kultura','sport','reklama','admin','union','addons','sosed','detsad','setka'];
+let currentData = null;
+
+async function loadRegions() {
+    const r = await fetch('/api/filtration/regions');
+    if (!r.ok) throw new Error('regions');
+    const list = await r.json();
+    const sel = document.getElementById('regionSelect');
+    sel.innerHTML = '<option value="">— выберите —</option>';
+    list.forEach(x => {
+        const o = document.createElement('option');
+        o.value = x.code;
+        o.textContent = x.code + ' — ' + x.name;
+        sel.appendChild(o);
+    });
+}
+
+function buildThemeRows() {
+    const tb = document.getElementById('themeTableBody');
+    tb.innerHTML = '';
+    THEME_KEYS.forEach(t => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><code>${t}</code></td>
+            <td><input type="number" step="0.5" class="form-control form-control-sm bt-age" data-theme="${t}" placeholder="—" /></td>
+            <td><input type="number" class="form-control form-control-sm bt-posts" data-theme="${t}" placeholder="—" /></td>
+            <td><input type="number" class="form-control form-control-sm bt-raf" data-theme="${t}" placeholder="—" /></td>
+            <td><input type="number" class="form-control form-control-sm bt-fetch" data-theme="${t}" placeholder="—" /></td>`;
+        tb.appendChild(tr);
+    });
+}
+
+function showAlert(kind, msg) {
+    const el = document.getElementById('filtrationAlert');
+    el.className = 'alert alert-' + kind;
+    el.textContent = msg;
+    el.classList.remove('d-none');
+}
+
+async function loadFiltration() {
+    const code = document.getElementById('regionSelect').value;
+    document.getElementById('saveBtn').disabled = !code;
+    document.getElementById('filtrationForm').style.display = 'none';
+    document.getElementById('filtrationAlert').classList.add('d-none');
+    if (!code) return;
+
+    document.getElementById('filtrationLoading').classList.remove('d-none');
+    try {
+        const r = await fetch('/api/filtration/' + encodeURIComponent(code));
+        if (!r.ok) throw new Error(await r.text());
+        currentData = await r.json();
+
+        const df = currentData.digest_filters || { defaults: {}, by_topic: {} };
+        const d = df.defaults || {};
+        document.getElementById('def_max_age').value = d.max_post_age_hours ?? '';
+        document.getElementById('def_max_posts').value = d.max_posts_per_digest ?? '';
+        document.getElementById('def_min_rafinad').value = d.min_rafinad_len_core_dedup ?? '';
+        document.getElementById('def_fetch').value = d.posts_per_community_fetch ?? '';
+
+        THEME_KEYS.forEach(t => {
+            const ov = (df.by_topic || {})[t] || {};
+            const row = document.querySelector(`.bt-age[data-theme="${t}"]`);
+            if (!row) return;
+            document.querySelector(`.bt-age[data-theme="${t}"]`).value = ov.max_post_age_hours ?? '';
+            document.querySelector(`.bt-posts[data-theme="${t}"]`).value = ov.max_posts_per_digest ?? '';
+            document.querySelector(`.bt-raf[data-theme="${t}"]`).value = ov.min_rafinad_len_core_dedup ?? '';
+            document.querySelector(`.bt-fetch[data-theme="${t}"]`).value = ov.posts_per_community_fetch ?? '';
+        });
+
+        document.getElementById('black_id').value = (currentData.black_id || []).join('\n');
+        document.getElementById('delete_msg_blacklist').value = (currentData.delete_msg_blacklist || []).join('\n');
+        document.getElementById('repost_words_blacklist').value = (currentData.repost_words_blacklist || []).join('\n');
+        const tp = currentData.time_old_post || {};
+        document.getElementById('to_hard').value = tp.hard ?? '';
+        document.getElementById('to_medium').value = tp.medium ?? '';
+        document.getElementById('to_light').value = tp.light ?? '';
+        document.getElementById('text_post_maxsize').value = currentData.text_post_maxsize_simbols ?? 4096;
+        document.getElementById('setka_regim_repost').checked = !!currentData.setka_regim_repost;
+        document.getElementById('filter_group_json').value = JSON.stringify(currentData.filter_group_by_region_words || {}, null, 2);
+        document.getElementById('digest_filters_raw').value = JSON.stringify(df, null, 2);
+
+        document.getElementById('previewJson').textContent = JSON.stringify(currentData.effective_pipeline_preview || {}, null, 2);
+        document.getElementById('filtrationForm').style.display = 'block';
+    } catch (e) {
+        showAlert('danger', 'Ошибка загрузки: ' + e.message);
+    } finally {
+        document.getElementById('filtrationLoading').classList.add('d-none');
+    }
+}
+
+function collectDigestFiltersFromForm() {
+    const defaults = {};
+    const v = (id) => {
+        const el = document.getElementById(id);
+        const x = el.value.trim();
+        if (x === '') return undefined;
+        const n = Number(x);
+        return Number.isFinite(n) ? n : undefined;
+    };
+    const a = v('def_max_age'); if (a !== undefined) defaults.max_post_age_hours = a;
+    const b = v('def_max_posts'); if (b !== undefined) defaults.max_posts_per_digest = Math.round(b);
+    const c = v('def_min_rafinad'); if (c !== undefined) defaults.min_rafinad_len_core_dedup = Math.round(c);
+    const f = v('def_fetch'); if (f !== undefined) defaults.posts_per_community_fetch = Math.round(f);
+
+    const by_topic = {};
+    THEME_KEYS.forEach(t => {
+        const o = {};
+        const x1 = document.querySelector(`.bt-age[data-theme="${t}"]`).value.trim();
+        const x2 = document.querySelector(`.bt-posts[data-theme="${t}"]`).value.trim();
+        const x3 = document.querySelector(`.bt-raf[data-theme="${t}"]`).value.trim();
+        const x4 = document.querySelector(`.bt-fetch[data-theme="${t}"]`).value.trim();
+        if (x1 !== '') o.max_post_age_hours = Number(x1);
+        if (x2 !== '') o.max_posts_per_digest = Math.round(Number(x2));
+        if (x3 !== '') o.min_rafinad_len_core_dedup = Math.round(Number(x3));
+        if (x4 !== '') o.posts_per_community_fetch = Math.round(Number(x4));
+        if (Object.keys(o).length) by_topic[t] = o;
+    });
+    return { defaults, by_topic };
+}
+
+async function saveFiltration() {
+    const code = document.getElementById('regionSelect').value;
+    if (!code) return;
+    let digest_filters = collectDigestFiltersFromForm();
+    try {
+        const raw = document.getElementById('digest_filters_raw').value.trim();
+        if (raw && raw !== '{}') {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') digest_filters = parsed;
+        }
+    } catch (e) {
+        showAlert('danger', 'Неверный JSON на вкладке «JSON»: ' + e.message);
+        return;
+    }
+
+    const black_id = document.getElementById('black_id').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(x => parseInt(x, 10)).filter(Number.isFinite);
+    const delete_msg_blacklist = document.getElementById('delete_msg_blacklist').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const repost_words = document.getElementById('repost_words_blacklist').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    let filter_group = {};
+    try {
+        filter_group = JSON.parse(document.getElementById('filter_group_json').value || '{}');
+    } catch (e) {
+        showAlert('danger', 'Неверный JSON filter_group_by_region_words');
+        return;
+    }
+
+    const body = {
+        digest_filters,
+        black_id,
+        delete_msg_blacklist,
+        repost_words_blacklist,
+        filter_group_by_region_words: filter_group,
+        time_old_post: {
+            hard: parseInt(document.getElementById('to_hard').value, 10) || 86400,
+            medium: parseInt(document.getElementById('to_medium').value, 10) || 172800,
+            light: parseInt(document.getElementById('to_light').value, 10) || 604800,
+        },
+        text_post_maxsize_simbols: parseInt(document.getElementById('text_post_maxsize').value, 10) || 4096,
+        setka_regim_repost: document.getElementById('setka_regim_repost').checked,
+    };
+
+    document.getElementById('saveBtn').disabled = true;
+    try {
+        const r = await fetch('/api/filtration/' + encodeURIComponent(code), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const out = await r.json();
+        showAlert('success', 'Сохранено');
+        document.getElementById('previewJson').textContent = JSON.stringify(out.effective_pipeline_preview || {}, null, 2);
+        document.getElementById('digest_filters_raw').value = JSON.stringify(out.digest_filters || {}, null, 2);
+    } catch (e) {
+        showAlert('danger', 'Ошибка: ' + e.message);
+    } finally {
+        document.getElementById('saveBtn').disabled = false;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    buildThemeRows();
+    loadRegions().catch(e => showAlert('danger', e.message));
+});
+</script>
+{% endblock %}

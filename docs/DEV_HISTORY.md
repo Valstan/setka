@@ -1,5 +1,14 @@
 # История разработки SETKA
 
+## 2026-04-21 — UI «Фильтрация»: возраст постов по темам и правила RegionConfig
+
+- Новая страница `/filtration` (меню **Фильтрация**): настройка `digest_filters` в `region_configs` (defaults + `by_topic`: `max_post_age_hours`, `max_posts_per_digest`, `min_rafinad_len_core_dedup`, `posts_per_community_fetch`), плюс редактирование `black_id`, `delete_msg_blacklist`, `time_old_post`, лимит длины поста, `setka_regim_repost`, `filter_group_by_region_words`, `repost_words_blacklist`.
+- API: `/api/filtration/meta`, `/regions`, `GET/PUT /api/filtration/{region_code}`.
+- Колонка БД: `region_configs.digest_filters` (JSONB) — миграция `database/migrations/005_region_configs_digest_filters.sql`.
+- Парсер и `DigestBuilder` читают эффективные значения через `modules/digest_pipeline_settings.py` (`get_effective_pipeline_settings`).
+
+---
+
 ## 2026-04-21 — Парсер дайджестов: дедуп репостов и текста
 
 - **Проблема:** проверка `lip` шла до `clear_copy_history`, поэтому один оригинал, репощенный в разные группы, давал разные id и проходил несколько раз; `work_table_hash` / text dedup в `_filter_post` не использовались.
