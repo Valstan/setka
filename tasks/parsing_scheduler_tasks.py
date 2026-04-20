@@ -9,6 +9,8 @@ import logging
 from typing import Dict, Any, List
 from datetime import datetime
 
+from utils.celery_asyncio import run_coro
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,9 +23,8 @@ def parse_and_publish_theme(
 ) -> Dict[str, Any]:
     """
     Main parsing and publishing task for a region/theme.
-    Celery-compatible: uses new event loop per invocation.
+    Celery-compatible: uses run_coro (one event loop per worker process).
     """
-    import asyncio
     from database.models_extended import ParsingStats, RegionConfig, WorkTable
     from database.connection import AsyncSessionLocal
     from database.models import Community, Region
@@ -33,7 +34,6 @@ def parse_and_publish_theme(
     from modules.publisher.digest_splitter import DigestSplitter
     from modules.publisher.vk_publisher_extended import VKPublisher
     from config.runtime import get_parse_tokens
-    from utils.post_utils import lip_of_post
     from sqlalchemy import select
 
     start_time = datetime.now()
@@ -41,6 +41,12 @@ def parse_and_publish_theme(
     async def _execute():
         """Execute parsing and publishing pipeline."""
         async with AsyncSessionLocal() as session:
+            # Псевдо-регион «copy» + тема «setka» — отдельный сетевой хаб (env COPY_SETKA_*), без RegionConfig.
+            if region_code == "copy" and theme == "setka":
+                from modules.copy_setka_network import execute_copy_setka_network
+
+                return await execute_copy_setka_network(session, test_mode=test_mode)
+
             # 1. Get region config
             result = await session.execute(
                 select(RegionConfig).where(RegionConfig.region_code == region_code)
@@ -178,40 +184,56 @@ def parse_and_publish_theme(
                 'stats': parser_stats,
             }
 
-    from concurrent.futures import ThreadPoolExecutor
-    import concurrent.futures
-
-    def _run_async(coro):
-        """Run async coroutine in a SEPARATE THREAD with its own event loop."""
-        result = [None]
-        error = [None]
-        
-        def _thread_target():
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                result[0] = loop.run_until_complete(coro)
-            except Exception as e:
-                error[0] = e
-            finally:
-                loop.close()
-        
-        t = __import__('threading').Thread(target=_thread_target)
-        t.start()
-        t.join(timeout=300)
-        if error[0]:
-            raise error[0]
-        if t.is_alive():
-            raise TimeoutError("Async task timed out after 300s")
-        return result[0]
-
     try:
-        result = _run_async(_execute())
+        # Same persistent loop as other Celery tasks (see utils/celery_asyncio).
+        result = run_coro(_execute())
 
+        # Save stats (sync-friendly)
+        try:
+            async def _save_stats():
+                async with AsyncSessionLocal() as session:
+                    record = ParsingStats(
+                        region_code=region_code, theme=theme,
+                        run_date=start_time, run_type='scheduled',
+                        duration_seconds=(datetime.now() - start_time).total_seconds(),
+                        success=result.get('success', False),
+                        total_groups_checked=result.get('stats', {}).get('total_groups_checked', 0),
+                        total_posts_scanned=result.get('stats', {}).get('total_posts_scanned', 0),
+                        posts_filtered_old=result.get('stats', {}).get('posts_filtered_old', 0),
+                        posts_filtered_duplicate_lip=result.get('stats', {}).get('posts_filtered_duplicate_lip', 0),
+                        posts_filtered_duplicate_text=result.get('stats', {}).get('posts_filtered_duplicate_text', 0),
+                        posts_filtered_duplicate_foto=result.get('stats', {}).get('posts_filtered_duplicate_foto', 0),
+                        posts_filtered_black_id=result.get('stats', {}).get('posts_filtered_black_id', 0),
+                        posts_filtered_no_region_words=result.get('stats', {}).get('posts_filtered_no_region_words', 0),
+                        posts_filtered_advertisement=result.get('stats', {}).get('posts_filtered_advertisement', 0),
+                        posts_filtered_no_attachments=result.get('stats', {}).get('posts_filtered_no_attachments', 0),
+                        posts_final_count=result.get('stats', {}).get('posts_final_count', 0),
+                        published_to_test_polygon=test_mode,
+                    )
+                    session.add(record)
+                    await session.commit()
+            run_coro(_save_stats())
+        except Exception as stats_err:
+            logger.warning(f"Failed to save stats: {stats_err}")
         return result
 
     except Exception as e:
         logger.error(f"Task failed for {region_code}/{theme}: {e}")
+        # Save failure stats
+        try:
+            async def _save_failure():
+                async with AsyncSessionLocal() as session:
+                    record = ParsingStats(
+                        region_code=region_code, theme=theme,
+                        run_date=start_time, run_type='scheduled',
+                        duration_seconds=(datetime.now() - start_time).total_seconds(),
+                        success=False, error_message=str(e),
+                    )
+                    session.add(record)
+                    await session.commit()
+            run_coro(_save_failure())
+        except Exception:
+            pass
         raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
 
 
@@ -242,15 +264,6 @@ def run_all_regions_theme(theme: str):
     from database.models import Region
     from database.connection import AsyncSessionLocal
     from sqlalchemy import select
-    import asyncio
-
-    def _run_async(coro):
-        loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
 
     async def _get_regions():
         async with AsyncSessionLocal() as session:
@@ -259,7 +272,7 @@ def run_all_regions_theme(theme: str):
             )
             return [row.code for row in result.scalars().all()]
 
-    regions = _run_async(_get_regions())
+    regions = run_coro(_get_regions())
     results = []
     for rc in regions:
         r = parse_and_publish_theme.delay(rc, theme)

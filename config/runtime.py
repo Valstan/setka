@@ -12,7 +12,7 @@ import os
 import re
 import ast
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Set
 from urllib.parse import urlparse
 
 
@@ -203,5 +203,50 @@ SERVER = {
     "host": _getenv("SERVER_HOST", "127.0.0.1"),
     "port": int(_getenv("SERVER_PORT", "8000") or "8000"),
 }
+
+# ---------------------------------------------------------------------------
+# Сетевой хаб «copy / setka»: одна группа-источник → стены регионов (env-only)
+# ---------------------------------------------------------------------------
+
+
+def get_copy_setka_source_owner_id() -> int:
+    """Группа-источник (отрицательный owner_id). По умолчанию — vk.com/copy_by_setka (-167381590)."""
+    raw = _getenv("COPY_SETKA_SOURCE_GROUP_ID", "-167381590")
+    if not raw or not str(raw).strip():
+        return -167381590
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        return -167381590
+
+
+def copy_setka_disabled() -> bool:
+    """Полностью отключить сетевой хаб (например на стенде)."""
+    return (_getenv("COPY_SETKA_DISABLED", "0") or "0").strip() in ("1", "true", "yes", "on")
+
+
+def copy_setka_use_repost() -> bool:
+    """Устарело: режим теперь задаётся словом «репост» в тексте поста. Оставлено для совместимости."""
+    v = (_getenv("COPY_SETKA_USE_REPOST", "1") or "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def get_copy_setka_max_post_age_hours() -> float:
+    try:
+        return float(_getenv("COPY_SETKA_MAX_POST_AGE_HOURS", "48") or "48")
+    except ValueError:
+        return 48.0
+
+
+def get_copy_setka_repost_message() -> str:
+    return _getenv("COPY_SETKA_REPOST_MESSAGE", "") or ""
+
+
+def get_copy_setka_target_region_codes() -> Optional[Set[str]]:
+    """Ограничить список регионов (коды через запятую); None = все активные."""
+    raw = _getenv("COPY_SETKA_TARGET_REGION_CODES")
+    if not raw or not str(raw).strip():
+        return None
+    return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
 
 

@@ -169,12 +169,13 @@ class VKPublisher:
         # Build repost object string
         repost_object = f"wall{source_owner_id}_{source_post_id}"
         
+        # VK API expects `object` (e.g. wall-123_456), not an informal `repost` key.
         params = {
-            'owner_id': target_group_id,
+            'object': repost_object,
             'message': message,
-            'repost': repost_object,
-            'group_id': abs(target_group_id),
         }
+        if target_group_id < 0:
+            params['group_id'] = abs(target_group_id)
         
         try:
             response = await self._call_wall_post(params, method='wall.repost')
