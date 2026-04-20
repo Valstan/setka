@@ -1,5 +1,12 @@
 # История разработки SETKA
 
+## 2026-04-20 — Документация: SSH в приоритете, MCP запасной
+
+- Добавлен [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md): единое правило для AI — сначала SSH на хост SETKA; MCP не подменяет SSH и не должен указывать на чужие VPS для задач SETKA.
+- Обновлены [`START_HERE.md`](START_HERE.md), [`README.md`](README.md), [`MCP_SETUP_VSCODE.md`](MCP_SETUP_VSCODE.md), [`AI_DEV_GUIDE.md`](AI_DEV_GUIDE.md) со ссылками и предупреждениями.
+
+---
+
 ## 2026-04-20 — Фикс публикации дайджестов: нормализация group_id + fallback сообществ
 
 ### Проблема

@@ -1,5 +1,9 @@
 # Инструкция по настройке MCP сервера для SETKA
 
+> **Перед чтением этого файла** см. **[`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)**. Для работы с продакшеном SETKA **основной способ — SSH** на нужный хост; MCP — **вторичный** (особые случаи). В IDE может быть несколько MCP-серверов для **разных** проектов; для задач SETKA нельзя вызывать MCP, указывающий на чужой VPS.
+
+---
+
 ## Что настроено на VPS
 
 ✅ **Управляющий скрипт**: `/home/valstan/scripts/vps-manage.sh`
@@ -17,22 +21,20 @@
 
 ## ✅ Статус настройки MCP (обновлено: 2026-04-09)
 
-**MCP серверы настроены и протестированы:**
+**Для SETKA** из списка MCP в IDE релевантен только тот сервер, который указывает на **хост SETKA** и путь `/home/valstan/SETKA`. Остальные имена — **другие проекты**; не использовать их для деплоя или отладки SETKA (см. [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)).
 
-| Сервер | Статус | Описание |
-|--------|--------|----------|
-| `setka-vps` | ✅ Работает | Основной сервер SETKA |
-| `sshmatricarmz` | ✅ Работает | Matrix ARMZ VPS |
-| `gonba-vps` | ✅ Работает | GONBA VPS |
-| `karman-vps` | ✅ Работает | KARMAN VPS |
+| Пример имени в IDE | Заметка |
+|--------------------|---------|
+| `setka-vps` (или ваш алиас SETKA) | Использовать **только** если это тот же хост, что в `REMOTE_ACCESS.md` |
+| `sshmatricarmz`, `gonba-vps`, `karman-vps`, др. | **Не** сервер SETKA |
 
-**Конфигурация:** `c:\Users\valstan\.qwen\settings.json`
+**Конфигурация IDE** (путь у каждого свой): например `settings.json` редактора — не хранить секреты в репозитории.
 
-**Результаты тестов:**
-- ✅ SSH подключение ко всем серверам работает
-- ✅ Сервисы SETKA активны (setka, setka-celery-worker, setka-celery-beat)
-- ✅ Health check проходит: `{"status":"healthy","service":"SETKA"}`
-- ✅ vps-manage.sh скрипт работает (команды: status, health, disk, logs, и др.)
+**Проверки на стороне SETKA (через SSH предпочтительно):**
+- SSH подключение к целевому хосту работает
+- Сервисы: `setka`, `setka-celery-worker`, `setka-celery-beat`
+- Health: `curl -sS http://127.0.0.1:8000/api/health/` → `healthy`
+- Скрипт `vps-manage.sh`: команды `status`, `health`, `disk`, `logs` и др.
 
 ---
 
