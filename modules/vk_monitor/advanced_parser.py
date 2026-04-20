@@ -10,15 +10,34 @@ applies all filters, and returns cleaned posts ready for digest building.
 import logging
 import random
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 from modules.vk_monitor.vk_client import VKClient
-from modules.filters.base import FilterResult
 from utils.post_utils import lip_of_post, clear_copy_history, post_popularity
 from utils.vk_attachments import extract_vk_attachments, has_attachments
 from utils.text_utils import is_advertisement, check_blacklist
 
 logger = logging.getLogger(__name__)
+
+# Дайджесты: не брать посты старше 72 часов с момента публикации (оригинала при репосте)
+DIGEST_MAX_POST_AGE_HOURS = 72
+
+
+def _post_age_hours_utc(
+    post_data: Dict[str, Any],
+    now_ts: Optional[float] = None,
+) -> Optional[float]:
+    """Возраст поста в часах по полю date (Unix UTC). None — нет валидной даты."""
+    raw = post_data.get("date")
+    if raw is None:
+        return None
+    try:
+        ts = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if now_ts is None:
+        now_ts = datetime.now(tz=timezone.utc).timestamp()
+    return max(0.0, (now_ts - ts) / 3600.0)
 
 
 class AdvancedVKParser:
@@ -27,14 +46,11 @@ class AdvancedVKParser:
     
     Migrated from old_postopus parser.py with all filtering logic:
     1. Duplicate lip check
-    2. Age check
-    3. Unwrap reposts (clear_copy_history)
+    2. Unwrap reposts (clear_copy_history)
+    3. Возраст поста (не старше 72 ч для дайджеста)
     4. Black ID check
     5. Advertisement filter
-    6. Theme-specific filters (sosed hashtag, region words, etc.)
-    7. Text duplicate check
-    8. Photo/video duplicate check
-    9. No-attachments filter
+    6. Прочие фильтры (blacklist, вложения, темы)
     
     Returns filtered posts ready for digest building.
     """
@@ -208,30 +224,39 @@ class AdvancedVKParser:
             self.stats['posts_filtered_duplicate_lip'] += 1
             return None
         
-        # 2. Unwrap reposts (clear_copy_history)
+        # 2. Unwrap reposts (clear_copy_history) — дальше используем дату оригинала
         post_data = clear_copy_history(post_data)
+
+        # 3. Возраст публикации: только посты не старше DIGEST_MAX_POST_AGE_HOURS
+        age_h = _post_age_hours_utc(post_data)
+        if age_h is None:
+            self.stats["posts_filtered_old"] += 1
+            return None
+        if age_h > DIGEST_MAX_POST_AGE_HOURS:
+            self.stats["posts_filtered_old"] += 1
+            return None
         
-        # 3. Black ID check
+        # 4. Black ID check
         if region_config and region_config.black_id:
             if abs(owner_id) in [abs(x) for x in region_config.black_id]:
                 self.stats['posts_filtered_black_id'] += 1
                 return None
         
-        # 4. Advertisement filter
+        # 5. Advertisement filter
         is_reklama_theme = (theme == 'reklama')
         if is_advertisement(text, skip_for_reklama=is_reklama_theme, theme=theme):
             if not is_reklama_theme:
                 self.stats['posts_filtered_advertisement'] += 1
                 return None
         
-        # 5. Blacklist text check
+        # 6. Blacklist text check
         if region_config and region_config.delete_msg_blacklist:
             matched = check_blacklist(text, region_config.delete_msg_blacklist)
             if matched:
                 self.stats['posts_filtered_blacklist_text'] += 1
                 return None
         
-        # 6. Region words filter (for specific communities)
+        # 7. Region words filter (for specific communities)
         if region_config and region_config.filter_group_by_region_words:
             community_vk_id = post_data.get('community_vk_id', owner_id)
             if str(abs(community_vk_id)) in {str(abs(x)) for x in region_config.filter_group_by_region_words.keys()}:
@@ -239,14 +264,14 @@ class AdvancedVKParser:
                 # This would be handled by RegionWordsFilter in the new system
                 pass  # Placeholder - would use RegionWordsFilter
         
-        # 7. No-attachments filter (for non-novost/non-reklama themes)
+        # 8. No-attachments filter (for non-novost/non-reklama themes)
         if theme not in ('novost', 'reklama'):
             attachments = extract_vk_attachments(post_data)
             if not has_attachments(attachments):
                 self.stats['posts_filtered_no_attachments'] += 1
                 return None
         
-        # 8. Theme-specific filters
+        # 9. Theme-specific filters
         if theme == 'sosed':
             # Must have #Новости hashtag
             if '#новости' not in text.lower():
