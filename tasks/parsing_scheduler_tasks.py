@@ -8,6 +8,7 @@ from celery import shared_task
 import logging
 from typing import Dict, Any, List
 from datetime import datetime
+from types import SimpleNamespace
 
 from utils.celery_asyncio import run_coro
 
@@ -53,7 +54,20 @@ def parse_and_publish_theme(
             )
             region_config = result.scalars().first()
             if not region_config:
-                return {'success': False, 'error': f'RegionConfig not found for {region_code}'}
+                logger.warning(
+                    f"RegionConfig not found for {region_code}; using safe defaults"
+                )
+                region_config = SimpleNamespace(
+                    region_code=region_code,
+                    zagolovki={},
+                    heshteg={},
+                    heshteg_local={},
+                    black_id=[],
+                    delete_msg_blacklist=[],
+                    filter_group_by_region_words={},
+                    text_post_maxsize_simbols=4096,
+                    setka_regim_repost=False,
+                )
 
             # 2. Get work table
             result = await session.execute(
@@ -87,8 +101,19 @@ def parse_and_publish_theme(
             community_ids = [row[0] for row in communities_result.fetchall()]
 
             if not community_ids:
-                logger.warning(f"No communities found for {region_code}/{theme}")
-                return {'success': False, 'error': 'No communities found'}
+                logger.warning(
+                    f"No communities found for {region_code}/{theme}; "
+                    "falling back to all active communities in region"
+                )
+                fallback_result = await session.execute(
+                    select(Community.vk_id).where(
+                        Community.region_id == region.id,
+                        Community.is_active == True
+                    )
+                )
+                community_ids = [row[0] for row in fallback_result.fetchall()]
+                if not community_ids:
+                    return {'success': False, 'error': 'No communities found'}
 
             # 5. Parse
             parse_tokens = get_parse_tokens()
@@ -261,16 +286,39 @@ def parse_sosed(region_code: str):
 @shared_task
 def run_all_regions_theme(theme: str):
     """Run parsing for specific theme across all regions."""
-    from database.models import Region
+    from database.models import Region, Community
+    from database.models_extended import RegionConfig
     from database.connection import AsyncSessionLocal
-    from sqlalchemy import select
+    from sqlalchemy import select, exists
 
     async def _get_regions():
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Region).where(Region.is_active == True)
+            has_theme_communities = (
+                select(Community.id)
+                .where(
+                    Community.region_id == Region.id,
+                    Community.category == theme,
+                    Community.is_active == True,
+                )
+                .exists()
             )
-            return [row.code for row in result.scalars().all()]
+            has_any_communities = (
+                select(Community.id)
+                .where(
+                    Community.region_id == Region.id,
+                    Community.is_active == True,
+                )
+                .exists()
+            )
+            result = await session.execute(
+                select(Region.code).where(
+                    Region.is_active == True,
+                    Region.vk_group_id.isnot(None),
+                    exists().where(RegionConfig.region_code == Region.code),
+                    (has_theme_communities | has_any_communities),
+                )
+            )
+            return list(result.scalars().all())
 
     regions = run_coro(_get_regions())
     results = []

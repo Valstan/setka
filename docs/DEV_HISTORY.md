@@ -1,5 +1,44 @@
 # История разработки SETKA
 
+## 2026-04-20 — Фикс публикации дайджестов: нормализация group_id + fallback сообществ
+
+### Проблема
+- Дайджесты собирались, но публикация в часть регионов срывалась: `vk_group_id` в БД мог быть положительным (после миграций), а `wall.post` для групп требует `owner_id < 0`.
+- В ряде регионов для конкретной темы не находились сообщества, из-за чего задача завершалась без попытки парсинга/публикации.
+
+### Решение
+- В `modules/publisher/vk_publisher_extended.py` добавлена нормализация ID группы: любые входные `group_id` приводятся к формату owner_id группы (`-abs(group_id)`) для `wall.post` и `wall.repost`.
+- В `tasks/parsing_scheduler_tasks.py` добавлен fallback: если нет активных сообществ по `theme`, задача берёт все активные сообщества региона вместо мгновенного отказа.
+
+### Проверка
+- Добавлены unit-тесты `tests/test_publisher/test_vk_publisher_extended.py`:
+  - нормализация positive/negative ID;
+  - проверка `owner_id` для `publish_digest`;
+  - проверка `group_id`/`object` для `publish_repost`.
+- Локально: `pytest tests/test_publisher/test_vk_publisher_extended.py -q` → **3 passed**.
+
+---
+
+## 2026-04-20 — Scheduler: запуск только для валидных регионов
+
+### Проблема
+- `run_all_regions_theme` ставил задачи на все активные регионы, включая регионы без `RegionConfig`, без `vk_group_id` или без активных сообществ.
+- Это давало «шумные» прогоны с быстрыми отказами и мешало диагностике реальных публикаций.
+
+### Решение
+- В `tasks/parsing_scheduler_tasks.py` ужесточён отбор регионов в `run_all_regions_theme(theme)`:
+  - регион активен;
+  - есть `vk_group_id`;
+  - существует `RegionConfig` по `region_code`;
+  - есть активные сообщества (по теме или хотя бы любые активные в регионе).
+
+### Проверка
+- Добавлен тест `tests/test_scheduler/test_parsing_scheduler_tasks.py` на постановку задач только по отобранным регионам.
+- Регрессия publisher-тестов сохранена.
+- Локально: `pytest tests/test_scheduler/test_parsing_scheduler_tasks.py tests/test_publisher/test_vk_publisher_extended.py -q` → **4 passed**.
+
+---
+
 ## 2026-04-16 — Copy-by-setka: слово «репост», 10 постов / 10 lip, источник по умолчанию
 
 - Источник по умолчанию: группа [copy_by_setka](https://vk.com/copy_by_setka), ID **-167381590** (переопределяется `COPY_SETKA_SOURCE_GROUP_ID`).

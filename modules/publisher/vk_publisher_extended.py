@@ -80,12 +80,14 @@ class VKPublisher:
         Returns:
             VK API response dict with post_id, url, etc.
         """
+        normalized_group_id = self._normalize_group_owner_id(group_id)
+
         # Determine target group
         if self.test_polygon_mode:
-            target_group_id = self.test_polygon_group_id
+            target_group_id = self._normalize_group_owner_id(self.test_polygon_group_id)
             logger.info(f"🧪 TEST POLYGON MODE: Posting to test group {target_group_id}")
         else:
-            target_group_id = group_id
+            target_group_id = normalized_group_id
         
         # Rate limiting
         await self._enforce_rate_limit(target_group_id)
@@ -158,10 +160,12 @@ class VKPublisher:
         Returns:
             VK API response dict
         """
+        normalized_group_id = self._normalize_group_owner_id(group_id)
+
         if self.test_polygon_mode:
-            target_group_id = self.test_polygon_group_id
+            target_group_id = self._normalize_group_owner_id(self.test_polygon_group_id)
         else:
-            target_group_id = group_id
+            target_group_id = normalized_group_id
         
         # Rate limiting
         await self._enforce_rate_limit(target_group_id)
@@ -268,3 +272,14 @@ class VKPublisher:
         """
         # Simplified - would need actual tracking in production
         return self.POSTS_PER_DAY_LIMIT
+
+    @staticmethod
+    def _normalize_group_owner_id(group_id: int) -> int:
+        """
+        Normalize region VK group ID to owner_id format expected by wall.post/wall.repost.
+
+        In DB and migration scripts IDs are sometimes stored as positive numbers.
+        VK wall methods for groups require negative owner_id.
+        """
+        gid = int(group_id)
+        return -abs(gid)
