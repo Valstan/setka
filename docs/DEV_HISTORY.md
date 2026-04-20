@@ -1,5 +1,12 @@
 # История разработки SETKA
 
+## 2026-04-21 — Документация: только SSH для прода, без MCP
+
+- Политика доступа: для SETKA **не использовать MCP** в IDE — только **стандартный SSH** на хост с `/home/valstan/SETKA` (обновлён [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)).
+- Удалён [`MCP_SETUP_VSCODE.md`](MCP_SETUP_VSCODE.md); ссылки убраны из [`docs/README.md`](README.md), [`START_HERE.md`](START_HERE.md), [`AI_DEV_GUIDE.md`](AI_DEV_GUIDE.md).
+
+---
+
 ## 2026-04-21 — UI «Фильтрация»: возраст постов по темам и правила RegionConfig
 
 - Новая страница `/filtration` (меню **Фильтрация**): настройка `digest_filters` в `region_configs` (defaults + `by_topic`: `max_post_age_hours`, `max_posts_per_digest`, `min_rafinad_len_core_dedup`, `posts_per_community_fetch`), плюс редактирование `black_id`, `delete_msg_blacklist`, `time_old_post`, лимит длины поста, `setka_regim_repost`, `filter_group_by_region_words`, `repost_words_blacklist`.
@@ -32,10 +39,10 @@
 
 ---
 
-## 2026-04-20 — Документация: SSH в приоритете, MCP запасной
+## 2026-04-20 — Документация: SSH для удалённого доступа
 
-- Добавлен [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md): единое правило для AI — сначала SSH на хост SETKA; MCP не подменяет SSH и не должен указывать на чужие VPS для задач SETKA.
-- Обновлены [`START_HERE.md`](START_HERE.md), [`README.md`](README.md), [`MCP_SETUP_VSCODE.md`](MCP_SETUP_VSCODE.md), [`AI_DEV_GUIDE.md`](AI_DEV_GUIDE.md) со ссылками и предупреждениями.
+- Добавлен [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md): единое правило — работа с продом SETKA через SSH на хост с `/home/valstan/SETKA`.
+- Обновлены [`START_HERE.md`](START_HERE.md), [`README.md`](README.md), [`AI_DEV_GUIDE.md`](AI_DEV_GUIDE.md). (Позже MCP убран из политики — см. запись 2026-04-21 выше.)
 
 ---
 

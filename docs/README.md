@@ -3,7 +3,7 @@
 ## С чего начать
 
 - **AI/новая сессия**: начни с [`START_HERE.md`](START_HERE.md)
-- **Удалённый доступ (SSH в первую очередь, MCP — запасной)**: [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)
+- **Удалённый доступ к проду (только SSH)**: [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)
 - **Руководство AI-разработчика**: [`AI_DEV_GUIDE.md`](AI_DEV_GUIDE.md)
 - **Разработка и ops**: [`OPERATIONS.md`](OPERATIONS.md)
 
@@ -31,11 +31,10 @@
 
 | Документ | Описание |
 |----------|----------|
-| [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md) | 🔐 **Политика доступа**: сначала SSH на хост SETKA; MCP — опционально, не чужие хосты |
+| [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md) | 🔐 **Политика доступа**: только SSH на хост SETKA (без MCP) |
 | [`START_HERE.md`](START_HERE.md) | 🚀 Быстрый старт, команды, сервисы, синхронизация |
 | [`OPERATIONS.md`](OPERATIONS.md) | 🔧 Ops/runbook, troubleshooting, Nginx, мониторинг |
 | [`DEPLOY.md`](DEPLOY.md) | 🚀 Deployment guide, Celery расписания |
 | [`MIGRATION_GUIDE.md`](MIGRATION_GUIDE.md) | 🔄 Миграция old_postopus → SETKA |
-| [`MCP_SETUP_VSCODE.md`](MCP_SETUP_VSCODE.md) | 💻 Опционально: MCP в IDE (только как дополнение к SSH; см. `REMOTE_ACCESS.md`) |
 
 
