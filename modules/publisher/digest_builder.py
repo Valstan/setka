@@ -86,7 +86,11 @@ class DigestBuilder:
             max_text_length: Maximum text length
             repost_mode: True = VK repost, False = copy with attribution
         """
-        self.header = header or self.DEFAULT_HEADER
+        # Пустая строка = без заголовка (например траурный дайджест); None = дефолтный заголовок
+        if header is None:
+            self.header = self.DEFAULT_HEADER
+        else:
+            self.header = header
         self.hashtags = hashtags or []
         self.local_hashtag = local_hashtag
         self.max_text_length = max_text_length
@@ -134,9 +138,10 @@ class DigestBuilder:
         flat_attachments = []
         posts_included = []
 
-        # Add header
-        digest_parts.append(self.header)
-        digest_parts.append("")  # Empty line after header
+        # Заголовок (если задан непустой)
+        if self.header and str(self.header).strip():
+            digest_parts.append(str(self.header).strip())
+            digest_parts.append("")  # пустая строка после заголовка
 
         # Calculate static content that must always fit
         hashtag_text = self._build_hashtag_text()
@@ -156,9 +161,13 @@ class DigestBuilder:
             if not post_text.strip():
                 continue
 
-            # Get group name
+            # Get group name (ключи в group_names — по abs(owner_id))
             community_vk_id = post_data.get('community_vk_id', owner_id)
-            group_name = group_names.get(str(community_vk_id), group_names.get(str(owner_id), ''))
+            try:
+                aid = abs(int(community_vk_id if community_vk_id is not None else owner_id))
+            except (TypeError, ValueError):
+                aid = abs(int(owner_id)) if owner_id else 0
+            group_name = group_names.get(str(aid), "") if aid else ""
 
             # Build the complete post entry
             post_entry = self._format_post_entry(post_data, post_text, owner_id, post_id, group_name)
@@ -324,7 +333,7 @@ class DigestBuilder:
             Estimated number of posts
         """
         # Text capacity
-        header_length = len(self.header) + 2  # +2 for newlines
+        header_length = (len(str(self.header).strip()) + 2) if (self.header and str(self.header).strip()) else 0
         hashtag_length = len(self._build_hashtag_text()) + 2
         available = self.max_text_length - header_length - hashtag_length
         

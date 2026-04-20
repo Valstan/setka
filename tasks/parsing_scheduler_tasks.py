@@ -33,6 +33,10 @@ def parse_and_publish_theme(
     from modules.vk_monitor.vk_client import VKClient
     from modules.publisher.digest_builder import DigestBuilder
     from modules.publisher.digest_splitter import DigestSplitter
+    from modules.publisher.postopus_digest_headers import (
+        resolve_digest_header,
+        resolve_digest_hashtags,
+    )
     from modules.publisher.vk_publisher_extended import VKPublisher
     from config.runtime import get_parse_tokens
     from sqlalchemy import select
@@ -112,8 +116,14 @@ def parse_and_publish_theme(
                     )
                 )
                 community_ids = [row[0] for row in fallback_result.fetchall()]
-                if not community_ids:
-                    return {'success': False, 'error': 'No communities found'}
+            if not community_ids:
+                return {'success': False, 'error': 'No communities found'}
+
+            # Имена сообществ для кликабельных ссылок «источник» в дайджесте
+            comm_meta = await session.execute(
+                select(Community.vk_id, Community.name).where(Community.region_id == region.id)
+            )
+            group_names = {str(abs(row[0])): row[1] for row in comm_meta.fetchall()}
 
             # 5. Parse
             parse_tokens = get_parse_tokens()
@@ -138,12 +148,9 @@ def parse_and_publish_theme(
             mourning_posts, regular_posts = splitter.split_posts(posts)
             logger.info(f"Split: {len(mourning_posts)} mourning, {len(regular_posts)} regular")
 
-            # 7. Build digests
-            header = (region_config.zagolovki or {}).get(theme, f"📰 {theme.title()}")
-            heshteg = region_config.heshteg or {}
-            hashtags = [heshteg[theme]] if theme in heshteg else []
-            heshteg_local = region_config.heshteg_local or {}
-            local_hashtag = f"#{heshteg_local.get('raicentr', '')}" if heshteg_local else ""
+            # 7. Build digests (заголовки/хештеги как в old_postopus, см. postopus_digest_headers)
+            header = resolve_digest_header(region_config, theme, region)
+            theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
 
             results = []
 
@@ -151,12 +158,12 @@ def parse_and_publish_theme(
             if regular_posts:
                 builder = DigestBuilder(
                     header=header,
-                    hashtags=hashtags,
+                    hashtags=theme_tags,
                     local_hashtag=local_hashtag,
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
                     repost_mode=region_config.setka_regim_repost,
                 )
-                digest = builder.build_digest(regular_posts)
+                digest = builder.build_digest(regular_posts, group_names=group_names)
 
                 vk_publisher = VKPublisher(test_polygon_mode=test_mode)
                 publish_result = await vk_publisher.publish_digest(
@@ -169,12 +176,12 @@ def parse_and_publish_theme(
             # Mourning digest
             if mourning_posts:
                 mourning_builder = DigestBuilder(
-                    header='🕯 Скорбим',
-                    hashtags=[],
-                    local_hashtag='',
+                    header="",
+                    hashtags=list(theme_tags),
+                    local_hashtag=local_hashtag,
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
                 )
-                mourning_digest = mourning_builder.build_digest(mourning_posts)
+                mourning_digest = mourning_builder.build_digest(mourning_posts, group_names=group_names)
 
                 vk_pub = VKPublisher(test_polygon_mode=test_mode)
                 mourning_pub = await vk_pub.publish_digest(

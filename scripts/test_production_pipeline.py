@@ -25,6 +25,10 @@ async def main():
     from modules.vk_monitor.vk_client import VKClient
     from modules.publisher.digest_builder import DigestBuilder
     from modules.publisher.digest_splitter import DigestSplitter
+    from modules.publisher.postopus_digest_headers import (
+        resolve_digest_header,
+        resolve_digest_hashtags,
+    )
     from modules.publisher.vk_publisher_extended import VKPublisher
     from config.runtime import get_parse_tokens
     from sqlalchemy import select
@@ -129,11 +133,13 @@ async def main():
         print(f"📊 Split: {len(mourning_posts)} mourning, {len(regular_posts)} regular")
 
         # 6. Build and publish digests
-        header = (region_config.zagolovki or {}).get(theme, f"📰 {theme.title()}")
-        heshteg = region_config.heshteg or {}
-        hashtags = [heshteg[theme]] if theme in heshteg else []
-        heshteg_local = region_config.heshteg_local or {}
-        local_hashtag = f"#{heshteg_local.get('raicentr', '')}" if heshteg_local else ""
+        header = resolve_digest_header(region_config, theme, region_obj)
+        theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
+
+        comm_meta = await session.execute(
+            select(Community.vk_id, Community.name).where(Community.region_id == region_obj.id)
+        )
+        group_names = {str(abs(row[0])): row[1] for row in comm_meta.fetchall()}
 
         results = []
 
@@ -141,12 +147,12 @@ async def main():
         if regular_posts:
             builder = DigestBuilder(
                 header=header,
-                hashtags=hashtags,
+                hashtags=theme_tags,
                 local_hashtag=local_hashtag,
                 max_text_length=region_config.text_post_maxsize_simbols or 4096,
                 repost_mode=region_config.setka_regim_repost,
             )
-            digest = builder.build_digest(regular_posts)
+            digest = builder.build_digest(regular_posts, group_names=group_names)
             print(f"\n📝 Regular digest: {digest.post_count} posts, {digest.total_length} chars")
 
             vk_publisher = VKPublisher(test_polygon_mode=test_mode)
@@ -161,12 +167,12 @@ async def main():
         # Mourning digest
         if mourning_posts:
             mourning_builder = DigestBuilder(
-                header='🕯 Скорбим',
-                hashtags=[],
-                local_hashtag='',
+                header="",
+                hashtags=list(theme_tags),
+                local_hashtag=local_hashtag,
                 max_text_length=region_config.text_post_maxsize_simbols or 4096,
             )
-            mourning_digest = mourning_builder.build_digest(mourning_posts)
+            mourning_digest = mourning_builder.build_digest(mourning_posts, group_names=group_names)
             print(f"\n🕯 Mourning digest: {mourning_digest.post_count} posts, {mourning_digest.total_length} chars")
 
             vk_pub_m = VKPublisher(test_polygon_mode=test_mode)

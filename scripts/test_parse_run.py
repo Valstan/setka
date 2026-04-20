@@ -189,9 +189,9 @@ async def main():
         if mourning_posts:
             logger.info('\n[ШАГ 8b] Построение mourning дайджеста')
             mourning_builder = DigestBuilder(
-                header='🕯 Скорбим',
-                hashtags=[],
-                local_hashtag='',
+                header="",
+                hashtags=['тест'],
+                local_hashtag='#тест',
                 max_text_length=4096,
             )
             mourning_digest_result = mourning_builder.build_digest(mourning_posts)

@@ -187,24 +187,32 @@ def format_number(num: int) -> str:
         return str(num)
 
 
+def _vk_wiki_link(url: str, link_text: str) -> str:
+    """
+    Кликабельная подпись во ВКонтакте (разметка постов): [url|текст]
+    Символы, ломающие разметку, убираем из текста ссылки.
+    """
+    safe = (link_text or "").replace("[", "(").replace("]", ")").replace("|", "·").strip()
+    if not safe:
+        safe = "Источник"
+    return f"[{url}|{safe}]"
+
+
 def extract_source_attribution(post_data: Dict[str, Any], group_name: str = "") -> str:
     """
-    Extract source attribution for digest.
-    Format: @{url} (group_name)
-    
+    Ссылка на исходный пост: кликабельное название источника (ВК-разметка [url|текст]).
+
     Args:
         post_data: VK post data
-        group_name: Group display name
-    
+        group_name: Название сообщества или страницы (из БД / справочника)
+
     Returns:
-        Attribution string
+        Строка вида [https://vk.com/wall...|Название сообщества]
     """
-    owner_id = post_data.get('owner_id', post_data.get('from_id', 0))
-    post_id = post_data.get('id', 0)
-    
+    owner_id = post_data.get("owner_id", post_data.get("from_id", 0))
+    post_id = post_data.get("id", 0)
+
     vk_url = f"https://vk.com/wall{owner_id}_{post_id}"
-    
-    if group_name:
-        return f"@{vk_url} ({group_name})"
-    else:
-        return f"@{vk_url}"
+
+    label = (group_name or "").strip() or "Источник"
+    return _vk_wiki_link(vk_url, label)
