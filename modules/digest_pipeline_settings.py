@@ -35,6 +35,8 @@ DEFAULT_PIPELINE: Dict[str, Any] = {
     "max_post_age_hours": 72.0,
     "max_posts_per_digest": 3,
     "min_rafinad_len_core_dedup": 50,
+    "text_similarity_threshold": 0.90,
+    "min_rafinad_len_similarity_dedup": 80,
     "posts_per_community_fetch": 20,
 }
 
@@ -70,12 +72,18 @@ def get_effective_pipeline_settings(region_config: Any, theme: str) -> Dict[str,
     merged["max_post_age_hours"] = _coerce_float(merged.get("max_post_age_hours"), 72.0)
     merged["max_posts_per_digest"] = _coerce_int(merged.get("max_posts_per_digest"), 3)
     merged["min_rafinad_len_core_dedup"] = _coerce_int(merged.get("min_rafinad_len_core_dedup"), 50)
+    merged["text_similarity_threshold"] = _coerce_float(merged.get("text_similarity_threshold"), 0.90)
+    merged["min_rafinad_len_similarity_dedup"] = _coerce_int(
+        merged.get("min_rafinad_len_similarity_dedup"), 80
+    )
     merged["posts_per_community_fetch"] = _coerce_int(merged.get("posts_per_community_fetch"), 20)
     # разумные границы
     merged["max_post_age_hours"] = max(1.0, min(merged["max_post_age_hours"], 8760.0))
     merged["max_posts_per_digest"] = max(1, min(merged["max_posts_per_digest"], 10))
     merged["posts_per_community_fetch"] = max(1, min(merged["posts_per_community_fetch"], 100))
     merged["min_rafinad_len_core_dedup"] = max(10, min(merged["min_rafinad_len_core_dedup"], 500))
+    merged["text_similarity_threshold"] = max(0.70, min(merged["text_similarity_threshold"], 0.99))
+    merged["min_rafinad_len_similarity_dedup"] = max(20, min(merged["min_rafinad_len_similarity_dedup"], 1000))
     return merged
 
 

@@ -176,6 +176,51 @@ def create_text_core_fingerprint(text: str) -> str:
     return hash_obj.hexdigest()[:32]
 
 
+def create_text_simhash(text: str, shingle_size: int = 4) -> str:
+    """
+    Create 64-bit SimHash for near-duplicate detection.
+
+    SimHash is lightweight and allows quick approximate matching by Hamming distance.
+    """
+    rafinad = text_to_rafinad(text)
+    if not rafinad:
+        return ""
+
+    shingles: List[str]
+    if len(rafinad) <= shingle_size:
+        shingles = [rafinad]
+    else:
+        shingles = [rafinad[i:i + shingle_size] for i in range(len(rafinad) - shingle_size + 1)]
+
+    vector = [0] * 64
+    for shingle in shingles:
+        h = hashlib.blake2b(shingle.encode("utf-8"), digest_size=8).digest()
+        bits = int.from_bytes(h, byteorder="big", signed=False)
+        for i in range(64):
+            if bits & (1 << i):
+                vector[i] += 1
+            else:
+                vector[i] -= 1
+
+    out = 0
+    for i, v in enumerate(vector):
+        if v >= 0:
+            out |= (1 << i)
+    return f"{out:016x}"
+
+
+def simhash_hamming_distance(hash_a: str, hash_b: str) -> int:
+    """Return Hamming distance between two 64-bit SimHash hex strings."""
+    if not hash_a or not hash_b:
+        return 64
+    try:
+        a = int(hash_a, 16)
+        b = int(hash_b, 16)
+    except ValueError:
+        return 64
+    return (a ^ b).bit_count()
+
+
 def extract_text_features(text: str) -> Dict[str, Any]:
     """
     Extract various features from text for analysis

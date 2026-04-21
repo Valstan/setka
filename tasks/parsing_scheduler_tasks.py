@@ -14,6 +14,9 @@ from utils.celery_asyncio import run_coro
 
 logger = logging.getLogger(__name__)
 
+WORK_TABLE_LIP_LIMIT = 1000
+WORK_TABLE_HASH_LIMIT = 5000
+
 
 @shared_task(bind=True, max_retries=3)
 def parse_and_publish_theme(
@@ -41,6 +44,14 @@ def parse_and_publish_theme(
     from modules.digest_pipeline_settings import get_effective_pipeline_settings
     from modules.publisher.vk_publisher_extended import VKPublisher
     from config.runtime import get_parse_tokens
+    from utils.post_utils import lip_of_post
+    from modules.deduplication.fingerprints import (
+        create_text_fingerprint,
+        create_text_core_fingerprint,
+        create_text_simhash,
+        create_media_fingerprint,
+        text_to_rafinad,
+    )
     from sqlalchemy import select
 
     start_time = datetime.now()
@@ -169,6 +180,7 @@ def parse_and_publish_theme(
             theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
 
             results = []
+            selected_by_lip: Dict[str, Dict[str, Any]] = {}
 
             # Regular digest
             if regular_posts:
@@ -181,6 +193,13 @@ def parse_and_publish_theme(
                     max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
                 )
                 digest = builder.build_digest(regular_posts, group_names=group_names)
+                selected_by_lip.update({
+                    lip_of_post(
+                        p.get("owner_id", p.get("from_id", 0)),
+                        p.get("id", 0),
+                    ): p
+                    for p in regular_posts
+                })
 
                 vk_publisher = VKPublisher(test_polygon_mode=test_mode)
                 publish_result = await vk_publisher.publish_digest(
@@ -201,6 +220,13 @@ def parse_and_publish_theme(
                     max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
                 )
                 mourning_digest = mourning_builder.build_digest(mourning_posts, group_names=group_names)
+                selected_by_lip.update({
+                    lip_of_post(
+                        p.get("owner_id", p.get("from_id", 0)),
+                        p.get("id", 0),
+                    ): p
+                    for p in mourning_posts
+                })
 
                 vk_pub = VKPublisher(test_polygon_mode=test_mode)
                 mourning_pub = await vk_pub.publish_digest(
@@ -217,9 +243,38 @@ def parse_and_publish_theme(
             if all_included:
                 existing = work_table.lip or []
                 existing.extend(all_included)
-                if len(existing) > 30:
-                    existing = existing[-30:]
+                if len(existing) > WORK_TABLE_LIP_LIMIT:
+                    existing = existing[-WORK_TABLE_LIP_LIMIT:]
                 work_table.lip = existing
+
+                existing_hash = work_table.hash or []
+                new_hash_entries: List[str] = []
+                for lip in all_included:
+                    p = selected_by_lip.get(lip)
+                    if not isinstance(p, dict):
+                        continue
+                    text = (p.get("text") or "").strip()
+                    if text:
+                        tfp = create_text_fingerprint(text)
+                        if tfp:
+                            new_hash_entries.append(f"txtfp:{tfp}")
+                        cfp = create_text_core_fingerprint(text)
+                        if cfp:
+                            new_hash_entries.append(f"txtcore:{cfp}")
+                        rafinad_len = len(text_to_rafinad(text))
+                        if rafinad_len >= 80:
+                            simhash = create_text_simhash(text)
+                            if simhash:
+                                new_hash_entries.append(f"txtsim:{rafinad_len // 20}:{simhash}")
+
+                    atts = p.get("attachments")
+                    media_ids = create_media_fingerprint(atts if isinstance(atts, list) else [])
+                    new_hash_entries.extend(media_ids)
+
+                existing_hash.extend(new_hash_entries)
+                if len(existing_hash) > WORK_TABLE_HASH_LIMIT:
+                    existing_hash = existing_hash[-WORK_TABLE_HASH_LIMIT:]
+                work_table.hash = existing_hash
                 await session.commit()
 
             # 9. Return result

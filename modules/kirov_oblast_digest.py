@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REGION_CODE = "kirov_obl"
 THEME_OBLAST = "oblast"
+WORK_TABLE_LIP_LIMIT = 1000
+WORK_TABLE_HASH_LIMIT = 5000
 
 
 def _defaults_dict(region_config: Any) -> Dict[str, Any]:
@@ -79,6 +81,14 @@ async def run_kirov_oblast_digest(
     from modules.vk_monitor.vk_client import VKClient
     from config.runtime import get_parse_tokens
     from utils.vk_wall_links import extract_wall_post_refs_from_text
+    from utils.post_utils import lip_of_post
+    from modules.deduplication.fingerprints import (
+        create_text_fingerprint,
+        create_text_core_fingerprint,
+        create_text_simhash,
+        create_media_fingerprint,
+        text_to_rafinad,
+    )
     from types import SimpleNamespace
 
     result = await session.execute(select(Region).where(Region.code == region_code))
@@ -198,6 +208,7 @@ async def run_kirov_oblast_digest(
     theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
 
     results = []
+    selected_by_lip: Dict[str, Dict[str, Any]] = {}
     if regular_posts:
         builder = DigestBuilder(
             header=header,
@@ -208,6 +219,13 @@ async def run_kirov_oblast_digest(
             max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
         )
         digest = builder.build_digest(regular_posts, group_names=group_names)
+        selected_by_lip.update({
+            lip_of_post(
+                p.get("owner_id", p.get("from_id", 0)),
+                p.get("id", 0),
+            ): p
+            for p in regular_posts
+        })
         vk_pub = VKPublisher(test_polygon_mode=test_mode)
         pub = await vk_pub.publish_digest(
             group_id=region.vk_group_id,
@@ -226,6 +244,13 @@ async def run_kirov_oblast_digest(
             max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
         )
         md = mb.build_digest(mourning_posts, group_names=group_names)
+        selected_by_lip.update({
+            lip_of_post(
+                p.get("owner_id", p.get("from_id", 0)),
+                p.get("id", 0),
+            ): p
+            for p in mourning_posts
+        })
         vk_pub2 = VKPublisher(test_polygon_mode=test_mode)
         mp = await vk_pub2.publish_digest(
             group_id=region.vk_group_id,
@@ -240,9 +265,36 @@ async def run_kirov_oblast_digest(
     if all_included:
         lip = work_table.lip or []
         lip.extend(all_included)
-        if len(lip) > 30:
-            lip = lip[-30:]
+        if len(lip) > WORK_TABLE_LIP_LIMIT:
+            lip = lip[-WORK_TABLE_LIP_LIMIT:]
         work_table.lip = lip
+
+        wh = work_table.hash or []
+        new_hash_entries: List[str] = []
+        for included_lip in all_included:
+            p = selected_by_lip.get(included_lip)
+            if not isinstance(p, dict):
+                continue
+            text = (p.get("text") or "").strip()
+            if text:
+                tfp = create_text_fingerprint(text)
+                if tfp:
+                    new_hash_entries.append(f"txtfp:{tfp}")
+                cfp = create_text_core_fingerprint(text)
+                if cfp:
+                    new_hash_entries.append(f"txtcore:{cfp}")
+                rafinad_len = len(text_to_rafinad(text))
+                if rafinad_len >= 80:
+                    simhash = create_text_simhash(text)
+                    if simhash:
+                        new_hash_entries.append(f"txtsim:{rafinad_len // 20}:{simhash}")
+            atts = p.get("attachments")
+            media_ids = create_media_fingerprint(atts if isinstance(atts, list) else [])
+            new_hash_entries.extend(media_ids)
+        wh.extend(new_hash_entries)
+        if len(wh) > WORK_TABLE_HASH_LIMIT:
+            wh = wh[-WORK_TABLE_HASH_LIMIT:]
+        work_table.hash = wh
         await session.commit()
 
     total_published = sum(d.post_count for _, d, _ in results)

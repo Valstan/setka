@@ -19,7 +19,9 @@ from utils.text_utils import is_advertisement, check_blacklist
 from modules.deduplication.fingerprints import (
     create_text_fingerprint,
     create_text_core_fingerprint,
+    create_text_simhash,
     create_media_fingerprint,
+    simhash_hamming_distance,
     text_to_rafinad,
 )
 
@@ -27,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Не считать «ядро» текста для near-dup, если rafinad слишком короткий (меньше ложных срабатываний)
 _MIN_RAFINAD_LEN_FOR_CORE_DEDUP = 50
+_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP = 80
+_TEXT_SIMILARITY_THRESHOLD = 0.90
+_SIMHASH_BUCKET_SIZE = 20
 
 # Дайджесты: не брать посты старше 72 часов с момента публикации (оригинала при репосте)
 DIGEST_MAX_POST_AGE_HOURS = 72
@@ -69,6 +74,11 @@ class AdvancedVKParser:
         self.vk_client = vk_client
         self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
         self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
+        self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
+        self._text_similarity_threshold = float(_TEXT_SIMILARITY_THRESHOLD)
+        self._max_simhash_hamming = self._compute_max_simhash_hamming(self._text_similarity_threshold)
+        self._historical_text_simhashes: List[tuple[int, str]] = []
+        self._batch_text_simhashes: Set[str] = set()
 
         # Parsing statistics (stat_mode)
         self.stats = {
@@ -132,17 +142,31 @@ class AdvancedVKParser:
         self._batch_text_fps: Set[str] = set()
         self._batch_core_fps: Set[str] = set()
         self._batch_media_sigs: Set[str] = set()
+        self._batch_text_simhashes: Set[str] = set()
 
         if pipeline_settings is None:
             self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
             self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
+            self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
+            self._text_similarity_threshold = float(_TEXT_SIMILARITY_THRESHOLD)
             effective_count = count_per_community
         else:
             self._max_post_age_hours = float(pipeline_settings.get("max_post_age_hours", DIGEST_MAX_POST_AGE_HOURS))
             self._min_rafinad_core = int(
                 pipeline_settings.get("min_rafinad_len_core_dedup", _MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
             )
+            self._min_rafinad_similarity = int(
+                pipeline_settings.get(
+                    "min_rafinad_len_similarity_dedup",
+                    _MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP,
+                )
+            )
+            self._text_similarity_threshold = float(
+                pipeline_settings.get("text_similarity_threshold", _TEXT_SIMILARITY_THRESHOLD)
+            )
             effective_count = int(pipeline_settings.get("posts_per_community_fetch", count_per_community))
+        self._max_simhash_hamming = self._compute_max_simhash_hamming(self._text_similarity_threshold)
+        self._historical_text_simhashes = self._extract_text_simhashes(work_hash_set)
 
         # Shuffle communities (randomize fetch order)
         if shuffle_communities:
@@ -229,10 +253,13 @@ class AdvancedVKParser:
         self._batch_text_fps = set()
         self._batch_core_fps = set()
         self._batch_media_sigs = set()
+        self._batch_text_simhashes = set()
 
         if pipeline_settings is None:
             self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
             self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
+            self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
+            self._text_similarity_threshold = float(_TEXT_SIMILARITY_THRESHOLD)
         else:
             self._max_post_age_hours = float(
                 pipeline_settings.get("max_post_age_hours", DIGEST_MAX_POST_AGE_HOURS)
@@ -240,6 +267,17 @@ class AdvancedVKParser:
             self._min_rafinad_core = int(
                 pipeline_settings.get("min_rafinad_len_core_dedup", _MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
             )
+            self._min_rafinad_similarity = int(
+                pipeline_settings.get(
+                    "min_rafinad_len_similarity_dedup",
+                    _MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP,
+                )
+            )
+            self._text_similarity_threshold = float(
+                pipeline_settings.get("text_similarity_threshold", _TEXT_SIMILARITY_THRESHOLD)
+            )
+        self._max_simhash_hamming = self._compute_max_simhash_hamming(self._text_similarity_threshold)
+        self._historical_text_simhashes = self._extract_text_simhashes(work_hash_set)
 
         all_posts: List[Dict[str, Any]] = []
         for post_data in posts:
@@ -386,13 +424,22 @@ class AdvancedVKParser:
         if text:
             fp = create_text_fingerprint(text)
             if fp:
-                if fp in self._batch_text_fps or fp in recent_text_fingerprints:
+                if (
+                    fp in self._batch_text_fps
+                    or fp in recent_text_fingerprints
+                    or f"txtfp:{fp}" in work_hash_set
+                ):
                     self.stats["posts_filtered_duplicate_text"] += 1
                     return None
                 rlen = len(text_to_rafinad(text))
                 if rlen >= self._min_rafinad_core:
                     cfp = create_text_core_fingerprint(text)
-                    if cfp and cfp in self._batch_core_fps:
+                    if cfp and (cfp in self._batch_core_fps or f"txtcore:{cfp}" in work_hash_set):
+                        self.stats["posts_filtered_duplicate_text"] += 1
+                        return None
+                if rlen >= self._min_rafinad_similarity:
+                    simhash = create_text_simhash(text)
+                    if simhash and self._is_near_duplicate_text(simhash, rlen):
                         self.stats["posts_filtered_duplicate_text"] += 1
                         return None
 
@@ -408,8 +455,77 @@ class AdvancedVKParser:
                     cfp = create_text_core_fingerprint(text)
                     if cfp:
                         self._batch_core_fps.add(cfp)
+                if len(text_to_rafinad(text)) >= self._min_rafinad_similarity:
+                    simhash = create_text_simhash(text)
+                    if simhash:
+                        self._register_batch_simhash(simhash, len(text_to_rafinad(text)))
 
         return post_data
+
+    @staticmethod
+    def _extract_text_simhashes(work_hash_set: Set[str]) -> List[tuple[int, str]]:
+        out: List[tuple[int, str]] = []
+        for item in work_hash_set:
+            if not isinstance(item, str):
+                continue
+            if not item.startswith("txtsim:"):
+                continue
+            parts = item.split(":", 2)
+            if len(parts) != 3:
+                continue
+            try:
+                bucket = int(parts[1])
+            except (TypeError, ValueError):
+                continue
+            sh = parts[2].strip().lower()
+            if len(sh) != 16:
+                continue
+            out.append((bucket, sh))
+        return out
+
+    @staticmethod
+    def _simhash_bucket_for_len(rafinad_len: int) -> int:
+        return max(0, int(rafinad_len) // _SIMHASH_BUCKET_SIZE)
+
+    @staticmethod
+    def _compute_max_simhash_hamming(similarity_threshold: float) -> int:
+        # SimHash is approximate; for practical 90% near-dup we use a slightly wider gate.
+        raw = int((1.0 - similarity_threshold) * 128)
+        return max(0, min(raw, 64))
+
+    def _register_batch_simhash(self, simhash: str, rafinad_len: int) -> None:
+        bucket = self._simhash_bucket_for_len(rafinad_len)
+        self._batch_text_simhashes.add(f"{bucket}:{simhash}")
+
+    def _iter_batch_simhashes(self) -> List[tuple[int, str]]:
+        out: List[tuple[int, str]] = []
+        for marker in getattr(self, "_batch_text_simhashes", set()):
+            parts = marker.split(":", 1)
+            if len(parts) != 2:
+                continue
+            try:
+                bucket = int(parts[0])
+            except (TypeError, ValueError):
+                continue
+            sh = parts[1].strip().lower()
+            if len(sh) != 16:
+                continue
+            out.append((bucket, sh))
+        return out
+
+    def _is_near_duplicate_text(self, simhash: str, rafinad_len: int) -> bool:
+        bucket = self._simhash_bucket_for_len(rafinad_len)
+        for b, sh in self._historical_text_simhashes:
+            if abs(b - bucket) > 1:
+                continue
+            if simhash_hamming_distance(simhash, sh) <= self._max_simhash_hamming:
+                return True
+        for b, sh in self._iter_batch_simhashes():
+            if abs(b - bucket) > 1:
+                continue
+            if simhash_hamming_distance(simhash, sh) <= self._max_simhash_hamming:
+                return True
+        return False
     
     def get_stats(self) -> Dict[str, Any]:
         """Get parsing statistics (for stat_mode)."""

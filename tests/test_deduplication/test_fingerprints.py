@@ -15,6 +15,8 @@ from modules.deduplication.fingerprints import (
     create_media_fingerprint,
     create_text_fingerprint,
     create_text_core_fingerprint,
+    create_text_simhash,
+    simhash_hamming_distance,
 )
 
 
@@ -159,3 +161,27 @@ class TestTextCoreFingerprint:
         fp1 = create_text_core_fingerprint(text)
         fp2 = create_text_core_fingerprint(text)
         assert fp1 == fp2
+
+
+class TestTextSimhash:
+    """Tests for near-duplicate text SimHash."""
+
+    def test_same_text_same_simhash(self):
+        text = "В районе пройдет спортивный праздник в эту субботу"
+        sh1 = create_text_simhash(text)
+        sh2 = create_text_simhash(text)
+        assert sh1 == sh2
+
+    def test_small_rewrite_has_small_hamming_distance(self):
+        t1 = "Срочно! В районе пройдет спортивный праздник в эту субботу"
+        t2 = "В эту субботу в районе пройдет спортивный праздник. Срочно"
+        sh1 = create_text_simhash(t1)
+        sh2 = create_text_simhash(t2)
+        assert simhash_hamming_distance(sh1, sh2) <= 12
+
+    def test_different_text_has_large_hamming_distance(self):
+        t1 = "В районе пройдет спортивный праздник"
+        t2 = "Завтра отключат водоснабжение в нескольких деревнях"
+        sh1 = create_text_simhash(t1)
+        sh2 = create_text_simhash(t2)
+        assert simhash_hamming_distance(sh1, sh2) >= 8

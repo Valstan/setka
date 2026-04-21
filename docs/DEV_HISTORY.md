@@ -1,5 +1,15 @@
 # История разработки SETKA
 
+## 2026-04-21 — Дедуп дайджестов: усиление LIP и 90% похожесть текста
+
+- В `modules/vk_monitor/advanced_parser.py` усилен конвейер дедупликации: кроме `lip`/точных hash, добавлена near-duplicate проверка текста на базе 64-bit SimHash с порогом похожести (по умолчанию `0.90`) и ограничением по длине нормализованного текста.
+- Персистентный текстовый дедуп теперь использует `work_table.hash` с префиксами `txtfp:`, `txtcore:`, `txtsim:<bucket>:<hash>`; при парсинге эти сигнатуры учитываются вместе с батч-дедупом.
+- После публикации в `tasks/parsing_scheduler_tasks.py` и `modules/kirov_oblast_digest.py` в `work_table` сохраняются не только `lip`, но и сигнатуры текста/медиа для будущих прогонов.
+- Увеличены окна памяти дедупа в `work_table`: `lip` до 1000, `hash` до 5000 записей (вместо слишком короткой истории, из-за которой старые дубли возвращались).
+- Расширены настройки `digest_filters` (`text_similarity_threshold`, `min_rafinad_len_similarity_dedup`) и покрытие тестами для SimHash/исторического дедупа.
+
+---
+
 ## 2026-04-21 — Mourning-дайджесты: без любых заголовков и хештегов
 
 - Для mourning-публикаций добавлен единый форматтер `resolve_mourning_digest_format()` в `modules/publisher/postopus_digest_headers.py`, который всегда возвращает пустые `header`, `hashtags` и `local_hashtag`.

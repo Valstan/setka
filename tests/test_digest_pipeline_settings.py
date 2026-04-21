@@ -14,6 +14,8 @@ def test_effective_uses_defaults():
     eff = get_effective_pipeline_settings(rc, "novost")
     assert eff["max_post_age_hours"] == 72.0
     assert eff["max_posts_per_digest"] == 3
+    assert eff["text_similarity_threshold"] == 0.90
+    assert eff["min_rafinad_len_similarity_dedup"] == 80
 
 
 def test_by_topic_overrides_age():
