@@ -106,3 +106,10 @@ def resolve_digest_hashtags(
     local_hashtag = f"#{raicentr_raw.lstrip('#')}" if raicentr_raw else ""
 
     return tags, local_hashtag
+
+
+def resolve_mourning_digest_format() -> Tuple[str, List[str], str]:
+    """
+    Mourning-digest must be published without any header and hashtags.
+    """
+    return "", [], ""

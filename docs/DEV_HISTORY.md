@@ -1,5 +1,14 @@
 # История разработки SETKA
 
+## 2026-04-21 — Mourning-дайджесты: без любых заголовков и хештегов
+
+- Для mourning-публикаций добавлен единый форматтер `resolve_mourning_digest_format()` в `modules/publisher/postopus_digest_headers.py`, который всегда возвращает пустые `header`, `hashtags` и `local_hashtag`.
+- Production-пайплайны `tasks/parsing_scheduler_tasks.py` и `modules/kirov_oblast_digest.py` переведены на этот форматтер, чтобы траурные дайджесты по всем регионам/темам выходили без автоподстановок.
+- Обновлены тестовые/диагностические скрипты (`scripts/test_production_pipeline.py`, `scripts/test_parse_run.py`) и убран декоративный префикс `🕯` из вывода тестового скрипта.
+- Добавлены тесты `tests/test_publisher/test_postopus_digest_headers.py` и `tests/test_publisher/test_digest_builder.py` на поведение mourning-формата без заголовка и тегов.
+
+---
+
 ## 2026-04-21 — Документация: только SSH для прода, без MCP
 
 - Политика доступа: для SETKA **не использовать MCP** в IDE — только **стандартный SSH** на хост с `/home/valstan/SETKA` (обновлён [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)).

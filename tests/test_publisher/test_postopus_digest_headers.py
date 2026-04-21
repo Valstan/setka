@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from modules.publisher.postopus_digest_headers import (
     resolve_digest_header,
     resolve_digest_hashtags,
+    resolve_mourning_digest_format,
 )
 
 
@@ -34,3 +35,10 @@ def test_resolve_header_oblast_fallback():
     h = resolve_digest_header(rc, "oblast", region)
     assert "Главное в области" in h
     assert "Кировская область" in h
+
+
+def test_resolve_mourning_digest_format_is_plain_text_only():
+    header, tags, local = resolve_mourning_digest_format()
+    assert header == ""
+    assert tags == []
+    assert local == ""

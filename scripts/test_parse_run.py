@@ -41,6 +41,7 @@ async def main():
     from modules.publisher.digest_builder import DigestBuilder
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.region_config import RegionConfigManager
+    from modules.publisher.postopus_digest_headers import resolve_mourning_digest_format
 
     async with AsyncSessionLocal() as session:
         # 1. Проверяем регион
@@ -188,10 +189,11 @@ async def main():
         mourning_digest_result = None
         if mourning_posts:
             logger.info('\n[ШАГ 8b] Построение mourning дайджеста')
+            mourning_header, mourning_tags, mourning_local_hashtag = resolve_mourning_digest_format()
             mourning_builder = DigestBuilder(
-                header="",
-                hashtags=['тест'],
-                local_hashtag='#тест',
+                header=mourning_header,
+                hashtags=mourning_tags,
+                local_hashtag=mourning_local_hashtag,
                 max_text_length=4096,
             )
             mourning_digest_result = mourning_builder.build_digest(mourning_posts)

@@ -36,6 +36,7 @@ def parse_and_publish_theme(
     from modules.publisher.postopus_digest_headers import (
         resolve_digest_header,
         resolve_digest_hashtags,
+        resolve_mourning_digest_format,
     )
     from modules.digest_pipeline_settings import get_effective_pipeline_settings
     from modules.publisher.vk_publisher_extended import VKPublisher
@@ -191,10 +192,11 @@ def parse_and_publish_theme(
 
             # Mourning digest
             if mourning_posts:
+                mourning_header, mourning_tags, mourning_local_hashtag = resolve_mourning_digest_format()
                 mourning_builder = DigestBuilder(
-                    header="",
-                    hashtags=list(theme_tags),
-                    local_hashtag=local_hashtag,
+                    header=mourning_header,
+                    hashtags=mourning_tags,
+                    local_hashtag=mourning_local_hashtag,
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
                     max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
                 )

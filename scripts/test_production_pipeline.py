@@ -28,6 +28,7 @@ async def main():
     from modules.publisher.postopus_digest_headers import (
         resolve_digest_header,
         resolve_digest_hashtags,
+        resolve_mourning_digest_format,
     )
     from modules.publisher.vk_publisher_extended import VKPublisher
     from config.runtime import get_parse_tokens
@@ -166,14 +167,15 @@ async def main():
 
         # Mourning digest
         if mourning_posts:
+            mourning_header, mourning_tags, mourning_local_hashtag = resolve_mourning_digest_format()
             mourning_builder = DigestBuilder(
-                header="",
-                hashtags=list(theme_tags),
-                local_hashtag=local_hashtag,
+                header=mourning_header,
+                hashtags=mourning_tags,
+                local_hashtag=mourning_local_hashtag,
                 max_text_length=region_config.text_post_maxsize_simbols or 4096,
             )
             mourning_digest = mourning_builder.build_digest(mourning_posts, group_names=group_names)
-            print(f"\n🕯 Mourning digest: {mourning_digest.post_count} posts, {mourning_digest.total_length} chars")
+            print(f"\nMourning digest: {mourning_digest.post_count} posts, {mourning_digest.total_length} chars")
 
             vk_pub_m = VKPublisher(test_polygon_mode=test_mode)
             mourning_pub = await vk_pub_m.publish_digest(

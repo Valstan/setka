@@ -30,3 +30,20 @@ def test_empty_header_starts_with_post_marker_not_default_title():
 def test_explicit_empty_string_not_replaced_by_default_header():
     b = DigestBuilder(header="")
     assert b.header == ""
+
+
+def test_empty_header_without_hashtags_has_no_footer_tags():
+    posts = [
+        {
+            "owner_id": -100,
+            "id": 2,
+            "text": "Текст без хештегов",
+            "likes": {"count": 0},
+            "comments": {"count": 0},
+            "reposts": {"count": 0},
+        }
+    ]
+    b = DigestBuilder(header="", hashtags=[], local_hashtag="", max_text_length=4096)
+    r = b.build_digest(posts, group_names={"100": "Группа тест"})
+    assert "#тест" not in r.text
+    assert "#" not in r.text
