@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,7 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modules.kirov_oblast_digest import (
     DEFAULT_REGION_CODE,
     THEME_OBLAST,
+    OBLAST_LOOKBACK_HOURS,
     _defaults_dict,
+    _is_recent_enough,
+    _is_oblast_source_digest_text,
+    _is_religious_text,
     _resolve_source_region_codes,
 )
 from modules.digest_pipeline_settings import POSTOPUS_DIGEST_THEMES
@@ -25,6 +30,26 @@ def test_postopus_themes_includes_oblast():
 def test_constants():
     assert DEFAULT_REGION_CODE == "kirov_obl"
     assert THEME_OBLAST == "oblast"
+
+
+def test_recent_enough_by_vk_date():
+    now = int(time.time())
+    fresh = {"date": now - 3600}
+    old = {"date": now - int((OBLAST_LOOKBACK_HOURS + 1) * 3600)}
+    assert _is_recent_enough(fresh, OBLAST_LOOKBACK_HOURS)
+    assert not _is_recent_enough(old, OBLAST_LOOKBACK_HOURS)
+
+
+def test_oblast_source_digest_text_filters_markers():
+    good = "✍ Текст\n[https://vk.com/wall-1_1|Источник]"
+    bad = "Реклама\n[https://vk.com/wall-1_1|Источник]"
+    assert _is_oblast_source_digest_text(good)
+    assert not _is_oblast_source_digest_text(bad)
+
+
+def test_religious_text_markers():
+    assert _is_religious_text("В храме прошла служба")
+    assert not _is_religious_text("Открыли новую дорогу в районе")
 
 
 def test_defaults_dict_empty_and_nested():

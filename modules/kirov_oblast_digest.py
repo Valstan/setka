@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from utils.vk_wall_links import extract_wall_post_refs_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,32 @@ DEFAULT_REGION_CODE = "kirov_obl"
 THEME_OBLAST = "oblast"
 WORK_TABLE_LIP_LIMIT = 1000
 WORK_TABLE_HASH_LIMIT = 5000
+OBLAST_LOOKBACK_HOURS = 72.0
+OBLAST_DIGEST_SCAN_DEPTH = 100
+
+_OBLAST_BANNED_DIGEST_MARKERS = (
+    "реклама",
+    "объявлен",
+    "дополнительно",
+    "addons",
+)
+
+_OBLAST_RELIGIOUS_MARKERS = (
+    "православ",
+    "церков",
+    "храм",
+    "молитв",
+    "епарх",
+    "богослуж",
+    "священ",
+    "митрополит",
+    "монастыр",
+    "пасх",
+    "крещен",
+    "ислам",
+    "мечет",
+    "намаз",
+)
 
 
 def _defaults_dict(region_config: Any) -> Dict[str, Any]:
@@ -35,6 +63,46 @@ def _defaults_dict(region_config: Any) -> Dict[str, Any]:
         return {}
     d = df.get("defaults") or {}
     return d if isinstance(d, dict) else {}
+
+
+def _post_age_hours_from_vk_date(post_data: Dict[str, Any]) -> Optional[float]:
+    raw = post_data.get("date")
+    if raw is None:
+        return None
+    try:
+        ts = float(raw)
+    except (TypeError, ValueError):
+        return None
+    now_ts = datetime.now(tz=timezone.utc).timestamp()
+    return max(0.0, (now_ts - ts) / 3600.0)
+
+
+def _is_recent_enough(post_data: Dict[str, Any], max_age_hours: float) -> bool:
+    age = _post_age_hours_from_vk_date(post_data)
+    if age is None:
+        return False
+    return age <= max_age_hours
+
+
+def _is_oblast_source_digest_text(text: str) -> bool:
+    """
+    Keep only digest-like source posts with wall refs and without obvious banned digest themes.
+    """
+    txt = (text or "").strip()
+    if not txt:
+        return False
+    refs = extract_wall_post_refs_from_text(txt)
+    if not refs:
+        return False
+    low = txt.lower()
+    if any(marker in low for marker in _OBLAST_BANNED_DIGEST_MARKERS):
+        return False
+    return True
+
+
+def _is_religious_text(text: str) -> bool:
+    low = (text or "").lower()
+    return any(marker in low for marker in _OBLAST_RELIGIOUS_MARKERS)
 
 
 async def _resolve_source_region_codes(
@@ -80,8 +148,8 @@ async def run_kirov_oblast_digest(
     from modules.vk_monitor.advanced_parser import AdvancedVKParser
     from modules.vk_monitor.vk_client import VKClient
     from config.runtime import get_parse_tokens
-    from utils.vk_wall_links import extract_wall_post_refs_from_text
     from utils.post_utils import lip_of_post
+    from utils.text_utils import is_advertisement
     from modules.deduplication.fingerprints import (
         create_text_fingerprint,
         create_text_core_fingerprint,
@@ -153,14 +221,20 @@ async def run_kirov_oblast_digest(
         await session.refresh(global_work_table)
 
     ddef = _defaults_dict(region_config)
-    wall_depth = int(ddef.get("oblast_wall_posts_per_source", 15))
-    wall_depth = max(1, min(wall_depth, 100))
+    wall_depth = int(ddef.get("oblast_wall_posts_per_source", OBLAST_DIGEST_SCAN_DEPTH))
+    wall_depth = max(1, min(wall_depth, OBLAST_DIGEST_SCAN_DEPTH))
     max_refs = int(ddef.get("oblast_max_wall_refs", 200))
     max_refs = max(10, min(max_refs, 500))
 
     source_codes = await _resolve_source_region_codes(session, region_code, region_config)
     if not source_codes:
-        return {"success": False, "error": "Нет районов-источников (oblast_source_region_codes или активные регионы)"}
+        return {
+            "success": True,
+            "message": "no source regions configured for oblast digest",
+            "posts_published": 0,
+            "digests_count": 0,
+            "stats": {},
+        }
 
     parse_tokens = get_parse_tokens()
     if not parse_tokens:
@@ -172,6 +246,21 @@ async def run_kirov_oblast_digest(
         select(WorkTable).where(WorkTable.region_code == region_code)
     )
     region_lips, region_hashes = build_region_dedup_sets(all_wt_result.scalars().all())
+    debug_counters: Dict[str, int] = {
+        "source_regions_total": len(source_codes),
+        "source_regions_scanned": 0,
+        "source_digest_posts_scanned": 0,
+        "source_digest_posts_old": 0,
+        "source_digest_posts_non_digest": 0,
+        "source_refs_collected": 0,
+        "raw_posts_loaded": 0,
+        "filtered_posts_after_pipeline": 0,
+        "filtered_posts_non_news_ads": 0,
+        "filtered_posts_non_news_religious": 0,
+        "filtered_posts_mourning": 0,
+        "regular_posts_ready": 0,
+        "mourning_posts_ready": 0,
+    }
     try:
         target_group_posts = await asyncio.to_thread(
             vk.get_wall_posts, -abs(int(region.vk_group_id)), TARGET_GROUP_POSTS_SCAN_LIMIT, 0
@@ -184,6 +273,7 @@ async def run_kirov_oblast_digest(
     seen: Set[Tuple[int, int]] = set()
 
     for code in source_codes:
+        debug_counters["source_regions_scanned"] += 1
         rr = await session.execute(select(Region).where(Region.code == code))
         src_region = rr.scalars().first()
         if not src_region or not src_region.vk_group_id:
@@ -195,13 +285,21 @@ async def run_kirov_oblast_digest(
             logger.warning("Kirov oblast: wall.get failed for %s: %s", code, e)
             continue
         for wp in wall_posts or []:
+            debug_counters["source_digest_posts_scanned"] += 1
+            if not _is_recent_enough(wp, OBLAST_LOOKBACK_HOURS):
+                debug_counters["source_digest_posts_old"] += 1
+                continue
             txt = (wp.get("text") or "") + "\n"
+            if not _is_oblast_source_digest_text(txt):
+                debug_counters["source_digest_posts_non_digest"] += 1
+                continue
             for oid, pid in extract_wall_post_refs_from_text(txt):
                 key = (oid, pid)
                 if key in seen:
                     continue
                 seen.add(key)
                 refs_ordered.append(key)
+                debug_counters["source_refs_collected"] += 1
                 if len(refs_ordered) >= max_refs:
                     break
         if len(refs_ordered) >= max_refs:
@@ -214,11 +312,20 @@ async def run_kirov_oblast_digest(
             "posts_published": 0,
             "digests_count": 0,
             "stats": {},
+            "debug": debug_counters,
         }
 
     raw_posts = await asyncio.to_thread(vk.get_posts_by_ids, refs_ordered)
+    debug_counters["raw_posts_loaded"] = len(raw_posts or [])
     if not raw_posts:
-        return {"success": False, "error": "wall.getById returned no posts"}
+        return {
+            "success": True,
+            "message": "wall.getById returned no posts",
+            "posts_published": 0,
+            "digests_count": 0,
+            "stats": {},
+            "debug": debug_counters,
+        }
 
     pipeline_eff = get_effective_pipeline_settings(region_config, theme)
     parser = AdvancedVKParser(vk)
@@ -231,7 +338,26 @@ async def run_kirov_oblast_digest(
         recent_text_fingerprints=[],
         pipeline_settings=pipeline_eff,
     )
+    debug_counters["filtered_posts_after_pipeline"] = len(posts)
     parser_stats = parser.get_stats()
+
+    # Hardcoded oblast-only exclusions by requirement:
+    # - remove ad/addons-like posts
+    # - remove religious posts
+    oblast_news_posts: List[Dict[str, Any]] = []
+    for p in posts:
+        txt = (p.get("text") or "").strip()
+        txt_low = txt.lower()
+        if any(marker in txt_low for marker in _OBLAST_BANNED_DIGEST_MARKERS):
+            debug_counters["filtered_posts_non_news_ads"] += 1
+            continue
+        if is_advertisement(txt, skip_for_reklama=False, theme="novost"):
+            debug_counters["filtered_posts_non_news_ads"] += 1
+            continue
+        if _is_religious_text(txt):
+            debug_counters["filtered_posts_non_news_religious"] += 1
+            continue
+        oblast_news_posts.append(p)
 
     comm_meta = await session.execute(
         select(Community.vk_id, Community.name).where(Community.is_active == True)
@@ -239,7 +365,13 @@ async def run_kirov_oblast_digest(
     group_names = {str(abs(row[0])): row[1] for row in comm_meta.fetchall()}
 
     splitter = DigestSplitter()
-    mourning_posts, regular_posts = splitter.split_posts(posts)
+    mourning_posts, regular_posts = splitter.split_posts(oblast_news_posts)
+    debug_counters["mourning_posts_ready"] = len(mourning_posts)
+    debug_counters["regular_posts_ready"] = len(regular_posts)
+    # Mourning must be excluded for oblast digest.
+    if mourning_posts:
+        debug_counters["filtered_posts_mourning"] = len(mourning_posts)
+    mourning_posts = []
 
     header = resolve_digest_header(region_config, theme, region)
     theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
@@ -357,4 +489,5 @@ async def run_kirov_oblast_digest(
         "stats": parser_stats,
         "source_regions_scanned": len(source_codes),
         "wall_links_collected": len(refs_ordered),
+        "debug": debug_counters,
     }
