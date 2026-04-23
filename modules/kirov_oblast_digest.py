@@ -89,6 +89,13 @@ async def run_kirov_oblast_digest(
         create_media_fingerprint,
         text_to_rafinad,
     )
+    from modules.deduplication.digest_history import (
+        GLOBAL_REGION_WORK_THEME,
+        TARGET_GROUP_POSTS_SCAN_LIMIT,
+        build_region_dedup_sets,
+        extract_source_lips_from_target_group_posts,
+        append_unique_limited,
+    )
     from types import SimpleNamespace
 
     result = await session.execute(select(Region).where(Region.code == region_code))
@@ -127,6 +134,24 @@ async def run_kirov_oblast_digest(
         await session.commit()
         await session.refresh(work_table)
 
+    global_wt_result = await session.execute(
+        select(WorkTable).where(
+            WorkTable.region_code == region_code,
+            WorkTable.theme == GLOBAL_REGION_WORK_THEME,
+        )
+    )
+    global_work_table = global_wt_result.scalars().first()
+    if not global_work_table:
+        global_work_table = WorkTable(
+            region_code=region_code,
+            theme=GLOBAL_REGION_WORK_THEME,
+            lip=[],
+            hash=[],
+        )
+        session.add(global_work_table)
+        await session.commit()
+        await session.refresh(global_work_table)
+
     ddef = _defaults_dict(region_config)
     wall_depth = int(ddef.get("oblast_wall_posts_per_source", 15))
     wall_depth = max(1, min(wall_depth, 100))
@@ -142,6 +167,18 @@ async def run_kirov_oblast_digest(
         return {"success": False, "error": "No VK tokens configured"}
     parse_token = next(iter(parse_tokens.values()))
     vk = VKClient(parse_token)
+
+    all_wt_result = await session.execute(
+        select(WorkTable).where(WorkTable.region_code == region_code)
+    )
+    region_lips, region_hashes = build_region_dedup_sets(all_wt_result.scalars().all())
+    try:
+        target_group_posts = await asyncio.to_thread(
+            vk.get_wall_posts, -abs(int(region.vk_group_id)), TARGET_GROUP_POSTS_SCAN_LIMIT, 0
+        )
+        region_lips.update(extract_source_lips_from_target_group_posts(target_group_posts))
+    except Exception as e:
+        logger.warning("Kirov oblast: failed to load target group digest history: %s", e)
 
     refs_ordered: List[Tuple[int, int]] = []
     seen: Set[Tuple[int, int]] = set()
@@ -189,8 +226,8 @@ async def run_kirov_oblast_digest(
         raw_posts,
         theme=theme,
         region_config=region_config,
-        work_table_lip=work_table.lip or [],
-        work_table_hash=work_table.hash or [],
+        work_table_lip=list(region_lips),
+        work_table_hash=list(region_hashes),
         recent_text_fingerprints=[],
         pipeline_settings=pipeline_eff,
     )
@@ -263,13 +300,17 @@ async def run_kirov_oblast_digest(
     for _, d, _ in results:
         all_included.extend(d.posts_included)
     if all_included:
-        lip = work_table.lip or []
-        lip.extend(all_included)
-        if len(lip) > WORK_TABLE_LIP_LIMIT:
-            lip = lip[-WORK_TABLE_LIP_LIMIT:]
-        work_table.lip = lip
+        work_table.lip = append_unique_limited(
+            work_table.lip or [],
+            all_included,
+            WORK_TABLE_LIP_LIMIT,
+        )
+        global_work_table.lip = append_unique_limited(
+            global_work_table.lip or [],
+            all_included,
+            WORK_TABLE_LIP_LIMIT,
+        )
 
-        wh = work_table.hash or []
         new_hash_entries: List[str] = []
         for included_lip in all_included:
             p = selected_by_lip.get(included_lip)
@@ -291,10 +332,16 @@ async def run_kirov_oblast_digest(
             atts = p.get("attachments")
             media_ids = create_media_fingerprint(atts if isinstance(atts, list) else [])
             new_hash_entries.extend(media_ids)
-        wh.extend(new_hash_entries)
-        if len(wh) > WORK_TABLE_HASH_LIMIT:
-            wh = wh[-WORK_TABLE_HASH_LIMIT:]
-        work_table.hash = wh
+        work_table.hash = append_unique_limited(
+            work_table.hash or [],
+            new_hash_entries,
+            WORK_TABLE_HASH_LIMIT,
+        )
+        global_work_table.hash = append_unique_limited(
+            global_work_table.hash or [],
+            new_hash_entries,
+            WORK_TABLE_HASH_LIMIT,
+        )
         await session.commit()
 
     total_published = sum(d.post_count for _, d, _ in results)

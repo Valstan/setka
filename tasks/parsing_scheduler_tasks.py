@@ -5,6 +5,7 @@ Migrated from old_postopus crontab entries to Celery Beat schedule.
 Each theme/region combination gets its own scheduled task.
 """
 from celery import shared_task
+import asyncio
 import logging
 from typing import Dict, Any, List
 from datetime import datetime
@@ -51,6 +52,13 @@ def parse_and_publish_theme(
         create_text_simhash,
         create_media_fingerprint,
         text_to_rafinad,
+    )
+    from modules.deduplication.digest_history import (
+        GLOBAL_REGION_WORK_THEME,
+        TARGET_GROUP_POSTS_SCAN_LIMIT,
+        build_region_dedup_sets,
+        extract_source_lips_from_target_group_posts,
+        append_unique_limited,
     )
     from sqlalchemy import select
 
@@ -111,6 +119,23 @@ def parse_and_publish_theme(
                 session.add(work_table)
                 await session.commit()
 
+            global_wt_result = await session.execute(
+                select(WorkTable).where(
+                    WorkTable.region_code == region_code,
+                    WorkTable.theme == GLOBAL_REGION_WORK_THEME,
+                )
+            )
+            global_work_table = global_wt_result.scalars().first()
+            if not global_work_table:
+                global_work_table = WorkTable(
+                    region_code=region_code,
+                    theme=GLOBAL_REGION_WORK_THEME,
+                    lip=[],
+                    hash=[],
+                )
+                session.add(global_work_table)
+                await session.commit()
+
             # 3. Get region
             region_result = await session.execute(
                 select(Region).where(Region.code == region_code)
@@ -159,12 +184,24 @@ def parse_and_publish_theme(
             parser = AdvancedVKParser(vk_client)
             pipeline_eff = get_effective_pipeline_settings(region_config, theme)
 
+            all_wt_result = await session.execute(
+                select(WorkTable).where(WorkTable.region_code == region_code)
+            )
+            region_lips, region_hashes = build_region_dedup_sets(all_wt_result.scalars().all())
+            try:
+                target_group_posts = await asyncio.to_thread(
+                    vk_client.get_wall_posts, -abs(int(region.vk_group_id)), TARGET_GROUP_POSTS_SCAN_LIMIT, 0
+                )
+                region_lips.update(extract_source_lips_from_target_group_posts(target_group_posts))
+            except Exception as e:
+                logger.warning("Failed to load target group digest history for %s: %s", region_code, e)
+
             posts = await parser.parse_posts_from_communities(
                 community_ids=community_ids,
                 theme=theme,
                 region_config=region_config,
-                work_table_lip=work_table.lip or [],
-                work_table_hash=work_table.hash or [],
+                work_table_lip=list(region_lips),
+                work_table_hash=list(region_hashes),
                 count_per_community=20,
                 pipeline_settings=pipeline_eff,
             )
@@ -241,13 +278,17 @@ def parse_and_publish_theme(
             for _, d, _ in results:
                 all_included.extend(d.posts_included)
             if all_included:
-                existing = work_table.lip or []
-                existing.extend(all_included)
-                if len(existing) > WORK_TABLE_LIP_LIMIT:
-                    existing = existing[-WORK_TABLE_LIP_LIMIT:]
-                work_table.lip = existing
+                work_table.lip = append_unique_limited(
+                    work_table.lip or [],
+                    all_included,
+                    WORK_TABLE_LIP_LIMIT,
+                )
+                global_work_table.lip = append_unique_limited(
+                    global_work_table.lip or [],
+                    all_included,
+                    WORK_TABLE_LIP_LIMIT,
+                )
 
-                existing_hash = work_table.hash or []
                 new_hash_entries: List[str] = []
                 for lip in all_included:
                     p = selected_by_lip.get(lip)
@@ -271,10 +312,16 @@ def parse_and_publish_theme(
                     media_ids = create_media_fingerprint(atts if isinstance(atts, list) else [])
                     new_hash_entries.extend(media_ids)
 
-                existing_hash.extend(new_hash_entries)
-                if len(existing_hash) > WORK_TABLE_HASH_LIMIT:
-                    existing_hash = existing_hash[-WORK_TABLE_HASH_LIMIT:]
-                work_table.hash = existing_hash
+                work_table.hash = append_unique_limited(
+                    work_table.hash or [],
+                    new_hash_entries,
+                    WORK_TABLE_HASH_LIMIT,
+                )
+                global_work_table.hash = append_unique_limited(
+                    global_work_table.hash or [],
+                    new_hash_entries,
+                    WORK_TABLE_HASH_LIMIT,
+                )
                 await session.commit()
 
             # 9. Return result
