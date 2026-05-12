@@ -184,6 +184,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Load regions for filter and modal
     try {
         const regions = await apiClient.getRegions();
+        window.communityRegions = regions;
+        window.communityCategories = [
+            { value: 'admin', label: 'Админ' },
+            { value: 'novost', label: 'Новости' },
+            { value: 'kultura', label: 'Культура' },
+            { value: 'sport', label: 'Спорт' },
+            { value: 'reklama', label: 'Реклама' },
+            { value: 'other', label: 'Другое' }
+        ];
         
         // Populate filter dropdown
         const regionFilter = document.getElementById('filter-region');
@@ -276,10 +285,22 @@ async function loadCommunities() {
                         </a>
                     </td>
                     <td>
-                        <span class="badge bg-secondary">${community.region_code || 'N/A'}</span>
+                        <select class="form-select form-select-sm" onchange="onCommunityRegionChange(event)" data-community-id="${community.id}">
+                            ${window.communityRegions.map(region => `
+                                <option value="${region.id}" ${region.id === community.region_id ? 'selected' : ''}>
+                                    ${region.name}
+                                </option>
+                            `).join('')}
+                        </select>
                     </td>
                     <td>
-                        ${community.category ? `<span class="badge ${getCategoryColor(community.category)}">${getCategoryLabel(community.category)}</span>` : '-'}
+                        <select class="form-select form-select-sm" onchange="onCommunityCategoryChange(event)" data-community-id="${community.id}">
+                            ${window.communityCategories.map(category => `
+                                <option value="${category.value}" ${category.value === community.category ? 'selected' : ''}>
+                                    ${category.label}
+                                </option>
+                            `).join('')}
+                        </select>
                     </td>
                     <td>
                         <span class="badge ${community.is_active ? 'bg-success' : 'bg-secondary'}">
@@ -341,12 +362,52 @@ async function toggleActive(communityId, newStatus) {
     }
     
     try {
-        // TODO: Implement API endpoint for updating community status
-        alert('Функция находится в разработке');
-        // await apiClient.updateCommunity(communityId, { is_active: newStatus });
-        // await loadCommunities();
+        await apiClient.updateCommunity(communityId, { is_active: newStatus });
+        await loadCommunities();
     } catch (err) {
         alert('Ошибка: ' + err.message);
+    }
+}
+
+async function onCommunityRegionChange(event) {
+    const select = event.target;
+    const communityId = parseInt(select.dataset.communityId);
+    const regionId = parseInt(select.value);
+
+    if (!communityId || !regionId) {
+        return;
+    }
+
+    select.disabled = true;
+    try {
+        await apiClient.updateCommunity(communityId, { region_id: regionId });
+        await loadCommunities();
+    } catch (err) {
+        alert('Ошибка обновления региона: ' + err.message);
+        await loadCommunities();
+    } finally {
+        select.disabled = false;
+    }
+}
+
+async function onCommunityCategoryChange(event) {
+    const select = event.target;
+    const communityId = parseInt(select.dataset.communityId);
+    const category = select.value;
+
+    if (!communityId || !category) {
+        return;
+    }
+
+    select.disabled = true;
+    try {
+        await apiClient.updateCommunity(communityId, { category });
+        await loadCommunities();
+    } catch (err) {
+        alert('Ошибка обновления категории: ' + err.message);
+        await loadCommunities();
+    } finally {
+        select.disabled = false;
     }
 }
 

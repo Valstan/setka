@@ -130,6 +130,7 @@ class CommunityCreate(BaseModel):
 
 class CommunityUpdate(BaseModel):
     """Community update model"""
+    region_id: Optional[int] = None
     category: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -366,8 +367,19 @@ async def update_community(
     
     # Update fields
     update_data = community_data.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(community, field, value)
+
+    if 'region_id' in update_data:
+        new_region_id = update_data.pop('region_id')
+        if new_region_id is not None and new_region_id != community.region_id:
+            region_result = await db.execute(
+                select(Region).where(Region.id == new_region_id)
+            )
+            new_region = region_result.scalar_one_or_none()
+            if not new_region:
+                raise HTTPException(status_code=404, detail="Region not found")
+            community.region = new_region
+            community.region_id = new_region.id
+
     
     community.updated_at = datetime.utcnow()
     

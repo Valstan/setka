@@ -74,34 +74,35 @@ const apiClient = {
     
     // Communities endpoints
     async getCommunities(params = {}) {
-        // If region_id is specified, use region-specific endpoint
+        let communities = [];
+
         if (params.region_id) {
             const regionId = params.region_id;
             delete params.region_id;
-            return this.request(`/communities/region/${regionId}`);
-        }
-        
-        // Otherwise, get all communities from all regions
-        const regions = await this.getRegions();
-        const allCommunities = [];
-        for (const region of regions) {
-            try {
-                const communities = await this.request(`/communities/region/${region.id}`);
-                allCommunities.push(...communities);
-            } catch (err) {
-                console.warn(`Failed to load communities for region ${region.id}:`, err);
+            communities = await this.request(`/communities/region/${regionId}`);
+        } else {
+            const regions = await this.getRegions();
+            const allCommunities = [];
+            for (const region of regions) {
+                try {
+                    const regionCommunities = await this.request(`/communities/region/${region.id}`);
+                    allCommunities.push(...regionCommunities);
+                } catch (err) {
+                    console.warn(`Failed to load communities for region ${region.id}:`, err);
+                }
             }
+            communities = allCommunities;
         }
-        
+
         // Apply filters
-        let filtered = allCommunities;
+        let filtered = communities;
         if (params.category) {
             filtered = filtered.filter(c => c.category === params.category);
         }
         if (params.is_active !== undefined) {
-            filtered = filtered.filter(c => c.is_active === (params.is_active === 'true'));
+            filtered = filtered.filter(c => c.is_active === params.is_active);
         }
-        
+
         // Apply pagination
         const skip = parseInt(params.skip) || 0;
         const limit = parseInt(params.limit) || 100;
