@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+import redis
 
 from database.connection import AsyncSessionLocal
 from database.models import Region, Community, Post, PublishSchedule
@@ -428,8 +429,27 @@ class CorrectWorkflowManager:
                     channel="VK"
                 )
                 
+                # Проверяем, был ли уже опубликован дайджест в этом часу
+                current_hour = current_time.hour
+                redis_key = f"setka:digest_last_published:{region.id}:{current_hour}"
+                redis_client = redis.Redis(host="localhost", port=6379, db=1, decode_responses=True)
+                
+                last_published = redis_client.get(redis_key)
+                if last_published:
+                    logger.info(f"Digest already published for region {region.name} in hour {current_hour}, skipping")
+                    return {
+                        'success': True,
+                        'skipped': True,
+                        'reason': f'Digest already published in hour {current_hour}',
+                        'last_published': last_published
+                    }
+                
                 # Публикуем в главную группу
                 published = await self.publish_digest_to_main_group(digest_text, region)
+                
+                if published:
+                    # Запоминаем время публикации
+                    redis_client.setex(redis_key, 3600, current_time.isoformat())  # Храним 1 час
                 
                 # Уведомляем о завершении публикации
                 notify_digest_publishing_complete(

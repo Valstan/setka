@@ -653,6 +653,7 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute=5),  # Каждый час на 5-й минуте
         'options': {
             'expires': 3000,  # Task expires after 50 minutes
+            'catchup': False,  # Не догонять пропущенные запуски после простоев
         }
     },
 
@@ -662,6 +663,7 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute=15, hour='8-22'),  # Каждый час 8-22 на 15-й минуте
         'options': {
             'expires': 3000,
+            'catchup': False,
         }
     },
 
@@ -671,6 +673,7 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute=16, hour='8-22'),  # Каждый час 8-22 на 16-й минуте
         'options': {
             'expires': 3000,
+            'catchup': False,
         }
     },
 
@@ -680,6 +683,7 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute=17, hour='8-22'),  # Каждый час 8-22 на 17-й минуте
         'options': {
             'expires': 3000,
+            'catchup': False,
         }
     },
 
@@ -689,6 +693,7 @@ app.conf.beat_schedule = {
         'schedule': crontab(hour=18, minute=0),  # 18:00 каждый день
         'options': {
             'expires': 3000,
+            'catchup': False,
         }
     },
 
@@ -698,6 +703,7 @@ app.conf.beat_schedule = {
         'schedule': crontab(hour=3, minute=0),  # 03:00 каждый день
         'options': {
             'expires': 3000,
+            'catchup': False,
         }
     },
 
