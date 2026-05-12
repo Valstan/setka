@@ -85,7 +85,18 @@ class NewsAggregator:
         """
         if not posts:
             return None
-        
+
+        # Не агрегируем если ни один пост не содержит текста — иначе получится "пустой" дайджест
+        filtered_posts = [
+            p for p in posts
+            if getattr(p, 'text', None) and str(getattr(p, 'text', '')).strip()
+        ]
+        if not filtered_posts:
+            logger.warning("Skipping digest aggregation: no posts with meaningful text")
+            return None
+
+        posts = filtered_posts
+
         if len(posts) == 1:
             # Только один пост - возвращаем его как есть
             return AggregatedPost(
@@ -129,6 +140,9 @@ class NewsAggregator:
         
         # Формирование текста дайджеста
         aggregated_text = self._format_digest(anchor, additional, title, hashtags)
+        if not aggregated_text.strip():
+            logger.warning("Digest aggregation produced empty text after formatting")
+            return None
         
         # Статистика
         total_views = sum(getattr(p, 'views', 0) for p in [anchor] + additional)

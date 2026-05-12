@@ -570,6 +570,10 @@ class TestInfoScheduler:
                     digest_lines.append(tags_line)
                     digest_lines.append("")
 
+        if idx == 0:
+            logger.warning("Skipping digest creation: no posts with text")
+            return ""
+
         return "\n".join(digest_lines).strip()
 
     async def _publish_digest_to_main_group(self, vk_token: str, digest_text: str, topic: str) -> Dict[str, Any]:
