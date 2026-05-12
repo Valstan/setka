@@ -267,12 +267,11 @@ class DigestBuilder:
             # Text-only post with marker
             parts.append(f"{self.POST_MARKER}[без текста]")
 
-        # Empty line between text and attribution
-        parts.append("")
-
-        # Source attribution
-        attribution = extract_source_attribution(post_data, group_name)
-        parts.append(attribution)
+        # Empty line between text and attribution only when attribution is present
+        if not post_data.get('hide_attribution'):
+            parts.append("")
+            attribution = extract_source_attribution(post_data, group_name)
+            parts.append(attribution)
 
         return "\n".join(parts)
 

@@ -386,13 +386,32 @@ class AdvancedVKParser:
                 self.stats["posts_filtered_blacklist_text"] += 1
                 return None
 
-        # 7. Region words filter (placeholder)
-        if region_config and region_config.filter_group_by_region_words:
+        # 7. Region words filter (for communities that require regional relevance)
+        if region_config and getattr(region_config, 'filter_group_by_region_words', None):
             community_vk_id = post_data.get("community_vk_id", owner_id)
-            if str(abs(community_vk_id)) in {
-                str(abs(x)) for x in region_config.filter_group_by_region_words.keys()
-            }:
-                pass
+            try:
+                community_key = str(abs(int(community_vk_id)))
+            except (TypeError, ValueError):
+                community_key = str(abs(int(owner_id))) if owner_id else ""
+
+            group_words = None
+            for group_id, words in (region_config.filter_group_by_region_words or {}).items():
+                try:
+                    if str(abs(int(group_id))) == community_key:
+                        group_words = words
+                        break
+                except (TypeError, ValueError):
+                    continue
+
+            if group_words is not None:
+                text_lower = text.lower()
+                matched_words = [w for w in group_words if w and w.lower() in text_lower]
+                if not matched_words:
+                    self.stats["posts_filtered_no_region_words"] += 1
+                    return None
+
+                # Hide source attribution for posts accepted by regional keyword filter
+                post_data["hide_attribution"] = True
 
         # 8. No-attachments filter (for non-novost/non-reklama themes; oblast = как новости)
         if theme not in ("novost", "reklama", "oblast"):
