@@ -1,13 +1,14 @@
 # История разработки SETKA
 
-## 2026-05-18 — RegionalRelevanceFilter подключён к RegionConfig + морфология
+## 2026-05-18 — RegionalRelevanceFilter подключён к RegionConfig + морфология + UI
 
 - `modules/filters/regional.py`: фильтр перестал быть фактическим no-op в production-пайплайне. Раньше он ждал `region_id` в контексте, а `scripts/run_production_workflow.py` клал `region` (объект) — фильтр всегда возвращал `passed=True`. Теперь поддерживает оба варианта (через `_resolve_region`).
 - Ключевые слова региона загружаются из `RegionConfig.region_words` (исторически `kirov_words` + `tatar_words` из MongoDB) и опционального нового поля `RegionConfig.localities` (JSONB — населённые пункты района). Базовые ключи из `Region.name`/`Region.code` остаются как fallback, мусорные токены (`ИНФО`, `НОВОСТИ`, `РАЙОН`, ...) отфильтровываются.
 - Добавлена утилита `modules/filters/morphology.py` без сторонних либ: `get_word_stem`, `expand_keywords`, `text_matches_keyword`, `find_matching_keywords`. Срезает адъективные (`-ский/-ская/-ское`, `-ического`) и падежные окончания так, чтобы keyword «Малмыжский» матчил пост «В Малмыже прошёл фестиваль» и наоборот. Матчинг — по началу токена (через `re.findall`), без ложных подстрочных совпадений внутри слова.
 - Дедупликация ключевых слов по lowercase (`«МАЛМЫЖ»` + `«Малмыж»` теперь один токен), TTL-кеш по `region_id` (5 минут, метод `invalidate_cache`).
 - Миграция `database/migrations/006_region_configs_localities.sql` добавляет колонку `region_configs.localities JSONB DEFAULT NULL`. Применить на проде: `psql $DATABASE_URL -f database/migrations/006_region_configs_localities.sql`.
-- Тесты: 21 на морфологию + 12 на фильтр (`tests/test_filters/test_morphology.py`, `tests/test_filters/test_regional_relevance.py`). Полный прогон проекта — 149/149 зелёные.
+- UI «Фильтрация» (`web/templates/filtration.html`): новый textarea «Населённые пункты района» во вкладке «Списки и лимиты». В `web/api/filtration.py` добавлено поле `localities` в `FiltrationPutBody`, GET/PUT-роуты, выделена функция `_normalize_localities` (trim + дедуп без учёта регистра/ё). Заодно поправлен JS-баг: в save-body передавался shorthand `repost_words_blacklist`, тогда как переменная называлась `repost_words` (теперь явное `repost_words_blacklist: repost_words`).
+- Тесты: 21 на морфологию + 12 на фильтр + 10 на API фильтрации (`tests/test_api/test_filtration.py`). Полный прогон проекта — 159/159 зелёные.
 
 ---
 

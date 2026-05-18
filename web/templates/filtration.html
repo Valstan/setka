@@ -103,6 +103,15 @@
                     <label class="form-check-label" for="setka_regim_repost">Режим репоста (setka_regim_repost)</label>
                 </div>
                 <div class="mb-3">
+                    <label class="form-label">Населённые пункты района (по одному в строке)</label>
+                    <textarea class="form-control" id="localities" rows="6" placeholder="Цепочкино&#10;Гоньба&#10;Калинино"></textarea>
+                    <div class="form-text">
+                        Расширяет ключевые слова региональной релевантности
+                        (<code>RegionalRelevanceFilter</code>). Морфологические варианты
+                        («Цепочкино» / «Цепочкина» / «Цепочкинский») учитываются автоматически.
+                    </div>
+                </div>
+                <div class="mb-3">
                     <label class="form-label">filter_group_by_region_words (JSON)</label>
                     <textarea class="form-control font-monospace small" id="filter_group_json" rows="6" placeholder='{"12345": ["слово"]}'></textarea>
                 </div>
@@ -198,6 +207,7 @@ async function loadFiltration() {
         document.getElementById('black_id').value = (currentData.black_id || []).join('\n');
         document.getElementById('delete_msg_blacklist').value = (currentData.delete_msg_blacklist || []).join('\n');
         document.getElementById('repost_words_blacklist').value = (currentData.repost_words_blacklist || []).join('\n');
+        document.getElementById('localities').value = (currentData.localities || []).join('\n');
         const tp = currentData.time_old_post || {};
         document.getElementById('to_hard').value = tp.hard ?? '';
         document.getElementById('to_medium').value = tp.medium ?? '';
@@ -264,6 +274,7 @@ async function saveFiltration() {
     const black_id = document.getElementById('black_id').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(x => parseInt(x, 10)).filter(Number.isFinite);
     const delete_msg_blacklist = document.getElementById('delete_msg_blacklist').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     const repost_words = document.getElementById('repost_words_blacklist').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const localities = document.getElementById('localities').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     let filter_group = {};
     try {
         filter_group = JSON.parse(document.getElementById('filter_group_json').value || '{}');
@@ -276,7 +287,7 @@ async function saveFiltration() {
         digest_filters,
         black_id,
         delete_msg_blacklist,
-        repost_words_blacklist,
+        repost_words_blacklist: repost_words,
         filter_group_by_region_words: filter_group,
         time_old_post: {
             hard: parseInt(document.getElementById('to_hard').value, 10) || 86400,
@@ -285,6 +296,7 @@ async function saveFiltration() {
         },
         text_post_maxsize_simbols: parseInt(document.getElementById('text_post_maxsize').value, 10) || 4096,
         setka_regim_repost: document.getElementById('setka_regim_repost').checked,
+        localities,
     };
 
     document.getElementById('saveBtn').disabled = true;

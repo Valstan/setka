@@ -35,6 +35,11 @@ class FiltrationPutBody(BaseModel):
     text_post_maxsize_simbols: Optional[int] = Field(None, ge=500, le=8192)
     setka_regim_repost: Optional[bool] = None
     repost_words_blacklist: Optional[List[str]] = None
+    # Населённые пункты района — расширяют region_words для
+    # RegionalRelevanceFilter (см. modules/filters/regional.py).
+    # Передаём как простой список строк, на стороне сервера
+    # сохраняем в RegionConfig.localities (JSONB).
+    localities: Optional[List[str]] = None
 
 
 def _normalize_digest_filters(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -43,6 +48,32 @@ def _normalize_digest_filters(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     defaults = {**DEFAULT_PIPELINE, **(data.get("defaults") or {})}
     by_topic = data.get("by_topic") if isinstance(data.get("by_topic"), dict) else {}
     return {"defaults": defaults, "by_topic": by_topic}
+
+
+def _normalize_localities(raw: Optional[List[str]]) -> List[str]:
+    """Очистка списка localities перед сохранением в RegionConfig.
+
+    - Убираем пустые строки и пробелы;
+    - убираем дубли (без учёта регистра);
+    - сохраняем исходный порядок и оригинальный регистр первой
+      встретившейся записи.
+    """
+    if not raw:
+        return []
+    seen: set[str] = set()
+    cleaned: List[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        v = item.strip()
+        if not v:
+            continue
+        key = v.lower().replace("ё", "е")
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(v)
+    return cleaned
 
 
 @router.get("/meta")
@@ -108,6 +139,7 @@ async def get_filtration(region_code: str, session: AsyncSession = Depends(get_d
         "text_post_maxsize_simbols": cfg.text_post_maxsize_simbols or 4096,
         "setka_regim_repost": bool(cfg.setka_regim_repost),
         "repost_words_blacklist": cfg.repost_words_blacklist or [],
+        "localities": list(getattr(cfg, "localities", None) or []),
     }
 
 
@@ -146,6 +178,8 @@ async def put_filtration(
         cfg.setka_regim_repost = payload.setka_regim_repost
     if payload.repost_words_blacklist is not None:
         cfg.repost_words_blacklist = payload.repost_words_blacklist
+    if payload.localities is not None:
+        cfg.localities = _normalize_localities(payload.localities)
 
     await session.commit()
     await session.refresh(cfg)
