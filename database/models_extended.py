@@ -118,6 +118,10 @@ class RegionConfig(Base):
     black_id = Column(JSON, nullable=True)  # [owner_id1, owner_id2, ...]
     filter_group_by_region_words = Column(JSON, nullable=True)  # {group_id: [words]}
     region_words = Column(JSON, nullable=True)  # {"kirov": ["слово1", ...], "tatar": [...]}
+    # Населённые пункты района (список строк) — расширяет region_words
+    # для RegionalRelevanceFilter, чтобы посты с упоминанием конкретных
+    # сёл/деревень тоже считались релевантными региону.
+    localities = Column(JSON, nullable=True)  # ["Цепочкино", "Гоньба", ...]
     only_main_news = Column(JSON, nullable=True)  # [group_id1, group_id2, ...]
     
     # Age thresholds (legacy / другие пайплайны)
@@ -165,6 +169,7 @@ class RegionConfig(Base):
             "black_id": self.black_id,
             "filter_group_by_region_words": self.filter_group_by_region_words,
             "region_words": self.region_words,
+            "localities": self.localities,
             "only_main_news": self.only_main_news,
             "time_old_post": self.time_old_post,
             "digest_filters": self.digest_filters,

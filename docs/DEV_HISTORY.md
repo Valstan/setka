@@ -1,5 +1,16 @@
 # История разработки SETKA
 
+## 2026-05-18 — RegionalRelevanceFilter подключён к RegionConfig + морфология
+
+- `modules/filters/regional.py`: фильтр перестал быть фактическим no-op в production-пайплайне. Раньше он ждал `region_id` в контексте, а `scripts/run_production_workflow.py` клал `region` (объект) — фильтр всегда возвращал `passed=True`. Теперь поддерживает оба варианта (через `_resolve_region`).
+- Ключевые слова региона загружаются из `RegionConfig.region_words` (исторически `kirov_words` + `tatar_words` из MongoDB) и опционального нового поля `RegionConfig.localities` (JSONB — населённые пункты района). Базовые ключи из `Region.name`/`Region.code` остаются как fallback, мусорные токены (`ИНФО`, `НОВОСТИ`, `РАЙОН`, ...) отфильтровываются.
+- Добавлена утилита `modules/filters/morphology.py` без сторонних либ: `get_word_stem`, `expand_keywords`, `text_matches_keyword`, `find_matching_keywords`. Срезает адъективные (`-ский/-ская/-ское`, `-ического`) и падежные окончания так, чтобы keyword «Малмыжский» матчил пост «В Малмыже прошёл фестиваль» и наоборот. Матчинг — по началу токена (через `re.findall`), без ложных подстрочных совпадений внутри слова.
+- Дедупликация ключевых слов по lowercase (`«МАЛМЫЖ»` + `«Малмыж»` теперь один токен), TTL-кеш по `region_id` (5 минут, метод `invalidate_cache`).
+- Миграция `database/migrations/006_region_configs_localities.sql` добавляет колонку `region_configs.localities JSONB DEFAULT NULL`. Применить на проде: `psql $DATABASE_URL -f database/migrations/006_region_configs_localities.sql`.
+- Тесты: 21 на морфологию + 12 на фильтр (`tests/test_filters/test_morphology.py`, `tests/test_filters/test_regional_relevance.py`). Полный прогон проекта — 149/149 зелёные.
+
+---
+
 ## 2026-05-12 — Исправление частоты дайджестов: catchup=False и лимит 1 дайджест/час на регион
 
 - В `tasks/celery_app.py` добавлен `catchup=False` во все расписания Celery Beat, чтобы после простоев не догонялись пропущенные запуски (monitoring-hourly, check-suggested-hourly, check-unread-messages-hourly, check-recent-comments-hourly, digest-daily, cleanup-daily).
