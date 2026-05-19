@@ -420,14 +420,13 @@ def check_unread_messages():
 
     try:
         from database.connection import AsyncSessionLocal
-        from database.models import Region
+        from database.models import Region, VKToken
         from modules.notifications.vk_messages_checker import VKMessagesChecker
         from modules.notifications.storage import NotificationsStorage
         from config.runtime import VK_TOKENS
         from sqlalchemy import select
 
         async def check():
-            # Получаем все регионы с главными группами
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
                     select(Region).where(
@@ -458,7 +457,17 @@ def check_unread_messages():
                     logger.error("VK token not found")
                     return []
 
-                checker = VKMessagesChecker(vk_token)
+                # Подтягиваем community-токены: для групп, где такой токен сохранён,
+                # checker будет вызывать messages.getConversations под ним (без scope-restricted user-токена).
+                community_tokens_q = await session.execute(
+                    select(VKToken).where(
+                        VKToken.community_id.isnot(None),
+                        VKToken.is_active.is_(True),
+                    )
+                )
+                community_tokens = {t.community_id: t.token for t in community_tokens_q.scalars()}
+
+                checker = VKMessagesChecker(vk_token, community_tokens=community_tokens)
                 result = await checker.check_all_region_groups(region_groups)
                 notifications = result['notifications']
                 denied_groups = result['denied_groups']

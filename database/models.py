@@ -181,31 +181,38 @@ class Filter(Base):
 
 
 class VKToken(Base):
-    """VK токены для динамического управления"""
+    """VK токены для динамического управления.
+
+    Если `community_id` задан — это community access token, привязанный к
+    конкретному сообществу (используется для `messages.getConversations` без
+    группового scope у user-токена). Хранится как `abs(group_id)`.
+    """
     __tablename__ = "vk_tokens"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(50), unique=True, nullable=False, index=True)  # VALSTAN, OLGA, VITA, etc.
+    name = Column(String(50), unique=True, nullable=False, index=True)  # VALSTAN, OLGA, VITA, COMM_158787639...
     token = Column(Text, nullable=False)  # VK API токен
+    community_id = Column(Integer, nullable=True, index=True)  # abs(vk_group_id), если это community token
     is_active = Column(Boolean, default=True, index=True)  # Активен ли токен
     last_used = Column(DateTime, nullable=True)  # Последнее использование
     last_validated = Column(DateTime, nullable=True)  # Последняя валидация
     validation_status = Column(String(20), default='unknown', index=True)  # valid, invalid, unknown
     error_message = Column(Text)  # Сообщение об ошибке при валидации
     permissions = Column(JSON)  # Права доступа токена
-    user_info = Column(JSON)  # Информация о пользователе
+    user_info = Column(JSON)  # Информация о пользователе / community-info для community-токенов
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     def __repr__(self):
-        return f"<VKToken(name='{self.name}', status='{self.validation_status}', active={self.is_active})>"
-    
+        return f"<VKToken(name='{self.name}', status='{self.validation_status}', active={self.is_active}, community_id={self.community_id})>"
+
     def to_dict(self):
         """Преобразовать в словарь для API"""
         return {
             "id": self.id,
             "name": self.name,
             "token": self.token[:20] + "..." if len(self.token) > 20 else self.token,  # Маскируем токен
+            "community_id": self.community_id,
             "is_active": self.is_active,
             "last_used": self.last_used.isoformat() if self.last_used else None,
             "last_validated": self.last_validated.isoformat() if self.last_validated else None,
