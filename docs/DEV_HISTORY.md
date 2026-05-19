@@ -1,5 +1,22 @@
 # История разработки SETKA
 
+## 2026-05-19 — Уведомления VK: диагностика «нет доступа» вместо «всё проверено»
+
+- **Симптом:** на странице «Уведомления VK» блок «Непрочитанные сообщения» стабильно показывал «Нет непрочитанных сообщений. Все проверено!», хотя сообщения сообществам приходят. В логах рядом — `WARNING modules.notifications.vk_messages_checker - No access to messages for group -...` × 14 (по числу регионов), повторяется каждый час; 658 строк access denied за последние сутки.
+- **Корень:** VK API `messages.getConversations(group_id=...)` с user-токеном требует scope `messages` И прав админа сообщества. Probe на проде показал:
+  - `messages.getConversations(group_id=X)` → `[15] Access denied: no access to call this method`
+  - `messages.getConversations(count=1)` без group_id → тот же 15 (т.е. у токена вообще нет scope `messages`)
+  - `groups.getCallbackServers(group_id=X)` → OK (scope `manage` присутствует)
+  - `groups.getById` → `is_admin=1, admin_level=3` (бот реально админ)
+
+  Свежий VALSTAN-токен после сегодняшней ротации был сгенерирован без scope `messages` — VK Admin app (`client_id=2685278`) не выдаёт этот scope. Нужен либо собственный app (`postopus`, id 51421557, в `apps.get`), либо app с whitelisted-scope, и явное `&scope=…,messages` при OAuth.
+- **Дополнительный баг — `validate_single_token` врал:** `web/api/token_management.py::validate_single_token` собирал permissions через `try: await get_X(); permissions.append('X')`. Но `VKClient.get_messages/get_posts/get_groups` глотают `ApiError` и возвращают `None` — exception не поднимается, и `messages.read` добавлялся всегда. UI токенов показывал `["wall.read", "groups.read", "messages.read"]` при фактическом отсутствии scope. Поправил на `if await get_X(...) is not None: permissions.append('X')`.
+- **Диагностика в UI:** `modules/notifications/vk_messages_checker.py::check_all_region_groups` теперь возвращает `{notifications, denied_groups}` вместо плоского списка. `unified_checker`, `tasks/celery_app.check_unread_messages`, `NotificationsStorage` (новый Redis-ключ `setka:notifications:unread_messages_denied`) и `web/api/notifications.py` пробрасывают `messages_denied_count` + `unread_messages_denied`. Front-end (`web/templates/notifications.html` + `web/static/js/notifications.js`): когда `denied_groups.length > 0` появляется жёлтый alert «Нет доступа к сообществам VK. Выпустите токен с scope `messages,manage,groups,offline`» с перечнем затронутых групп. Зелёный «Всё проверено» теперь показывается **только** при пустом denied И пустом unread.
+- **Что должен сделать пользователь:** перевыпустить VALSTAN-токен в OAuth implicit flow с явными `scope=offline,wall,groups,photos,docs,messages,manage` через собственный app (или другой app, у которого whitelisted `messages` scope), записать в `/etc/setka/setka.env::VK_TOKEN_VALSTAN`, рестартнуть сервисы. После этого баннер «нет доступа» исчезнет, в списке появятся реальные непрочитанные.
+- Тесты: 162/162 unchanged.
+
+---
+
 ## 2026-05-19 — UI: dropdown-меню + footer + single-source версия (1.5.0)
 
 - **Симптом:** на узких экранах верхнее меню (11 кнопок) не помещалось по ширине и переносилось. В подвале — статичный `SETKA v1.0 | © 2025 Valstan` ещё с октября.

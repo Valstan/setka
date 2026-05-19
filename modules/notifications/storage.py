@@ -117,22 +117,40 @@ class NotificationsStorage:
     def get_messages_notifications(self) -> List[Dict[str, Any]]:
         """
         Получить уведомления о непрочитанных сообщениях
-        
+
         Returns:
             Список уведомлений о сообщениях
         """
         try:
             key = f"{self.key_prefix}:unread_messages"
             data_str = self.redis_client.get(key)
-            
+
             if not data_str:
                 return []
-            
+
             data = json.loads(data_str)
             return data.get('notifications', [])
-            
+
         except Exception as e:
             logger.error(f"Failed to get messages notifications: {e}")
+            return []
+
+    def get_messages_denied_groups(self) -> List[Dict[str, Any]]:
+        """
+        Группы, по которым VK вернул access denied на messages.getConversations
+        (например, у токена нет scope `messages`).
+
+        Нужно UI чтобы отличать «нет непрочитанных» от «нет доступа».
+        """
+        try:
+            key = f"{self.key_prefix}:unread_messages_denied"
+            data_str = self.redis_client.get(key)
+            if not data_str:
+                return []
+            data = json.loads(data_str)
+            return data.get('notifications', [])
+        except Exception as e:
+            logger.error(f"Failed to get messages denied groups: {e}")
             return []
     
     def get_comments_notifications(self) -> List[Dict[str, Any]]:
@@ -173,28 +191,33 @@ class NotificationsStorage:
         try:
             suggested = self.get_notifications()
             messages = self.get_messages_notifications()
+            messages_denied = self.get_messages_denied_groups()
             comments = self.get_comments_notifications()
-            
+
             return {
                 'suggested_posts': suggested,
                 'unread_messages': messages,
+                'unread_messages_denied': messages_denied,
                 'recent_comments': comments,
                 'total_count': len(suggested) + len(messages) + len(comments),
                 'suggested_count': len(suggested),
                 'messages_count': len(messages),
+                'messages_denied_count': len(messages_denied),
                 'comments_count': len(comments),
                 'timestamp': None  # Будет установлен в API endpoint
             }
-            
+
         except Exception as e:
             logger.error(f"Failed to get all notifications: {e}")
             return {
                 'suggested_posts': [],
                 'unread_messages': [],
+                'unread_messages_denied': [],
                 'recent_comments': [],
                 'total_count': 0,
                 'suggested_count': 0,
                 'messages_count': 0,
+                'messages_denied_count': 0,
                 'comments_count': 0,
                 'timestamp': None
             }

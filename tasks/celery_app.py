@@ -459,21 +459,28 @@ def check_unread_messages():
                     return []
 
                 checker = VKMessagesChecker(vk_token)
-                notifications = await checker.check_all_region_groups(region_groups)
+                result = await checker.check_all_region_groups(region_groups)
+                notifications = result['notifications']
+                denied_groups = result['denied_groups']
 
                 storage = NotificationsStorage()
                 storage.save_notifications(notifications, 'unread_messages')
+                storage.save_notifications(denied_groups, 'unread_messages_denied')
 
-                logger.info(f"Found {len(notifications)} groups with unread messages")
-                return notifications
+                logger.info(
+                    "Found %d groups with unread messages (%d denied access)",
+                    len(notifications), len(denied_groups),
+                )
+                return notifications, denied_groups
 
-        notifications = run_coro(check())
+        notifications, denied_groups = run_coro(check())
 
         return {
             'success': True,
             'timestamp': datetime.now().isoformat(),
             'notifications_count': len(notifications),
-            'notifications': notifications
+            'notifications': notifications,
+            'denied_count': len(denied_groups),
         }
 
     except Exception as e:

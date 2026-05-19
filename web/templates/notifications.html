@@ -157,7 +157,18 @@
                     <i class="bi bi-check-circle"></i>
                     Нет непрочитанных сообщений. Все проверено!
                 </div>
-                
+
+                <div id="messages-denied" class="alert alert-warning m-3" style="display: none;">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Нет доступа к сообществам VK.</strong>
+                    У токена для проверки нет scope <code>messages</code>, либо
+                    бот не админ сообщества. Выпустите токен заново с правами
+                    <code>messages,manage,groups,offline</code> и подставьте его
+                    как <code>VK_TOKEN_VALSTAN</code>. Деталями делится консоль
+                    Celery (<code>logs/celery-worker.log</code>).
+                    <div id="messages-denied-list" class="mt-2 small"></div>
+                </div>
+
                 <div id="messages-list" style="display: none;">
                     <!-- Unread messages will be loaded here -->
                 </div>
