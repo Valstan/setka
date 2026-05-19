@@ -388,20 +388,28 @@ async def run_kirov_oblast_digest(
             max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
         )
         digest = builder.build_digest(regular_posts, group_names=group_names)
-        selected_by_lip.update({
-            lip_of_post(
-                p.get("owner_id", p.get("from_id", 0)),
-                p.get("id", 0),
-            ): p
-            for p in regular_posts
-        })
-        vk_pub = VKPublisher(test_polygon_mode=test_mode)
-        pub = await vk_pub.publish_digest(
-            group_id=region.vk_group_id,
-            text=digest.text,
-            attachments=digest.attachments_list,
-        )
-        results.append(("regular", digest, pub))
+        if digest.post_count == 0 or not digest.text.strip():
+            logger.warning(
+                "Oblast: empty regular digest after build, skipping publish "
+                "(region=%s theme=%s candidates=%d)",
+                region.code, theme, len(regular_posts),
+            )
+            debug_counters["filtered_posts_empty_digest"] = len(regular_posts)
+        else:
+            selected_by_lip.update({
+                lip_of_post(
+                    p.get("owner_id", p.get("from_id", 0)),
+                    p.get("id", 0),
+                ): p
+                for p in regular_posts
+            })
+            vk_pub = VKPublisher(test_polygon_mode=test_mode)
+            pub = await vk_pub.publish_digest(
+                group_id=region.vk_group_id,
+                text=digest.text,
+                attachments=digest.attachments_list,
+            )
+            results.append(("regular", digest, pub))
 
     if mourning_posts:
         mourning_header, mourning_tags, mourning_local_hashtag = resolve_mourning_digest_format()
@@ -413,20 +421,27 @@ async def run_kirov_oblast_digest(
             max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
         )
         md = mb.build_digest(mourning_posts, group_names=group_names)
-        selected_by_lip.update({
-            lip_of_post(
-                p.get("owner_id", p.get("from_id", 0)),
-                p.get("id", 0),
-            ): p
-            for p in mourning_posts
-        })
-        vk_pub2 = VKPublisher(test_polygon_mode=test_mode)
-        mp = await vk_pub2.publish_digest(
-            group_id=region.vk_group_id,
-            text=md.text,
-            attachments=md.attachments_list,
-        )
-        results.append(("mourning", md, mp))
+        if md.post_count == 0 or not md.text.strip():
+            logger.warning(
+                "Oblast: empty mourning digest after build, skipping publish "
+                "(region=%s theme=%s candidates=%d)",
+                region.code, theme, len(mourning_posts),
+            )
+        else:
+            selected_by_lip.update({
+                lip_of_post(
+                    p.get("owner_id", p.get("from_id", 0)),
+                    p.get("id", 0),
+                ): p
+                for p in mourning_posts
+            })
+            vk_pub2 = VKPublisher(test_polygon_mode=test_mode)
+            mp = await vk_pub2.publish_digest(
+                group_id=region.vk_group_id,
+                text=md.text,
+                attachments=md.attachments_list,
+            )
+            results.append(("mourning", md, mp))
 
     all_included: List[str] = []
     for _, d, _ in results:
