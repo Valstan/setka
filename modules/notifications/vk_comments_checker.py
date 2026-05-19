@@ -12,7 +12,7 @@ VK Recent Comments Checker
 """
 
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 import vk_api
@@ -22,16 +22,32 @@ logger = logging.getLogger(__name__)
 
 
 class VKCommentsChecker:
-    """Проверка комментариев под постами VK"""
+    """Проверка комментариев под постами VK.
 
-    def __init__(self, vk_token: str):
+    Поддерживает community access tokens: если у группы (owner_id) есть свой
+    токен в `vk_tokens.community_id`, читать комментарии будем под ним.
+    Иначе fallback на пользовательский токен. Снимает нагрузку с VALSTAN/VITA.
+    """
+
+    def __init__(self, vk_token: str, community_tokens: Optional[Dict[int, str]] = None):
         try:
             self.session = vk_api.VkApi(token=vk_token)
             self.vk = self.session.get_api()
-            logger.info("VK Comments Checker initialized")
+            self.community_tokens = dict(community_tokens or {})
+            logger.info(
+                "VK Comments Checker initialized (community tokens: %d)",
+                len(self.community_tokens),
+            )
         except Exception as e:
             logger.error(f"Failed to initialize VK Comments Checker: {e}")
             raise
+
+    def _api_for(self, group_id: int):
+        cid = abs(int(group_id))
+        tok = self.community_tokens.get(cid)
+        if tok:
+            return vk_api.VkApi(token=tok).get_api(), True
+        return self.vk, False
 
     def check_post_comments_since(
         self,
@@ -47,8 +63,9 @@ class VKCommentsChecker:
             Список объектов комментариев VK (отфильтрованных по времени).
         """
         try:
+            api, _ = self._api_for(owner_id)
             # Последние комментарии (обычно достаточно 100 для суток)
-            resp = self.vk.wall.getComments(
+            resp = api.wall.getComments(
                 owner_id=owner_id,
                 post_id=post_id,
                 need_likes=0,

@@ -1,5 +1,22 @@
 # История разработки SETKA
 
+## 2026-05-19 — Community-токены приоритет: publisher, suggested, comments, messages, copy_setka
+
+- **Идея пользователя:** если у нас уже есть community access token с полными правами (Управление + Сообщения + Стена + Фото + Документы + Истории + Товары), эти токены логично использовать **для всех операций над своими группами**: публикация дайджестов, проверка предложек/комментариев/сообщений, копи-сетка. Это снимает нагрузку с VALSTAN/VITA, разносит rate-limit по 14 отдельным пулам (а не 2) и снижает риск VK-бана за «нерациональное использование API».
+- **Хелпер:** новый `modules/vk_token_router.py` с `load_community_tokens(session) -> Dict[int, str]` (один select по `vk_tokens` where `community_id IS NOT NULL AND is_active`) и `pick_token(...)`. Используется во всех точках, где раньше тянулся VK_TOKEN_VALSTAN.
+- **VKPublisher** (`modules/publisher/vk_publisher_extended.py`):
+  - `__init__(..., community_tokens={cid: token})`; ленивый кэш `_community_clients`.
+  - `_client_for_group(target_group_id)` возвращает `(client, via_community)`: community-VKClient если есть, иначе общий publish-VKClient.
+  - `publish_digest` и `publish_repost` используют клиент через `_client_for_group(target)`. В логах теперь `via=community-token` / `publish-token`.
+  - `_call_wall_post(params, method, client=...)` принимает явный клиент, по умолчанию `self.vk_client`.
+- **VKSuggestedChecker** (`modules/notifications/vk_suggested_checker.py`) и **VKCommentsChecker** (`modules/notifications/vk_comments_checker.py`): добавлены `community_tokens` в `__init__` и `_api_for(group_id)` helper. `wall.get` / `wall.getComments` теперь идут под community-токеном целевой группы, если такой есть.
+- **Pre-loading при вызове:** `tasks/celery_app.check_suggested_posts/check_unread_messages/check_recent_comments`, `tasks/parsing_scheduler_tasks.parse_and_publish_theme`, `modules/kirov_oblast_digest.run_kirov_oblast_digest`, `modules/copy_setka_network.execute_copy_setka_network` — все вызывают `load_community_tokens(session)` (1 SELECT/прогон) и передают в нужный класс.
+- **Парсинг (отложено):** основной парсер `AdvancedVKParser` читает **чужие** новостные сообщества (источники для дайджестов) — там community-токенов нет в принципе, user-token (VALSTAN/VITA) — единственный путь. Чтение своих стен из oblast-digest потенциально могло бы использовать community-токены, но требует расширения VKClient/parser; вынес в follow-up.
+- **Поведение fallback:** если community-токена нет — всё работает как раньше через VALSTAN. Никакой регрессии: ни один существующий путь не сломан, просто приоритет переехал на community-токены, когда они есть.
+- Тесты: 162/162 unchanged. Прода после merge ничего не требует — миграция уже применена, токены будут подхватываться автоматически при следующем `check_unread_messages` / следующей публикации.
+
+---
+
 ## 2026-05-19 — Community access tokens для чтения сообщений сообществ
 
 - **Контекст:** VK ограничивает scope `messages` для user-токенов (выдаётся только апп-ам с whitelist'ом). VK Admin / Postopus / Kate Mobile / iPhone — ни один из них в проде не сработал. Альтернативный путь, который рекомендует сам VK, — community access tokens: токен выдаётся в `vk.com/club{ID}` → Управление → Работа с API → Создать ключ, с правом «Сообщения сообщества». Такой токен умеет звать `messages.getConversations` без `group_id`-параметра, без user-токена со scope `messages`.

@@ -6,9 +6,14 @@ VK Suggested Posts Checker
 VK API:
 - wall.get с filter='suggests' возвращает предложенные записи
 - Требуется токен с правами на управление группой
+
+Поддерживаем 2 источника токенов:
+1. community access token для каждой группы (приоритет). Снимает нагрузку
+   с пользовательского токена и не упирается в права на чужой стене.
+2. user-токен (fallback) — раньше единственный путь.
 """
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 import vk_api
 from vk_api.exceptions import ApiError
@@ -17,46 +22,39 @@ logger = logging.getLogger(__name__)
 
 
 class VKSuggestedChecker:
-    """Проверка предложенных постов в VK группах"""
-    
-    def __init__(self, vk_token: str):
-        """
-        Инициализация checker
-        
-        Args:
-            vk_token: VK access token с правами на управление группами
-        """
+    """Проверка предложенных постов в VK группах."""
+
+    def __init__(self, vk_token: str, community_tokens: Optional[Dict[int, str]] = None):
         try:
             self.session = vk_api.VkApi(token=vk_token)
             self.vk = self.session.get_api()
-            logger.info("VK Suggested Checker initialized")
+            self.community_tokens = dict(community_tokens or {})
+            logger.info(
+                "VK Suggested Checker initialized (community tokens: %d)",
+                len(self.community_tokens),
+            )
         except Exception as e:
             logger.error(f"Failed to initialize VK Suggested Checker: {e}")
             raise
-    
+
+    def _api_for(self, group_id: int):
+        """Вернуть (vk_api_handle, via_community) для группы."""
+        cid = abs(int(group_id))
+        tok = self.community_tokens.get(cid)
+        if tok:
+            return vk_api.VkApi(token=tok).get_api(), True
+        return self.vk, False
+
     def check_suggested_posts(self, group_id: int) -> Dict[str, Any]:
-        """
-        Проверить предложенные посты в группе
-        
-        Args:
-            group_id: ID группы VK (отрицательное число)
-            
-        Returns:
-            Dict с информацией:
-                - has_suggested: bool - есть ли предложенные посты
-                - count: int - количество предложенных постов
-                - group_id: int - ID группы
-                - url: str - ссылка на предложку
-        """
+        """Проверить предложенные посты в группе."""
         try:
-            # Убираем минус для запроса
             positive_id = abs(group_id)
-            
-            # Получаем предложенные записи
-            result = self.vk.wall.get(
+            api, _via_community = self._api_for(group_id)
+            # wall.get требует owner_id всегда (это не «свой контекст», как у messages.getConversations).
+            result = api.wall.get(
                 owner_id=group_id,
                 filter='suggests',
-                count=100  # Максимум для проверки
+                count=100,
             )
             
             count = result.get('count', 0)
