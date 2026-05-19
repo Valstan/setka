@@ -54,7 +54,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest tests/ -q --cov=modules --cov=tasks --cov=config \
+          python -m pytest tests/ -q --cov=modules --cov=tasks --cov=config \
             --cov-report=xml --cov-report=term-missing
         env:
           # Provide dummy values so config/runtime.py doesn't crash
