@@ -1,5 +1,29 @@
 # История разработки SETKA
 
+## 2026-05-19 — UI: dropdown-меню + footer + single-source версия (1.5.0)
+
+- **Симптом:** на узких экранах верхнее меню (11 кнопок) не помещалось по ширине и переносилось. В подвале — статичный `SETKA v1.0 | © 2025 Valstan` ещё с октября.
+- **Меню:** `web/templates/base.html` переработан в 3 dropdown'а Bootstrap 5 + Dashboard:
+  - **Dashboard** (одиночная кнопка) — `/`
+  - **Контент ▾** — Регионы, Сообщества, Посты, Фильтрация
+  - **Пайплайн ▾** — Парсинг, Расписание, Статистика
+  - **Система ▾** — Мониторинг, Уведомления, Токены
+  - справа: `API` (ведёт на FastAPI `/docs`), индикатор статуса.
+
+  Итого 4 видимых пункта вместо 11 + иконки `bootstrap-icons` для каждого. К каждому пункту добавлены классы `dropdown-toggle`/`dropdown-menu`/`dropdown-item` стандартного Bootstrap 5 — JS уже подключён через `bootstrap.bundle.min.js`.
+- **Active-highlight:** введены 3 новых блока `nav_section_content`, `nav_section_pipeline`, `nav_section_system`. В каждом дочернем шаблоне (regions/communities/posts/filtration/parsing/schedule/parsing_stats/monitoring/notifications/tokens) рядом с существующим `{% block nav_X %}active{% endblock %}` добавлен соответствующий `{% block nav_section_Y %}active{% endblock %}` — при заходе на страницу подсвечивается и сам пункт в выпадашке, и триггер группы. Заодно у `parsing_stats.html` починена давно отсутствовавшая `nav_parsing_stats` подсветка (раньше там просто не было блока).
+- **Footer:** `SETKA {{ app_version }} | Production | © 2025–<год> Valstan`, где `app_version` подставляется как Jinja global, а год — динамически из JS (`new Date().getFullYear()`). API Docs ссылка исправлена с `/api/docs` на `/docs` (FastAPI монтирует Swagger именно туда).
+- **Версия:** добавлен `_version.py` в корне репо с `__version__ = "1.5.0"`. В `main.py` теперь `from _version import __version__ as APP_VERSION` → используется в `FastAPI(version=...)` и регистрируется как `templates.env.globals["app_version"]`. Раньше в коде висел захардкоженный `version="1.0.0"`.
+- **Почему 1.5.0:** реконструировал по git-милстоунам (см. docstring `_version.py`):
+  - 1.0.0 — initial 2025-10-09
+  - 1.1.0 — Postopus migration 2026-04-08
+  - 1.2.0 — digest formatting + token roles + mourning split 2026-04-13
+  - 1.3.0 — copy_setka + Filtration UI + Kirov oblast 2026-04-20
+  - 1.4.x — region filter morphology + dedup hardening + log-noise/metrics/empty-digest фиксы (май 2026)
+  - 1.5.0 — UI: grouped navigation + dynamic footer (этот PR)
+
+---
+
 ## 2026-05-19 — Запрет публикации пустых дайджестов (только заголовок + хештеги)
 
 - **Симптом:** в ленту сообщества прилетал дайджест вида:

@@ -13,6 +13,7 @@ import logging
 import os
 from pathlib import Path
 
+from _version import __version__ as APP_VERSION
 from database.connection import get_db_session, init_db, close_db
 from modules.module_activity_notifier import notify_system_startup
 from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher, parsing, parsing_stats, filtration
@@ -57,7 +58,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SETKA",
     description="Multimedia Management System for News Resources",
-    version="1.0.0",
+    version=APP_VERSION,
     lifespan=lifespan
 )
 
@@ -86,6 +87,8 @@ app.add_middleware(MetricsMiddleware)
 # Setup templates and static files
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "web" / "templates"))
+# Make APP_VERSION available in every template (footer uses {{ app_version }}).
+templates.env.globals["app_version"] = APP_VERSION
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), name="static")
 
 # Include routers

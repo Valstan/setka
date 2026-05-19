@@ -27,65 +27,69 @@
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto gap-2">
                     <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_dashboard %}{% endblock %}" href="/">
-                            Dashboard
+                        <a class="nav-link {% block nav_dashboard %}{% endblock %}" href="/">
+                            <i class="bi bi-speedometer2"></i> Dashboard
                         </a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_regions %}{% endblock %}" href="/regions">
-                            Регионы
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle {% block nav_section_content %}{% endblock %}"
+                           href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-collection"></i> Контент
                         </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item {% block nav_regions %}{% endblock %}" href="/regions">
+                                <i class="bi bi-geo-alt"></i> Регионы
+                            </a></li>
+                            <li><a class="dropdown-item {% block nav_communities %}{% endblock %}" href="/communities">
+                                <i class="bi bi-people"></i> Сообщества
+                            </a></li>
+                            <li><a class="dropdown-item {% block nav_posts %}{% endblock %}" href="/posts">
+                                <i class="bi bi-file-post"></i> Посты
+                            </a></li>
+                            <li><a class="dropdown-item {% block nav_filtration %}{% endblock %}" href="/filtration">
+                                <i class="bi bi-funnel"></i> Фильтрация
+                            </a></li>
+                        </ul>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_posts %}{% endblock %}" href="/posts">
-                            Посты
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle {% block nav_section_pipeline %}{% endblock %}"
+                           href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-diagram-3"></i> Пайплайн
                         </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item {% block nav_parsing %}{% endblock %}" href="/parsing">
+                                <i class="bi bi-arrow-repeat"></i> Парсинг
+                            </a></li>
+                            <li><a class="dropdown-item {% block nav_schedule %}{% endblock %}" href="/schedule">
+                                <i class="bi bi-calendar3"></i> Расписание
+                            </a></li>
+                            <li><a class="dropdown-item {% block nav_parsing_stats %}{% endblock %}" href="/parsing-stats">
+                                <i class="bi bi-bar-chart"></i> Статистика
+                            </a></li>
+                        </ul>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_communities %}{% endblock %}" href="/communities">
-                            Сообщества
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle {% block nav_section_system %}{% endblock %}"
+                           href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-gear"></i> Система
                         </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_notifications %}{% endblock %}" href="/notifications">
-                            Уведомления
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_monitoring %}{% endblock %}" href="/monitoring">
-                            Мониторинг
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_tokens %}{% endblock %}" href="/tokens">
-                            Токены
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_schedule %}{% endblock %}" href="/schedule">
-                            Расписание
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_parsing %}{% endblock %}" href="/parsing">
-                            Парсинг
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_parsing_stats %}{% endblock %}" href="/parsing-stats">
-                            Статистика
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light {% block nav_filtration %}{% endblock %}" href="/filtration">
-                            Фильтрация
-                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item {% block nav_monitoring %}{% endblock %}" href="/monitoring">
+                                <i class="bi bi-heart-pulse"></i> Мониторинг
+                            </a></li>
+                            <li><a class="dropdown-item {% block nav_notifications %}{% endblock %}" href="/notifications">
+                                <i class="bi bi-bell"></i> Уведомления
+                            </a></li>
+                            <li><a class="dropdown-item {% block nav_tokens %}{% endblock %}" href="/tokens">
+                                <i class="bi bi-key"></i> Токены
+                            </a></li>
+                        </ul>
                     </li>
                 </ul>
                 <ul class="navbar-nav">
                     <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-light" href="/api/docs" target="_blank">
-                            API Docs
+                        <a class="nav-link" href="/docs" target="_blank">
+                            <i class="bi bi-book"></i> API
                         </a>
                     </li>
                     <li class="nav-item">
@@ -107,12 +111,19 @@
     <footer class="footer mt-5 py-3 bg-light">
         <div class="container text-center">
             <span class="text-muted">
-                SETKA v1.0 | 
-                <a href="https://3931b3fe50ab.vps.myjino.ru" target="_blank">Production</a> | 
-                © 2025 Valstan
+                SETKA {{ app_version }} |
+                <a href="https://3931b3fe50ab.vps.myjino.ru" target="_blank">Production</a> |
+                © 2025&ndash;<span id="footer-year">2026</span> Valstan
             </span>
         </div>
     </footer>
+    <script>
+        // Год обновляется автоматически из браузера, чтобы footer не «застревал» при смене года.
+        (function() {
+            var el = document.getElementById('footer-year');
+            if (el) el.textContent = new Date().getFullYear();
+        })();
+    </script>
 
     <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
