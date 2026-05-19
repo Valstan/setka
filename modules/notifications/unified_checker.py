@@ -71,18 +71,23 @@ class UnifiedNotificationsChecker:
         
         # Проверяем suggested posts и messages параллельно
         suggested_notifications = await self.suggested_checker.check_all_region_groups(region_groups)
-        messages_notifications = await self.messages_checker.check_all_region_groups(region_groups)
-        
+        messages_result = await self.messages_checker.check_all_region_groups(region_groups)
+        messages_notifications = messages_result['notifications']
+        messages_denied = messages_result['denied_groups']
+
         # Сохраняем в Redis
         self.storage.save_notifications(suggested_notifications, 'suggested_posts')
         self.storage.save_notifications(messages_notifications, 'unread_messages')
-        
+        self.storage.save_notifications(messages_denied, 'unread_messages_denied')
+
         # Подготавливаем результат
         result = {
             'suggested_posts': suggested_notifications,
             'unread_messages': messages_notifications,
+            'unread_messages_denied': messages_denied,
             'suggested_count': len(suggested_notifications),
             'messages_count': len(messages_notifications),
+            'messages_denied_count': len(messages_denied),
             'total_count': len(suggested_notifications) + len(messages_notifications),
             'checked_at': datetime.now().isoformat()
         }

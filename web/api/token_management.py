@@ -325,28 +325,17 @@ async def validate_single_token(token: str) -> Dict[str, Any]:
                 'permissions': None
             }
         
-        # Получить права доступа
+        # Получить права доступа.
+        # VKClient.get_posts/get_groups/get_messages глотают ApiError и возвращают None
+        # при отказе VK — поэтому try/except не сработает, нужно проверять возвращаемое
+        # значение на не-None, чтобы не репортить «есть permission», когда VK его отозвал.
         permissions = []
-        try:
-            # Тест wall.get
-            await vk_client.get_posts(owner_id=-1, count=1)
+        if await vk_client.get_posts(owner_id=-1, count=1) is not None:
             permissions.append('wall.read')
-        except Exception as e:
-            logger.debug(f"wall.read permission test failed: {e}")
-        
-        try:
-            # Тест groups.get
-            await vk_client.get_groups(count=1)
+        if await vk_client.get_groups(count=1) is not None:
             permissions.append('groups.read')
-        except Exception as e:
-            logger.debug(f"groups.read permission test failed: {e}")
-        
-        try:
-            # Тест messages.get
-            await vk_client.get_messages(count=1)
+        if await vk_client.get_messages(count=1) is not None:
             permissions.append('messages.read')
-        except Exception as e:
-            logger.debug(f"messages.read permission test failed: {e}")
         
         return {
             'is_valid': True,

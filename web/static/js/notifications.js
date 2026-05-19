@@ -24,7 +24,10 @@ async function loadNotifications() {
         loadSuggestedPosts(data.suggested_posts || []);
         
         // Load unread messages
-        loadUnreadMessages(data.unread_messages || []);
+        loadUnreadMessages(
+            data.unread_messages || [],
+            data.unread_messages_denied || [],
+        );
 
         // Load recent comments
         loadRecentComments(data.recent_comments || []);
@@ -117,57 +120,77 @@ function loadSuggestedPosts(suggestedPosts) {
     }
 }
 
-function loadUnreadMessages(unreadMessages) {
+function loadUnreadMessages(unreadMessages, deniedGroups) {
     const loading = document.getElementById('messages-loading');
     const empty = document.getElementById('messages-empty');
+    const denied = document.getElementById('messages-denied');
+    const deniedList = document.getElementById('messages-denied-list');
     const list = document.getElementById('messages-list');
-    
+
     loading.style.display = 'none';
-    
-    if (unreadMessages.length === 0) {
-        empty.style.display = 'block';
-        list.style.display = 'none';
-    } else {
-        empty.style.display = 'none';
-        
-        let html = '<div class="list-group list-group-flush">';
-        
-        unreadMessages.forEach(notif => {
-            html += `
-                <a href="${notif.url}" target="_blank" 
-                   class="list-group-item list-group-item-action list-group-item-info">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div class="flex-grow-1">
-                            <div class="d-flex align-items-center mb-2">
-                                <i class="bi bi-geo-alt-fill text-info me-2"></i>
-                                <h6 class="mb-0">${notif.region_name}</h6>
-                            </div>
-                            <div class="d-flex align-items-center">
-                                <i class="bi bi-chat-dots me-2 text-muted"></i>
-                                <span class="badge bg-info">
-                                    ${notif.unread_count} непрочитанн${notif.unread_count === 1 ? 'ое' : notif.unread_count < 5 ? 'ых' : 'ых'} сообщени${notif.unread_count === 1 ? 'е' : notif.unread_count < 5 ? 'я' : 'й'}
-                                </span>
-                            </div>
-                            ${notif.checked_at ? `
-                                <small class="text-muted d-block mt-1">
-                                    <i class="bi bi-clock"></i>
-                                    Проверено: ${new Date(notif.checked_at).toLocaleTimeString('ru-RU')}
-                                </small>
-                            ` : ''}
-                        </div>
-                        <div class="text-end">
-                            <i class="bi bi-box-arrow-up-right text-info fs-4"></i>
-                            <small class="d-block text-muted mt-1">Открыть в VK</small>
-                        </div>
-                    </div>
-                </a>
-            `;
-        });
-        
-        html += '</div>';
-        list.innerHTML = html;
-        list.style.display = 'block';
+    deniedGroups = deniedGroups || [];
+
+    // Сначала — баннер про denied. Это видно даже когда у части групп есть unread:
+    // понимаем что часть охвачена, часть — нет.
+    if (deniedGroups.length > 0 && denied) {
+        const names = deniedGroups
+            .map(g => escapeHtml(g.region_name || g.region_code || `group ${g.vk_group_id}`))
+            .join(', ');
+        deniedList.innerHTML = `Затронуто ${deniedGroups.length} групп${
+            deniedGroups.length === 1 ? 'а' : deniedGroups.length < 5 ? 'ы' : ''
+        }: ${names}`;
+        denied.style.display = 'block';
+    } else if (denied) {
+        denied.style.display = 'none';
     }
+
+    if (unreadMessages.length === 0) {
+        // empty показываем только когда И unread пуст, И нет denied —
+        // иначе denied-баннер сам несёт корректную диагностику.
+        empty.style.display = deniedGroups.length === 0 ? 'block' : 'none';
+        list.style.display = 'none';
+        return;
+    }
+
+    empty.style.display = 'none';
+
+    let html = '<div class="list-group list-group-flush">';
+
+    unreadMessages.forEach(notif => {
+        html += `
+            <a href="${notif.url}" target="_blank"
+               class="list-group-item list-group-item-action list-group-item-info">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <div class="d-flex align-items-center mb-2">
+                            <i class="bi bi-geo-alt-fill text-info me-2"></i>
+                            <h6 class="mb-0">${notif.region_name}</h6>
+                        </div>
+                        <div class="d-flex align-items-center">
+                            <i class="bi bi-chat-dots me-2 text-muted"></i>
+                            <span class="badge bg-info">
+                                ${notif.unread_count} непрочитанн${notif.unread_count === 1 ? 'ое' : notif.unread_count < 5 ? 'ых' : 'ых'} сообщени${notif.unread_count === 1 ? 'е' : notif.unread_count < 5 ? 'я' : 'й'}
+                            </span>
+                        </div>
+                        ${notif.checked_at ? `
+                            <small class="text-muted d-block mt-1">
+                                <i class="bi bi-clock"></i>
+                                Проверено: ${new Date(notif.checked_at).toLocaleTimeString('ru-RU')}
+                            </small>
+                        ` : ''}
+                    </div>
+                    <div class="text-end">
+                        <i class="bi bi-box-arrow-up-right text-info fs-4"></i>
+                        <small class="d-block text-muted mt-1">Открыть в VK</small>
+                    </div>
+                </div>
+            </a>
+        `;
+    });
+
+    html += '</div>';
+    list.innerHTML = html;
+    list.style.display = 'block';
 }
 
 function escapeHtml(str) {

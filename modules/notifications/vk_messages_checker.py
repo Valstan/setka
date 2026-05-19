@@ -121,31 +121,41 @@ class VKMessagesChecker:
                 'error': str(e)
             }
     
-    async def check_all_region_groups(self, region_groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def check_all_region_groups(self, region_groups: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Проверить непрочитанные сообщения во всех главных группах регионов
-        
-        Args:
-            region_groups: Список dict с полями:
-                - region_id: int
-                - region_name: str
-                - region_code: str
-                - vk_group_id: int
-        
-        Returns:
-            Список уведомлений о группах с непрочитанными сообщениями
+        Проверить непрочитанные сообщения во всех главных группах регионов.
+
+        Возвращает dict:
+            notifications: List - группы с >0 непрочитанных
+            denied_groups: List - группы где VK вернул access denied (нет scope
+                messages у токена или другой блок). Нужно, чтобы UI отличал
+                «нет непрочитанных» от «нет доступа» — раньше эти два состояния
+                сливались в пустой список, и пользователь видел «Все проверено»,
+                хотя система просто не могла читать диалоги.
         """
-        notifications = []
-        
+        notifications: List[Dict[str, Any]] = []
+        denied_groups: List[Dict[str, Any]] = []
+
         for group_info in region_groups:
             if not group_info.get('vk_group_id'):
                 continue
-            
+
             result = self.check_unread_messages(group_info['vk_group_id'])
-            
+
+            if result.get('error_code') is not None:
+                denied_groups.append({
+                    'region_id': group_info['region_id'],
+                    'region_name': group_info['region_name'],
+                    'region_code': group_info['region_code'],
+                    'vk_group_id': result['group_id'],
+                    'error_code': result['error_code'],
+                    'error': result.get('error', ''),
+                })
+                continue
+
             if result['has_unread']:
-                notification = {
-                    'type': 'unread_messages',  # NEW: тип уведомления
+                notifications.append({
+                    'type': 'unread_messages',
                     'region_id': group_info['region_id'],
                     'region_name': group_info['region_name'],
                     'region_code': group_info['region_code'],
@@ -153,15 +163,18 @@ class VKMessagesChecker:
                     'unread_count': result['unread_count'],
                     'total_conversations': result['total_conversations'],
                     'url': result['url'],
-                    'checked_at': datetime.now().isoformat()
-                }
-                notifications.append(notification)
-                
+                    'checked_at': datetime.now().isoformat(),
+                })
                 logger.info(f"💬 {group_info['region_name']}: {result['unread_count']} unread messages")
-        
-        logger.info(f"Found {len(notifications)} groups with unread messages")
-        
-        return notifications
+
+        logger.info(
+            "Messages check: %d groups with unread, %d groups denied",
+            len(notifications), len(denied_groups),
+        )
+        return {
+            'notifications': notifications,
+            'denied_groups': denied_groups,
+        }
 
 
 if __name__ == "__main__":
