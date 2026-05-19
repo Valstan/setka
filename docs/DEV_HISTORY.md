@@ -1,5 +1,12 @@
 # История разработки SETKA
 
+## 2026-05-19 — Фикс /metrics: asyncio.run внутри event loop и обновление messages.get
+
+- `monitoring/metrics.py`: `get_cache_metrics()` дёргал `asyncio.run(cache.get_stats())`, что валилось на `RuntimeError: asyncio.run() cannot be called from a running event loop` при обращении к `/metrics` (FastAPI-эндпоинт уже под loop). Перевёл `get_cache_metrics` и `get_metrics` в `async`, обновил вызов в `main.py:226` на `await get_metrics()`. Симптом в `logs/app.log` 2026-05-14: `Failed to get cache metrics: asyncio.run() cannot be called from a running event loop`.
+- `modules/vk_monitor/vk_client.py`: `get_messages()` вызывал `self.vk.messages.get(count=...)`, но `messages.get` удалён из VK API в 2016 году — отсюда `[3] Unknown method passed` в логах 2026-05-19 00:10 при `POST /api/tokens/{name}/validate` (там же проверяется permission `messages.read`). Переключил на `messages.getConversations(count=...)` — современный аналог, который успешно возвращает данные при наличии scope `messages` и фейлится с `Access denied` при его отсутствии. Заодно завернул VK ApiError в `_log_vk_api_error`, чтобы шум от тестов прав не валил уровень ERROR.
+
+---
+
 ## 2026-05-19 — Уборка untracked-файлов, тише логи VK, фикс KeyError 'domain', обход блокировки Telegram
 
 - На проде в `/home/valstan/SETKA` оставались 8 untracked-файлов (после ручной отладки): 7 root-скриптов (`check_region_config.py`, `check_vk_token.py`, `deep_vk_token_check.py`, `test_new_valstan_token.py`, `test_parse_run.py`, `test_production_pipeline.py`, `trigger_celery_task.py`) и orphan-модуль `modules/publisher/vk_client.py`. 5 root-копий были byte-identical с уже закоммиченными `scripts/<same>.py`, 2 (`test_parse_run.py`, `test_production_pipeline.py`) — устаревшие версии. `modules/publisher/vk_client.py` нигде не импортируется (используется `modules/publisher/vk_publisher_extended.py` и `modules/vk_monitor/vk_client.py`). Все 8 удалены, `git status` чист.

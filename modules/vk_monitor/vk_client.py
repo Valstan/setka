@@ -302,19 +302,18 @@ class VKClient:
     
     async def get_messages(self, count: int = 10) -> Optional[Dict[str, Any]]:
         """
-        Get user's messages
-        
-        Args:
-            count: Number of messages to fetch
-            
-        Returns:
-            Messages data or None
+        Get user's conversations (used to probe `messages` permission).
+
+        VK API `messages.get` has been deprecated/removed since 2016;
+        `messages.getConversations` is the modern replacement and only
+        succeeds when the token actually carries the `messages` scope.
         """
         try:
-            response = self.vk.messages.get(
-                count=count
-            )
+            response = self.vk.messages.getConversations(count=count)
             return response
+        except vk_api.exceptions.ApiError as e:
+            _log_vk_api_error("Error getting messages", e)
+            return None
         except Exception as e:
             logger.error(f"Error getting messages: {e}")
             return None
