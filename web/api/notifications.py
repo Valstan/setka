@@ -138,7 +138,7 @@ async def check_all_now():
     Не зависит от расписания, можно запускать в любое время.
     """
     from database.connection import AsyncSessionLocal
-    from database.models import Region
+    from database.models import Region, VKToken
     from modules.notifications.unified_checker import UnifiedNotificationsChecker
     from modules.notifications.storage import NotificationsStorage
     from config.runtime import VK_TOKENS, TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID, SERVER
@@ -182,7 +182,16 @@ async def check_all_now():
                     'total_count': 0
                 }
             
-            checker = UnifiedNotificationsChecker(vk_token)
+            # Community access tokens для проверки messages в каждой группе.
+            community_q = await session.execute(
+                select(VKToken).where(
+                    VKToken.community_id.isnot(None),
+                    VKToken.is_active.is_(True),
+                )
+            )
+            community_tokens = {t.community_id: t.token for t in community_q.scalars()}
+
+            checker = UnifiedNotificationsChecker(vk_token, community_tokens=community_tokens)
             result_data = await checker.check_all(region_groups)
             
             # Комментарии: запускаем в фоне через Celery (иначе запрос может превысить nginx timeout)
