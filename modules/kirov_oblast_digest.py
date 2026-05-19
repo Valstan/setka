@@ -376,6 +376,11 @@ async def run_kirov_oblast_digest(
     header = resolve_digest_header(region_config, theme, region)
     theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
 
+    # Community-токены: для своей публикации Кировской области используем
+    # community-токен этой группы (если сохранён в /tokens).
+    from modules.vk_token_router import load_community_tokens
+    community_tokens = await load_community_tokens(session)
+
     results = []
     selected_by_lip: Dict[str, Dict[str, Any]] = {}
     if regular_posts:
@@ -403,7 +408,10 @@ async def run_kirov_oblast_digest(
                 ): p
                 for p in regular_posts
             })
-            vk_pub = VKPublisher(test_polygon_mode=test_mode)
+            vk_pub = VKPublisher(
+                test_polygon_mode=test_mode,
+                community_tokens=community_tokens,
+            )
             pub = await vk_pub.publish_digest(
                 group_id=region.vk_group_id,
                 text=digest.text,
@@ -435,7 +443,10 @@ async def run_kirov_oblast_digest(
                 ): p
                 for p in mourning_posts
             })
-            vk_pub2 = VKPublisher(test_polygon_mode=test_mode)
+            vk_pub2 = VKPublisher(
+                test_polygon_mode=test_mode,
+                community_tokens=community_tokens,
+            )
             mp = await vk_pub2.publish_digest(
                 group_id=region.vk_group_id,
                 text=md.text,

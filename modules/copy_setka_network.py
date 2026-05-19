@@ -170,7 +170,12 @@ async def execute_copy_setka_network(
         }
 
     msg_suffix = get_copy_setka_repost_message()
-    publisher = VKPublisher(test_polygon_mode=test_mode)
+
+    # Подгрузим community-токены: copy_setka льёт пост в стены наших регионов,
+    # значит выгодно использовать community-токен каждой целевой группы.
+    from modules.vk_token_router import load_community_tokens
+    community_tokens = await load_community_tokens(session)
+    publisher = VKPublisher(test_polygon_mode=test_mode, community_tokens=community_tokens)
 
     repost_pair: Optional[Tuple[int, int]] = None
     copy_text: str = ""

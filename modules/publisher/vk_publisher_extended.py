@@ -12,6 +12,8 @@ from datetime import datetime
 from utils.post_utils import lip_of_post
 from utils.vk_attachments import build_attachments_list
 
+# Imported lazily inside __init__ to avoid hard deps for test fixtures.
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,6 +23,12 @@ class VKPublisher:
 
     IMPORTANT: This class creates its OWN VK client with the PUBLISH token.
     Never reuse a parsing client for publishing.
+
+    Community access tokens (опционально): передаются как
+    `community_tokens={abs(group_id): token}`. Если для целевой группы есть
+    community-токен — публикуем под ним. Это и снимает нагрузку с VALSTAN/VITA,
+    и работает корректно даже если у user-токена нет нужных прав на стену
+    этой группы.
     """
 
     # VK API limits
@@ -32,12 +40,15 @@ class VKPublisher:
         vk_client=None,
         test_polygon_mode: bool = False,
         test_polygon_group_id: int = -137760500,
+        community_tokens: Optional[Dict[int, str]] = None,
     ):
         """
         Args:
             vk_client: Optional VK API client. If None, creates one with the publish token.
             test_polygon_mode: If True, post to test group instead
             test_polygon_group_id: Test polygon VK group ID
+            community_tokens: {abs(group_id): token} per-community access tokens —
+                имеют приоритет над общим publish-токеном для своих групп.
         """
         from modules.vk_monitor.vk_client import VKClient
         from config.runtime import get_publish_token
@@ -58,6 +69,31 @@ class VKPublisher:
         self.test_polygon_mode = test_polygon_mode
         self.test_polygon_group_id = test_polygon_group_id
         self._last_post_time = {}  # group_id -> datetime
+        self._community_tokens = dict(community_tokens or {})
+        # Кеш community-клиентов (VKClient инициализирует session, не хочется делать заново).
+        self._community_clients: Dict[int, Any] = {}
+        if self._community_tokens:
+            logger.info(
+                "VKPublisher: %d community tokens available for per-group publish",
+                len(self._community_tokens),
+            )
+
+    def _client_for_group(self, target_group_id: int):
+        """Возвращает клиент, под которым нужно постить в эту группу.
+
+        Если есть community-токен — используется он (создаётся VKClient ленивно).
+        Иначе — общий publish-клиент (`self.vk_client`).
+        """
+        cid = abs(int(target_group_id))
+        tok = self._community_tokens.get(cid)
+        if not tok:
+            return self.vk_client, False
+        cli = self._community_clients.get(cid)
+        if cli is None:
+            from modules.vk_monitor.vk_client import VKClient
+            cli = VKClient(tok)
+            self._community_clients[cid] = cli
+        return cli, True
     
     async def publish_digest(
         self,
@@ -108,19 +144,24 @@ class VKPublisher:
         if copyright_url:
             params['copyright'] = copyright_url
         
-        # Execute wall.post
+        # Execute wall.post под правильным клиентом (community-токен, если есть).
+        client, via_community = self._client_for_group(target_group_id)
         try:
-            response = await self._call_wall_post(params)
-            
+            response = await self._call_wall_post(params, client=client)
+
             post_id = response.get('post_id')
             post_url = f"https://vk.com/wall{target_group_id}_{post_id}"
-            
-            logger.info(f"✅ Published post {post_id} to group {target_group_id}")
+
+            logger.info(
+                "✅ Published post %s to group %s (via %s)",
+                post_id, target_group_id,
+                "community-token" if via_community else "publish-token",
+            )
             logger.info(f"   URL: {post_url}")
-            
+
             # Track last post time
             self._last_post_time[target_group_id] = datetime.now()
-            
+
             return {
                 'success': True,
                 'post_id': post_id,
@@ -129,10 +170,10 @@ class VKPublisher:
                 'text_length': len(text),
                 'attachments_count': len(attachments) if attachments else 0,
             }
-            
+
         except Exception as e:
             logger.error(f"❌ Failed to publish post to group {target_group_id}: {e}")
-            
+
             return {
                 'success': False,
                 'error': str(e),
@@ -181,16 +222,21 @@ class VKPublisher:
         if target_group_id < 0:
             params['group_id'] = abs(target_group_id)
         
+        client, via_community = self._client_for_group(target_group_id)
         try:
-            response = await self._call_wall_post(params, method='wall.repost')
-            
+            response = await self._call_wall_post(params, method='wall.repost', client=client)
+
             post_id = response.get('post_id')
             success = response.get('success', 0) == 1
-            
+
             if success:
                 post_url = f"https://vk.com/wall{target_group_id}_{post_id}"
-                logger.info(f"✅ Reposted {source_owner_id}_{source_post_id} to {target_group_id}")
-                
+                logger.info(
+                    "✅ Reposted %s_%s to %s (via %s)",
+                    source_owner_id, source_post_id, target_group_id,
+                    "community-token" if via_community else "publish-token",
+                )
+
                 self._last_post_time[target_group_id] = datetime.now()
                 
                 return {
@@ -214,22 +260,25 @@ class VKPublisher:
                 'error': str(e),
             }
     
-    async def _call_wall_post(self, params: Dict[str, Any], method: str = 'wall.post') -> Dict:
+    async def _call_wall_post(
+        self,
+        params: Dict[str, Any],
+        method: str = 'wall.post',
+        client=None,
+    ) -> Dict:
         """
-        Call VK API wall.post method.
-        
-        Args:
-            params: wall.post parameters
-            method: VK API method name
-        
-        Returns:
-            VK API response
+        Call VK API wall.post method through the given client.
+
+        `client` берётся из `_client_for_group(owner_id)`; если не передан —
+        используется общий publish-клиент.
         """
+        target_client = client if client is not None else self.vk_client
+
         # Use vk_client to make API call
         # This will handle token rotation automatically
-        if hasattr(self.vk_client, 'api_call'):
+        if hasattr(target_client, 'api_call'):
             import asyncio, inspect
-            api_call_method = getattr(self.vk_client, 'api_call')
+            api_call_method = getattr(target_client, 'api_call')
             if inspect.iscoroutinefunction(api_call_method):
                 response = await api_call_method(method, params)
             else:
@@ -237,8 +286,8 @@ class VKPublisher:
                 response = await asyncio.get_event_loop().run_in_executor(
                     None, api_call_method, method, params
                 )
-        elif hasattr(self.vk_client, 'method'):
-            response = self.vk_client.method(method, params)
+        elif hasattr(target_client, 'method'):
+            response = target_client.method(method, params)
         else:
             raise NotImplementedError("VK client doesn't support API calls")
         

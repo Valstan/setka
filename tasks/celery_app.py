@@ -314,9 +314,10 @@ def check_suggested_posts():
     
     try:
         from database.connection import AsyncSessionLocal
-        from database.models import Region
+        from database.models import Region, VKToken
         from modules.notifications.vk_suggested_checker import VKSuggestedChecker
         from modules.notifications.storage import NotificationsStorage
+        from modules.vk_token_router import load_community_tokens
         from config.runtime import VK_TOKENS
         from sqlalchemy import select
         
@@ -353,8 +354,9 @@ def check_suggested_posts():
                 if not vk_token:
                     logger.error("VK token not found")
                     return []
-                
-                checker = VKSuggestedChecker(vk_token)
+
+                community_tokens = await load_community_tokens(session)
+                checker = VKSuggestedChecker(vk_token, community_tokens=community_tokens)
                 notifications = await checker.check_all_region_groups(region_groups)
                 
                 # Сохраняем в Redis
@@ -423,6 +425,7 @@ def check_unread_messages():
         from database.models import Region, VKToken
         from modules.notifications.vk_messages_checker import VKMessagesChecker
         from modules.notifications.storage import NotificationsStorage
+        from modules.vk_token_router import load_community_tokens
         from config.runtime import VK_TOKENS
         from sqlalchemy import select
 
@@ -457,15 +460,8 @@ def check_unread_messages():
                     logger.error("VK token not found")
                     return []
 
-                # Подтягиваем community-токены: для групп, где такой токен сохранён,
-                # checker будет вызывать messages.getConversations под ним (без scope-restricted user-токена).
-                community_tokens_q = await session.execute(
-                    select(VKToken).where(
-                        VKToken.community_id.isnot(None),
-                        VKToken.is_active.is_(True),
-                    )
-                )
-                community_tokens = {t.community_id: t.token for t in community_tokens_q.scalars()}
+                # Community-токены для каждой группы (если есть) — checker предпочтёт их.
+                community_tokens = await load_community_tokens(session)
 
                 checker = VKMessagesChecker(vk_token, community_tokens=community_tokens)
                 result = await checker.check_all_region_groups(region_groups)
@@ -541,6 +537,7 @@ def check_recent_comments():
         from database.models import Region
         from modules.notifications.vk_comments_checker import VKCommentsChecker
         from modules.notifications.storage import NotificationsStorage
+        from modules.vk_token_router import load_community_tokens
         from config.runtime import VK_TOKENS
         from sqlalchemy import select
 
@@ -577,7 +574,8 @@ def check_recent_comments():
                         "vk_group_id": vk_group_id
                     })
 
-                checker = VKCommentsChecker(vk_token)
+                community_tokens = await load_community_tokens(session)
+                checker = VKCommentsChecker(vk_token, community_tokens=community_tokens)
                 notifications = await checker.check_recent_comments_for_region_groups(
                     region_groups=region_groups,
                     cutoff_ts=cutoff_ts

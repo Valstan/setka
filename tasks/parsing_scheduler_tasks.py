@@ -216,6 +216,12 @@ def parse_and_publish_theme(
             header = resolve_digest_header(region_config, theme, region)
             theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
 
+            # Community access tokens — публикуем в свою стену под своим токеном,
+            # экономя rate-limit VALSTAN/VITA. Если для группы такого токена нет,
+            # VKPublisher автоматически уйдёт на publish-токен (VALSTAN).
+            from modules.vk_token_router import load_community_tokens
+            community_tokens = await load_community_tokens(session)
+
             results = []
             selected_by_lip: Dict[str, Dict[str, Any]] = {}
 
@@ -245,7 +251,10 @@ def parse_and_publish_theme(
                         for p in regular_posts
                     })
 
-                    vk_publisher = VKPublisher(test_polygon_mode=test_mode)
+                    vk_publisher = VKPublisher(
+                        test_polygon_mode=test_mode,
+                        community_tokens=community_tokens,
+                    )
                     publish_result = await vk_publisher.publish_digest(
                         group_id=region.vk_group_id,
                         text=digest.text,
@@ -279,7 +288,10 @@ def parse_and_publish_theme(
                         for p in mourning_posts
                     })
 
-                    vk_pub = VKPublisher(test_polygon_mode=test_mode)
+                    vk_pub = VKPublisher(
+                        test_polygon_mode=test_mode,
+                        community_tokens=community_tokens,
+                    )
                     mourning_pub = await vk_pub.publish_digest(
                         group_id=region.vk_group_id,
                         text=mourning_digest.text,
