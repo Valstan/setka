@@ -1,5 +1,23 @@
 # История разработки SETKA
 
+## 2026-05-19 — Фикс /metrics: asyncio.run внутри event loop и обновление messages.get
+
+- `monitoring/metrics.py`: `get_cache_metrics()` дёргал `asyncio.run(cache.get_stats())`, что валилось на `RuntimeError: asyncio.run() cannot be called from a running event loop` при обращении к `/metrics` (FastAPI-эндпоинт уже под loop). Перевёл `get_cache_metrics` и `get_metrics` в `async`, обновил вызов в `main.py:226` на `await get_metrics()`. Симптом в `logs/app.log` 2026-05-14: `Failed to get cache metrics: asyncio.run() cannot be called from a running event loop`.
+- `modules/vk_monitor/vk_client.py`: `get_messages()` вызывал `self.vk.messages.get(count=...)`, но `messages.get` удалён из VK API в 2016 году — отсюда `[3] Unknown method passed` в логах 2026-05-19 00:10 при `POST /api/tokens/{name}/validate` (там же проверяется permission `messages.read`). Переключил на `messages.getConversations(count=...)` — современный аналог, который успешно возвращает данные при наличии scope `messages` и фейлится с `Access denied` при его отсутствии. Заодно завернул VK ApiError в `_log_vk_api_error`, чтобы шум от тестов прав не валил уровень ERROR.
+
+---
+
+## 2026-05-19 — Уборка untracked-файлов, тише логи VK, фикс KeyError 'domain', обход блокировки Telegram
+
+- На проде в `/home/valstan/SETKA` оставались 8 untracked-файлов (после ручной отладки): 7 root-скриптов (`check_region_config.py`, `check_vk_token.py`, `deep_vk_token_check.py`, `test_new_valstan_token.py`, `test_parse_run.py`, `test_production_pipeline.py`, `trigger_celery_task.py`) и orphan-модуль `modules/publisher/vk_client.py`. 5 root-копий были byte-identical с уже закоммиченными `scripts/<same>.py`, 2 (`test_parse_run.py`, `test_production_pipeline.py`) — устаревшие версии. `modules/publisher/vk_client.py` нигде не импортируется (используется `modules/publisher/vk_publisher_extended.py` и `modules/vk_monitor/vk_client.py`). Все 8 удалены, `git status` чист.
+- `modules/vk_monitor/vk_client.py`: VK API ошибки с кодами `{15, 18, 203, 212, 220}` (доступ закрыт, пользователь удалён/забанен, нет доступа к группе и т.п.) перевели с `logger.error` на `logger.warning` через помощник `_log_vk_api_error`. Раньше за один прогон парсинга в лог летело по 30+ строк `ERROR ... [15] Access denied: wall is disabled`, что забивало мониторинг и метрики ошибок — это штатная ситуация для сообществ с закрытой стеной, пайплайн её корректно скипает.
+- `web/api/notifications.py`: `dashboard_url = f"https://{SERVER['domain']}/notifications"` падал с `KeyError: 'domain'` — в `config/runtime.py` `SERVER` имел только `host`/`port`. Добавил ключ `domain` (env `SERVER_DOMAIN`, дефолт — текущий домен Jino), а в API использую `.get('domain')` с fallback на `host:port`. Endpoint `POST /api/notifications/check-now` перестал отдавать 500.
+- `scripts/test_new_valstan_token.py`: убрал заинлайненный VK-токен в plaintext (был закоммичен в git с апреля), переписал на чтение из `config.runtime.VK_TOKENS["VALSTAN"]` + аргументы `--token-name/--owner-id`, дефолт `owner_id = VK_TEST_GROUP_ID`. **Токен по адресу `vk1.a.zhWLKN...` считать скомпрометированным — необходимо ротировать в VK** (Settings → Apps → Revoke).
+- Прод: api.telegram.org с jino-VPS режется TLS-инспекцией на дефолтном IP `149.154.166.110` (TCP timeout 7с при ICMP/DNS ok), но `149.154.167.220` работает. Прописал `/etc/hosts: 149.154.167.220 api.telegram.org` — `curl https://api.telegram.org/` теперь отдаёт 302 за 0.2с, `check_recent_comments` сможет толкать алерты обратно в чат. Это stopgap, не код-фикс: если Telegram сменит IP, поправить вручную. Полноценное решение — env `TELEGRAM_API_BASE_URL` либо socks/http-прокси, но пайплайн алертов критичен и /etc/hosts достаточно надёжно.
+- Тесты: полный прогон 159/159 зелёные после правок (vk_client.py, config/runtime.py, web/api/notifications.py).
+
+---
+
 ## 2026-05-18 — RegionalRelevanceFilter подключён к RegionConfig + морфология + UI
 
 - `modules/filters/regional.py`: фильтр перестал быть фактическим no-op в production-пайплайне. Раньше он ждал `region_id` в контексте, а `scripts/run_production_workflow.py` клал `region` (объект) — фильтр всегда возвращал `passed=True`. Теперь поддерживает оба варианта (через `_resolve_region`).

@@ -208,7 +208,8 @@ async def check_all_now():
                 chat_id = TELEGRAM_ALERT_CHAT_ID
                 
                 if telegram_token and chat_id:
-                    dashboard_url = f"https://{SERVER['domain']}/notifications"
+                    domain = SERVER.get('domain') or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+                    dashboard_url = f"https://{domain}/notifications"
                     await checker.send_telegram_notification(
                         bot_token=telegram_token,
                         chat_id=chat_id,

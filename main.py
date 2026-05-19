@@ -223,8 +223,8 @@ async def metrics():
     await update_business_metrics()
     
     # Get metrics
-    content, content_type = get_metrics()
-    
+    content, content_type = await get_metrics()
+
     return Response(content=content, media_type=content_type)
 
 

@@ -337,20 +337,19 @@ def update_system_info(version: str, python_version: str, environment: str = 'pr
     })
 
 
-def get_cache_metrics():
+async def get_cache_metrics():
     """
     Get current cache metrics
-    
+
     Returns:
         Dict with cache statistics
     """
     try:
         from utils.cache import get_cache
-        import asyncio
-        
+
         cache = get_cache()
-        stats = asyncio.run(cache.get_stats())
-        
+        stats = await cache.get_stats()
+
         # Update gauge
         if 'memory_used' in stats:
             # Parse memory (e.g., "1.5M" -> bytes)
@@ -358,7 +357,7 @@ def get_cache_metrics():
             if memory_str != 'N/A':
                 # Simple parsing (improve if needed)
                 cache_size_bytes.set(0)  # Placeholder
-        
+
         return stats
     except Exception as e:
         logger.error(f"Failed to get cache metrics: {e}")
@@ -395,16 +394,16 @@ async def update_business_metrics():
 # METRICS ENDPOINT
 # =============================================================================
 
-def get_metrics():
+async def get_metrics():
     """
     Get Prometheus metrics in text format
-    
+
     Returns:
         Tuple of (content, content_type)
     """
     # Update cache metrics before export
-    get_cache_metrics()
-    
+    await get_cache_metrics()
+
     return generate_latest(), CONTENT_TYPE_LATEST
 
 
