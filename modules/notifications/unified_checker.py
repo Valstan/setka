@@ -9,7 +9,7 @@ Unified Notifications Checker
 """
 import logging
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 from modules.notifications.vk_suggested_checker import VKSuggestedChecker
@@ -31,18 +31,23 @@ class UnifiedNotificationsChecker:
     - Непрочитанные сообщения (messages)
     """
     
-    def __init__(self, vk_token: str):
+    def __init__(self, vk_token: str, community_tokens: Optional[Dict[int, str]] = None):
         """
-        Инициализация unified checker
-        
+        Инициализация unified checker.
+
         Args:
-            vk_token: VK access token с правами на группы и сообщения
+            vk_token: user-токен (fallback для community-токенов)
+            community_tokens: {community_id: token} — community access tokens
+                для отдельных групп; используются в messages_checker.
         """
         self.suggested_checker = VKSuggestedChecker(vk_token)
-        self.messages_checker = VKMessagesChecker(vk_token)
+        self.messages_checker = VKMessagesChecker(vk_token, community_tokens=community_tokens)
         self.storage = NotificationsStorage()
-        
-        logger.info("Unified Notifications Checker initialized")
+
+        logger.info(
+            "Unified Notifications Checker initialized (community tokens: %d)",
+            len(community_tokens or {}),
+        )
     
     async def check_all(self, region_groups: List[Dict[str, Any]]) -> Dict[str, Any]:
         """

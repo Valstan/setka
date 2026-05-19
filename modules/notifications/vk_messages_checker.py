@@ -6,10 +6,15 @@ VK Messages Checker
 VK API:
 - messages.getConversations возвращает список диалогов
 - unread_count показывает количество непрочитанных
-- Требуется токен с правами на messages
+- Нужен токен с правами на messages. Поддерживаем 2 варианта:
+  1. Community access token (предпочтительно). Выпускается в
+     vk.com/club{ID} → Управление → Работа с API → Создать ключ.
+     Хранится в `vk_tokens.community_id`. Вызывается БЕЗ `group_id`-параметра.
+  2. User token с scope `messages` и admin-правами на группу (fallback).
+     Вызывается С `group_id`-параметром.
 """
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 import vk_api
 from vk_api.exceptions import ApiError
@@ -18,66 +23,74 @@ logger = logging.getLogger(__name__)
 
 
 class VKMessagesChecker:
-    """Проверка непрочитанных сообщений в VK группах"""
-    
-    def __init__(self, vk_token: str):
-        """
-        Инициализация messages checker
-        
-        Args:
-            vk_token: VK access token с правами на messages и группы
-        """
+    """Проверка непрочитанных сообщений в VK группах.
+
+    `vk_token` — user-токен по умолчанию (fallback). Через
+    `community_tokens={community_id: token}` можно передать community-токены
+    для конкретных групп; для таких групп вызовы пойдут под их токеном.
+    """
+
+    def __init__(self, vk_token: str, community_tokens: Optional[Dict[int, str]] = None):
         try:
             self.session = vk_api.VkApi(token=vk_token)
             self.vk = self.session.get_api()
-            logger.info("VK Messages Checker initialized")
+            self.community_tokens = dict(community_tokens or {})
+            logger.info(
+                "VK Messages Checker initialized (community tokens: %d)",
+                len(self.community_tokens),
+            )
         except Exception as e:
             logger.error(f"Failed to initialize VK Messages Checker: {e}")
             raise
-    
+
+    def _api_for(self, group_id: int):
+        """Вернуть (vk_api_handle, is_community) для конкретной группы.
+
+        Если есть community-токен для abs(group_id) — используем его (без
+        group_id-параметра в API-вызове). Иначе — общий user-токен.
+        """
+        cid = abs(int(group_id))
+        tok = self.community_tokens.get(cid)
+        if tok:
+            return vk_api.VkApi(token=tok).get_api(), True
+        return self.vk, False
+
     def check_unread_messages(self, group_id: int) -> Dict[str, Any]:
         """
-        Проверить непрочитанные сообщения в группе
-        
-        Args:
-            group_id: ID группы VK (отрицательное число)
-            
-        Returns:
-            Dict с информацией:
-                - has_unread: bool - есть ли непрочитанные
-                - unread_count: int - количество непрочитанных
-                - total_conversations: int - всего диалогов
-                - group_id: int - ID группы
-                - url: str - ссылка на сообщения группы
+        Проверить непрочитанные сообщения в группе.
         """
+        positive_id = abs(int(group_id))
+        api, via_community = self._api_for(group_id)
         try:
-            # Убираем минус для некоторых запросов
-            positive_id = abs(group_id)
-            
-            # Получаем статистику сообщений группы
-            # messages.getConversations для группы
-            result = self.vk.messages.getConversations(
-                group_id=positive_id,
-                count=200,  # Максимум диалогов для проверки
-                filter='unread'  # Только непрочитанные
-            )
+            # У community-токена параметр group_id не нужен (он подразумевается).
+            # User-токен требует group_id явно.
+            if via_community:
+                result = api.messages.getConversations(count=200, filter='unread')
+            else:
+                result = api.messages.getConversations(
+                    group_id=positive_id,
+                    count=200,
+                    filter='unread',
+                )
             
             unread_count = result.get('count', 0)
             items = result.get('items', [])
-            
-            # Дополнительно проверяем общий inbox
+
             try:
-                # Получаем общее количество непрочитанных
-                stats = self.vk.messages.getConversations(
-                    group_id=positive_id,
-                    count=1
-                )
+                if via_community:
+                    stats = api.messages.getConversations(count=1)
+                else:
+                    stats = api.messages.getConversations(group_id=positive_id, count=1)
                 total_conversations = stats.get('count', 0)
             except (ApiError, Exception) as e:
                 logger.debug(f"Failed to get total conversations for group {group_id}: {e}")
                 total_conversations = 0
-            
-            logger.info(f"Group {group_id}: {unread_count} unread messages (total conversations: {total_conversations})")
+
+            logger.info(
+                "Group %s: %s unread messages (total=%s, via=%s)",
+                group_id, unread_count, total_conversations,
+                "community-token" if via_community else "user-token",
+            )
             
             # Ссылка на раздел сообщений группы
             messages_url = f"https://vk.com/gim{positive_id}"

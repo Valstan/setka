@@ -120,6 +120,58 @@
             </div>
         </div>
     </div>
+
+    <!-- Community access tokens (для чтения сообщений сообществ) -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card border-info">
+                <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-chat-square-text"></i>
+                        Токены сообществ — чтение сообщений
+                    </h5>
+                    <button class="btn btn-outline-info btn-sm" onclick="refreshCommunityTokens()">
+                        <i class="bi bi-arrow-clockwise"></i> Обновить
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-light mb-3">
+                        <i class="bi bi-info-circle"></i>
+                        Эти токены берутся в VK по каждому сообществу отдельно:
+                        <code>vk.com/club{ID}</code> → <b>Управление</b> →
+                        <b>Работа с API</b> → <b>Создать ключ</b>.
+                        Дай ключу права <b>«Сообщения сообщества»</b>, скопируй
+                        полученное значение и вставь в поле нужной строки ниже.
+                        SETKA будет ходить под этим токеном в
+                        <code>messages.getConversations</code> для этой группы
+                        (без ограничения scope user-токена).
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle" id="community-tokens-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:25%">Регион</th>
+                                    <th style="width:15%">VK group</th>
+                                    <th style="width:35%">Токен</th>
+                                    <th style="width:15%">Статус</th>
+                                    <th style="width:10%">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="community-tokens-tbody">
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted">
+                                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                                        Загрузка...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Token Modal -->
@@ -238,10 +290,155 @@
 // Load initial data
 document.addEventListener('DOMContentLoaded', function() {
     loadTokens();
-    
+    refreshCommunityTokens();
+
     // Add token form
     document.getElementById('add-token-form').addEventListener('submit', addToken);
 });
+
+// ===========================================================================
+// Community access tokens (для messages.getConversations)
+// ===========================================================================
+
+async function refreshCommunityTokens() {
+    const tbody = document.getElementById('community-tokens-tbody');
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">
+        <div class="spinner-border spinner-border-sm" role="status"></div> Загрузка...
+    </td></tr>`;
+    try {
+        const r = await fetch('/api/tokens/communities');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const rows = await r.json();
+        renderCommunityTokens(rows);
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-danger">Ошибка: ${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+function renderCommunityTokens(rows) {
+    const tbody = document.getElementById('community-tokens-tbody');
+    if (!rows || rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">Нет регионов с VK group</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = rows.map(row => communityTokenRowHtml(row)).join('');
+}
+
+function communityTokenRowHtml(row) {
+    const statusBadge = communityStatusBadge(row.validation_status);
+    const hasToken = !!row.token_id;
+    const cid = row.community_id;
+    const inputId = `ctok-input-${cid}`;
+    const placeholder = hasToken ? row.token_masked || '(сохранён)' : 'вставь access_token из настроек сообщества';
+    return `
+        <tr data-cid="${cid}">
+            <td>
+                <div><strong>${escapeHtml(row.region_name || '')}</strong></div>
+                <small class="text-muted">${escapeHtml(row.region_code || '')}</small>
+            </td>
+            <td>
+                <a href="https://vk.com/club${cid}/managers" target="_blank" rel="noopener">
+                    club${cid}
+                </a>
+                <div><small class="text-muted">vk_group_id = ${row.vk_group_id}</small></div>
+            </td>
+            <td>
+                <input type="text" class="form-control form-control-sm" id="${inputId}"
+                       placeholder="${escapeHtml(placeholder)}" autocomplete="off">
+                ${row.error_message ? `<small class="text-danger d-block mt-1">${escapeHtml(row.error_message)}</small>` : ''}
+            </td>
+            <td>${statusBadge}${row.last_validated ? `<div><small class="text-muted">${new Date(row.last_validated).toLocaleString('ru-RU')}</small></div>` : ''}</td>
+            <td>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button class="btn btn-outline-success" title="Сохранить" onclick="saveCommunityToken(${cid})">
+                        <i class="bi bi-save"></i>
+                    </button>
+                    <button class="btn btn-outline-primary" title="Проверить" onclick="validateCommunityTokenRow(${cid})" ${hasToken ? '' : 'disabled'}>
+                        <i class="bi bi-check-circle"></i>
+                    </button>
+                    <button class="btn btn-outline-danger" title="Удалить" onclick="deleteCommunityToken(${cid})" ${hasToken ? '' : 'disabled'}>
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `;
+}
+
+function communityStatusBadge(status) {
+    const map = {
+        'valid':   ['success', 'OK'],
+        'invalid': ['danger', 'invalid'],
+        'unknown': ['secondary', 'unknown'],
+        'missing': ['warning', 'нет токена'],
+    };
+    const [cls, label] = map[status] || map['missing'];
+    return `<span class="badge bg-${cls}">${label}</span>`;
+}
+
+async function saveCommunityToken(cid) {
+    const input = document.getElementById(`ctok-input-${cid}`);
+    const token = (input.value || '').trim();
+    if (!token) {
+        showError('Вставь токен в поле перед сохранением');
+        return;
+    }
+    try {
+        const r = await fetch(`/api/tokens/communities/${cid}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token: token, validate_token: true}),
+        });
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${r.status}`);
+        }
+        const updated = await r.json();
+        if (updated.validation_status === 'valid') {
+            showSuccess(`Токен сохранён и валиден для ${updated.region_name}`);
+        } else {
+            showError(`Сохранён, но валидация не прошла: ${updated.error_message || updated.validation_status}`);
+        }
+        input.value = '';
+        refreshCommunityTokens();
+    } catch (e) {
+        showError('Ошибка сохранения: ' + e.message);
+    }
+}
+
+async function validateCommunityTokenRow(cid) {
+    try {
+        const r = await fetch(`/api/tokens/communities/${cid}/validate`, {method: 'POST'});
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${r.status}`);
+        }
+        const v = await r.json();
+        if (v.is_valid) {
+            showSuccess(`Токен валиден (permissions: ${(v.permissions || []).join(', ') || '—'})`);
+        } else {
+            showError(`Невалиден: ${v.error_message || ''}`);
+        }
+        refreshCommunityTokens();
+    } catch (e) {
+        showError('Ошибка проверки: ' + e.message);
+    }
+}
+
+async function deleteCommunityToken(cid) {
+    if (!confirm('Удалить community-токен этой группы?')) return;
+    try {
+        const r = await fetch(`/api/tokens/communities/${cid}`, {method: 'DELETE'});
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${r.status}`);
+        }
+        showSuccess('Токен удалён');
+        refreshCommunityTokens();
+    } catch (e) {
+        showError('Ошибка удаления: ' + e.message);
+    }
+}
 
 async function loadTokens() {
     try {

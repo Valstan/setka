@@ -1,5 +1,25 @@
 # История разработки SETKA
 
+## 2026-05-19 — Community access tokens для чтения сообщений сообществ
+
+- **Контекст:** VK ограничивает scope `messages` для user-токенов (выдаётся только апп-ам с whitelist'ом). VK Admin / Postopus / Kate Mobile / iPhone — ни один из них в проде не сработал. Альтернативный путь, который рекомендует сам VK, — community access tokens: токен выдаётся в `vk.com/club{ID}` → Управление → Работа с API → Создать ключ, с правом «Сообщения сообщества». Такой токен умеет звать `messages.getConversations` без `group_id`-параметра, без user-токена со scope `messages`.
+- **Миграция БД:** `database/migrations/007_vk_tokens_community_id.sql` добавляет nullable `community_id BIGINT` + partial index `idx_vk_tokens_community_id`. Значение хранится как `abs(group_id)` для лёгкого джойна с `regions.vk_group_id` (там встречаются и положительные, и отрицательные ID).
+- **Модель** `database/models.VKToken`: добавил `community_id` поле + в `to_dict()`. `repr` стал чуть полезнее.
+- **API** `web/api/token_management.py` — новый блок ниже `GET /` и **выше** `GET /{token_name}` (порядок критичен, иначе FastAPI ловит `/communities` как `token_name="communities"`):
+  - `GET  /api/tokens/communities` — per-region список со статусом community-токена (regions JOIN vk_tokens по community_id);
+  - `PUT  /api/tokens/communities/{community_id}` — upsert токена с автоматической валидацией;
+  - `POST /api/tokens/communities/{community_id}/validate` — пере-проверить;
+  - `DELETE /api/tokens/communities/{community_id}` — снять токен.
+
+  Валидация выделена в отдельный `validate_community_token(token, community_id)` — community-токен **не** проходит `users.get` (у него нет пользователя), валидность проверяется через `groups.getById(group_id=cid)` + `messages.getConversations(count=1)`. Также `add_token`/`update_token`/`validate_token`/`validate_all_tokens` теперь выбирают между `validate_single_token` и `validate_community_token` по наличию `community_id` у записи.
+- **Checker:** `VKMessagesChecker.__init__(vk_token, community_tokens={cid: token})`. Внутри помощник `_api_for(group_id)` возвращает `(vk_api, via_community)`: если для группы есть community-токен — звонок идёт под ним и без `group_id`-параметра, иначе — fallback на user-токен. Лог `Group X: N unread messages (via=community-token|user-token)`.
+- **Pre-loading:** `tasks/celery_app.check_unread_messages` и `web/api/notifications.check_all_now` теперь делают `SELECT FROM vk_tokens WHERE community_id IS NOT NULL AND is_active` и передают в `UnifiedNotificationsChecker(vk_token, community_tokens=...)`. Один запрос на прогон, ноль изменений в горячем пути.
+- **UI** (`web/templates/tokens.html`): на странице `/tokens` под существующей сеткой токенов появилась карточка «Токены сообществ — чтение сообщений» с per-region таблицей (Регион / VK group / поле для access_token / статус / кнопки 💾 ✅ 🗑️). Заголовок объясняет где взять токен: `vk.com/club{ID}` → Управление → Работа с API → Создать ключ → «Сообщения сообщества». JS: `refreshCommunityTokens`/`saveCommunityToken`/`validateCommunityTokenRow`/`deleteCommunityToken`. Ссылка на `https://vk.com/club{ID}/managers` идёт прямо в раздел управления для удобства.
+- **Why это работает там, где user-token упирался в `[15]`:** community-токен живёт «внутри» группы — VK не делает security-review приложения, потому что приложение тут не у дел; права выдаёт админ группы (то есть пользователь сам себе) через интерфейс VK. Поэтому `messages.read` идёт по дефолту.
+- Тесты: 162/162 unchanged. Миграцию `007` нужно прогнать на проде: `psql $DATABASE_URL -f database/migrations/007_vk_tokens_community_id.sql`.
+
+---
+
 ## 2026-05-19 — Уведомления VK: диагностика «нет доступа» вместо «всё проверено»
 
 - **Симптом:** на странице «Уведомления VK» блок «Непрочитанные сообщения» стабильно показывал «Нет непрочитанных сообщений. Все проверено!», хотя сообщения сообществам приходят. В логах рядом — `WARNING modules.notifications.vk_messages_checker - No access to messages for group -...` × 14 (по числу регионов), повторяется каждый час; 658 строк access denied за последние сутки.
