@@ -10,6 +10,17 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# VK API error codes that indicate expected, recoverable conditions
+# (closed wall, banned/deleted user, private community).
+# https://dev.vk.com/reference/errors
+_VK_EXPECTED_ERROR_CODES = frozenset({15, 18, 203, 212, 220})
+
+
+def _log_vk_api_error(prefix: str, error: vk_api.exceptions.ApiError) -> None:
+    """Log VK ApiError at WARNING for expected/operational codes, ERROR otherwise."""
+    level = logging.WARNING if error.code in _VK_EXPECTED_ERROR_CODES else logging.ERROR
+    logger.log(level, "%s: %s", prefix, error)
+
 
 class VKClient:
     """VK API Client with token rotation and rate limiting"""
@@ -60,12 +71,12 @@ class VKClient:
             return posts
             
         except vk_api.exceptions.ApiError as e:
-            logger.error(f"VK API error for {owner_id}: {e}")
+            _log_vk_api_error(f"VK API error for {owner_id}", e)
             return []
         except Exception as e:
             logger.error(f"Unexpected error fetching posts from {owner_id}: {e}")
             return []
-    
+
     def get_posts_by_ids(self, refs: List[tuple]) -> List[Dict[str, Any]]:
         """
         Пакетная загрузка постов wall.getById (до 100 за запрос).
@@ -88,7 +99,7 @@ class VKClient:
                 if resp:
                     out.extend(resp)
             except vk_api.exceptions.ApiError as e:
-                logger.error(f"VK wall.getById batch error: {e}")
+                _log_vk_api_error("VK wall.getById batch error", e)
             except Exception as e:
                 logger.error(f"Unexpected getById batch error: {e}")
         return out
@@ -113,7 +124,7 @@ class VKClient:
             return None
             
         except vk_api.exceptions.ApiError as e:
-            logger.error(f"VK API error getting post {owner_id}_{post_id}: {e}")
+            _log_vk_api_error(f"VK API error getting post {owner_id}_{post_id}", e)
             return None
         except Exception as e:
             logger.error(f"Unexpected error getting post {owner_id}_{post_id}: {e}")
@@ -140,7 +151,7 @@ class VKClient:
             return None
             
         except vk_api.exceptions.ApiError as e:
-            logger.error(f"VK API error getting group info {group_id}: {e}")
+            _log_vk_api_error(f"VK API error getting group info {group_id}", e)
             return None
         except Exception as e:
             logger.error(f"Unexpected error getting group info {group_id}: {e}")
@@ -338,7 +349,7 @@ class VKClient:
             response = self.session.method(method, params)
             return response
         except vk_api.exceptions.ApiError as e:
-            logger.error(f"VK API error ({method}): {e}")
+            _log_vk_api_error(f"VK API error ({method})", e)
             return {'error': {'error_msg': str(e)}}
         except Exception as e:
             logger.error(f"Unexpected error in {method}: {e}")

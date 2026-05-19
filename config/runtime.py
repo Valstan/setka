@@ -202,6 +202,7 @@ MONGO_CONNECTION = _getenv("MONGO_CONNECTION")
 SERVER = {
     "host": _getenv("SERVER_HOST", "127.0.0.1"),
     "port": int(_getenv("SERVER_PORT", "8000") or "8000"),
+    "domain": _getenv("SERVER_DOMAIN", "3931b3fe50ab.vps.myjino.ru"),
 }
 
 # ---------------------------------------------------------------------------
