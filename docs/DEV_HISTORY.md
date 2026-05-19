@@ -1,5 +1,22 @@
 # История разработки SETKA
 
+## 2026-05-19 — Запрет публикации пустых дайджестов (только заголовок + хештеги)
+
+- **Симптом:** в ленту сообщества прилетал дайджест вида:
+  ```
+  Физическое развитие:
+
+  #спортМалмыж #малмыж
+  ```
+  то есть только заголовок и хештеги, без единого поста-источника.
+- **Причина:** `DigestBuilder.build_digest` в `modules/publisher/digest_builder.py` сначала добавлял заголовок в `digest_parts`, потом проходил по постам с `continue`-ветками (пустой `post_text.strip()`, не влазит в `max_text_length`, не хватает слотов под `attachments`). Если **все** кандидаты пропускались, цикл просто заканчивался, к `digest_parts` приклеивались хештеги и возвращался `DigestResult(text="<header>\n\n#tags", post_count=0, ...)`. Caller'ы (`tasks/parsing_scheduler_tasks.py`, `modules/kirov_oblast_digest.py`) проверяли только `if regular_posts:` (есть ли кандидаты на входе), но не финальный `post_count`, и публиковали такую заглушку через `vk.wall.post`.
+- **Решение (3 слоя):**
+  - В `DigestBuilder.build_digest`: если после цикла `posts_included` пуст — возвращаем полностью пустой `DigestResult(text="", attachments_list=[], post_count=0, ...)`. Никаких header/hashtags в одиночку.
+  - В обоих production-callers (`tasks/parsing_scheduler_tasks.py` для regular+mourning, `modules/kirov_oblast_digest.py` для regular+mourning) перед `vk_publisher.publish_digest(...)` добавлена проверка `if digest.post_count == 0 or not digest.text.strip(): logger.warning(...)` и `else: publish`. В oblast также инкрементируется `debug_counters["filtered_posts_empty_digest"]`.
+- Тесты: 3 новых в `tests/test_publisher/test_digest_builder.py` — `test_all_posts_empty_text_yields_empty_digest` (whitespace-only тексты), `test_no_posts_fit_yields_empty_digest` (`max_text_length` слишком жадный), `test_at_least_one_post_fits_produces_normal_digest` (sanity). Полный прогон 162/162 зелёные.
+
+---
+
 ## 2026-05-19 — Фикс /metrics: asyncio.run внутри event loop и обновление messages.get
 
 - `monitoring/metrics.py`: `get_cache_metrics()` дёргал `asyncio.run(cache.get_stats())`, что валилось на `RuntimeError: asyncio.run() cannot be called from a running event loop` при обращении к `/metrics` (FastAPI-эндпоинт уже под loop). Перевёл `get_cache_metrics` и `get_metrics` в `async`, обновил вызов в `main.py:226` на `await get_metrics()`. Симптом в `logs/app.log` 2026-05-14: `Failed to get cache metrics: asyncio.run() cannot be called from a running event loop`.

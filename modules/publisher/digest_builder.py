@@ -209,6 +209,20 @@ class DigestBuilder:
             # Collect attachments
             flat_attachments.extend(post_attachments)
 
+        # If no post made it through the loop, return an empty result so callers
+        # never publish a "digest" that's just a header + hashtags. All filtering
+        # paths (no text, doesn't fit, attachments don't fit) end up here.
+        if not posts_included:
+            return DigestResult(
+                text="",
+                attachments_list=[],
+                post_count=0,
+                total_length=0,
+                posts_included=[],
+                max_length_exceeded=False,
+                max_attachments_exceeded=False,
+            )
+
         # Add hashtags at the end
         if hashtag_text:
             digest_parts.append(hashtag_text)

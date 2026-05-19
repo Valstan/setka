@@ -230,21 +230,28 @@ def parse_and_publish_theme(
                     max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
                 )
                 digest = builder.build_digest(regular_posts, group_names=group_names)
-                selected_by_lip.update({
-                    lip_of_post(
-                        p.get("owner_id", p.get("from_id", 0)),
-                        p.get("id", 0),
-                    ): p
-                    for p in regular_posts
-                })
+                if digest.post_count == 0 or not digest.text.strip():
+                    logger.warning(
+                        "Empty regular digest after build, skipping publish "
+                        "(region=%s theme=%s candidates=%d)",
+                        region.code, theme, len(regular_posts),
+                    )
+                else:
+                    selected_by_lip.update({
+                        lip_of_post(
+                            p.get("owner_id", p.get("from_id", 0)),
+                            p.get("id", 0),
+                        ): p
+                        for p in regular_posts
+                    })
 
-                vk_publisher = VKPublisher(test_polygon_mode=test_mode)
-                publish_result = await vk_publisher.publish_digest(
-                    group_id=region.vk_group_id,
-                    text=digest.text,
-                    attachments=digest.attachments_list,
-                )
-                results.append(('regular', digest, publish_result))
+                    vk_publisher = VKPublisher(test_polygon_mode=test_mode)
+                    publish_result = await vk_publisher.publish_digest(
+                        group_id=region.vk_group_id,
+                        text=digest.text,
+                        attachments=digest.attachments_list,
+                    )
+                    results.append(('regular', digest, publish_result))
 
             # Mourning digest
             if mourning_posts:
@@ -257,21 +264,28 @@ def parse_and_publish_theme(
                     max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
                 )
                 mourning_digest = mourning_builder.build_digest(mourning_posts, group_names=group_names)
-                selected_by_lip.update({
-                    lip_of_post(
-                        p.get("owner_id", p.get("from_id", 0)),
-                        p.get("id", 0),
-                    ): p
-                    for p in mourning_posts
-                })
+                if mourning_digest.post_count == 0 or not mourning_digest.text.strip():
+                    logger.warning(
+                        "Empty mourning digest after build, skipping publish "
+                        "(region=%s theme=%s candidates=%d)",
+                        region.code, theme, len(mourning_posts),
+                    )
+                else:
+                    selected_by_lip.update({
+                        lip_of_post(
+                            p.get("owner_id", p.get("from_id", 0)),
+                            p.get("id", 0),
+                        ): p
+                        for p in mourning_posts
+                    })
 
-                vk_pub = VKPublisher(test_polygon_mode=test_mode)
-                mourning_pub = await vk_pub.publish_digest(
-                    group_id=region.vk_group_id,
-                    text=mourning_digest.text,
-                    attachments=mourning_digest.attachments_list,
-                )
-                results.append(('mourning', mourning_digest, mourning_pub))
+                    vk_pub = VKPublisher(test_polygon_mode=test_mode)
+                    mourning_pub = await vk_pub.publish_digest(
+                        group_id=region.vk_group_id,
+                        text=mourning_digest.text,
+                        attachments=mourning_digest.attachments_list,
+                    )
+                    results.append(('mourning', mourning_digest, mourning_pub))
 
             # 8. Update work table
             all_included = []
