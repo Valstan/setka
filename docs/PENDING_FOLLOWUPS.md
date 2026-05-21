@@ -33,10 +33,22 @@ _Сейчас нет._
 
 Дальше план — этап 4b (то что отложили). Плюс новые техдолги по ходу сессии:
 
-### 🆕 Новые техдолги (по результатам наблюдения прода в этой сессии)
+### 🆕 Техдолги по audit'у token routing
 
-- **VK Captcha-rate-limit на publish-token.** После fallback `wall.repost` теперь идёт через VALSTAN для 14 групп подряд → VK через ~10 successful repost'ов ставит капчу (`[0] Captcha needed`). Решение: либо глобальный sleep между repost'ами (sec=2-3 для всей сессии VALSTAN-token, не per-group), либо ротация на второй publish-token (VITA), либо handler для captcha challenge. Затрагивает `modules/publisher/vk_publisher_extended.py:_enforce_rate_limit` (он сейчас per-group, надо сделать global) или `modules/vk_monitor/vk_token_rotator.py`.
-- **Косметика логирования `via=community-token` после fallback.** В `publish_repost` строка `✅ Reposted ... (via community-token)` рисуется по `via_community` от `_client_for_group()` — но фактический успех после `_call_wall_post` fallback пошёл через publish-token. Точнее логировать «via community-fallback-publish». Это просто диагностика, не функциональность.
+Закрыто 2026-05-21 (см. `DEV_HISTORY.md`):
+- ✅ VK Captcha rate-limit — добавлен `GLOBAL_PUBLISH_INTERVAL_SECONDS=1.5` (class-var на VKPublisher).
+- ✅ Косметика лога `via=community-token` после fallback — `_call_wall_post` теперь возвращает `(response, via_label)`, метка вычисляется по фактическому пути.
+- ✅ wall.repost больше не пробует community-token (VK API физически не поддерживает) — добавлен `_USER_TOKEN_ONLY_METHODS={'wall.repost'}`.
+
+Остаются:
+
+- **Удалить мёртвый код:** `modules/publisher/cross_region_repost.py` (никем не импортируется), и заглушку `modules/correct_workflow.py::publish_digest_to_main_group` (только логирует, не публикует).
+- **Мигрировать старый `vk_publisher.py` (без community-tokens)** или удалить его пользователей:
+  - `modules/publisher/publisher.py` — wrapper, можно перенаправить на extended.
+  - `tasks/real_vk_workflow.py` — не зарегистрирован в beat_schedule, видимо deprecated → удалить или переписать.
+  - `web/api/publisher.py` — UI ручной публикации, мигрировать на extended VKPublisher с community-tokens.
+  - `scripts/run_production_workflow.py` — manual test script, обновить или удалить.
+- **Глобальный rate-limit на parse-token VITA** (по аналогии с VALSTAN): сейчас vk_api lib сама sleep'ит при rate-limit hit, но это per-session — при множестве параллельных парсеров (если когда-нибудь увеличим concurrency Celery worker'а) может зацепиться.
 
 ### Этап 4 — UI обратной связи (всё ещё в плане)
 

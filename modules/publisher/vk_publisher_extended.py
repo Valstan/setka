@@ -6,7 +6,7 @@ Handles VK API wall.post with proper error handling and token rotation.
 """
 import asyncio
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, ClassVar, Optional, List, Tuple
 from datetime import datetime
 
 from utils.post_utils import lip_of_post
@@ -33,7 +33,31 @@ class VKPublisher:
 
     # VK API limits
     POSTS_PER_DAY_LIMIT = 50  # Per group
-    POST_INTERVAL_SECONDS = 5  # Minimum interval between posts
+    POST_INTERVAL_SECONDS = 5  # Minimum interval between posts to the SAME group
+
+    # Global rate-limit on the shared publish-token (VALSTAN). Without this,
+    # a burst of 13 wall.repost calls in 7 sec earns us a [0] Captcha needed
+    # response from VK (observed on 2026-05-21 14:37 right after the
+    # community→publish fallback started working). Empirically ~1.5s between
+    # publish-token API calls stays under VK's anti-burst threshold without
+    # noticeably slowing the hourly copy-setka cycle (13 calls × 1.5 ≈ 20s).
+    GLOBAL_PUBLISH_INTERVAL_SECONDS = 1.5
+
+    # Class-level state: one publish-token per process, shared across all
+    # VKPublisher instances. Hence a class-var (not instance attribute).
+    _last_publish_token_call: ClassVar[Optional[datetime]] = None
+    _publish_token_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
+
+    # VK error codes where a community-token wall.* call should be retried
+    # via the global publish-token. Community access tokens issued via
+    # vk.com/club{ID}→API typically lack `manage` scope.
+    _COMMUNITY_FALLBACK_CODES = {15, 27}
+
+    # VK API methods that are KNOWN to be unsupported with group access tokens
+    # — VK docs explicitly state these need a user token. We don't even try
+    # the community-token first to save a guaranteed-failure round trip and
+    # to keep the publish-token rate-limit budget intact.
+    _USER_TOKEN_ONLY_METHODS = frozenset({'wall.repost'})
 
     def __init__(
         self,
@@ -145,17 +169,16 @@ class VKPublisher:
             params['copyright'] = copyright_url
         
         # Execute wall.post под правильным клиентом (community-токен, если есть).
-        client, via_community = self._client_for_group(target_group_id)
+        client, _via_community = self._client_for_group(target_group_id)
         try:
-            response = await self._call_wall_post(params, client=client)
+            response, via = await self._call_wall_post(params, client=client)
 
             post_id = response.get('post_id')
             post_url = f"https://vk.com/wall{target_group_id}_{post_id}"
 
             logger.info(
                 "✅ Published post %s to group %s (via %s)",
-                post_id, target_group_id,
-                "community-token" if via_community else "publish-token",
+                post_id, target_group_id, via,
             )
             logger.info(f"   URL: {post_url}")
 
@@ -222,9 +245,15 @@ class VKPublisher:
         if target_group_id < 0:
             params['group_id'] = abs(target_group_id)
         
-        client, via_community = self._client_for_group(target_group_id)
+        # wall.repost is user-token-only per VK API; _call_wall_post recognises
+        # this via _USER_TOKEN_ONLY_METHODS and routes through publish-token.
+        # We still pass a client (community) just to keep the signature uniform,
+        # but it'll be ignored by _call_wall_post for repost.
+        client, _via_community = self._client_for_group(target_group_id)
         try:
-            response = await self._call_wall_post(params, method='wall.repost', client=client)
+            response, via = await self._call_wall_post(
+                params, method='wall.repost', client=client,
+            )
 
             post_id = response.get('post_id')
             success = response.get('success', 0) == 1
@@ -233,12 +262,11 @@ class VKPublisher:
                 post_url = f"https://vk.com/wall{target_group_id}_{post_id}"
                 logger.info(
                     "✅ Reposted %s_%s to %s (via %s)",
-                    source_owner_id, source_post_id, target_group_id,
-                    "community-token" if via_community else "publish-token",
+                    source_owner_id, source_post_id, target_group_id, via,
                 )
 
                 self._last_post_time[target_group_id] = datetime.now()
-                
+
                 return {
                     'success': True,
                     'post_id': post_id,
@@ -251,40 +279,56 @@ class VKPublisher:
                     'success': False,
                     'error': 'VK API returned success=0',
                 }
-            
+
         except Exception as e:
             logger.error(f"❌ Failed to repost to group {target_group_id}: {e}")
-            
+
             return {
                 'success': False,
                 'error': str(e),
             }
     
-    # VK API codes on which a community-token publishing call should be retried
-    # via the global publish-token. Common reason: community-token doesn't carry
-    # `manage` scope required for wall.post/wall.repost.
-    _COMMUNITY_FALLBACK_CODES = {15, 27}
-
     async def _call_wall_post(
         self,
         params: Dict[str, Any],
         method: str = 'wall.post',
         client=None,
-    ) -> Dict:
+    ) -> Tuple[Dict, str]:
         """
         Call VK API wall.post / wall.repost.
 
         Strategy:
-        1. Use `client` if provided (community-token, when available for the group).
-        2. If VK returns code 15 or 27 (no rights / group auth failed) — retry
-           via the global publish-client (`self.vk_client`).
+        1. If method is in `_USER_TOKEN_ONLY_METHODS` (e.g. wall.repost which
+           VK fundamentally doesn't allow with a group token), bypass any
+           community-client and go straight to publish-token.
+        2. Otherwise use `client` if provided (community-token, when available
+           for the target group).
+        3. On VK error 15 or 27 from a community-client, retry via publish-token.
+        4. All publish-token calls go through `_enforce_publish_token_rate_limit`
+           which globally throttles VALSTAN to one API call every
+           GLOBAL_PUBLISH_INTERVAL_SECONDS — fights VK's anti-burst captcha.
+
+        Returns:
+            (response, via_label) where via_label is one of
+            'publish-token' / 'community-token' / 'community-fallback-publish'.
         """
+        # Step 1: VK API restrictions — never try a group-token call we know fails
+        if method in self._USER_TOKEN_ONLY_METHODS:
+            await self._enforce_publish_token_rate_limit()
+            response = await self._invoke(self.vk_client, method, params)
+            return response, 'publish-token'
+
         primary_client = client if client is not None else self.vk_client
+        is_publish_token = primary_client is self.vk_client
+
         try:
-            return await self._invoke(primary_client, method, params)
+            if is_publish_token:
+                await self._enforce_publish_token_rate_limit()
+            response = await self._invoke(primary_client, method, params)
+            return response, ('publish-token' if is_publish_token else 'community-token')
         except _VKApiCallError as e:
             if (
-                primary_client is not self.vk_client
+                not is_publish_token
                 and e.code in self._COMMUNITY_FALLBACK_CODES
             ):
                 logger.info(
@@ -292,8 +336,35 @@ class VKPublisher:
                     "retrying via publish-token",
                     e.code, method,
                 )
-                return await self._invoke(self.vk_client, method, params)
+                await self._enforce_publish_token_rate_limit()
+                response = await self._invoke(self.vk_client, method, params)
+                return response, 'community-fallback-publish'
             raise Exception(f"VK API error: {e.message}") from e
+
+    @classmethod
+    async def _enforce_publish_token_rate_limit(cls) -> None:
+        """Throttle calls that go through the publish-token (VALSTAN).
+
+        Shared across all VKPublisher instances in the process via class-vars,
+        because every VKPublisher() in this codebase uses the same publish-token
+        from `get_publish_token()`. Multiple parallel Celery tasks would each
+        wait their turn — currently the worker runs `-c 1` so this is just a
+        time gate, not a contention lock, but the asyncio.Lock makes it correct
+        if concurrency is bumped later.
+        """
+        async with cls._publish_token_lock:
+            now = datetime.now()
+            last = cls._last_publish_token_call
+            if last is not None:
+                elapsed = (now - last).total_seconds()
+                wait = cls.GLOBAL_PUBLISH_INTERVAL_SECONDS - elapsed
+                if wait > 0:
+                    logger.debug(
+                        "Publish-token global rate-limit: waiting %.2fs",
+                        wait,
+                    )
+                    await asyncio.sleep(wait)
+            cls._last_publish_token_call = datetime.now()
 
     async def _invoke(self, target_client, method: str, params: Dict[str, Any]) -> Dict:
         """Single VK API call; raises _VKApiCallError on VK error payload."""

@@ -33,6 +33,65 @@
 
 ---
 
+## 2026-05-21 — Token routing fix: wall.repost минует community, глобальный rate-limit на VALSTAN
+
+**Тема сессии:** пользователь спросил почему дайджесты публикуются через VALSTAN, а не через community-tokens регионов. Аудит показал: **дайджесты (wall.post) УЖЕ идут через community-tokens** (см. лог 14:05-14:06, 10 групп подряд `Published post ... (via community-token)`). Жалоба основана на косметическом баге логирования `Reposted ... (via community-token)` — после fallback там уже publish-token. Параллельно сразу две проблемы оставались:
+
+1. **wall.repost через community-token гарантированно падает с VK error 27** — VK API физически не поддерживает group access tokens для этого метода. Сейчас на каждый запуск copy-setka делалось 13-14 заведомо-провальных VK-запросов через community-tokens, потом fallback. Это засоряло логи и подтачивало rate-limit publish-token.
+2. **VK captcha [0] на publish-token** после burst'а из ~10 wall.repost'ов за 7 сек (14:37 на проде). VITA только парсит (нет admin прав), так что весь publish-traffic уходит в VALSTAN — нужен глобальный rate-limit именно на этот токен.
+
+### Изменения
+
+#### `modules/publisher/vk_publisher_extended.py`
+
+- **Новая константа `_USER_TOKEN_ONLY_METHODS = frozenset({'wall.repost'})`** — список VK API методов, которые VK документировано не поддерживает с group-token. `_call_wall_post` для таких методов сразу идёт через `self.vk_client` (publish-token), не пробуя community-token. Экономит ~13 обречённых VK-запросов на каждый запуск copy-setka.
+- **Новый класс-атрибут `GLOBAL_PUBLISH_INTERVAL_SECONDS = 1.5`** + class-vars `_last_publish_token_call` и `_publish_token_lock`. Метод `_enforce_publish_token_rate_limit()` гарантирует минимальный интервал между **всеми** API-вызовами через publish-token (VALSTAN), независимо от того, в каком VKPublisher-instance они происходят. 13 repost'ов теперь занимают ~20 сек вместо 7 — VK не успевает поставить капчу.
+- **`_call_wall_post` теперь возвращает tuple `(response, via_label)`.** Метка via берётся по факту, какой клиент **реально** успешно выполнил запрос: `publish-token` / `community-token` / `community-fallback-publish`. Это убирает косметический баг лога «Reposted ... via community-token» после fallback.
+- `publish_digest` и `publish_repost` обновлены под новую сигнатуру, логируют точный via.
+- Старый класс-атрибут `_COMMUNITY_FALLBACK_CODES` поднят выше в шапку как single source of truth.
+
+#### Audit token routing — где и как используются токены
+
+| Место | VK API метод | Текущий маршрут | Статус |
+|---|---|---|---|
+| `parse_and_publish_theme` (часовые дайджесты regular/mourning) | wall.post | community → publish (fallback) | ✓ работает, в логах `via community-token` |
+| `kirov_oblast_digest` (oblast novost/mourning) | wall.post | community → publish | ✓ |
+| `copy_setka_network` text-copy | wall.post | community → publish | ✓ |
+| `copy_setka_network` repost-mode | wall.repost | **publish-only** (этот фикс) | ✓ no более waste calls |
+| `cross_region_repost.py` | wall.repost | dead code, никем не импортируется | → PENDING (удалить) |
+| `correct_workflow.publish_digest_to_main_group` | (заглушка) | не публикует, только логирует | → PENDING (доделать или удалить) |
+| `tasks/real_vk_workflow.py`, `web/api/publisher.py` | wall.* | используют старый `vk_publisher.py` (без community-tokens) | → PENDING (мигрировать на extended) |
+| `check_suggested_posts` / `check_recent_comments` | wall.get(...) | BaseVKChecker community → user (fallback) | ✓ |
+| `check_unread_messages` | messages.getConversations | BaseVKChecker community-only | ✓ |
+| `like_comment` | likes.add | community → user fallback | ✓ |
+| Парсинг чужих сообществ (`vk_monitor/*`) | wall.get | VKClient(VITA или VALSTAN-parse) | ✓ (community-tokens принципиально неприменимы к чужим стенам) |
+
+Вердикт: все hot-path точки уже используют community-tokens. Старые/мёртвые пути — записаны в PENDING на следующие сессии.
+
+### Тесты
+
+- **`test_publisher_fallback.py`** обновлён под tuple-возврат:
+  - `test_repost_skips_community_token_entirely` (новый) — community-client.method НЕ вызывается для wall.repost, сразу publish-client.
+  - `test_global_rate_limit_throttles_publish_token` (новый) — два back-to-back publish-token-call отстают друг от друга на ≥ `GLOBAL_PUBLISH_INTERVAL_SECONDS` (test переустанавливает её в 0.3 для ускорения CI).
+  - `test_post_fallback_on_15`, `test_fallback_on_code_27_when_only_in_error_msg`, `test_community_token_success_no_fallback` — обновлены под `(response, via)`.
+- **216/216 pytest green** (215 после этапа 4a-mini + новый test_global_rate_limit, без потерь старых).
+
+### Применение
+
+- Деплой через `git pull` + restart. После рестарта следующий copy-setka-тик (14:37 + 30 мин = ~15:07 на момент сессии, либо 15:37) увидим:
+  - В worker.log **больше нет** `VK API error (wall.repost): [27]` и `wall publish via community-token failed (code 27 on wall.repost), retrying via publish-token` — этих строк не должно быть.
+  - Вместо этого: `✅ Reposted ... (via publish-token)` напрямую.
+  - Между repost'ами видимая пауза ~1.5 сек.
+  - 13/13 групп должны репостнуться без captcha (раньше 10/13 + 3 captcha).
+
+### Хвосты в PENDING_FOLLOWUPS
+
+- 🟡 Удалить `modules/publisher/cross_region_repost.py` (dead code) и заглушку `correct_workflow.publish_digest_to_main_group`.
+- 🟡 Мигрировать `web/api/publisher.py` и `tasks/real_vk_workflow.py` (если он ещё нужен) с `vk_publisher.py` на extended `vk_publisher_extended.VKPublisher` с community-tokens.
+- 🟡 Глобальный rate-limit аналогичный на parse-token VITA (на случай если VK добавит более жёсткий лимит и для read-операций). Сейчас vk_api lib сама делает sleep `Too many requests! Sleeping 0.5 sec`, но это per-session.
+
+---
+
 ## 2026-05-21 — Этап 4a-mini: лайки коммента, mark-as-handled, виджет «Горячие посты»
 
 **Тема сессии:** UI обратной связи для модераторов — три быстрые действия из карточки коммента без перехода в VK. Inline-reply / AI-черновик / шаблоны для сообщений / Telegram inline-button — **отложены в этап 4b** (требуют модального окна и больше времени).

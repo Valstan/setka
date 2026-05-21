@@ -40,20 +40,24 @@ def _vk_error_response(code: int, msg: str = "Fake"):
 
 
 @pytest.mark.asyncio
-async def test_repost_fallback_on_27():
+async def test_repost_skips_community_token_entirely():
+    """wall.repost is in _USER_TOKEN_ONLY_METHODS: it must NEVER try the
+    community client even if one is provided (VK fundamentally rejects
+    group-token wall.repost). Saves a guaranteed-failure round trip."""
     publish_client = _client_with_method_only({"response": {"success": 1, "post_id": 999}})
-    community_client = _client_with_method_only(_vk_error_response(27, "Group auth failed"))
+    community_client = _client_with_method_only({"response": {"success": 1, "post_id": 111}})
 
     publisher = _make_publisher(publish_client)
-    response = await publisher._call_wall_post(
+    response, via = await publisher._call_wall_post(
         params={"object": "wall-1_2"},
         method="wall.repost",
         client=community_client,
     )
 
     publish_client.method.assert_called_once_with("wall.repost", {"object": "wall-1_2"})
-    community_client.method.assert_called_once()
+    community_client.method.assert_not_called()
     assert response == {"success": 1, "post_id": 999}
+    assert via == "publish-token"
 
 
 @pytest.mark.asyncio
@@ -62,7 +66,7 @@ async def test_post_fallback_on_15():
     community_client = _client_with_method_only(_vk_error_response(15, "Access denied"))
 
     publisher = _make_publisher(publish_client)
-    response = await publisher._call_wall_post(
+    response, via = await publisher._call_wall_post(
         params={"owner_id": -1, "message": "x"},
         method="wall.post",
         client=community_client,
@@ -70,6 +74,7 @@ async def test_post_fallback_on_15():
 
     publish_client.method.assert_called_once()
     assert response == {"post_id": 555}
+    assert via == "community-fallback-publish"
 
 
 @pytest.mark.asyncio
@@ -112,7 +117,8 @@ async def test_unrelated_error_propagates():
 async def test_fallback_on_code_27_when_only_in_error_msg():
     """Regression: VKClient.api_call old code path returned {'error_msg': str(ApiError)}
     without explicit error_code. _invoke must parse '[27] ...' from the message
-    so retry-on-fallback still triggers.
+    so retry-on-fallback still triggers — exercised here via wall.post (which
+    DOES try community first; wall.repost wouldn't).
     """
     publish_client = _client_with_method_only({"response": {"post_id": 777}})
     community_client = _client_with_method_only({
@@ -123,14 +129,15 @@ async def test_fallback_on_code_27_when_only_in_error_msg():
     })
 
     publisher = _make_publisher(publish_client)
-    response = await publisher._call_wall_post(
-        params={"object": "wall-1_2"},
-        method="wall.repost",
+    response, via = await publisher._call_wall_post(
+        params={"owner_id": -1, "message": "x"},
+        method="wall.post",
         client=community_client,
     )
 
     publish_client.method.assert_called_once()
     assert response == {"post_id": 777}
+    assert via == "community-fallback-publish"
 
 
 @pytest.mark.asyncio
@@ -140,7 +147,7 @@ async def test_community_token_success_no_fallback():
     community_client = _client_with_method_only({"response": {"post_id": 42}})
 
     publisher = _make_publisher(publish_client)
-    response = await publisher._call_wall_post(
+    response, via = await publisher._call_wall_post(
         params={"owner_id": -1, "message": "ok"},
         method="wall.post",
         client=community_client,
@@ -149,3 +156,35 @@ async def test_community_token_success_no_fallback():
     community_client.method.assert_called_once()
     publish_client.method.assert_not_called()
     assert response == {"post_id": 42}
+    assert via == "community-token"
+
+
+@pytest.mark.asyncio
+async def test_global_rate_limit_throttles_publish_token():
+    """Two back-to-back publish-token calls must be ≥ GLOBAL_PUBLISH_INTERVAL_SECONDS
+    apart. Verifies our defence against VK captcha after fallback bursts."""
+    from modules.publisher.vk_publisher_extended import VKPublisher
+    import time
+
+    publish_client = _client_with_method_only({"response": {"post_id": 1}})
+    publisher = _make_publisher(publish_client)
+    # Reset shared class state so we don't get penalised by other tests
+    VKPublisher._last_publish_token_call = None
+
+    # Shrink the interval for the test so it doesn't slow CI significantly
+    original = VKPublisher.GLOBAL_PUBLISH_INTERVAL_SECONDS
+    VKPublisher.GLOBAL_PUBLISH_INTERVAL_SECONDS = 0.3
+    try:
+        t0 = time.monotonic()
+        await publisher._call_wall_post(
+            params={"object": "wall-1_1"}, method="wall.repost", client=publish_client,
+        )
+        await publisher._call_wall_post(
+            params={"object": "wall-1_2"}, method="wall.repost", client=publish_client,
+        )
+        elapsed = time.monotonic() - t0
+    finally:
+        VKPublisher.GLOBAL_PUBLISH_INTERVAL_SECONDS = original
+
+    # First call doesn't wait, second waits the full interval.
+    assert elapsed >= 0.25  # allow some slack for scheduler jitter
