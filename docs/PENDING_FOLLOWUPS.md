@@ -22,9 +22,12 @@ _Сейчас нет._
 
 ### Рефакторинг модуля уведомлений VK (этапы 1-5)
 
-Этап 0 (hot-fix fallback на user-token при VK error 15/27) — закрыт 2026-05-21 (см. [`DEV_HISTORY.md`](DEV_HISTORY.md)). Дальше план:
+Этапы 0 и 1 закрыты 2026-05-21 (см. [`DEV_HISTORY.md`](DEV_HISTORY.md)):
+- 0 — Fallback на user-token при VK error 15/27 (suggested, comments, publisher) + `keep_if_empty` в storage.
+- 1 — Полный сбор комментариев: пагинация по offset, распаковка thread.items, `max_total_comments` 300→5000 (safety cap).
 
-- **Этап 1 — Комментарии собираются полностью.** Убрать `max_total_comments=300` в `vk_comments_checker.py`. Пагинация по `offset` если `comments_count > 100`. Включить `extended=1, thread_items=1` — распаковка ответов на комментарии. Тесты.
+Дальше план:
+
 - **Этап 2 — Архитектурный рефактор.** `modules/notifications/base_checker.py` с общим `BaseVKChecker` (fallback, retry на error 6, общий logging). Все три checker'а унаследовать. **Удалить `UnifiedNotificationsChecker`** — в нём баг на строке 43 (suggested_checker без community_tokens); вызов трёх checker'ов уезжает прямо в `web/api/notifications.py:check_all_now`. Окно 8-22 — только в crontab.
 - **Этап 3 — Storage с историей.** Redis-list `setka:notifications:history:{type}` (LPUSH+LTRIM до 24 записей, TTL 25ч). API `GET /history` и `GET /stats`. UI-виджет «активность за сутки» (Chart.js).
 - **Этап 4a — UI обратной связи (часть 1).** Inline-ответ из SETKA (`wall.createComment`); **лайк коммента от имени сообщества** (`likes.add` через community-token, кнопка-сердечко); mark-as-handled / архив (Redis `setka:notifications:handled:{id}` TTL 7 дней); виджет «Горячие посты» (топ-5 за сутки с >10 комментариев).

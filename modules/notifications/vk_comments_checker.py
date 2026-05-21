@@ -71,48 +71,112 @@ class VKCommentsChecker:
                 return fn(self.vk), "community-fallback-user"
             raise
 
+    # Per-post safety cap to bound runtime on viral threads. 50 pages × 100 = 5000
+    # comments per single post is enough for any realistic news discussion;
+    # raise here if needed.
+    _PAGES_PER_POST_LIMIT = 50
+    _PAGE_SIZE = 100
+
     def check_post_comments_since(
         self,
         owner_id: int,
         post_id: int,
         cutoff_ts: int,
-        count: int = 100,
+        count: int = 100,  # kept for back-compat; not used (we paginate by _PAGE_SIZE)
     ) -> List[Dict[str, Any]]:
-        """
-        Получить комментарии под постом начиная с cutoff_ts (unix seconds).
+        """Получить ВСЕ комментарии под постом за период [cutoff_ts, now].
 
-        При неуспехе через community-token (code 15/27) автоматически повторяет
-        через user-token.
+        Пагинируется по `offset` (VK возвращает не больше 100 за раз) до тех
+        пор пока:
+          - вернулся пустой items (стена закрыта / закончились комменты), ИЛИ
+          - все комменты последней партии старше cutoff_ts (мы прошли границу
+            окна 24h), ИЛИ
+          - достигли safety cap `_PAGES_PER_POST_LIMIT` (vк-viral-thread защита).
+
+        Каждый коммент дополнительно распаковывает свой `thread.items` (ответы
+        первого уровня) — в плоский список с `parent_id` и `is_reply=True`. VK
+        отдаёт thread inline в ответе wall.getComments при `thread_items=1`.
+
+        При неуспехе через community-token (code 15/27) автоматически
+        повторяет через user-token.
         """
-        def call(api):
-            return api.wall.getComments(
-                owner_id=owner_id,
-                post_id=post_id,
-                need_likes=0,
-                extended=0,
-                count=count,
-                sort="desc",
+        recent: List[Dict[str, Any]] = []
+        offset = 0
+        pages = 0
+
+        while pages < self._PAGES_PER_POST_LIMIT:
+            def call(api, _offset=offset):
+                return api.wall.getComments(
+                    owner_id=owner_id,
+                    post_id=post_id,
+                    need_likes=0,
+                    extended=1,         # join profiles[]/groups[] (для имени автора)
+                    thread_items=1,     # вернуть thread.items (ответы на коммент)
+                    count=self._PAGE_SIZE,
+                    offset=_offset,
+                    sort="desc",        # новые сверху → можно прерваться при выходе за cutoff
+                )
+
+            try:
+                resp, _via = self._call_with_fallback(owner_id, "wall.getComments", call)
+            except ApiError as e:
+                logger.debug(
+                    f"VK API error while fetching comments for wall{owner_id}_{post_id} "
+                    f"(offset {offset}): {e} (code: {e.code})"
+                )
+                break
+            except Exception as e:
+                logger.warning(
+                    f"Error while fetching comments for wall{owner_id}_{post_id} "
+                    f"(offset {offset}): {e}"
+                )
+                break
+
+            items = resp.get("items", []) or []
+            if not items:
+                break
+
+            page_kept_any = False
+            page_oldest_after_cutoff = False  # True если хотя бы один коммент страницы новее cutoff
+
+            for c in items:
+                c_date = c.get("date")
+                if not c_date:
+                    continue
+                if int(c_date) >= cutoff_ts:
+                    page_oldest_after_cutoff = True
+                    recent.append(c)
+                    page_kept_any = True
+                    # Распаковка thread.items — ответы первого уровня.
+                    thread = c.get("thread") or {}
+                    thread_items = thread.get("items") or []
+                    for t in thread_items:
+                        t_date = t.get("date")
+                        if t_date and int(t_date) >= cutoff_ts:
+                            t["parent_id"] = c.get("id")
+                            t["is_reply"] = True
+                            recent.append(t)
+
+            pages += 1
+            offset += self._PAGE_SIZE
+
+            # Прерываем когда ВСЯ страница уже старше cutoff_ts (sort=desc).
+            # Если page_kept_any=False — значит самый «новый» из этой страницы
+            # уже за пределами окна, следующая будет ещё старше.
+            if not page_kept_any:
+                break
+
+            total_in_post = resp.get("count") or 0
+            if offset >= int(total_in_post):
+                break
+
+        if pages == self._PAGES_PER_POST_LIMIT:
+            logger.warning(
+                f"wall{owner_id}_{post_id}: reached safety cap "
+                f"({self._PAGES_PER_POST_LIMIT} pages × {self._PAGE_SIZE}); "
+                f"some older comments may be missing"
             )
 
-        try:
-            resp, _via = self._call_with_fallback(owner_id, "wall.getComments", call)
-        except ApiError as e:
-            logger.debug(
-                f"VK API error while fetching comments for wall{owner_id}_{post_id}: {e} (code: {e.code})"
-            )
-            return []
-        except Exception as e:
-            logger.warning(f"Error while fetching comments for wall{owner_id}_{post_id}: {e}")
-            return []
-
-        items = resp.get("items", []) or []
-        recent = []
-        for c in items:
-            c_date = c.get("date")
-            if not c_date:
-                continue
-            if int(c_date) >= cutoff_ts:
-                recent.append(c)
         return recent
 
     def _get_recent_wall_posts_with_comments(
@@ -160,21 +224,15 @@ class VKCommentsChecker:
         posts: List[Dict[str, Any]],
         cutoff_ts: int,
         max_posts: int = 200,
-        max_comments_per_post: int = 100,
-        max_total_comments: int = 300,
+        max_comments_per_post: int = 100,  # back-compat; not used (per-post pagination)
+        max_total_comments: int = 5000,
     ) -> List[Dict[str, Any]]:
-        """
-        Проверить комментарии для списка постов.
+        """Проверить комментарии для списка постов с пагинацией и threads.
 
-        Args:
-            posts: Список dict с полями:
-                - region_id, region_name, region_code
-                - community_id, community_name
-                - vk_owner_id, vk_post_id
-            cutoff_ts: unix seconds (граница "за сутки")
-
-        Returns:
-            Список уведомлений (по одному на комментарий).
+        В отличие от старой логики, **не обрывает** обход на первых 300
+        комментариях: лимит `max_total_comments` теперь служит safety-капом
+        от рассасывания памяти (5000 ≈ 5 МБ JSON), а не «нашли N — стоп
+        и пропускаем остальные посты». Все посты сканируются всегда.
         """
         notifications: List[Dict[str, Any]] = []
         now_iso = datetime.utcnow().isoformat()
@@ -187,49 +245,70 @@ class VKCommentsChecker:
                 owner_id=owner_id,
                 post_id=post_id,
                 cutoff_ts=cutoff_ts,
-                count=max_comments_per_post,
             )
-
             if not comments:
                 continue
 
             post_url = f"https://vk.com/wall{owner_id}_{post_id}"
-
             for c in comments:
-                comment_id = c.get("id")
-                text = (c.get("text") or "").strip()
-                c_date = c.get("date")
-                if not text:
-                    # Пустые комментарии (стикеры/вложения) пока пропускаем
-                    continue
-
-                notifications.append(
-                    {
-                        "type": "recent_comment",
-                        "region_id": p.get("region_id"),
-                        "region_name": p.get("region_name"),
-                        "region_code": p.get("region_code"),
-                        "community_id": p.get("community_id"),
-                        "community_name": p.get("community_name"),
-                        "vk_owner_id": owner_id,
-                        "vk_post_id": post_id,
-                        "comment_id": comment_id,
-                        "text": text,
-                        "post_url": post_url,
-                        "commented_at": datetime.utcfromtimestamp(int(c_date)).isoformat()
-                        if c_date
-                        else None,
-                        "checked_at": now_iso,
-                    }
-                )
-
                 if len(notifications) >= max_total_comments:
-                    logger.info(f"Reached max_total_comments={max_total_comments}, stopping early")
-                    return notifications
+                    logger.warning(
+                        f"Reached max_total_comments safety cap "
+                        f"({max_total_comments}); truncating output"
+                    )
+                    return self._sort_newest_first(notifications)
+                notif = self._build_comment_notification(
+                    c, post=p, owner_id=owner_id, post_id=post_id,
+                    post_url=post_url, now_iso=now_iso,
+                )
+                if notif is not None:
+                    notifications.append(notif)
 
-        # Новые сверху
-        notifications.sort(key=lambda n: n.get("commented_at") or "", reverse=True)
         logger.info(f"Found {len(notifications)} recent comments notifications")
+        return self._sort_newest_first(notifications)
+
+    @staticmethod
+    def _build_comment_notification(
+        c: Dict[str, Any],
+        *,
+        post: Dict[str, Any],
+        owner_id: int,
+        post_id: int,
+        post_url: str,
+        now_iso: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Map a raw VK comment dict to a notification entry. Returns None for
+        empty-text comments (sticker-only, attachments-only) — but they still
+        bump the per-post counter via the caller, just aren't surfaced."""
+        text = (c.get("text") or "").strip()
+        if not text:
+            return None
+        c_date = c.get("date")
+        return {
+            "type": "recent_comment",
+            "region_id": post.get("region_id"),
+            "region_name": post.get("region_name"),
+            "region_code": post.get("region_code"),
+            "community_id": post.get("community_id"),
+            "community_name": post.get("community_name"),
+            "vk_owner_id": owner_id,
+            "vk_post_id": post_id,
+            "comment_id": c.get("id"),
+            "parent_id": c.get("parent_id"),
+            "is_reply": bool(c.get("is_reply")),
+            "from_id": c.get("from_id"),
+            "likes_count": (c.get("likes") or {}).get("count", 0),
+            "has_attachments": bool(c.get("attachments")),
+            "text": text,
+            "post_url": post_url,
+            "commented_at": datetime.utcfromtimestamp(int(c_date)).isoformat()
+            if c_date else None,
+            "checked_at": now_iso,
+        }
+
+    @staticmethod
+    def _sort_newest_first(notifications: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        notifications.sort(key=lambda n: n.get("commented_at") or "", reverse=True)
         return notifications
 
     async def check_recent_comments_for_region_groups(
@@ -237,16 +316,16 @@ class VKCommentsChecker:
         region_groups: List[Dict[str, Any]],
         cutoff_ts: int,
         max_posts_per_group: int = 50,
-        max_comments_per_post: int = 100,
-        max_total_comments: int = 300,
+        max_comments_per_post: int = 100,  # back-compat; per-post pagination
+        max_total_comments: int = 5000,
     ) -> List[Dict[str, Any]]:
         """
-        Собрать комментарии за последние 24 часа только из главных региональных групп (ИНФО).
+        Собрать комментарии за последние 24 часа из главных региональных групп (ИНФО).
 
-        Args:
-            region_groups: Список dict с полями:
-                - region_id, region_name, region_code, vk_group_id
-            cutoff_ts: unix seconds
+        Старая логика обрывала обход на 300 комментариях, теряя посты-хвосты.
+        Сейчас `max_total_comments` — только safety-кап от raw-памяти.
+        Каждый пост сканируется полностью через `check_post_comments_since`,
+        включая ответы первого уровня (`thread.items`).
         """
         notifications: List[Dict[str, Any]] = []
         now_iso = datetime.utcnow().isoformat()
@@ -256,7 +335,7 @@ class VKCommentsChecker:
             if not group_id:
                 continue
 
-            owner_id = int(group_id)  # для групп в базе уже отрицательный
+            owner_id = int(group_id)
             recent_posts = self._get_recent_wall_posts_with_comments(
                 owner_id=owner_id,
                 cutoff_ts=cutoff_ts,
@@ -272,47 +351,38 @@ class VKCommentsChecker:
                     owner_id=owner_id,
                     post_id=int(post_id),
                     cutoff_ts=cutoff_ts,
-                    count=max_comments_per_post,
                 )
                 if not comments:
                     continue
 
                 post_url = f"https://vk.com/wall{owner_id}_{int(post_id)}"
-
+                # Главная ИНФО-группа: post-context берём из региона, не из p
+                # (т.к. p — это сырой dict от VK API, а не db record).
+                post_context = {
+                    "region_id": g.get("region_id"),
+                    "region_name": g.get("region_name"),
+                    "region_code": g.get("region_code"),
+                    "community_id": None,
+                    "community_name": g.get("region_name"),
+                }
                 for c in comments:
-                    comment_id = c.get("id")
-                    text = (c.get("text") or "").strip()
-                    c_date = c.get("date")
-                    if not text:
-                        continue
-
-                    notifications.append(
-                        {
-                            "type": "recent_comment",
-                            "region_id": g.get("region_id"),
-                            "region_name": g.get("region_name"),
-                            "region_code": g.get("region_code"),
-                            "community_id": None,
-                            "community_name": g.get("region_name"),  # главная ИНФО-группа
-                            "vk_owner_id": owner_id,
-                            "vk_post_id": int(post_id),
-                            "comment_id": comment_id,
-                            "text": text,
-                            "post_url": post_url,
-                            "commented_at": datetime.utcfromtimestamp(int(c_date)).isoformat()
-                            if c_date
-                            else None,
-                            "checked_at": now_iso,
-                        }
-                    )
-
                     if len(notifications) >= max_total_comments:
-                        logger.info(f"Reached max_total_comments={max_total_comments}, stopping early")
-                        return notifications
+                        logger.warning(
+                            f"Reached max_total_comments safety cap "
+                            f"({max_total_comments}); truncating output"
+                        )
+                        return self._sort_newest_first(notifications)
+                    notif = self._build_comment_notification(
+                        c, post=post_context, owner_id=owner_id,
+                        post_id=int(post_id), post_url=post_url, now_iso=now_iso,
+                    )
+                    if notif is not None:
+                        notifications.append(notif)
 
-        # Новые сверху
-        notifications.sort(key=lambda n: n.get("commented_at") or "", reverse=True)
-        logger.info(f"Found {len(notifications)} recent comments notifications (main INFO groups only)")
-        return notifications
+        logger.info(
+            f"Found {len(notifications)} recent comments notifications "
+            f"(main INFO groups only, threads included)"
+        )
+        return self._sort_newest_first(notifications)
 
 

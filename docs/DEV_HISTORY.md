@@ -33,6 +33,55 @@
 
 ---
 
+## 2026-05-21 — Полный сбор комментариев: пагинация + thread.items + расширенные метаданные
+
+**Тема сессии:** этап 1 рефактора уведомлений по плану из PENDING_FOLLOWUPS. Исправлены три проблемы сбора комментариев под постами региональных сообществ.
+
+### Проблемы (которые жаловался пользователь — «комменты теряются»)
+
+1. **`max_total_comments=300`** обрывал обход на первых ~3 постах с активной перепиской: «первые 3 поста дали 300 комментов → следующие 47 постов вообще не сканируются».
+2. **`wall.getComments(count=100)` без пагинации**: пост с 250 комментами терял 150 хвостовых (с учётом `sort='desc'` — самые старые внутри 24ч окна).
+3. **Ответы на комментарии (`thread.items`)** не распаковывались, полностью пропадали — а это часто половина диалога.
+
+### Изменения
+
+#### `modules/notifications/vk_comments_checker.py`
+
+- **`check_post_comments_since` переработан** под пагинацию:
+  - Цикл `offset += 100` пока (а) есть items, (б) хотя бы один коммент партии новее `cutoff_ts`, (в) `offset < total`, (г) не превышен safety-cap `_PAGES_PER_POST_LIMIT=50` (5000 комментов на пост).
+  - `extended=1` + `thread_items=1` в API-запросе.
+  - Каждый `thread.items[i]` плоско добавляется в результат с пометками `parent_id` и `is_reply=True`. Ответы старше cutoff фильтруются.
+  - `sort='desc'`: новые сверху → останов на первой полностью out-of-window странице вместо дочитывания до конца.
+- **`max_total_comments` поднят 300 → 5000** в `check_recent_comments_for_posts` и `check_recent_comments_for_region_groups`. Теперь это **safety-cap от raw-памяти**, а не обрыв обхода: все посты сканируются всегда; лимит срабатывает только на крайне-активной стене (виральный тред 5000+ комментов).
+- **Расширенные метаданные** в каждой notification-записи: `parent_id`, `is_reply`, `from_id`, `likes_count`, `has_attachments`. Это даст UI на этапе 4 (mark-as-handled, виджет «Горячие посты»: «N без ответа», лайк коммента от имени сообщества).
+- Выделены статические хелперы `_build_comment_notification` (map raw-comment → notification, фильтр empty-text), `_sort_newest_first`.
+
+### Тесты
+
+- **`tests/test_notifications/test_comments_pagination.py`** — 7 новых:
+  - single page < 100 не пагинируется.
+  - 3 страницы (250 комментариев), offsets 0/100/200.
+  - выход из 24ч окна на 2-й странице → останов без 3-й.
+  - `thread.items` плоско распакованы (3 элемента: parent + 2 reply).
+  - `thread.items` старше cutoff не попадают.
+  - termination когда `count` (total) исчерпан.
+  - safety-cap: бесконечный поток страниц → ровно 5000 комментариев и warning.
+- Прогон: 189/189 зелёные (182 после этапа 0 + 7 новых).
+
+### Применение
+
+- Деплой через `/reliz`-флоу: pytest → commit → push → SSH `git pull` + restart → проверка следующего `check_recent_comments` тика.
+- Совместимость: параметр `max_comments_per_post=100` в публичных методах сохранён для back-compat, но реально не используется (пагинация по `_PAGE_SIZE=100`).
+
+### Хвосты, оставленные в `PENDING_FOLLOWUPS.md`
+
+- ⏳ Этап 2: BaseVKChecker (DRY для fallback/retry-логики) + удалить UnifiedNotificationsChecker.
+- ⏳ Этап 3: история проверок в Redis-list для виджета «активность за сутки».
+- ⏳ Этап 4a/b: UI feedback (inline-ответ, лайк, шаблоны, AI-черновик, mark-as-handled, hot posts).
+- ⏳ Этап 5: Prometheus метрики + алёрт по token health.
+
+---
+
 ## 2026-05-21 — Hot-fix VK community-tokens: fallback на user-token при error 15/27
 
 **Тема сессии:** аудит модуля уведомлений по жалобе «автопроверка нестабильна, комментарии теряются». Обнаружено: с PR #9 от 19 мая все три checker'а и публикатор используют community access tokens приоритетно. Эти токены созданы без scope `manage`, поэтому VK возвращает code 27 «Group authorization failed» на `wall.get(filter='suggests')`, `wall.repost` и `wall.post`. Падали — тихо, без fallback. Эффект: автотаски `check_suggested_posts` каждый час писали в Redis `notifications: []`, стирая результат успешной ручной проверки; публикация дайджестов в 7+ регионах падала.
