@@ -117,6 +117,129 @@ async def get_comments_notifications():
     return storage.get_comments_notifications()
 
 
+class HandledRequest(BaseModel):
+    """POST /handled body: mark notifications as handled."""
+    notification_type: str  # 'recent_comment' | 'suggested_post' | 'unread_message'
+    item_id: str            # comment_id / post_id / group_id (as string for flexibility)
+
+
+@router.post("/handled")
+async def mark_handled(req: HandledRequest):
+    """Mark a specific notification as handled (etap 4a).
+
+    Stored in Redis for 7 days. UI filters handled items out of the active
+    list but can show them in archive view.
+    """
+    storage = NotificationsStorage()
+    ok = storage.mark_handled(req.notification_type, req.item_id)
+    return {'success': ok, 'handled': ok}
+
+
+@router.delete("/handled")
+async def unmark_handled(req: HandledRequest):
+    """Undo: remove the handled mark."""
+    storage = NotificationsStorage()
+    ok = storage.unmark_handled(req.notification_type, req.item_id)
+    return {'success': ok}
+
+
+@router.get("/handled/{notification_type}")
+async def list_handled(notification_type: str):
+    """All currently-handled item_ids for the given type."""
+    storage = NotificationsStorage()
+    return {'notification_type': notification_type, 'ids': sorted(storage.get_handled_set(notification_type))}
+
+
+class LikeCommentRequest(BaseModel):
+    """POST /comments/like body."""
+    owner_id: int
+    post_id: int
+    comment_id: int
+
+
+@router.post("/comments/like")
+async def like_comment_endpoint(req: LikeCommentRequest):
+    """Like a comment from the group account (etap 4a).
+
+    Prefers the community-token of the owner group. Falls back to VALSTAN
+    user-token if community-token fails with VK error 15/27 (no `manage` /
+    no access). Idempotent — VK keeps a single like per (user, target).
+    """
+    from database.connection import AsyncSessionLocal
+    from database.models import VKToken
+    from modules.notifications.vk_actions import like_comment
+    from config.runtime import VK_TOKENS
+    from sqlalchemy import select
+
+    vk_token = VK_TOKENS.get("VALSTAN")
+    if not vk_token:
+        return {'success': False, 'error': 'VK token not found'}
+
+    async with AsyncSessionLocal() as session:
+        q = await session.execute(
+            select(VKToken).where(
+                VKToken.community_id.isnot(None),
+                VKToken.is_active.is_(True),
+            )
+        )
+        community_tokens = {t.community_id: t.token for t in q.scalars()}
+
+    return like_comment(
+        owner_id=req.owner_id,
+        post_id=req.post_id,
+        comment_id=req.comment_id,
+        user_token=vk_token,
+        community_tokens=community_tokens,
+    )
+
+
+@router.get("/hot-posts")
+async def get_hot_posts(min_comments: int = 5, limit: int = 5):
+    """Top-N posts with the most discussion in the last 24h (etap 4a).
+
+    Derived from the recent_comments Redis cache (already grouped by
+    post_url). Not a separate VK query — uses what's already collected.
+    """
+    storage = NotificationsStorage()
+    comments = storage.get_comments_notifications()
+    if not comments:
+        return {'posts': [], 'min_comments': min_comments, 'window_hours': 24}
+
+    by_post: dict = {}
+    handled_ids = storage.get_handled_set('recent_comment')
+    for c in comments:
+        url = c.get('post_url')
+        if not url:
+            continue
+        bucket = by_post.setdefault(url, {
+            'post_url': url,
+            'region_name': c.get('region_name'),
+            'region_code': c.get('region_code'),
+            'vk_owner_id': c.get('vk_owner_id'),
+            'vk_post_id': c.get('vk_post_id'),
+            'total_comments': 0,
+            'unhandled_comments': 0,
+            'newest_at': None,
+            'preview': None,
+        })
+        bucket['total_comments'] += 1
+        if str(c.get('comment_id')) not in handled_ids:
+            bucket['unhandled_comments'] += 1
+        ts = c.get('commented_at')
+        if ts and (bucket['newest_at'] is None or ts > bucket['newest_at']):
+            bucket['newest_at'] = ts
+        if not bucket['preview']:
+            bucket['preview'] = (c.get('text') or '')[:120]
+
+    hot = [b for b in by_post.values() if b['total_comments'] >= min_comments]
+    hot.sort(key=lambda b: (-b['unhandled_comments'], -b['total_comments']))
+    return {
+        'posts': hot[:limit],
+        'min_comments': min_comments,
+        'window_hours': 24,
+    }
+
+
 @router.get("/history")
 async def get_history(notification_type: str = None):
     """История последних запусков проверок (этап 3).

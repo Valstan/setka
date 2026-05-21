@@ -364,6 +364,59 @@ class NotificationsStorage:
         return result
 
     # ────────────────────────────────────────────────────────────────
+    # Handled marks (etap 4a): UI "Обработано" button removes the item from
+    # the active list, keeps it in archive for 7 days
+    # ────────────────────────────────────────────────────────────────
+
+    HANDLED_TTL_SECONDS = 7 * 86400
+
+    def _handled_key(self, notification_type: str, item_id) -> str:
+        return f"{self.key_prefix}:handled:{notification_type}:{item_id}"
+
+    def mark_handled(self, notification_type: str, item_id) -> bool:
+        """Mark a specific notification (comment id / post id / dialog id)
+        as handled by the operator. Persists for HANDLED_TTL_SECONDS so the
+        UI can hide it from the active list while still showing in archive.
+        """
+        try:
+            key = self._handled_key(notification_type, item_id)
+            self.redis_client.setex(
+                key,
+                self.HANDLED_TTL_SECONDS,
+                datetime.now().isoformat(),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to mark {notification_type}:{item_id} handled: {e}")
+            return False
+
+    def unmark_handled(self, notification_type: str, item_id) -> bool:
+        """Remove the handled mark (undo)."""
+        try:
+            self.redis_client.delete(self._handled_key(notification_type, item_id))
+            return True
+        except Exception as e:
+            logger.error(f"Failed to unmark {notification_type}:{item_id}: {e}")
+            return False
+
+    def is_handled(self, notification_type: str, item_id) -> bool:
+        try:
+            return bool(self.redis_client.exists(self._handled_key(notification_type, item_id)))
+        except Exception as e:
+            logger.error(f"Failed to check handled state {notification_type}:{item_id}: {e}")
+            return False
+
+    def get_handled_set(self, notification_type: str) -> set:
+        """All currently-handled item_ids for the given type (for UI batch render)."""
+        try:
+            prefix = f"{self.key_prefix}:handled:{notification_type}:"
+            keys = self.redis_client.keys(f"{prefix}*") or []
+            return {k[len(prefix):] for k in keys}
+        except Exception as e:
+            logger.error(f"Failed to get handled set for {notification_type}: {e}")
+            return set()
+
+    # ────────────────────────────────────────────────────────────────
 
     def clear_notifications(self, notification_type: str = None) -> bool:
         """

@@ -22,15 +22,16 @@ _Сейчас нет._
 
 ### Рефакторинг модуля уведомлений VK (этапы 1-5)
 
-Этапы 0, 1, 2, 3, 5 + hot-fix-2 закрыты 2026-05-21 (см. [`DEV_HISTORY.md`](DEV_HISTORY.md)):
+Этапы 0, 1, 2, 3, 4a-mini, 5 + hot-fix-2 закрыты 2026-05-21 (см. [`DEV_HISTORY.md`](DEV_HISTORY.md)):
 - 0 — Fallback на user-token при VK error 15/27 + `keep_if_empty` в storage.
 - 1 — Полный сбор комментариев: пагинация по offset, thread.items, `max_total_comments` 300→5000 safety cap.
 - 2 — BaseVKChecker (DRY), удалён UnifiedNotificationsChecker и dead-code, окно 8-22 только в crontab.
 - 3 — Storage history + виджет «активность за 24ч» (Chart.js) + API `/history` `/stats`.
-- 5 — Prometheus метрики (`notifications_check_total`, `notifications_check_duration_seconds`, `notifications_items_found_total`, `notifications_zero_streak`) + token-health watchdog с Telegram-alert и 6h cooldown.
+- 4a-mini — `like_comment` от имени сообщества, mark-as-handled (7d), виджет «Горячие посты» (top-5 ≥5 комментов за 24ч).
+- 5 — Prometheus метрики (`notifications_check_*`, `notifications_zero_streak`) + token-health watchdog с Telegram-alert и 6h cooldown.
 - hot-fix-2 — VKClient.api_call propagates error_code + regex fallback в `_invoke`.
 
-Дальше план — только этап 4 (UI feedback). Плюс новые техдолги, открытые по ходу сессии:
+Дальше план — этап 4b (то что отложили). Плюс новые техдолги по ходу сессии:
 
 ### 🆕 Новые техдолги (по результатам наблюдения прода в этой сессии)
 

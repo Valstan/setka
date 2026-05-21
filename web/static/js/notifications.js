@@ -3,6 +3,7 @@
 document.addEventListener('DOMContentLoaded', async () => {
     await loadNotifications();
     await loadActivityWidget();
+    await loadHotPosts();
 });
 
 async function loadNotifications() {
@@ -289,7 +290,7 @@ function escapeHtml(str) {
         .replace(/'/g, '&#039;');
 }
 
-function loadRecentComments(recentComments) {
+async function loadRecentComments(recentComments) {
     const loading = document.getElementById('comments-loading');
     const empty = document.getElementById('comments-empty');
     const list = document.getElementById('comments-list');
@@ -300,11 +301,22 @@ function loadRecentComments(recentComments) {
     recentComments.sort((a, b) => {
         const ad = a.commented_at || a.checked_at || '';
         const bd = b.commented_at || b.checked_at || '';
-        // ISO strings compare lexicographically
         return bd.localeCompare(ad);
     });
 
-    if (recentComments.length === 0) {
+    // Fetch handled set so we can hide / dim already-processed items
+    let handledIds = new Set();
+    try {
+        const resp = await fetch('/api/notifications/handled/recent_comment');
+        if (resp.ok) {
+            const data = await resp.json();
+            handledIds = new Set((data.ids || []).map(String));
+        }
+    } catch (e) { /* non-fatal */ }
+
+    const visible = recentComments.filter(n => !handledIds.has(String(n.comment_id)));
+
+    if (visible.length === 0) {
         empty.style.display = 'block';
         list.style.display = 'none';
     } else {
@@ -312,19 +324,26 @@ function loadRecentComments(recentComments) {
 
         let html = '<div class="list-group list-group-flush">';
 
-        recentComments.forEach(notif => {
+        visible.forEach(notif => {
             const text = escapeHtml(notif.text || '');
             const postUrl = notif.post_url || '#';
             const communityName = escapeHtml(notif.community_name || notif.region_name || 'Сообщество');
+            const cid = notif.comment_id;
+            const ownerId = notif.vk_owner_id;
+            const postId = notif.vk_post_id;
+            const replyBadge = notif.is_reply
+                ? '<span class="badge bg-info-subtle text-info-emphasis ms-2">ответ</span>' : '';
+            const likesBadge = (notif.likes_count || 0) > 0
+                ? `<span class="badge bg-light text-dark ms-1"><i class="bi bi-heart-fill text-danger"></i> ${notif.likes_count}</span>` : '';
 
             html += `
-                <a href="${postUrl}" target="_blank"
-                   class="list-group-item list-group-item-action list-group-item-light">
+                <div class="list-group-item list-group-item-light" data-comment-id="${cid}">
                     <div class="d-flex justify-content-between align-items-start">
                         <div class="flex-grow-1">
                             <div class="d-flex align-items-center mb-2">
                                 <i class="bi bi-chat-left-text me-2 text-secondary"></i>
                                 <h6 class="mb-0">${communityName}</h6>
+                                ${replyBadge}${likesBadge}
                             </div>
                             <div class="text-body">
                                 <div class="small" style="white-space: pre-wrap;">${text}</div>
@@ -336,12 +355,21 @@ function loadRecentComments(recentComments) {
                                 </small>
                             ` : ''}
                         </div>
-                        <div class="text-end ms-2">
-                            <i class="bi bi-box-arrow-up-right text-secondary fs-4"></i>
-                            <small class="d-block text-muted mt-1">Открыть пост</small>
+                        <div class="text-end ms-2 d-flex flex-column gap-1">
+                            <a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-secondary" title="Открыть в VK">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                            <button class="btn btn-sm btn-outline-danger" title="Лайкнуть от имени сообщества"
+                                    onclick="likeComment(${ownerId}, ${postId}, ${cid}, this)">
+                                <i class="bi bi-heart"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-success" title="Отметить обработанным"
+                                    onclick="markHandled('recent_comment', '${cid}', this)">
+                                <i class="bi bi-check2"></i>
+                            </button>
                         </div>
                     </div>
-                </a>
+                </div>
             `;
         });
 
@@ -349,6 +377,89 @@ function loadRecentComments(recentComments) {
         list.innerHTML = html;
         list.style.display = 'block';
     }
+}
+
+async function likeComment(ownerId, postId, commentId, btn) {
+    btn.disabled = true;
+    const originalHtml = btn.innerHTML;
+    try {
+        const resp = await fetch('/api/notifications/comments/like', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ owner_id: ownerId, post_id: postId, comment_id: commentId }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            btn.innerHTML = '<i class="bi bi-heart-fill text-danger"></i>';
+            btn.classList.remove('btn-outline-danger');
+            btn.classList.add('btn-danger');
+        } else {
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+            alert(`Не удалось лайкнуть: ${data.error || '?'}`);
+        }
+    } catch (e) {
+        btn.innerHTML = originalHtml;
+        btn.disabled = false;
+        alert(`Ошибка: ${e.message}`);
+    }
+}
+
+async function markHandled(notificationType, itemId, btn) {
+    btn.disabled = true;
+    try {
+        const resp = await fetch('/api/notifications/handled', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notification_type: notificationType, item_id: String(itemId) }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            // Fade out the parent list-group-item and remove
+            const card = btn.closest('.list-group-item');
+            if (card) {
+                card.style.transition = 'opacity 0.3s';
+                card.style.opacity = '0.2';
+                setTimeout(() => card.remove(), 300);
+            }
+        } else {
+            btn.disabled = false;
+            alert('Не удалось отметить');
+        }
+    } catch (e) {
+        btn.disabled = false;
+        alert(`Ошибка: ${e.message}`);
+    }
+}
+
+async function loadHotPosts() {
+    try {
+        const resp = await fetch('/api/notifications/hot-posts?min_comments=5&limit=5');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const card = document.getElementById('hot-posts-card');
+        const list = document.getElementById('hot-posts-list');
+        if (!card || !list) return;
+        if (!data.posts || data.posts.length === 0) {
+            card.style.display = 'none';
+            return;
+        }
+        card.style.display = 'block';
+        list.innerHTML = data.posts.map(p => `
+            <a href="${p.post_url}" target="_blank" class="list-group-item list-group-item-action">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <strong>${escapeHtml(p.region_name || '')}</strong>
+                        <div class="small text-muted mt-1">${escapeHtml(p.preview || '')}</div>
+                    </div>
+                    <div class="text-end ms-2">
+                        <span class="badge bg-warning text-dark">${p.unhandled_comments} 🟡</span>
+                        <small class="d-block text-muted">из ${p.total_comments}</small>
+                    </div>
+                </div>
+            </a>
+        `).join('');
+    } catch (e) { /* non-fatal */ }
 }
 
 async function checkNotificationsNow() {

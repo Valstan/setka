@@ -142,6 +142,22 @@
     </div>
 </div>
 
+<!-- Hot Posts Widget (etap 4a) -->
+<div class="row mb-4" id="hot-posts-card" style="display:none;">
+    <div class="col-12">
+        <div class="card border-warning">
+            <div class="card-header bg-warning bg-opacity-10">
+                <h6 class="mb-0">
+                    <i class="bi bi-fire"></i> Горячие посты (≥5 комментариев за сутки)
+                </h6>
+            </div>
+            <div class="card-body p-0">
+                <div class="list-group list-group-flush" id="hot-posts-list"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Suggested Posts Section -->
 <div class="row mb-4">
     <div class="col-12">
@@ -254,6 +270,6 @@
 {% block extra_scripts %}
 {# Cache-busting: nginx serves /static with long-lived immutable cache headers #}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/static/js/notifications.js?v=20260521_3"></script>
+<script src="/static/js/notifications.js?v=20260521_4"></script>
 {% endblock %}
 

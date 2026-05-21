@@ -33,6 +33,58 @@
 
 ---
 
+## 2026-05-21 — Этап 4a-mini: лайки коммента, mark-as-handled, виджет «Горячие посты»
+
+**Тема сессии:** UI обратной связи для модераторов — три быстрые действия из карточки коммента без перехода в VK. Inline-reply / AI-черновик / шаблоны для сообщений / Telegram inline-button — **отложены в этап 4b** (требуют модального окна и больше времени).
+
+### Изменения
+
+#### Backend
+
+- **`modules/notifications/vk_actions.py` (новый)** — `like_comment(owner_id, post_id, comment_id, user_token, community_tokens)`. Использует `likes.add(type='comment', ...)` через community-token приоритетно, при error 15/27 — fallback на user-token (как у read-checker'ов).
+- **`modules/notifications/storage.py`** — четыре новых метода для handled-mark:
+  - `mark_handled(notification_type, item_id)` — `SETEX key TTL=7d`.
+  - `unmark_handled(...)` — `DELETE`.
+  - `is_handled(...)` — `EXISTS`.
+  - `get_handled_set(type)` — `KEYS prefix*` → set of ids.
+- **`web/api/notifications.py`** — новые endpoint'ы:
+  - `POST /api/notifications/handled` `{notification_type, item_id}` — отметить.
+  - `DELETE /api/notifications/handled` — снять.
+  - `GET /api/notifications/handled/{type}` — список handled-id для bulk-render UI.
+  - `POST /api/notifications/comments/like` `{owner_id, post_id, comment_id}` — лайк.
+  - `GET /api/notifications/hot-posts?min_comments=5&limit=5` — топ-5 постов с самой активной перепиской (агрегируется из уже собранных в Redis комментов, без отдельных VK-запросов; сортировка по `unhandled_comments` desc, ties → `total_comments` desc).
+
+#### UI
+
+- **`web/static/js/notifications.js`** — переработан `loadRecentComments`:
+  - Параллельно тянет `/handled/recent_comment` и **скрывает** уже обработанные.
+  - В каждой карточке коммента три новых кнопки в правом столбце: `🔗 Открыть в VK`, `🤍 Лайкнуть от имени сообщества`, `✓ Отметить обработанным`.
+  - Бейджи `ответ` (для `is_reply=true`) и `🤍 N` (если `likes_count > 0`).
+  - `likeComment(...)` → POST → при успехе кнопка превращается в `❤️` (filled). `markHandled(...)` → POST → карточка плавно исчезает (opacity 0.2 → remove).
+- **Виджет «Горячие посты»** под виджетом активности: title region + preview первого коммента + бейдж `N 🟡 из M` (необработанных из всего). Кликабельная ссылка на пост в VK. Прячется если кандидатов нет.
+- Кэш-бастинг JS: `notifications.js?v=20260521_4`.
+
+### Тесты
+
+- **`tests/test_notifications/test_handled_marks.py`** (4 теста): SETEX с правильным TTL, DELETE, EXISTS, KEYS-pattern → set strip-prefix.
+- **`tests/test_notifications/test_vk_actions.py`** (4 теста): like через community-token (happy path), fallback на user при code 27, отсутствие community-token → сразу user, неоднозначные ошибки → failure payload без retry.
+- **215/215 pytest green** (207 после этапов 3+5 + 4 handled + 4 vk_actions).
+
+### Что НЕ вошло (отложено в этап 4b)
+
+- Inline-ответ на коммент из SETKA (нужен модальник + `wall.createComment(reply_to_comment=...)`).
+- AI-черновик через Groq (кнопка ✨ → предзаполненная textarea).
+- Шаблонные ответы на сообщения сообщества — отдельный экран `/templates` для CRUD шаблонов + `messages.send` через community-token.
+- Telegram inline-кнопка «Ответить из SETKA» — требует bot webhook + deep-link на `/notifications#comment_X`.
+
+Все четыре пункта зафиксированы в `PENDING_FOLLOWUPS.md` → этап 4b.
+
+### Применение
+
+- Деплой через `git pull` + restart. UI обновляется автоматически при следующем заходе на `/notifications` (cache-bust v=20260521_4). Виджет «Горячие посты» появится когда наберётся ≥5 комментариев под одним постом в окне 24ч.
+
+---
+
 ## 2026-05-21 — Этапы 3 + 5: история проверок, виджет «активность за 24ч», Prometheus + token-health alert
 
 **Тема сессии:** дать UI окно в реальную работу автотасок (раньше единственная отметка времени — «последняя проверка», без истории) и навесить алёрт если токены реально сломались.
