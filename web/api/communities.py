@@ -131,6 +131,7 @@ class CommunityCreate(BaseModel):
 class CommunityUpdate(BaseModel):
     """Community update model"""
     region_id: Optional[int] = None
+    name: Optional[str] = None
     category: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -380,7 +381,15 @@ async def update_community(
             community.region = new_region
             community.region_id = new_region.id
 
-    
+    for field, value in update_data.items():
+        if value is None:
+            continue
+        if field == 'name':
+            value = str(value).strip()
+            if not value:
+                raise HTTPException(status_code=400, detail="Name cannot be empty")
+        setattr(community, field, value)
+
     community.updated_at = datetime.utcnow()
     
     await db.commit()

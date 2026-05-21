@@ -278,7 +278,7 @@ async function loadCommunities() {
                 <tr>
                     <td>${community.id}</td>
                     <td>
-                        <strong>${community.name || 'Без названия'}</strong>
+                        <input type="text" class="form-control form-control-sm" value="${community.name || 'Без названия'}" onchange="onCommunityNameChange(event)" data-community-id="${community.id}" />
                     </td>
                     <td>
                         <a href="https://vk.com/club${Math.abs(community.vk_id)}" target="_blank" class="text-decoration-none">
@@ -316,6 +316,9 @@ async function loadCommunities() {
                             </a>
                             <button class="btn btn-outline-secondary" onclick="toggleActive(${community.id}, ${!community.is_active})" title="${community.is_active ? 'Деактивировать' : 'Активировать'}">
                                 <i class="bi ${community.is_active ? 'bi-pause' : 'bi-play'}"></i>
+                            </button>
+                            <button class="btn btn-outline-danger" onclick="deleteCommunity(${community.id})" title="Удалить сообщество">
+                                <i class="bi bi-trash"></i>
                             </button>
                         </div>
                     </td>
@@ -409,6 +412,48 @@ async function onCommunityCategoryChange(event) {
         await loadCommunities();
     } finally {
         select.disabled = false;
+    }
+}
+
+async function onCommunityNameChange(event) {
+    const input = event.target;
+    const communityId = parseInt(input.dataset.communityId);
+    const name = (input.value || '').trim();
+
+    if (!communityId) {
+        return;
+    }
+    if (!name) {
+        alert('Название не может быть пустым');
+        await loadCommunities();
+        return;
+    }
+
+    input.disabled = true;
+    try {
+        await apiClient.updateCommunity(communityId, { name });
+        await loadCommunities();
+    } catch (err) {
+        alert('Ошибка обновления названия: ' + err.message);
+        await loadCommunities();
+    } finally {
+        input.disabled = false;
+    }
+}
+
+async function deleteCommunity(communityId) {
+    if (!communityId) {
+        return;
+    }
+    if (!confirm('Удалить это сообщество? Действие необратимо.')) {
+        return;
+    }
+
+    try {
+        await apiClient.deleteCommunity(communityId);
+        await loadCommunities();
+    } catch (err) {
+        alert('Ошибка удаления сообщества: ' + err.message);
     }
 }
 
