@@ -90,6 +90,41 @@ vk_api_rate_limit_hits = Counter(
 )
 
 # =============================================================================
+# NOTIFICATIONS METRICS (etap 5)
+# =============================================================================
+
+# Outcome counter for the three hourly checks. Lets us alert on:
+#   - 3+ runs in a row with result="error"  → token health degraded
+#   - sudden drop in "items_found" sum      → VK auth broken silently
+notifications_check_total = Counter(
+    'setka_notifications_check_total',
+    'VK notifications check runs',
+    ['check_type', 'result'],  # check_type: suggested|messages|comments
+                               # result: ok|empty|error|denied
+)
+
+notifications_check_duration_seconds = Histogram(
+    'setka_notifications_check_duration_seconds',
+    'Duration of one notifications check run',
+    ['check_type'],
+    buckets=(0.5, 1, 2, 5, 10, 20, 30, 60),
+)
+
+notifications_items_found_total = Counter(
+    'setka_notifications_items_found_total',
+    'Items found by notification checks (suggested posts / unread / comments)',
+    ['check_type'],
+)
+
+# Gauge that flips to 1 when the last N consecutive auto-runs of a given type
+# all returned ZERO items — useful for alerting on broken-token symptoms.
+notifications_zero_streak = Gauge(
+    'setka_notifications_zero_streak',
+    'Consecutive auto-runs that returned 0 items for the given check_type',
+    ['check_type'],
+)
+
+# =============================================================================
 # DATABASE METRICS
 # =============================================================================
 

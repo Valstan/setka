@@ -22,15 +22,23 @@ _Сейчас нет._
 
 ### Рефакторинг модуля уведомлений VK (этапы 1-5)
 
-Этапы 0, 1, 2 + hot-fix-2 закрыты 2026-05-21 (см. [`DEV_HISTORY.md`](DEV_HISTORY.md)):
+Этапы 0, 1, 2, 3, 5 + hot-fix-2 закрыты 2026-05-21 (см. [`DEV_HISTORY.md`](DEV_HISTORY.md)):
 - 0 — Fallback на user-token при VK error 15/27 + `keep_if_empty` в storage.
 - 1 — Полный сбор комментариев: пагинация по offset, thread.items, `max_total_comments` 300→5000 safety cap.
-- 2 — BaseVKChecker (DRY для fallback/cache), удалён UnifiedNotificationsChecker и dead-code `tasks/notification_tasks.py`, окно 8-22 только в crontab.
-- hot-fix-2 — VKClient.api_call propagates error_code + regex fallback в `_invoke` для legacy-формата.
+- 2 — BaseVKChecker (DRY), удалён UnifiedNotificationsChecker и dead-code, окно 8-22 только в crontab.
+- 3 — Storage history + виджет «активность за 24ч» (Chart.js) + API `/history` `/stats`.
+- 5 — Prometheus метрики (`notifications_check_total`, `notifications_check_duration_seconds`, `notifications_items_found_total`, `notifications_zero_streak`) + token-health watchdog с Telegram-alert и 6h cooldown.
+- hot-fix-2 — VKClient.api_call propagates error_code + regex fallback в `_invoke`.
 
-Дальше план:
+Дальше план — только этап 4 (UI feedback). Плюс новые техдолги, открытые по ходу сессии:
 
-- **Этап 3 — Storage с историей.** Redis-list `setka:notifications:history:{type}` (LPUSH+LTRIM до 24 записей, TTL 25ч). API `GET /history` и `GET /stats`. UI-виджет «активность за сутки» (Chart.js).
+### 🆕 Новые техдолги (по результатам наблюдения прода в этой сессии)
+
+- **VK Captcha-rate-limit на publish-token.** После fallback `wall.repost` теперь идёт через VALSTAN для 14 групп подряд → VK через ~10 successful repost'ов ставит капчу (`[0] Captcha needed`). Решение: либо глобальный sleep между repost'ами (sec=2-3 для всей сессии VALSTAN-token, не per-group), либо ротация на второй publish-token (VITA), либо handler для captcha challenge. Затрагивает `modules/publisher/vk_publisher_extended.py:_enforce_rate_limit` (он сейчас per-group, надо сделать global) или `modules/vk_monitor/vk_token_rotator.py`.
+- **Косметика логирования `via=community-token` после fallback.** В `publish_repost` строка `✅ Reposted ... (via community-token)` рисуется по `via_community` от `_client_for_group()` — но фактический успех после `_call_wall_post` fallback пошёл через publish-token. Точнее логировать «via community-fallback-publish». Это просто диагностика, не функциональность.
+
+### Этап 4 — UI обратной связи (всё ещё в плане)
+
 - **Этап 4a — UI обратной связи (часть 1).** Inline-ответ из SETKA (`wall.createComment`); **лайк коммента от имени сообщества** (`likes.add` через community-token, кнопка-сердечко); mark-as-handled / архив (Redis `setka:notifications:handled:{id}` TTL 7 дней); виджет «Горячие посты» (топ-5 за сутки с >10 комментариев).
 - **Этап 4b — UI обратной связи (часть 2).** **Шаблонные ответы на сообщения** (`messages.send` через community-token + отдельный экран `/templates` для CRUD шаблонов); **AI-черновик** через Groq (кнопка «Сгенерировать ответ» → редактируемая textarea); Telegram-бот inline-кнопка «Ответить из SETKA».
 - **Этап 5 — Мониторинг.** Prometheus метрика `notifications_check_total{type,result}`. Алёрт в Telegram «3 автопроверки подряд возвращают error 27 — токены сломаны».

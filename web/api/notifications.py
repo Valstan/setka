@@ -117,6 +117,40 @@ async def get_comments_notifications():
     return storage.get_comments_notifications()
 
 
+@router.get("/history")
+async def get_history(notification_type: str = None):
+    """История последних запусков проверок (этап 3).
+
+    Возвращает список последних ~48 проверок за 25ч для указанного типа
+    (`suggested_posts` / `unread_messages` / `recent_comments`) или для всех
+    сразу. Каждая запись содержит ts, count, duration_seconds, denied_count,
+    success.
+
+    Используется фронтом для виджета «активность за сутки».
+    """
+    storage = NotificationsStorage()
+    if notification_type:
+        return {
+            'type': notification_type,
+            'runs': storage.get_recent_runs(notification_type),
+        }
+    return {
+        'suggested_posts': storage.get_recent_runs('suggested_posts'),
+        'unread_messages': storage.get_recent_runs('unread_messages'),
+        'recent_comments': storage.get_recent_runs('recent_comments'),
+    }
+
+
+@router.get("/stats")
+async def get_stats():
+    """Агрегаты по последним 24 часам проверок (этап 3).
+
+    Для виджета «сколько прогонов, средняя длительность, последний результат».
+    """
+    storage = NotificationsStorage()
+    return storage.get_stats()
+
+
 @router.delete("/")
 async def clear_notifications():
     """Очистить все уведомления"""

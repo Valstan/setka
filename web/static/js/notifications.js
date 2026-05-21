@@ -2,27 +2,28 @@
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadNotifications();
+    await loadActivityWidget();
 });
 
 async function loadNotifications() {
     try {
         const response = await fetch('/api/notifications/');
-        
+
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
-        
+
         const data = await response.json();
-        
+
         // Update stats
         updateStats(data);
-        
+
         // Update timestamp
         updateTimestamp(data.timestamp);
-        
+
         // Load suggested posts
         loadSuggestedPosts(data.suggested_posts || []);
-        
+
         // Load unread messages
         loadUnreadMessages(
             data.unread_messages || [],
@@ -31,11 +32,97 @@ async function loadNotifications() {
 
         // Load recent comments
         loadRecentComments(data.recent_comments || []);
-        
+
     } catch (error) {
         console.error('Error loading notifications:', error);
         showError(error.message);
     }
+}
+
+let _activityChart = null;
+
+async function loadActivityWidget() {
+    try {
+        const [statsResp, historyResp] = await Promise.all([
+            fetch('/api/notifications/stats'),
+            fetch('/api/notifications/history'),
+        ]);
+        if (!statsResp.ok || !historyResp.ok) return;
+        const stats = await statsResp.json();
+        const history = await historyResp.json();
+
+        // Per-type counters
+        const sp = stats.types?.suggested_posts || {};
+        const msg = stats.types?.unread_messages || {};
+        const cmt = stats.types?.recent_comments || {};
+        document.getElementById('stats-sp-runs').textContent = sp.total_runs ?? 0;
+        document.getElementById('stats-sp-hits').textContent = sp.with_results_runs ?? 0;
+        document.getElementById('stats-msg-runs').textContent = msg.total_runs ?? 0;
+        document.getElementById('stats-msg-hits').textContent = msg.with_results_runs ?? 0;
+        document.getElementById('stats-cmt-runs').textContent = cmt.total_runs ?? 0;
+        document.getElementById('stats-cmt-hits').textContent = cmt.with_results_runs ?? 0;
+
+        const lastRun =
+            [sp.last_run_ts, msg.last_run_ts, cmt.last_run_ts]
+                .filter(Boolean)
+                .sort()
+                .pop() || null;
+        document.getElementById('activity-summary').textContent = lastRun
+            ? `последний прогон: ${new Date(lastRun).toLocaleString('ru-RU')}`
+            : 'нет данных';
+
+        renderActivityChart(history);
+    } catch (e) {
+        console.warn('Activity widget failed:', e);
+    }
+}
+
+function renderActivityChart(history) {
+    const ctx = document.getElementById('activity-chart');
+    if (!ctx || typeof Chart === 'undefined') return;
+
+    // Build a unified X-axis from sorted ts values across all three series.
+    const allRuns = [
+        ...(history.suggested_posts || []),
+        ...(history.unread_messages || []),
+        ...(history.recent_comments || []),
+    ];
+    const uniqLabels = Array.from(new Set(allRuns.map(r => r.ts))).sort();
+    const labels = uniqLabels.map(ts => new Date(ts).toLocaleTimeString('ru-RU', {
+        hour: '2-digit', minute: '2-digit',
+    }));
+
+    const tsIndex = new Map(uniqLabels.map((ts, i) => [ts, i]));
+    const seriesValues = (raw) => {
+        const out = new Array(uniqLabels.length).fill(null);
+        for (const r of (raw || [])) {
+            const i = tsIndex.get(r.ts);
+            if (i !== undefined) out[i] = r.count || 0;
+        }
+        return out;
+    };
+
+    const datasets = [
+        { label: 'Предложки', data: seriesValues(history.suggested_posts), borderColor: '#ffc107', backgroundColor: '#ffc10733', tension: 0.25, spanGaps: true },
+        { label: 'Сообщения', data: seriesValues(history.unread_messages), borderColor: '#0d6efd', backgroundColor: '#0d6efd33', tension: 0.25, spanGaps: true },
+        { label: 'Комменты', data: seriesValues(history.recent_comments), borderColor: '#198754', backgroundColor: '#19875433', tension: 0.25, spanGaps: true },
+    ];
+
+    if (_activityChart) _activityChart.destroy();
+    _activityChart = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            animation: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+                y: { beginAtZero: true, precision: 0 },
+            },
+            plugins: { legend: { position: 'bottom' } },
+        },
+    });
 }
 
 function updateStats(data) {

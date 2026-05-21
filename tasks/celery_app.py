@@ -357,8 +357,10 @@ def check_suggested_posts():
 
                 community_tokens = await load_community_tokens(session)
                 checker = VKSuggestedChecker(vk_token, community_tokens=community_tokens)
+                run_start = datetime.now()
                 notifications = await checker.check_all_region_groups(region_groups)
-                
+                run_duration = (datetime.now() - run_start).total_seconds()
+
                 # Сохраняем в Redis. keep_if_empty=True защищает от стирания
                 # результата ручной проверки, если автопроверка вернула 0
                 # из-за временной ошибки VK API (например, сломаны
@@ -369,18 +371,44 @@ def check_suggested_posts():
                     'suggested_posts',
                     keep_if_empty=True,
                 )
+                # История проверок (этап 3): для виджета «активность за 24ч».
+                storage.save_run(
+                    'suggested_posts',
+                    count=len(notifications),
+                    duration_seconds=run_duration,
+                    success=True,
+                )
+                # Prometheus (etap 5)
+                try:
+                    from monitoring.metrics import (
+                        notifications_check_total,
+                        notifications_check_duration_seconds,
+                        notifications_items_found_total,
+                    )
+                    result_label = 'ok' if notifications else 'empty'
+                    notifications_check_total.labels(
+                        check_type='suggested', result=result_label,
+                    ).inc()
+                    notifications_check_duration_seconds.labels(
+                        check_type='suggested',
+                    ).observe(run_duration)
+                    notifications_items_found_total.labels(
+                        check_type='suggested',
+                    ).inc(len(notifications))
+                except Exception as _e:
+                    logger.debug("metrics emit failed: %s", _e)
 
                 logger.info(f"Found {len(notifications)} groups with suggested posts")
 
                 return notifications
-        
+
         notifications = run_coro(check())
-        
+
         return {
             'success': True,
             'timestamp': datetime.now().isoformat(),
             'notifications_count': len(notifications),
-            'notifications': notifications
+            'notifications': notifications,
         }
         
     except Exception as e:
@@ -448,13 +476,45 @@ def check_unread_messages():
                 community_tokens = await load_community_tokens(session)
 
                 checker = VKMessagesChecker(vk_token, community_tokens=community_tokens)
+                run_start = datetime.now()
                 result = await checker.check_all_region_groups(region_groups)
+                run_duration = (datetime.now() - run_start).total_seconds()
                 notifications = result['notifications']
                 denied_groups = result['denied_groups']
 
                 storage = NotificationsStorage()
                 storage.save_notifications(notifications, 'unread_messages')
                 storage.save_notifications(denied_groups, 'unread_messages_denied')
+                storage.save_run(
+                    'unread_messages',
+                    count=len(notifications),
+                    denied_count=len(denied_groups),
+                    duration_seconds=run_duration,
+                    success=True,
+                )
+                try:
+                    from monitoring.metrics import (
+                        notifications_check_total,
+                        notifications_check_duration_seconds,
+                        notifications_items_found_total,
+                    )
+                    if denied_groups and not notifications:
+                        result_label = 'denied'
+                    elif notifications:
+                        result_label = 'ok'
+                    else:
+                        result_label = 'empty'
+                    notifications_check_total.labels(
+                        check_type='messages', result=result_label,
+                    ).inc()
+                    notifications_check_duration_seconds.labels(
+                        check_type='messages',
+                    ).observe(run_duration)
+                    notifications_items_found_total.labels(
+                        check_type='messages',
+                    ).inc(len(notifications))
+                except Exception as _e:
+                    logger.debug("metrics emit failed: %s", _e)
 
                 logger.info(
                     "Found %d groups with unread messages (%d denied access)",
@@ -539,10 +599,12 @@ def check_recent_comments():
 
                 community_tokens = await load_community_tokens(session)
                 checker = VKCommentsChecker(vk_token, community_tokens=community_tokens)
+                run_start = datetime.now()
                 notifications = await checker.check_recent_comments_for_region_groups(
                     region_groups=region_groups,
                     cutoff_ts=cutoff_ts
                 )
+                run_duration = (datetime.now() - run_start).total_seconds()
 
                 # keep_if_empty=True: ручной запуск из UI мог только что обнаружить
                 # комментарии — не стираем их если автотаска вернула 0 из-за
@@ -553,6 +615,30 @@ def check_recent_comments():
                     'recent_comments',
                     keep_if_empty=True,
                 )
+                storage.save_run(
+                    'recent_comments',
+                    count=len(notifications),
+                    duration_seconds=run_duration,
+                    success=True,
+                )
+                try:
+                    from monitoring.metrics import (
+                        notifications_check_total,
+                        notifications_check_duration_seconds,
+                        notifications_items_found_total,
+                    )
+                    result_label = 'ok' if notifications else 'empty'
+                    notifications_check_total.labels(
+                        check_type='comments', result=result_label,
+                    ).inc()
+                    notifications_check_duration_seconds.labels(
+                        check_type='comments',
+                    ).observe(run_duration)
+                    notifications_items_found_total.labels(
+                        check_type='comments',
+                    ).inc(len(notifications))
+                except Exception as _e:
+                    logger.debug("metrics emit failed: %s", _e)
 
                 logger.info(f"Found {len(notifications)} recent comments (main INFO groups only)")
                 return notifications
@@ -562,6 +648,26 @@ def check_recent_comments():
         # После обновления всех ключей (suggested/messages/comments) отправляем агрегированное
         # Telegram-уведомление (если есть новые элементы).
         _maybe_send_telegram_notifications_alert()
+
+        # Health watchdog (этап 5): если последние N автопроверок подряд
+        # вернули 0 — намёк на сломанный токен, шлём отдельный alert
+        # (с собственным cooldown, чтобы не спамить).
+        try:
+            from config.runtime import TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID, SERVER
+            from modules.notifications.health import maybe_alert_broken_tokens
+
+            telegram_token = TELEGRAM_TOKENS.get("VALSTANBOT")
+            chat_id = TELEGRAM_ALERT_CHAT_ID
+            domain = SERVER.get('domain') or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+            dashboard_url = f"https://{domain}/notifications"
+
+            run_coro(maybe_alert_broken_tokens(
+                telegram_token=telegram_token,
+                chat_id=chat_id,
+                dashboard_url=dashboard_url,
+            ))
+        except Exception as _e:
+            logger.debug("token health watchdog failed: %s", _e)
 
         return {
             'success': True,

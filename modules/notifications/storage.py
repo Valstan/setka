@@ -267,6 +267,104 @@ class NotificationsStorage:
                 'timestamp': None
             }
     
+    # ────────────────────────────────────────────────────────────────
+    # Run history (etap 3): per-type ring-buffer of recent check runs
+    # ────────────────────────────────────────────────────────────────
+
+    HISTORY_MAX_ENTRIES = 48      # 24h × 2 runs/hour worst case
+    HISTORY_TTL_SECONDS = 90000   # 25h — slightly more than the window
+
+    def save_run(
+        self,
+        notification_type: str,
+        *,
+        count: int,
+        duration_seconds: float = 0.0,
+        denied_count: int = 0,
+        success: bool = True,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Append a run record to the type's history list.
+
+        Used by `tasks.celery_app.check_*` and by the manual /check-now flow.
+        The list `setka:notifications:history:{type}` is bounded by
+        HISTORY_MAX_ENTRIES via LPUSH+LTRIM and refreshed TTL on each push.
+        """
+        try:
+            key = f"{self.key_prefix}:history:{notification_type}"
+            entry = {
+                "ts": datetime.now().isoformat(),
+                "count": int(count),
+                "duration_seconds": round(float(duration_seconds), 3),
+                "denied_count": int(denied_count),
+                "success": bool(success),
+            }
+            if extra:
+                entry["extra"] = extra
+            pipe = self.redis_client.pipeline()
+            pipe.lpush(key, json.dumps(entry, ensure_ascii=False))
+            pipe.ltrim(key, 0, self.HISTORY_MAX_ENTRIES - 1)
+            pipe.expire(key, self.HISTORY_TTL_SECONDS)
+            pipe.execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save run history for {notification_type}: {e}")
+            return False
+
+    def get_recent_runs(
+        self,
+        notification_type: str,
+        limit: int = HISTORY_MAX_ENTRIES,
+    ) -> List[Dict[str, Any]]:
+        """Return newest-first list of run records for the given type."""
+        try:
+            key = f"{self.key_prefix}:history:{notification_type}"
+            raw = self.redis_client.lrange(key, 0, limit - 1) or []
+            return [json.loads(r) for r in raw]
+        except Exception as e:
+            logger.error(f"Failed to get run history for {notification_type}: {e}")
+            return []
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Aggregate stats across the three notification types.
+
+        Returns:
+            {
+                'types': {
+                    'suggested_posts': {
+                        'total_runs': N,
+                        'with_results_runs': N,    # runs where count > 0
+                        'total_items': N,           # sum of counts in window
+                        'avg_duration_s': float,
+                        'last_run_ts': ISO | None,
+                        'last_run_count': int,
+                    },
+                    'unread_messages': {...},
+                    'recent_comments': {...},
+                },
+                'window_hours': 24,
+            }
+        """
+        result: Dict[str, Any] = {'types': {}, 'window_hours': 24}
+        for ntype in ('suggested_posts', 'unread_messages', 'recent_comments'):
+            runs = self.get_recent_runs(ntype, limit=self.HISTORY_MAX_ENTRIES)
+            with_results = [r for r in runs if r.get('count', 0) > 0]
+            total_items = sum(int(r.get('count') or 0) for r in runs)
+            durations = [float(r.get('duration_seconds') or 0) for r in runs]
+            avg_duration = round(sum(durations) / len(durations), 3) if durations else 0.0
+            last = runs[0] if runs else None
+            result['types'][ntype] = {
+                'total_runs': len(runs),
+                'with_results_runs': len(with_results),
+                'total_items': total_items,
+                'avg_duration_s': avg_duration,
+                'last_run_ts': last.get('ts') if last else None,
+                'last_run_count': int(last.get('count') or 0) if last else 0,
+            }
+        return result
+
+    # ────────────────────────────────────────────────────────────────
+
     def clear_notifications(self, notification_type: str = None) -> bool:
         """
         Очистить уведомления

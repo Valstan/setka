@@ -33,6 +33,69 @@
 
 ---
 
+## 2026-05-21 — Этапы 3 + 5: история проверок, виджет «активность за 24ч», Prometheus + token-health alert
+
+**Тема сессии:** дать UI окно в реальную работу автотасок (раньше единственная отметка времени — «последняя проверка», без истории) и навесить алёрт если токены реально сломались.
+
+### Этап 3 — История проверок и виджет
+
+#### `modules/notifications/storage.py`
+
+- Новые методы:
+  - `save_run(notification_type, *, count, duration_seconds, denied_count=0, success=True, extra=None)` — append-в-Redis-list `setka:notifications:history:{type}`, LPUSH + LTRIM до `HISTORY_MAX_ENTRIES=48` + EXPIRE `HISTORY_TTL_SECONDS=25h`. Атомарно через pipeline.
+  - `get_recent_runs(notification_type, limit)` — newest-first list.
+  - `get_stats()` — агрегаты по трём типам: `total_runs`, `with_results_runs`, `total_items`, `avg_duration_s`, `last_run_ts`, `last_run_count`.
+
+#### `tasks/celery_app.py`
+
+- Каждая из трёх auto-тасок (`check_suggested_posts`, `check_unread_messages`, `check_recent_comments`) после `save_notifications` вызывает `storage.save_run(...)` с реальным `run_duration`.
+
+#### `web/api/notifications.py`
+
+- Новые эндпойнты:
+  - `GET /api/notifications/history?notification_type=...` (или без параметра — все три).
+  - `GET /api/notifications/stats` — сводка для виджета.
+
+#### UI
+
+- В `web/templates/notifications.html` под "Последняя проверка" добавлен новый блок «Активность за последние 24 часа» с тремя счётчиками (предложки/сообщения/комменты — прогонов / с результатом) и линейным графиком Chart.js (по трём сериям).
+- В `web/static/js/notifications.js` — `loadActivityWidget()` и `renderActivityChart()` (category-scale, без time-adapter — Chart.js 4 не требует дополнительных пакетов).
+- Подключён CDN `chart.js@4.4.0`. Кэш-бастинг JS-файла: `notifications.js?v=20260521_3`.
+
+### Этап 5 — Prometheus метрики + token-health alert
+
+#### `monitoring/metrics.py`
+
+- Новые метрики:
+  - `setka_notifications_check_total{check_type,result}` — Counter (`check_type`: suggested/messages/comments; `result`: ok/empty/error/denied).
+  - `setka_notifications_check_duration_seconds{check_type}` — Histogram.
+  - `setka_notifications_items_found_total{check_type}` — Counter.
+  - `setka_notifications_zero_streak{check_type}` — Gauge (для Grafana alerting и для отладки).
+
+#### `modules/notifications/health.py` (новый)
+
+- `detect_zero_streaks(storage)` — для каждого типа считает кол-во последних подряд auto-runs с `count==0`. Заодно обновляет Prometheus Gauge.
+- `maybe_alert_broken_tokens(...)` — если streak ≥ `ZERO_STREAK_THRESHOLD=3` — отправляет Telegram-alert (HTML), с cool-down `ALERT_COOLDOWN_SECONDS=6h` через Redis-флаг чтобы не спамить.
+
+Подключение: в конце `check_recent_comments` (последняя в hourly-цепи) вызывается `maybe_alert_broken_tokens`.
+
+### Тесты
+
+- **`tests/test_notifications/test_storage_history.py`** (4 теста): LPUSH+LTRIM+EXPIRE pipeline; JSON-decode для get_recent_runs; агрегация get_stats по трём типам; payload с extra-полем.
+- **`tests/test_notifications/test_health_watchdog.py`** (6 тестов): streak=0 если последний прогон непустой; streak считает leading zeros; alert не шлётся ниже threshold; cooldown блокирует; alert уходит при streak ≥ threshold (Bot.send_message → cooldown setex); skipped если нет telegram-конфига.
+- **207/207 pytest green** (197 после этапа 2 + 4 history + 6 health).
+
+### Применение
+
+- Деплой через `git pull` + restart всех трёх сервисов. Виджет начнёт заполняться по мере прохождения часовых тиков (через 1ч будет первая точка для каждой серии). UI откроется и без данных корректно (если история пустая — chart пустой, без ошибок).
+- Prometheus метрики появятся на `/metrics` сразу; Grafana может строить графики; alert-rule в Grafana можно настроить на `setka_notifications_zero_streak >= 3`.
+
+### Прод-наблюдения по ходу сессии
+
+- В 14:37 (после деплоя hot-fix-2) на проде `wall.repost` через community-token падает с error 27 → fallback на publish-token успешно репостит 10 из 13 групп. Оставшиеся 3 группы получают `[0] Captcha needed` — VK rate-limited VALSTAN user-token после 10 repost'ов за 7 сек. **Новый техдолг:** глобальный rate-limiter на publish-token (а не per-group) или ротация на второй publish-токен (VITA). Записано в `PENDING_FOLLOWUPS`.
+
+---
+
 ## 2026-05-21 — Этап 2: BaseVKChecker + удаление UnifiedNotificationsChecker
 
 **Тема сессии:** архитектурная чистка модуля notifications по плану из PENDING_FOLLOWUPS этап 2. Цель — устранить дублирование fallback-логики между тремя checker'ами и убрать UnifiedNotificationsChecker (тот самый, где на строке 43 был скрытый баг — `suggested_checker` без `community_tokens`).
