@@ -5,6 +5,10 @@
 {% block nav_section_system %}active{% endblock %}
 
 {% block content %}
+{# Уведомления центрируются в окне максимум ~1100px шириной — на больших
+   экранах карточки не растягиваются неприглядно широко, на средних/малых
+   занимают всю доступную ширину как обычно. #}
+<div class="notifications-page mx-auto" style="max-width: 1100px;">
 <div class="row">
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center mb-4">
@@ -102,42 +106,6 @@
                 <i class="bi bi-info-circle"></i>
                 Автоматическая проверка каждый час с 8:00 до 22:00
             </small>
-        </div>
-    </div>
-</div>
-
-<!-- Activity Widget (etap 3) -->
-<div class="row mb-4">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h6 class="mb-0">
-                    <i class="bi bi-graph-up"></i> Активность за последние 24 часа
-                </h6>
-                <small class="text-muted" id="activity-summary">—</small>
-            </div>
-            <div class="card-body">
-                <div class="row text-center" id="activity-stats">
-                    <div class="col-md-4">
-                        <div class="text-muted small">Предложки</div>
-                        <div class="fs-5"><span id="stats-sp-runs">—</span> <small>прогонов</small></div>
-                        <div class="small text-muted">с результатом: <span id="stats-sp-hits">—</span></div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="text-muted small">Сообщения</div>
-                        <div class="fs-5"><span id="stats-msg-runs">—</span> <small>прогонов</small></div>
-                        <div class="small text-muted">с результатом: <span id="stats-msg-hits">—</span></div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="text-muted small">Комментарии</div>
-                        <div class="fs-5"><span id="stats-cmt-runs">—</span> <small>прогонов</small></div>
-                        <div class="small text-muted">с результатом: <span id="stats-cmt-hits">—</span></div>
-                    </div>
-                </div>
-                <hr>
-                <canvas id="activity-chart" height="80"></canvas>
-                <small class="text-muted">График: количество найденных уведомлений в каждой проверке (свежие справа).</small>
-            </div>
         </div>
     </div>
 </div>
@@ -265,6 +233,43 @@
     <strong>Ошибка:</strong> <span id="error-text"></span>
 </div>
 
+<!-- Activity Widget (etap 3) — внизу страницы, под живыми уведомлениями -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0">
+                    <i class="bi bi-graph-up"></i> Активность за последние 24 часа
+                </h6>
+                <small class="text-muted" id="activity-summary">—</small>
+            </div>
+            <div class="card-body">
+                <div class="row text-center" id="activity-stats">
+                    <div class="col-md-4">
+                        <div class="text-muted small">Предложки</div>
+                        <div class="fs-5"><span id="stats-sp-runs">—</span> <small>прогонов</small></div>
+                        <div class="small text-muted">с результатом: <span id="stats-sp-hits">—</span></div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="text-muted small">Сообщения</div>
+                        <div class="fs-5"><span id="stats-msg-runs">—</span> <small>прогонов</small></div>
+                        <div class="small text-muted">с результатом: <span id="stats-msg-hits">—</span></div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="text-muted small">Комментарии</div>
+                        <div class="fs-5"><span id="stats-cmt-runs">—</span> <small>прогонов</small></div>
+                        <div class="small text-muted">с результатом: <span id="stats-cmt-hits">—</span></div>
+                    </div>
+                </div>
+                <hr>
+                <canvas id="activity-chart" height="80"></canvas>
+                <small class="text-muted">График: количество найденных уведомлений в каждой проверке (свежие справа).</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+</div> {# /notifications-page wrapper — закрывает max-width контейнер #}
 {% endblock %}
 
 {% block extra_scripts %}
