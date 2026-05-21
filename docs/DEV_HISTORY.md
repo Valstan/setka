@@ -33,6 +33,78 @@
 
 ---
 
+## 2026-05-21 — Этап 2: BaseVKChecker + удаление UnifiedNotificationsChecker
+
+**Тема сессии:** архитектурная чистка модуля notifications по плану из PENDING_FOLLOWUPS этап 2. Цель — устранить дублирование fallback-логики между тремя checker'ами и убрать UnifiedNotificationsChecker (тот самый, где на строке 43 был скрытый баг — `suggested_checker` без `community_tokens`).
+
+### Изменения
+
+#### Новый `modules/notifications/base_checker.py`
+
+- **`BaseVKChecker`** с общим `__init__` (создание session/vk/community_tokens), `_api_for(group_id)` с **lazy-cache** `_community_apis: {community_id → vk_api_handle}` (раньше каждый `_api_for` создавал новый `VkApi(token=...).get_api()` — на ~1000 калов за час лишний overhead) и `_call_with_fallback(group_id, op_name, fn, fallback_codes=COMMUNITY_FALLBACK_CODES)`.
+- Константа модуля **`COMMUNITY_FALLBACK_CODES = frozenset({15, 27})`** — single source of truth для всех трёх checker'ов.
+
+#### `vk_suggested_checker.py`, `vk_comments_checker.py`, `vk_messages_checker.py`
+
+- Наследуются от `BaseVKChecker`. Удалены дублированные `__init__` / `_api_for` / `_COMMUNITY_FALLBACK_CODES` / локальные `_call_with_fallback`.
+- `VKCommentsChecker.check_post_comments_since` использует общий `_call_with_fallback` из базового класса (раньше был локальный).
+- `VKSuggestedChecker.check_suggested_posts` сократился втрое: вся логика fallback теперь в базе.
+- `VKMessagesChecker` особо отмечен: для него не используется auto-fallback (специфика messages-сценария: code 15 у user-token означает «scope messages не выдан», там нет «retry», там denied_groups).
+
+#### Удалён `modules/notifications/unified_checker.py` (226 строк)
+
+Вместо `UnifiedNotificationsChecker.check_all()` обёртки `web/api/notifications.py:check_all_now` теперь напрямую инстанциирует `VKSuggestedChecker` и `VKMessagesChecker` и вызывает их методы. Это:
+- Убирает скрытый баг (на строке 43 unified_checker'а `VKSuggestedChecker(vk_token)` создавался **без** `community_tokens` — этап 0 hot-fix этот путь не покрывал, потому что fallback стоял в самом checker'е, а Unified просто не пробрасывал tokens).
+- Снижает индирекцию: 2 уровня вызова → 1.
+- Делает Telegram-уведомление переиспользуемым: вынесено в `modules/notifications/telegram_alert.py::send_telegram_notifications_alert(...)`.
+
+#### Удалены: `tasks/notification_tasks.py` (110 строк), `scripts/test_notifications_system.py` (140 строк)
+
+`tasks/notification_tasks.py:check_vk_notifications` нигде не зарегистрирован в `beat_schedule` (`tasks/celery_app.py`) — мёртвый код, дубликат функциональности `check_suggested_posts` + `check_unread_messages`. Использовал `UnifiedChecker`. Удалён.
+
+`scripts/test_notifications_system.py` — ad-hoc manual test script на UnifiedChecker, тоже устарел.
+
+#### `tasks/celery_app.py`
+
+- В `check_unread_messages` и `check_recent_comments` удалена **inside-task проверка часа** (`if not 8 <= current_hour < 22: return {'skipped': True...}`). Окно уже гарантировано `crontab(minute=N, hour='8-22')` в beat-расписании. Раньше двойная защита просто крала ресурсы worker'а на skipped-таски.
+
+### Тесты
+
+- **Новый `tests/test_notifications/test_base_checker.py`** — 7 тестов:
+  - `_api_for` без community-token → user-api.
+  - `_api_for` c community-token → корректный handle + **кеш-хит** на втором вызове (важно для прод-нагрузки).
+  - `_call_with_fallback` happy path: community-token успешен.
+  - retry на code 27 → второй вызов через user-api, метка `community-fallback-user`.
+  - retry **не делается** на code 100 (вне `COMMUNITY_FALLBACK_CODES`).
+  - retry **не делается** если community-token не настроен (нечего фолбэкить с).
+  - константа `COMMUNITY_FALLBACK_CODES` содержит 15 и 27.
+- Обновлены патч-таргеты в существующих тестах: `modules.notifications.{vk_*_checker}.vk_api.VkApi` → `modules.notifications.base_checker.vk_api.VkApi` (теперь `vk_api` импортируется только в base).
+- **197/197 pytest green** (190 после hot-fix-2 + 7 новых).
+
+### Применение
+
+- Деплой через push → SSH `git pull` + restart.
+- На проде после deploy: автотаски `check_*_hourly` пойдут через новые наследуемые checker'ы, fallback при error 27 уже работает (после hot-fix-2 propagation того же дня).
+
+---
+
+## 2026-05-21 — Hot-fix 2: VK error_code propagation для fallback wall.repost
+
+**Тема сессии:** доделать этап 0 — на проде wall.repost всё ещё падал с error 27 несмотря на новый fallback. Причина: `VKClient.api_call` возвращает `{'error': {'error_msg': str(ApiError)}}` БЕЗ `error_code` ключа, а мой `_invoke` смотрел только `err.get('error_code')` (получал 0), не парсил из `error_msg`. Fallback-set `{15, 27}` не матчил, retry не вызывался.
+
+### Изменения
+
+- **`modules/vk_monitor/vk_client.py:api_call`** — теперь возвращает `{'error': {'error_code': int(e.code), 'error_msg': str(e)}}`. Чистое решение: всему коду, который консьюмирует VKClient ответы, теперь доступен `error_code`.
+- **`modules/publisher/vk_publisher_extended.py:_invoke`** — добавлен парсинг `^[(\d+)]` regex из `error_msg` как fallback на случай legacy-формата (без `error_code`). Belt + suspenders, чтобы регрессии не сломали retry.
+- **`tests/test_notifications/test_publisher_fallback.py::test_fallback_on_code_27_when_only_in_error_msg`** — регресс-тест на legacy-формат: error без `error_code`, только `error_msg`. Fallback должен сработать.
+
+### Подтверждение на проде
+
+- Логи 14:07 (до деплоя hot-fix-2): `❌ Failed to repost to group -158787639: VK API error: [27]` × 7 групп.
+- Логи после деплоя 14:28 (этап 0 + 1 + hot-fix-2): следующий repost-тик в 14:37 — будет первым с активным fallback. Ожидаем 0 ошибок 27 во всех 7 группах.
+
+---
+
 ## 2026-05-21 — Полный сбор комментариев: пагинация + thread.items + расширенные метаданные
 
 **Тема сессии:** этап 1 рефактора уведомлений по плану из PENDING_FOLLOWUPS. Исправлены три проблемы сбора комментариев под постами региональных сообществ.

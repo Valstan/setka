@@ -13,74 +13,36 @@ VK API:
 2. user-токен (fallback) — раньше единственный путь.
 """
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime
-import vk_api
 from vk_api.exceptions import ApiError
+
+from modules.notifications.base_checker import BaseVKChecker
 
 logger = logging.getLogger(__name__)
 
 
-class VKSuggestedChecker:
-    """Проверка предложенных постов в VK группах."""
+class VKSuggestedChecker(BaseVKChecker):
+    """Проверка предложенных постов в VK группах.
 
-    def __init__(self, vk_token: str, community_tokens: Optional[Dict[int, str]] = None):
-        try:
-            self.session = vk_api.VkApi(token=vk_token)
-            self.vk = self.session.get_api()
-            self.community_tokens = dict(community_tokens or {})
-            logger.info(
-                "VK Suggested Checker initialized (community tokens: %d)",
-                len(self.community_tokens),
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize VK Suggested Checker: {e}")
-            raise
+    `wall.get(filter='suggests')` требует scope `manage`. Community-токены
+    обычно его не имеют → BaseVKChecker автоматически делает retry через
+    user-token (см. `COMMUNITY_FALLBACK_CODES`).
+    """
 
-    # VK error codes where a community-token typically fails on wall.get(filter=suggests)
-    # because such token doesn't carry "manage" scope. Fall back to the user-token.
-    _COMMUNITY_FALLBACK_CODES = {15, 27}
-
-    def _api_for(self, group_id: int):
-        """Вернуть (vk_api_handle, via_community) для группы."""
-        cid = abs(int(group_id))
-        tok = self.community_tokens.get(cid)
-        if tok:
-            return vk_api.VkApi(token=tok).get_api(), True
-        return self.vk, False
-
-    def _wall_get_suggests(self, api, group_id: int):
-        """One VK API call; isolated for easier mocking and fallback logic."""
-        return api.wall.get(owner_id=group_id, filter='suggests', count=100)
+    CHECKER_NAME = "VK Suggested Checker"
 
     def check_suggested_posts(self, group_id: int) -> Dict[str, Any]:
-        """Проверить предложенные посты в группе.
-
-        Если первый вызов идёт через community-token и VK возвращает code 15/27
-        (нет прав на `wall.get(filter=suggests)` — community-токены обычно не
-        имеют scope `manage`), повторяем через user-token.
-        """
+        """Проверить предложенные посты в группе."""
         positive_id = abs(group_id)
-        api, via_community = self._api_for(group_id)
+
+        def call(api):
+            return api.wall.get(owner_id=group_id, filter='suggests', count=100)
+
         try:
-            result = self._wall_get_suggests(api, group_id)
-            via = "community-token" if via_community else "user-token"
+            result, via = self._call_with_fallback(group_id, "wall.get(suggests)", call)
         except ApiError as e:
-            if via_community and e.code in self._COMMUNITY_FALLBACK_CODES:
-                logger.info(
-                    "Group %s: community-token failed on suggests with code %s, retrying via user-token",
-                    group_id, e.code,
-                )
-                try:
-                    result = self._wall_get_suggests(self.vk, group_id)
-                    via = "community-fallback-user"
-                except ApiError as e2:
-                    return self._format_error(group_id, e2)
-                except Exception as e2:
-                    logger.error(f"Error retrying suggests for group {group_id}: {e2}")
-                    return self._empty_result(group_id, str(e2))
-            else:
-                return self._format_error(group_id, e)
+            return self._format_error(group_id, e)
         except Exception as e:
             logger.error(f"Error checking group {group_id}: {e}")
             return self._empty_result(group_id, str(e))

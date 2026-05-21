@@ -394,35 +394,12 @@ def check_suggested_posts():
 
 @app.task(name='tasks.celery_app.check_unread_messages')
 def check_unread_messages():
+    """Проверка непрочитанных сообщений в главных группах регионов.
+
+    Окно 8:00-22:00 MSK гарантируется beat-расписанием
+    `crontab(minute=16, hour='8-22')` в `beat_schedule`. Внутри таски доп.
+    проверка часа не нужна — раньше она лишь дублировала фильтр.
     """
-    Проверка непрочитанных сообщений (VK community messages) в главных группах регионов.
-
-    Выполняется каждый час с 8:00 до 22:00 (MSK).
-    Результаты сохраняются в Redis под ключом setka:notifications:unread_messages.
-    """
-    from datetime import datetime
-    import pytz
-
-    moscow_tz = pytz.timezone('Europe/Moscow')
-    now_moscow = datetime.now(moscow_tz)
-    current_hour = now_moscow.hour
-
-    WORK_HOURS_START = 8
-    WORK_HOURS_END = 22
-
-    if not (WORK_HOURS_START <= current_hour < WORK_HOURS_END):
-        logger.info(
-            f"😴 Outside work hours (current: {current_hour}:00 MSK, "
-            f"work: {WORK_HOURS_START}:00-{WORK_HOURS_END}:00)"
-        )
-        logger.info("⏸️  Skipping VK unread messages check (server resting)")
-        return {
-            'skipped': True,
-            'reason': f'Outside work hours ({current_hour}:00 MSK)',
-            'work_hours': f'{WORK_HOURS_START}:00-{WORK_HOURS_END}:00 MSK',
-            'next_check': f'Next check at {WORK_HOURS_START}:00 MSK'
-        }
-
     logger.info("=" * 80)
     logger.info("Checking unread messages in region groups...")
     logger.info("=" * 80)
@@ -506,34 +483,13 @@ def check_unread_messages():
 
 @app.task(name='tasks.celery_app.check_recent_comments')
 def check_recent_comments():
-    """
-    Проверка комментариев за последние 24 часа ТОЛЬКО в главных региональных сообществах (ИНФО).
+    """Проверка комментариев за последние 24 часа в главных ИНФО-группах регионов.
 
-    Источник групп: таблица regions (поле vk_group_id, названия с " - ИНФО").
-    Результаты сохраняются в Redis под ключом setka:notifications:recent_comments.
+    Окно 8:00-22:00 MSK гарантируется beat-расписанием
+    `crontab(minute=17, hour='8-22')` в `beat_schedule`. Доп. inside-task
+    проверка часа удалена (этап 2 рефактора).
     """
     from datetime import datetime, timedelta
-    import pytz
-
-    moscow_tz = pytz.timezone('Europe/Moscow')
-    now_moscow = datetime.now(moscow_tz)
-    current_hour = now_moscow.hour
-
-    WORK_HOURS_START = 8
-    WORK_HOURS_END = 22
-
-    if not (WORK_HOURS_START <= current_hour < WORK_HOURS_END):
-        logger.info(
-            f"😴 Outside work hours (current: {current_hour}:00 MSK, "
-            f"work: {WORK_HOURS_START}:00-{WORK_HOURS_END}:00)"
-        )
-        logger.info("⏸️  Skipping VK recent comments check (server resting)")
-        return {
-            'skipped': True,
-            'reason': f'Outside work hours ({current_hour}:00 MSK)',
-            'work_hours': f'{WORK_HOURS_START}:00-{WORK_HOURS_END}:00 MSK',
-            'next_check': f'Next check at {WORK_HOURS_START}:00 MSK'
-        }
 
     logger.info("=" * 80)
     logger.info("Checking recent comments (last 24h) under posts of all communities...")

@@ -30,7 +30,7 @@ def _make_api_error(code: int) -> ApiError:
 
 def _build_checker_with_community_token():
     """Patch vk_api.VkApi globally so __init__ doesn't hit the network."""
-    with patch("modules.notifications.vk_suggested_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         instance = MagicMock()
         instance.get_api.return_value = MagicMock(name="user-api")
         m.return_value = instance
@@ -48,7 +48,7 @@ def test_fallback_on_code_27_returns_user_token_result():
     user_api = checker.vk  # already a MagicMock
     user_api.wall.get.return_value = {"count": 3, "items": []}
 
-    with patch("modules.notifications.vk_suggested_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         community_instance = MagicMock()
         community_instance.get_api.return_value = community_api
         m.return_value = community_instance
@@ -67,7 +67,7 @@ def test_fallback_on_code_15():
     community_api.wall.get.side_effect = _make_api_error(15)
     checker.vk.wall.get.return_value = {"count": 1, "items": []}
 
-    with patch("modules.notifications.vk_suggested_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         community_instance = MagicMock()
         community_instance.get_api.return_value = community_api
         m.return_value = community_instance
@@ -79,7 +79,7 @@ def test_fallback_on_code_15():
 
 def test_no_fallback_when_no_community_token():
     """If a group has no community-token, code 27 is fatal (no retry path)."""
-    with patch("modules.notifications.vk_suggested_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         instance = MagicMock()
         instance.get_api.return_value = MagicMock(name="user-api")
         m.return_value = instance
@@ -99,7 +99,7 @@ def test_unrelated_error_not_retried():
     community_api = MagicMock()
     community_api.wall.get.side_effect = _make_api_error(5)
 
-    with patch("modules.notifications.vk_suggested_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         community_instance = MagicMock()
         community_instance.get_api.return_value = community_api
         m.return_value = community_instance
@@ -116,7 +116,7 @@ def test_community_token_success_no_fallback_needed():
     community_api = MagicMock()
     community_api.wall.get.return_value = {"count": 5, "items": []}
 
-    with patch("modules.notifications.vk_suggested_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         community_instance = MagicMock()
         community_instance.get_api.return_value = community_api
         m.return_value = community_instance

@@ -14,46 +14,29 @@ VK API:
      Вызывается С `group_id`-параметром.
 """
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime
-import vk_api
 from vk_api.exceptions import ApiError
+
+from modules.notifications.base_checker import BaseVKChecker
 
 logger = logging.getLogger(__name__)
 
 
-class VKMessagesChecker:
+class VKMessagesChecker(BaseVKChecker):
     """Проверка непрочитанных сообщений в VK группах.
 
-    `vk_token` — user-токен по умолчанию (fallback). Через
-    `community_tokens={community_id: token}` можно передать community-токены
-    для конкретных групп; для таких групп вызовы пойдут под их токеном.
+    Особенность по сравнению с suggested/comments: VK messages API ведёт себя
+    по-разному в зависимости от типа токена — community-токену не нужен
+    параметр `group_id` (он подразумевается), user-токену — нужен явно.
+    Поэтому отдельно вызывается `_api_for` (наследовано) с двумя разными
+    подписями API-вызова в `check_unread_messages`. Auto-fallback из
+    `_call_with_fallback` тут не используется (специфика messages-сценария:
+    при code 15 для user-token нет смысла повторять — это значит «scope
+    messages не выдан»; этот случай отдельно фиксируется в `denied_groups`).
     """
 
-    def __init__(self, vk_token: str, community_tokens: Optional[Dict[int, str]] = None):
-        try:
-            self.session = vk_api.VkApi(token=vk_token)
-            self.vk = self.session.get_api()
-            self.community_tokens = dict(community_tokens or {})
-            logger.info(
-                "VK Messages Checker initialized (community tokens: %d)",
-                len(self.community_tokens),
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize VK Messages Checker: {e}")
-            raise
-
-    def _api_for(self, group_id: int):
-        """Вернуть (vk_api_handle, is_community) для конкретной группы.
-
-        Если есть community-токен для abs(group_id) — используем его (без
-        group_id-параметра в API-вызове). Иначе — общий user-токен.
-        """
-        cid = abs(int(group_id))
-        tok = self.community_tokens.get(cid)
-        if tok:
-            return vk_api.VkApi(token=tok).get_api(), True
-        return self.vk, False
+    CHECKER_NAME = "VK Messages Checker"
 
     def check_unread_messages(self, group_id: int) -> Dict[str, Any]:
         """

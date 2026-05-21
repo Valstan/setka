@@ -20,7 +20,7 @@ LATER = CUTOFF + 1000
 
 
 def _make_checker(no_community=True):
-    with patch("modules.notifications.vk_comments_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         instance = MagicMock()
         instance.get_api.return_value = MagicMock(name="user-api")
         m.return_value = instance

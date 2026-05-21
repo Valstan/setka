@@ -29,7 +29,7 @@ def _api_error(code: int) -> ApiError:
 
 
 def _build_checker_with_community_token():
-    with patch("modules.notifications.vk_comments_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         instance = MagicMock()
         instance.get_api.return_value = MagicMock(name="user-api")
         m.return_value = instance
@@ -50,7 +50,7 @@ def test_comments_fallback_on_code_27():
         ]
     }
 
-    with patch("modules.notifications.vk_comments_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         community_instance = MagicMock()
         community_instance.get_api.return_value = community_api
         m.return_value = community_instance
@@ -73,7 +73,7 @@ def test_wall_get_uses_community_token_not_self_vk():
         ]
     }
 
-    with patch("modules.notifications.vk_comments_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         community_instance = MagicMock()
         community_instance.get_api.return_value = community_api
         m.return_value = community_instance
@@ -98,7 +98,7 @@ def test_wall_get_fallback_on_27():
         "items": [{"id": 200, "date": CUTOFF + 50, "comments": {"count": 1}}]
     }
 
-    with patch("modules.notifications.vk_comments_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         community_instance = MagicMock()
         community_instance.get_api.return_value = community_api
         m.return_value = community_instance
@@ -116,7 +116,7 @@ def test_unrelated_error_not_retried_comments():
     community_api = MagicMock()
     community_api.wall.getComments.side_effect = _api_error(100)
 
-    with patch("modules.notifications.vk_comments_checker.vk_api.VkApi") as m:
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
         community_instance = MagicMock()
         community_instance.get_api.return_value = community_api
         m.return_value = community_instance

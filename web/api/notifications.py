@@ -131,58 +131,67 @@ async def clear_notifications():
 
 @router.post("/check-now")
 async def check_all_now():
-    """
-    Запустить проверку ВСЕХ уведомлений прямо сейчас
-    (suggested posts + unread messages + recent comments)
-    
+    """Запустить проверку ВСЕХ уведомлений прямо сейчас.
+
     Не зависит от расписания, можно запускать в любое время.
+
+    Flow:
+      1. SELECT регионы + community access tokens.
+      2. VKSuggestedChecker.check_all_region_groups(...) синхронно.
+      3. VKMessagesChecker.check_all_region_groups(...) синхронно.
+      4. Сохраняем результаты в Redis (с keep_if_empty=False — ручной запуск
+         даёт «свежее правдивее»).
+      5. Comments — отдельная Celery таска `.delay()` (~25 сек, чтобы не
+         упереться в nginx timeout); UI отрисует comments из Redis по мере
+         появления.
+      6. Если total > 0 — Telegram-алёрт.
     """
     from database.connection import AsyncSessionLocal
     from database.models import Region, VKToken
-    from modules.notifications.unified_checker import UnifiedNotificationsChecker
+    from modules.notifications.vk_suggested_checker import VKSuggestedChecker
+    from modules.notifications.vk_messages_checker import VKMessagesChecker
     from modules.notifications.storage import NotificationsStorage
+    from modules.notifications.telegram_alert import send_telegram_notifications_alert
+    from modules.service_activity_notifier import (
+        notify_vk_notifications_check_start,
+        notify_vk_notifications_check_complete,
+    )
     from config.runtime import VK_TOKENS, TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID, SERVER
     from sqlalchemy import select
     from datetime import datetime
-    
+
     try:
         async with AsyncSessionLocal() as session:
-            # Получаем все регионы с главными группами (независимо от статуса активности)
             result = await session.execute(
-                select(Region).where(
-                    Region.vk_group_id.isnot(None)
-                )
+                select(Region).where(Region.vk_group_id.isnot(None))
             )
             regions = list(result.scalars())
-            
+
             if not regions:
                 return {
                     'success': False,
                     'message': 'No regions with VK groups found',
-                    'total_count': 0
+                    'total_count': 0,
                 }
-            
-            # Подготавливаем данные
+
             region_groups = [
                 {
                     'region_id': r.id,
                     'region_name': r.name,
                     'region_code': r.code,
-                    'vk_group_id': r.vk_group_id
+                    'vk_group_id': r.vk_group_id,
                 }
                 for r in regions
             ]
-            
-            # Проверяем через unified checker
+
             vk_token = VK_TOKENS.get("VALSTAN")
             if not vk_token:
                 return {
                     'success': False,
                     'message': 'VK token not found',
-                    'total_count': 0
+                    'total_count': 0,
                 }
-            
-            # Community access tokens для проверки messages в каждой группе.
+
             community_q = await session.execute(
                 select(VKToken).where(
                     VKToken.community_id.isnot(None),
@@ -191,10 +200,29 @@ async def check_all_now():
             )
             community_tokens = {t.community_id: t.token for t in community_q.scalars()}
 
-            checker = UnifiedNotificationsChecker(vk_token, community_tokens=community_tokens)
-            result_data = await checker.check_all(region_groups)
-            
-            # Комментарии: запускаем в фоне через Celery (иначе запрос может превысить nginx timeout)
+            # — Запуск двух проверок последовательно (одну после другой) —
+            notify_vk_notifications_check_start(len(region_groups))
+            start_time = datetime.now()
+
+            suggested_checker = VKSuggestedChecker(vk_token, community_tokens=community_tokens)
+            suggested = await suggested_checker.check_all_region_groups(region_groups)
+
+            messages_checker = VKMessagesChecker(vk_token, community_tokens=community_tokens)
+            messages_result = await messages_checker.check_all_region_groups(region_groups)
+            messages = messages_result['notifications']
+            messages_denied = messages_result['denied_groups']
+
+            processing_time = (datetime.now() - start_time).total_seconds()
+            notify_vk_notifications_check_complete(len(suggested), len(messages), processing_time)
+
+            # Сохраняем в Redis. Ручной запуск — без keep_if_empty: пользователь
+            # явно сказал «обнови сейчас» и ожидает реального текущего состояния.
+            storage = NotificationsStorage()
+            storage.save_notifications(suggested, 'suggested_posts')
+            storage.save_notifications(messages, 'unread_messages')
+            storage.save_notifications(messages_denied, 'unread_messages_denied')
+
+            # Comments в фоне через Celery (избегаем nginx timeout)
             comments_queued = False
             try:
                 from tasks.celery_app import check_recent_comments as celery_check_recent_comments
@@ -203,49 +231,50 @@ async def check_all_now():
             except Exception as e:
                 logger.warning(f"Failed to enqueue recent comments check: {e}")
 
-            # В ответ отдаём текущее состояние комментариев из Redis (если уже есть),
-            # а проверка обновит их через несколько секунд/минут.
-            storage = NotificationsStorage()
             current_comments = storage.get_comments_notifications()
-            result_data['recent_comments'] = current_comments
-            result_data['comments_count'] = len(current_comments)
-            result_data['total_count'] = result_data['total_count'] + result_data['comments_count']
-            
-            # Если есть уведомления, отправить в Telegram
-            if result_data['total_count'] > 0:
+            total_count = len(suggested) + len(messages) + len(current_comments)
+
+            # Telegram алёрт, если есть что показать
+            if total_count > 0:
                 telegram_token = TELEGRAM_TOKENS.get("VALSTANBOT")
                 chat_id = TELEGRAM_ALERT_CHAT_ID
-                
                 if telegram_token and chat_id:
                     domain = SERVER.get('domain') or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
                     dashboard_url = f"https://{domain}/notifications"
-                    await checker.send_telegram_notification(
+                    await send_telegram_notifications_alert(
                         bot_token=telegram_token,
                         chat_id=chat_id,
-                        notifications_data=result_data,
-                        dashboard_url=dashboard_url
+                        notifications_data={
+                            'suggested_count': len(suggested),
+                            'messages_count': len(messages),
+                            'total_count': total_count,
+                            'suggested_posts': suggested,
+                            'unread_messages': messages,
+                        },
+                        dashboard_url=dashboard_url,
                     )
-            
+
             return {
                 'success': True,
                 'timestamp': datetime.now().isoformat(),
-                'total_count': result_data['total_count'],
-                'suggested_count': result_data['suggested_count'],
-                'messages_count': result_data['messages_count'],
-                'comments_count': result_data.get('comments_count', 0),
+                'total_count': total_count,
+                'suggested_count': len(suggested),
+                'messages_count': len(messages),
+                'messages_denied_count': len(messages_denied),
+                'comments_count': len(current_comments),
                 'comments_queued': comments_queued,
                 'message': (
-                    f"Found {result_data['suggested_count']} suggested posts, "
-                    f"{result_data['messages_count']} unread messages, "
-                    f"{result_data.get('comments_count', 0)} recent comments"
-                )
+                    f"Found {len(suggested)} suggested posts, "
+                    f"{len(messages)} unread messages, "
+                    f"{len(current_comments)} recent comments"
+                ),
             }
-    
+
     except Exception as e:
         logger.error(f"Error in check_all_now: {e}", exc_info=True)
         return {
             'success': False,
             'message': str(e),
-            'total_count': 0
+            'total_count': 0,
         }
 

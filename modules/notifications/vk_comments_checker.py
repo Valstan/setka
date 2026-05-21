@@ -15,61 +15,20 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-import vk_api
 from vk_api.exceptions import ApiError
+
+from modules.notifications.base_checker import BaseVKChecker
 
 logger = logging.getLogger(__name__)
 
 
-class VKCommentsChecker:
-    """Проверка комментариев под постами VK.
+class VKCommentsChecker(BaseVKChecker):
+    """Проверка комментариев под постами VK с пагинацией и thread.items.
 
-    Поддерживает community access tokens: если у группы (owner_id) есть свой
-    токен в `vk_tokens.community_id`, читать комментарии будем под ним.
-    Иначе fallback на пользовательский токен. Снимает нагрузку с VALSTAN/VITA.
+    Token routing + community-token fallback handled by BaseVKChecker.
     """
 
-    def __init__(self, vk_token: str, community_tokens: Optional[Dict[int, str]] = None):
-        try:
-            self.session = vk_api.VkApi(token=vk_token)
-            self.vk = self.session.get_api()
-            self.community_tokens = dict(community_tokens or {})
-            logger.info(
-                "VK Comments Checker initialized (community tokens: %d)",
-                len(self.community_tokens),
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize VK Comments Checker: {e}")
-            raise
-
-    # VK API error codes where community-token typically fails and we should
-    # retry via user-token (no manage/wall scope, group auth restrictions).
-    _COMMUNITY_FALLBACK_CODES = {15, 27}
-
-    def _api_for(self, group_id: int):
-        cid = abs(int(group_id))
-        tok = self.community_tokens.get(cid)
-        if tok:
-            return vk_api.VkApi(token=tok).get_api(), True
-        return self.vk, False
-
-    def _call_with_fallback(self, group_id: int, op_name: str, fn):
-        """Run VK API call via community-token if available; on code 15/27 retry via user-token.
-
-        `fn(api)` must perform the actual VK API call given a vk_api handle.
-        Returns (response, via_label) or raises the final exception.
-        """
-        api, via_community = self._api_for(group_id)
-        try:
-            return fn(api), ("community-token" if via_community else "user-token")
-        except ApiError as e:
-            if via_community and e.code in self._COMMUNITY_FALLBACK_CODES:
-                logger.info(
-                    "Group %s: community-token failed on %s with code %s, retrying via user-token",
-                    group_id, op_name, e.code,
-                )
-                return fn(self.vk), "community-fallback-user"
-            raise
+    CHECKER_NAME = "VK Comments Checker"
 
     # Per-post safety cap to bound runtime on viral threads. 50 pages × 100 = 5000
     # comments per single post is enough for any realistic news discussion;
