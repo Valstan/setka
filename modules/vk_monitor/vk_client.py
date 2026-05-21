@@ -349,7 +349,14 @@ class VKClient:
             return response
         except vk_api.exceptions.ApiError as e:
             _log_vk_api_error(f"VK API error ({method})", e)
-            return {'error': {'error_msg': str(e)}}
+            # Pass through error_code so callers can implement smart retries
+            # (e.g. publisher fallback to publish-token on code 15/27).
+            return {
+                'error': {
+                    'error_code': int(getattr(e, 'code', 0) or 0),
+                    'error_msg': str(e),
+                }
+            }
         except Exception as e:
             logger.error(f"Unexpected error in {method}: {e}")
             return {'error': {'error_msg': str(e)}}

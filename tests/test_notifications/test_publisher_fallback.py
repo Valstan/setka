@@ -109,6 +109,31 @@ async def test_unrelated_error_propagates():
 
 
 @pytest.mark.asyncio
+async def test_fallback_on_code_27_when_only_in_error_msg():
+    """Regression: VKClient.api_call old code path returned {'error_msg': str(ApiError)}
+    without explicit error_code. _invoke must parse '[27] ...' from the message
+    so retry-on-fallback still triggers.
+    """
+    publish_client = _client_with_method_only({"response": {"post_id": 777}})
+    community_client = _client_with_method_only({
+        "error": {
+            "error_msg": "[27] Group authorization failed: method is unavailable with group auth."
+            # NOTE: no 'error_code' key — this mimics legacy VKClient behaviour.
+        }
+    })
+
+    publisher = _make_publisher(publish_client)
+    response = await publisher._call_wall_post(
+        params={"object": "wall-1_2"},
+        method="wall.repost",
+        client=community_client,
+    )
+
+    publish_client.method.assert_called_once()
+    assert response == {"post_id": 777}
+
+
+@pytest.mark.asyncio
 async def test_community_token_success_no_fallback():
     """Happy path — community-token works first try, publish-client untouched."""
     publish_client = _client_with_method_only({"response": {"post_id": 1}})

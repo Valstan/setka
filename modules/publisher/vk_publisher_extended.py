@@ -314,10 +314,17 @@ class VKPublisher:
 
         if isinstance(response, dict) and 'error' in response:
             err = response.get('error', {}) or {}
-            raise _VKApiCallError(
-                code=int(err.get('error_code') or 0),
-                message=str(err.get('error_msg') or 'Unknown error'),
-            )
+            message = str(err.get('error_msg') or 'Unknown error')
+            code = int(err.get('error_code') or 0)
+            if code == 0:
+                # VKClient.api_call historically returned {'error': {'error_msg': str(ApiError)}}
+                # without an explicit error_code. The string form starts with "[NN] ..." —
+                # parse it as a fallback so the retry-on-15/27 logic still works.
+                import re
+                m = re.match(r'^\[(\d+)\]', message)
+                if m:
+                    code = int(m.group(1))
+            raise _VKApiCallError(code=code, message=message)
 
         if isinstance(response, dict) and 'response' in response:
             return response['response']
