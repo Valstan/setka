@@ -33,39 +33,84 @@ class NotificationsStorage:
         )
         self.key_prefix = "setka:notifications"
         
-    def save_notifications(self, notifications: List[Dict[str, Any]], notification_type: str = 'suggested_posts') -> bool:
-        """
-        Сохранить список уведомлений (заменяет все старые)
-        
+    def save_notifications(
+        self,
+        notifications: List[Dict[str, Any]],
+        notification_type: str = 'suggested_posts',
+        keep_if_empty: bool = False,
+        keep_window_hours: int = 6,
+    ) -> bool:
+        """Сохранить список уведомлений в Redis.
+
         Args:
-            notifications: Список уведомлений
-            notification_type: Тип уведомлений ('suggested_posts', 'unread_messages', 'recent_comments', ...)
-            
+            notifications: Список уведомлений (может быть пустой).
+            notification_type: Тип ('suggested_posts', 'unread_messages',
+                'recent_comments', ...).
+            keep_if_empty: Если True и новый список пустой — НЕ перезаписываем
+                существующий непустой результат, пока он моложе
+                `keep_window_hours` часов. Защищает от ситуации, когда
+                автопроверка возвращает [] из-за временной ошибки VK API и
+                стирает результат удачной ручной проверки. Через
+                `keep_window_hours` пустое всё-таки записывается, чтобы UI
+                не «застрял» на устаревших данных.
+            keep_window_hours: Период удержания непустого результата при
+                `keep_if_empty=True`. По умолчанию 6 часов.
+
         Returns:
-            True если успешно
+            True — если записали; False — если задержали запись (keep_if_empty)
+            или произошла ошибка.
         """
         try:
             key = f"{self.key_prefix}:{notification_type}"
-            
-            # Сохраняем как JSON с timestamp
+
+            if keep_if_empty and not notifications:
+                existing_raw = self.redis_client.get(key)
+                if existing_raw:
+                    try:
+                        existing = json.loads(existing_raw)
+                    except (ValueError, TypeError):
+                        existing = None
+                    if existing and existing.get('notifications'):
+                        existing_ts = existing.get('timestamp')
+                        if self._within_keep_window(existing_ts, keep_window_hours):
+                            logger.info(
+                                "Keeping previous %d %s notifications "
+                                "(new result empty, prev age within %dh window)",
+                                len(existing['notifications']),
+                                notification_type,
+                                keep_window_hours,
+                            )
+                            return False
+
             data = {
                 'timestamp': datetime.now().isoformat(),
-                'notifications': notifications
+                'notifications': notifications,
             }
-            
-            # Сохраняем с TTL 24 часа
+
             self.redis_client.setex(
                 key,
                 86400,  # 24 часа
-                json.dumps(data, ensure_ascii=False)
+                json.dumps(data, ensure_ascii=False),
             )
-            
+
             logger.info(f"Saved {len(notifications)} {notification_type} notifications to Redis")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to save {notification_type} notifications: {e}")
             return False
+
+    @staticmethod
+    def _within_keep_window(timestamp_iso: Optional[str], hours: int) -> bool:
+        """True if the ISO timestamp is no older than `hours` hours from now."""
+        if not timestamp_iso:
+            return False
+        try:
+            stored = datetime.fromisoformat(timestamp_iso)
+        except (ValueError, TypeError):
+            return False
+        age = datetime.now() - stored
+        return age.total_seconds() < hours * 3600
     
     def get_notifications(self) -> List[Dict[str, Any]]:
         """

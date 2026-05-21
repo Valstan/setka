@@ -260,6 +260,11 @@ class VKPublisher:
                 'error': str(e),
             }
     
+    # VK API codes on which a community-token publishing call should be retried
+    # via the global publish-token. Common reason: community-token doesn't carry
+    # `manage` scope required for wall.post/wall.repost.
+    _COMMUNITY_FALLBACK_CODES = {15, 27}
+
     async def _call_wall_post(
         self,
         params: Dict[str, Any],
@@ -267,22 +272,38 @@ class VKPublisher:
         client=None,
     ) -> Dict:
         """
-        Call VK API wall.post method through the given client.
+        Call VK API wall.post / wall.repost.
 
-        `client` берётся из `_client_for_group(owner_id)`; если не передан —
-        используется общий publish-клиент.
+        Strategy:
+        1. Use `client` if provided (community-token, when available for the group).
+        2. If VK returns code 15 or 27 (no rights / group auth failed) — retry
+           via the global publish-client (`self.vk_client`).
         """
-        target_client = client if client is not None else self.vk_client
+        primary_client = client if client is not None else self.vk_client
+        try:
+            return await self._invoke(primary_client, method, params)
+        except _VKApiCallError as e:
+            if (
+                primary_client is not self.vk_client
+                and e.code in self._COMMUNITY_FALLBACK_CODES
+            ):
+                logger.info(
+                    "wall publish via community-token failed (code %s on %s), "
+                    "retrying via publish-token",
+                    e.code, method,
+                )
+                return await self._invoke(self.vk_client, method, params)
+            raise Exception(f"VK API error: {e.message}") from e
 
-        # Use vk_client to make API call
-        # This will handle token rotation automatically
+    async def _invoke(self, target_client, method: str, params: Dict[str, Any]) -> Dict:
+        """Single VK API call; raises _VKApiCallError on VK error payload."""
         if hasattr(target_client, 'api_call'):
-            import asyncio, inspect
+            import asyncio
+            import inspect
             api_call_method = getattr(target_client, 'api_call')
             if inspect.iscoroutinefunction(api_call_method):
                 response = await api_call_method(method, params)
             else:
-                # Sync method - run in thread
                 response = await asyncio.get_event_loop().run_in_executor(
                     None, api_call_method, method, params
                 )
@@ -290,33 +311,38 @@ class VKPublisher:
             response = target_client.method(method, params)
         else:
             raise NotImplementedError("VK client doesn't support API calls")
-        
-        # Check for errors
-        if 'error' in response:
-            error_msg = response.get('error', {}).get('error_msg', 'Unknown error')
-            raise Exception(f"VK API error: {error_msg}")
-        
-        return response.get('response', response)
-    
+
+        if isinstance(response, dict) and 'error' in response:
+            err = response.get('error', {}) or {}
+            raise _VKApiCallError(
+                code=int(err.get('error_code') or 0),
+                message=str(err.get('error_msg') or 'Unknown error'),
+            )
+
+        if isinstance(response, dict) and 'response' in response:
+            return response['response']
+        return response
+
+
     async def _enforce_rate_limit(self, group_id: int):
         """Enforce minimum interval between posts to same group."""
         last_post_time = self._last_post_time.get(group_id)
-        
+
         if last_post_time:
             elapsed = (datetime.now() - last_post_time).total_seconds()
             if elapsed < self.POST_INTERVAL_SECONDS:
                 wait_time = self.POST_INTERVAL_SECONDS - elapsed
                 logger.info(f"⏳ Rate limiting: waiting {wait_time:.1f}s before next post")
                 await asyncio.sleep(wait_time)
-    
+
     def is_test_mode(self) -> bool:
         """Check if running in test polygon mode."""
         return self.test_polygon_mode
-    
+
     def get_posts_remaining_today(self, group_id: int) -> int:
         """
         Get remaining posts that can be published today.
-        
+
         This is a simplified check - in production would track via DB.
         """
         # Simplified - would need actual tracking in production
@@ -332,3 +358,10 @@ class VKPublisher:
         """
         gid = int(group_id)
         return -abs(gid)
+
+
+class _VKApiCallError(Exception):
+    def __init__(self, code: int, message: str):
+        super().__init__(f"[{code}] {message}")
+        self.code = code
+        self.message = message

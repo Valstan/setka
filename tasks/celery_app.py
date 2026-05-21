@@ -359,12 +359,19 @@ def check_suggested_posts():
                 checker = VKSuggestedChecker(vk_token, community_tokens=community_tokens)
                 notifications = await checker.check_all_region_groups(region_groups)
                 
-                # Сохраняем в Redis
+                # Сохраняем в Redis. keep_if_empty=True защищает от стирания
+                # результата ручной проверки, если автопроверка вернула 0
+                # из-за временной ошибки VK API (например, сломаны
+                # community-tokens).
                 storage = NotificationsStorage()
-                storage.save_notifications(notifications)
-                
+                storage.save_notifications(
+                    notifications,
+                    'suggested_posts',
+                    keep_if_empty=True,
+                )
+
                 logger.info(f"Found {len(notifications)} groups with suggested posts")
-                
+
                 return notifications
         
         notifications = run_coro(check())
@@ -581,8 +588,15 @@ def check_recent_comments():
                     cutoff_ts=cutoff_ts
                 )
 
+                # keep_if_empty=True: ручной запуск из UI мог только что обнаружить
+                # комментарии — не стираем их если автотаска вернула 0 из-за
+                # community-token error 27.
                 storage = NotificationsStorage()
-                storage.save_notifications(notifications, 'recent_comments')
+                storage.save_notifications(
+                    notifications,
+                    'recent_comments',
+                    keep_if_empty=True,
+                )
 
                 logger.info(f"Found {len(notifications)} recent comments (main INFO groups only)")
                 return notifications

@@ -33,6 +33,46 @@
 
 ---
 
+## 2026-05-21 — Hot-fix VK community-tokens: fallback на user-token при error 15/27
+
+**Тема сессии:** аудит модуля уведомлений по жалобе «автопроверка нестабильна, комментарии теряются». Обнаружено: с PR #9 от 19 мая все три checker'а и публикатор используют community access tokens приоритетно. Эти токены созданы без scope `manage`, поэтому VK возвращает code 27 «Group authorization failed» на `wall.get(filter='suggests')`, `wall.repost` и `wall.post`. Падали — тихо, без fallback. Эффект: автотаски `check_suggested_posts` каждый час писали в Redis `notifications: []`, стирая результат успешной ручной проверки; публикация дайджестов в 7+ регионах падала.
+
+### Изменения
+
+#### Fallback при VK API error 15/27
+
+- **`modules/notifications/vk_suggested_checker.py`** — изолирован VK-вызов в `_wall_get_suggests(api, group_id)`. Главный метод `check_suggested_posts`: при `ApiError.code in {15, 27}` через community-token → автоматический повтор через `self.vk` (user-token). Результат теперь содержит поле `via` (`community-token` / `user-token` / `community-fallback-user`) для observability в логах.
+- **`modules/notifications/vk_comments_checker.py`** — добавлен helper `_call_with_fallback(group_id, op_name, fn)` для общей логики «попробуй community → при 15/27 повтори через user». `check_post_comments_since` и `_get_recent_wall_posts_with_comments` теперь оба идут через него. **Заодно исправлен скрытый баг** — `_get_recent_wall_posts_with_comments` использовал `self.vk` напрямую, минуя `_api_for(owner_id)`; то есть для списка постов использовался user-token, а для комментов под ними — community-token (рассинхрон).
+- **`modules/publisher/vk_publisher_extended.py`** — `_call_wall_post` разбит на `_call_wall_post` (со стратегией) + `_invoke` (одиночный вызов). При код 15/27 на community-client (не на `self.vk_client`) — повтор через publish-token. Новый internal exception `_VKApiCallError(code, message)` для надёжной диагностики VK-ответа.
+
+#### Storage: автотаска не стирает ручной результат
+
+- **`modules/notifications/storage.py`** — `save_notifications` получил параметры `keep_if_empty: bool = False` (по умолчанию — старое поведение) и `keep_window_hours: int = 6`. Если новый список пустой, существующий ключ непустой и моложе `keep_window_hours` — НЕ перезаписываем. Это убирает паттерн «ручная нашла 4, через час автотаска вернула 0 из-за временной VK-ошибки и стерла».
+- **`tasks/celery_app.py`** — для `check_suggested_posts` и `check_recent_comments` передан `keep_if_empty=True`. Для `unread_messages` оставлено старое поведение (0 непрочитанных — легитимный результат, и есть отдельный `denied_groups` для индикации проблем с токеном).
+
+### Тесты
+
+- **Новый каталог `tests/test_notifications/`** с четырьмя файлами:
+  - `test_suggested_fallback.py` (5 тестов): fallback на 27, на 15, отсутствие fallback без community-token, неоднозначные ошибки не ретраятся, happy path.
+  - `test_comments_fallback.py` (4 теста): fallback на 27 в `wall.getComments`, **регресс-тест на баг с `self.vk` в `_get_recent_wall_posts_with_comments`**, fallback на `wall.get`, неоднозначные ошибки не ретраятся.
+  - `test_publisher_fallback.py` (5 тестов): repost fallback на 27, post fallback на 15, отсутствие двойного retry если уже publish-client, неоднозначные ошибки propagate, happy path.
+  - `test_storage_keep_if_empty.py` (6 тестов): сохранение непустого предыдущего, замена устаревшего, запись при отсутствии ключа, перезапись непустым, дефолтное поведение, обработка corrupt timestamp.
+- Прогон: 182/182 зелёные (162 старых + 20 новых).
+
+### Применение
+
+- Деплой через `/reliz`-флоу: pytest → DEV_HISTORY/PENDING → commit → push → SSH `git pull` → restart `setka setka-celery-worker setka-celery-beat` → проверка `/api/health/full` + просмотр `celery-worker.log` следующего часового тика (ожидаем что worker.log перестанет показывать «VK API error code 27 for group X» в `check_suggested_posts`).
+
+### Хвосты, оставленные в `PENDING_FOLLOWUPS.md`
+
+- ⏳ Этап 1: полный сбор комментариев (убрать `max_total_comments=300`, добавить пагинацию по `offset`, распаковать `thread_items=1`).
+- ⏳ Этап 2: BaseVKChecker + удалить `UnifiedNotificationsChecker` (в нём баг на строке 43 — `suggested_checker` создаётся без `community_tokens`, спасает только это; после удаления Unified логика идёт прямо).
+- ⏳ Этап 3: storage с историей проверок (Redis-list `setka:notifications:history:{type}`, виджет «активность за 24ч»).
+- ⏳ Этап 4 (UI feedback): inline-ответ из SETKA, mark-as-handled / архив, виджет «Горячие посты», AI-черновик через Groq, **лайк коммента от имени сообщества**, **шаблонные ответы на сообщения с отдельным редактором шаблонов**.
+- ⏳ Этап 5: Prometheus метрика `notifications_check_total{type,result}`, алёрт «3 автопроверки подряд с error 27».
+
+---
+
 ## 2026-05-21 — Inline-редактирование сообществ + AI-инструментарий (CLAUDE.md, slash-команды)
 
 **Тема сессии:** доделать висевший с 12 мая WIP на `/communities` и принести в проект инфраструктуру для AI-сессий по образцу Гоньбы/MatricaRMZ.

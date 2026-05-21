@@ -42,12 +42,34 @@ class VKCommentsChecker:
             logger.error(f"Failed to initialize VK Comments Checker: {e}")
             raise
 
+    # VK API error codes where community-token typically fails and we should
+    # retry via user-token (no manage/wall scope, group auth restrictions).
+    _COMMUNITY_FALLBACK_CODES = {15, 27}
+
     def _api_for(self, group_id: int):
         cid = abs(int(group_id))
         tok = self.community_tokens.get(cid)
         if tok:
             return vk_api.VkApi(token=tok).get_api(), True
         return self.vk, False
+
+    def _call_with_fallback(self, group_id: int, op_name: str, fn):
+        """Run VK API call via community-token if available; on code 15/27 retry via user-token.
+
+        `fn(api)` must perform the actual VK API call given a vk_api handle.
+        Returns (response, via_label) or raises the final exception.
+        """
+        api, via_community = self._api_for(group_id)
+        try:
+            return fn(api), ("community-token" if via_community else "user-token")
+        except ApiError as e:
+            if via_community and e.code in self._COMMUNITY_FALLBACK_CODES:
+                logger.info(
+                    "Group %s: community-token failed on %s with code %s, retrying via user-token",
+                    group_id, op_name, e.code,
+                )
+                return fn(self.vk), "community-fallback-user"
+            raise
 
     def check_post_comments_since(
         self,
@@ -59,13 +81,11 @@ class VKCommentsChecker:
         """
         Получить комментарии под постом начиная с cutoff_ts (unix seconds).
 
-        Returns:
-            Список объектов комментариев VK (отфильтрованных по времени).
+        При неуспехе через community-token (code 15/27) автоматически повторяет
+        через user-token.
         """
-        try:
-            api, _ = self._api_for(owner_id)
-            # Последние комментарии (обычно достаточно 100 для суток)
-            resp = api.wall.getComments(
+        def call(api):
+            return api.wall.getComments(
                 owner_id=owner_id,
                 post_id=post_id,
                 need_likes=0,
@@ -74,20 +94,9 @@ class VKCommentsChecker:
                 sort="desc",
             )
 
-            items = resp.get("items", []) or []
-
-            recent = []
-            for c in items:
-                c_date = c.get("date")
-                if not c_date:
-                    continue
-                if int(c_date) >= cutoff_ts:
-                    recent.append(c)
-
-            return recent
-
+        try:
+            resp, _via = self._call_with_fallback(owner_id, "wall.getComments", call)
         except ApiError as e:
-            # access denied, comments closed, token invalid, etc.
             logger.debug(
                 f"VK API error while fetching comments for wall{owner_id}_{post_id}: {e} (code: {e.code})"
             )
@@ -95,6 +104,16 @@ class VKCommentsChecker:
         except Exception as e:
             logger.warning(f"Error while fetching comments for wall{owner_id}_{post_id}: {e}")
             return []
+
+        items = resp.get("items", []) or []
+        recent = []
+        for c in items:
+            c_date = c.get("date")
+            if not c_date:
+                continue
+            if int(c_date) >= cutoff_ts:
+                recent.append(c)
+        return recent
 
     def _get_recent_wall_posts_with_comments(
         self,
@@ -105,38 +124,36 @@ class VKCommentsChecker:
         """
         Получить посты со стены owner_id (обычно группа) за последние 24 часа, у которых есть комментарии.
 
-        Args:
-            owner_id: VK owner_id стены (для группы обычно отрицательное число)
-            cutoff_ts: unix seconds (граница "за сутки")
-            count: сколько последних постов смотреть
+        Был баг: `self.vk` использовался напрямую вместо `_api_for(owner_id)`,
+        из-за чего community-токены сюда не доходили (см. PR 2026-05-21).
+        Теперь маршрут одинаковый с `check_post_comments_since` + fallback.
         """
+        def call(api):
+            return api.wall.get(owner_id=owner_id, count=count)
+
         try:
-            resp = self.vk.wall.get(owner_id=owner_id, count=count)
-            items = resp.get("items", []) or []
-
-            recent_posts = []
-            for p in items:
-                p_date = p.get("date")
-                if not p_date:
-                    continue
-                if int(p_date) < cutoff_ts:
-                    continue
-
-                comments_meta = p.get("comments") or {}
-                comments_count = comments_meta.get("count", 0) or 0
-                if comments_count <= 0:
-                    continue
-
-                recent_posts.append(p)
-
-            return recent_posts
-
+            resp, _via = self._call_with_fallback(owner_id, "wall.get", call)
         except ApiError as e:
             logger.debug(f"VK API error while fetching wall for owner_id={owner_id}: {e} (code: {e.code})")
             return []
         except Exception as e:
             logger.warning(f"Error while fetching wall for owner_id={owner_id}: {e}")
             return []
+
+        items = resp.get("items", []) or []
+        recent_posts = []
+        for p in items:
+            p_date = p.get("date")
+            if not p_date:
+                continue
+            if int(p_date) < cutoff_ts:
+                continue
+            comments_meta = p.get("comments") or {}
+            comments_count = comments_meta.get("count", 0) or 0
+            if comments_count <= 0:
+                continue
+            recent_posts.append(p)
+        return recent_posts
 
     async def check_recent_comments_for_posts(
         self,

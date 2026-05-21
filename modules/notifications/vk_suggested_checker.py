@@ -37,6 +37,10 @@ class VKSuggestedChecker:
             logger.error(f"Failed to initialize VK Suggested Checker: {e}")
             raise
 
+    # VK error codes where a community-token typically fails on wall.get(filter=suggests)
+    # because such token doesn't carry "manage" scope. Fall back to the user-token.
+    _COMMUNITY_FALLBACK_CODES = {15, 27}
+
     def _api_for(self, group_id: int):
         """Вернуть (vk_api_handle, via_community) для группы."""
         cid = abs(int(group_id))
@@ -45,54 +49,69 @@ class VKSuggestedChecker:
             return vk_api.VkApi(token=tok).get_api(), True
         return self.vk, False
 
+    def _wall_get_suggests(self, api, group_id: int):
+        """One VK API call; isolated for easier mocking and fallback logic."""
+        return api.wall.get(owner_id=group_id, filter='suggests', count=100)
+
     def check_suggested_posts(self, group_id: int) -> Dict[str, Any]:
-        """Проверить предложенные посты в группе."""
+        """Проверить предложенные посты в группе.
+
+        Если первый вызов идёт через community-token и VK возвращает code 15/27
+        (нет прав на `wall.get(filter=suggests)` — community-токены обычно не
+        имеют scope `manage`), повторяем через user-token.
+        """
+        positive_id = abs(group_id)
+        api, via_community = self._api_for(group_id)
         try:
-            positive_id = abs(group_id)
-            api, _via_community = self._api_for(group_id)
-            # wall.get требует owner_id всегда (это не «свой контекст», как у messages.getConversations).
-            result = api.wall.get(
-                owner_id=group_id,
-                filter='suggests',
-                count=100,
-            )
-            
-            count = result.get('count', 0)
-            
-            logger.info(f"Group {group_id}: {count} suggested posts")
-            
-            # Простая ссылка на группу (предложенные посты видны в разделе "Предложенные записи")
-            return {
-                'has_suggested': count > 0,
-                'count': count,
-                'group_id': group_id,
-                'url': f"https://vk.com/club{positive_id}"
-            }
-            
+            result = self._wall_get_suggests(api, group_id)
+            via = "community-token" if via_community else "user-token"
         except ApiError as e:
-            # Если нет прав или группа недоступна
-            if e.code == 15:  # Access denied
-                logger.warning(f"No access to suggested posts for group {group_id}")
-            elif e.code == 5:  # Authorization failed
-                logger.error(f"Token invalid for group {group_id}")
+            if via_community and e.code in self._COMMUNITY_FALLBACK_CODES:
+                logger.info(
+                    "Group %s: community-token failed on suggests with code %s, retrying via user-token",
+                    group_id, e.code,
+                )
+                try:
+                    result = self._wall_get_suggests(self.vk, group_id)
+                    via = "community-fallback-user"
+                except ApiError as e2:
+                    return self._format_error(group_id, e2)
+                except Exception as e2:
+                    logger.error(f"Error retrying suggests for group {group_id}: {e2}")
+                    return self._empty_result(group_id, str(e2))
             else:
-                logger.error(f"VK API error for group {group_id}: {e}")
-            
-            return {
-                'has_suggested': False,
-                'count': 0,
-                'group_id': group_id,
-                'error': str(e)
-            }
-            
+                return self._format_error(group_id, e)
         except Exception as e:
             logger.error(f"Error checking group {group_id}: {e}")
-            return {
-                'has_suggested': False,
-                'count': 0,
-                'group_id': group_id,
-                'error': str(e)
-            }
+            return self._empty_result(group_id, str(e))
+
+        count = result.get('count', 0)
+        logger.info(f"Group {group_id}: {count} suggested posts (via {via})")
+        return {
+            'has_suggested': count > 0,
+            'count': count,
+            'group_id': group_id,
+            'url': f"https://vk.com/club{positive_id}",
+            'via': via,
+        }
+
+    def _format_error(self, group_id: int, err: ApiError) -> Dict[str, Any]:
+        if err.code == 15:
+            logger.warning(f"No access to suggested posts for group {group_id}")
+        elif err.code == 5:
+            logger.error(f"Token invalid for group {group_id}")
+        else:
+            logger.error(f"VK API error for group {group_id}: {err}")
+        return self._empty_result(group_id, str(err))
+
+    @staticmethod
+    def _empty_result(group_id: int, error: str) -> Dict[str, Any]:
+        return {
+            'has_suggested': False,
+            'count': 0,
+            'group_id': group_id,
+            'error': error,
+        }
     
     async def check_all_region_groups(self, region_groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
