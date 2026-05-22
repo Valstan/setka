@@ -48,6 +48,47 @@
 
 ---
 
+## 2026-05-22 — brain_matrica onboarding: mailbox + PR-only flow
+
+**Тема сессии:** setka подключается к meta-репо `brain_matrica` (стратегический hub для всех проектов @valstan). Получены 3 директивных письма (все `mandate` — либо явно, либо по retroactive-правилу [ADR-0001 v2](../../brain_matrica/adr/0001-brain-projects-mailboxes.md#compliance-levels)): подключить mailbox-протокол, перейти на PR-only flow, отображать `compliance` levels (MAY/SHOULD/MUST по RFC 2119) в репортах. Реализованы все три в одном PR.
+
+### Изменения
+
+- **`.claude/commands/start.md`** — новый Шаг 0 «Mailbox check»: сканирует `../brain_matrica/mailboxes/setka/from-brain/*.md` (без `DRAFTS/` и `ARCHIVE/`), читает frontmatter (`kind`, `urgency`, `compliance`), применяет retroactive-правило (`directive` без compliance → `mandate`, `idea` → `recommend`), докладывает в формате `[urgency COMPLIANCE]`, обновляет `.last-seen`. Шаг 6 — в отчёт добавлена строка `📬 Mailbox`. Новый флаг `--no-mailbox` для skip.
+- **`.claude/commands/reliz.md`** — Шаг 3 теперь требует feature-ветку (`git checkout -b <type>/<slug>` если на main), Шаг 4 — `gh pr create` → review → `gh pr merge --squash --delete-branch` → `git checkout main && git pull`. Hot-fix исключение со ссылкой на [ADR-0002 §8](../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md). Удалена строчка «по умолчанию коммитим прямо в main».
+- **`.claude/commands/finish.md`** — Шаг 4: новая опция «Commit + push + PR (без deploy)» вместо `git push origin <branch>`. Перед коммитом — `git checkout -b <type>/<slug>` если на main.
+- **`CLAUDE.md`** — новый раздел «Интеграция с brain_matrica» (mailbox path, ссылки на ADR-0001/0002, lifecycle письма). Обновлён раздел «Жизненный цикл задачи» (6 шагов вместо 4, явная feature-ветка + PR). Обновлён «Стиль коммитов и веток». Убрана устаревшая запись про захардкоженный `/home/valstan/SETKA/logs/app.log` в `main.py` (теперь `LOG_PATH` env). Worktree-путь обобщён до `.claude/worktrees/<имя>`.
+- **`docs/PENDING_FOLLOWUPS.md`** — добавлена 🟡 идея «branch protection rules на GitHub для `main`» (рекомендация [ADR-0002 §D](../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)).
+
+### Что НЕ менялось
+
+- Прод-доступ остаётся **только через SSH** `setka-prod`, MCP не используем — это политика setka, brain_matrica её не отменяет.
+- Свой docs-стиль (`START_HERE` + `AI_DEV_GUIDE` + `DEV_HISTORY` + `/finish` вместо `SESSION_HANDOFF` + `/close_session` как у GONBA/MatricaRMZ) — оставлен. brain в письме [mailbox-protocol-onboarding](../../brain_matrica/mailboxes/setka/from-brain/ARCHIVE/2026-05-22-mailbox-protocol-onboarding.md) явно подтвердила: «мы не унифицируем docs силой».
+- Memory `feedback-prod-only-ssh` остаётся в силе.
+
+### Проверка / прогон
+
+- Тесты не запускались — правки только в slash-команды и markdown-документацию, кода/тестов не касаются.
+- Pre-commit — то же (нет staged Python-файлов).
+
+### Применение
+
+1. Merge PR на новой схеме (`gh pr merge --squash --delete-branch`).
+2. Прод-деплой **не нужен**: изменения только в `.claude/` и `docs/`, прод их не использует.
+3. Следующий `/start` подхватит новый Шаг 0 автоматически.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- 🟡 Branch protection rules на GitHub для `main` (require PR, disallow force push, disallow deletion).
+- Уведомление brain в [`projects/setka.md`](../../brain_matrica/projects/setka.md) частично устарела (путь `D:\GitHubReps\setka\` → реально `C:\GitHubProjects\setka\`; «не запускать main.py — захардкожен лог-путь» → теперь `LOG_PATH` env). Это зона brain, не моя — пинг через `to-brain/` feedback позже.
+
+### Связанные artefacts
+
+- PR в setka: `feat/brain-mailbox-onboarding-and-pr-flow` (этот).
+- PR в brain_matrica: `feat/setka-acknowledgement-and-archive` (acknowledgement-письма + архивация исходных директив).
+
+---
+
 ## 2026-05-22 — Legacy lint sweep: autoflake + ruff + flake8 ignore-relax
 
 **Тема сессии:** в /reliz итерации 2 big idea обнаружилось, что `pre-commit run --all-files` валится на **592 flake8-ошибках** в legacy-коде (F401 unused imports, F541 empty f-strings, E712 SQLAlchemy `== True`, E402 module-level imports, E501 long lines, F841 unused locals). Эти ошибки сидели задолго до сессии — pre-commit срабатывал только на staged-файлах при коммитах, и каждый разработчик их обходил. После того как black/isort прошлись по всему репо в текущем релизе и попали ещё в working tree, дальнейшие коммиты были бы заблокированы.
