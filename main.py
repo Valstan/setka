@@ -2,21 +2,42 @@
 SETKA - Main FastAPI application
 Multimedia management system for news resources
 """
-from fastapi import FastAPI, Depends, Request
+
+import logging
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.ext.asyncio import AsyncSession
-from contextlib import asynccontextmanager
-import logging
-import os
-from pathlib import Path
 
 from _version import __version__ as APP_VERSION
-from database.connection import get_db_session, init_db, close_db
+from database.connection import close_db, init_db
+from middleware.metrics_middleware import MetricsMiddleware
+from middleware.rate_limiter import RateLimitMiddleware
 from modules.module_activity_notifier import notify_system_startup
-from web.api import health, regions, communities, posts, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher, parsing, parsing_stats, filtration, templates as templates_api
+from web.api import (
+    communities,
+    discovery,
+    filtration,
+    health,
+    notifications,
+    parsing,
+    parsing_stats,
+    posts,
+    publisher,
+    regions,
+    schedule_management,
+    scheduler,
+    service_notifications,
+    system_monitoring,
+    task_monitoring,
+)
+from web.api import templates as templates_api
+from web.api import test_workflow, token_management, vk_monitoring
 
 # Setup logging
 # LOG_PATH задаётся в /etc/setka/setka.env на проде, по умолчанию — прод-путь
@@ -40,7 +61,7 @@ if _log_path:
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "WARNING").upper(), logging.WARNING),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=_handlers,
 )
 
@@ -54,16 +75,16 @@ async def lifespan(app: FastAPI):
     logger.info("Starting SETKA application...")
     await init_db()
     logger.info("Database initialized")
-    
+
     # Start system status monitoring (ОТКЛЮЧЕНО - использует старую систему уведомлений)
     # await start_status_monitoring()
     logger.info("System status monitoring disabled - using new workflow notifications")
-    
+
     # Уведомляем о запуске системы
     notify_system_startup()
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down SETKA application...")
     await close_db()
@@ -75,7 +96,7 @@ app = FastAPI(
     title="SETKA",
     description="Multimedia Management System for News Resources",
     version=APP_VERSION,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -88,7 +109,6 @@ app.add_middleware(
 )
 
 # Rate limiting middleware (защита от DoS)
-from middleware.rate_limiter import RateLimitMiddleware
 app.add_middleware(
     RateLimitMiddleware,
     requests_per_minute=100,  # 100 requests per minute per IP
@@ -97,7 +117,6 @@ app.add_middleware(
 )
 
 # Metrics middleware (мониторинг производительности)
-from middleware.metrics_middleware import MetricsMiddleware
 app.add_middleware(MetricsMiddleware)
 
 # Setup templates and static files
@@ -126,6 +145,7 @@ app.include_router(parsing.router, tags=["Parsing"])
 app.include_router(parsing_stats.router, tags=["Parsing Stats"])  # Postopus migration
 app.include_router(filtration.router, prefix="/api/filtration", tags=["Filtration"])
 app.include_router(templates_api.router, prefix="/api/templates", tags=["Message Templates"])
+app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Discovery"])
 
 
 @app.get("/")
@@ -162,6 +182,21 @@ async def notifications_page(request: Request):
 async def templates_page(request: Request):
     """Message templates CRUD page (etap 4b)"""
     return templates.TemplateResponse("templates.html", {"request": request})
+
+
+@app.get("/regions/new")
+async def region_new_page(request: Request):
+    """Wizard для добавления нового региона (big idea 2026-05-22)."""
+    return templates.TemplateResponse("region_new.html", {"request": request})
+
+
+@app.get("/regions/{region_code}/discovery")
+async def region_discovery_page(request: Request, region_code: str):
+    """Список кандидатов на сообщества для региона (big idea 2026-05-22)."""
+    return templates.TemplateResponse(
+        "region_discovery.html",
+        {"request": request, "region_code": region_code},
+    )
 
 
 @app.get("/tokens")
@@ -226,11 +261,16 @@ async def filtration_page(request: Request):
 async def favicon():
     """Favicon"""
     from fastapi.responses import Response
+
     # Простой SVG favicon
-    svg_content = '''<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-        <rect width="32" height="32" fill="#0d6efd"/>
-        <text x="16" y="20" text-anchor="middle" fill="white" font-family="Arial" font-size="16" font-weight="bold">S</text>
-    </svg>'''
+    svg_content = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" '
+        'viewBox="0 0 32 32">'
+        '<rect width="32" height="32" fill="#0d6efd"/>'
+        '<text x="16" y="20" text-anchor="middle" fill="white" '
+        'font-family="Arial" font-size="16" font-weight="bold">S</text>'
+        "</svg>"
+    )
     return Response(content=svg_content, media_type="image/svg+xml")
 
 
@@ -238,15 +278,16 @@ async def favicon():
 async def metrics():
     """
     Prometheus metrics endpoint
-    
+
     Returns metrics in Prometheus format
     """
     from fastapi.responses import Response
+
     from monitoring.metrics import get_metrics, update_business_metrics
-    
+
     # Update business metrics before export
     await update_business_metrics()
-    
+
     # Get metrics
     content, content_type = await get_metrics()
 
@@ -255,11 +296,5 @@ async def metrics():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
 
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_level="info")

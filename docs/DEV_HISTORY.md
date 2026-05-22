@@ -48,6 +48,62 @@
 
 ---
 
+## 2026-05-22 — Big idea: модуль авто-регистрации регионов и сообществ (MVP)
+
+**Тема сессии:** реализовать MVP описанный в `PENDING_FOLLOWUPS.md` (🌍 big idea). Wizard добавления нового района → Celery-таска ищет VK-сообщества (`groups.search` по гео + ключевикам) → Groq AI-категоризатор предлагает тематику → UI «Найдено N кандидатов» с approve/reject. Без weekly recheck (вынесено в следующую итерацию).
+
+### Изменения
+
+#### Миграция 011 + модели
+
+- **`database/migrations/011_community_candidates.sql`** — три блока, всё идемпотентно:
+  1. `regions.vk_city_id INTEGER` + `regions.center_city VARCHAR(200)`. vk_city_id заполняется через `database.getCities` resolver, center_city — для построения keyword-запросов.
+  2. `communities.health_status / last_post_at / checked_at / suggested_category`. health_status: active/dormant/dead/changed_category. Composite UNIQUE(region_id, vk_id) через `DO $$ … END$$` (чтобы повторное применение не падало).
+  3. Таблица `community_candidates` (region_id FK, vk_id, name, screen_name, photo_url, description, members_count, ai_category, ai_confidence, ai_reasoning, ai_is_info_page, status, discovered_via, created_at, updated_at). UNIQUE(region_id, vk_id), индекс на (status, region_id). Триггер `update_updated_at_column` (общая функция из 003).
+- **`database/models.py`** — поля Region.vk_city_id/center_city, Community.health_status/last_post_at/checked_at/suggested_category, новая модель `CommunityCandidate` с `to_dict`. Relationship `Region.candidates`.
+
+#### Discovery — backend
+
+- **`modules/vk_monitor/vk_client.py`** — три новых метода: `search_groups(query, city_id, count, offset)`, `get_groups_by_ids(group_ids, fields)` (batch 500), `resolve_city(query, country_id, count)` (database.getCities). Все уважают `_enforce_rate_limit`. Failure-cases возвращают `[]`, не raise.
+- **`modules/discovery/vk_search.py`** — композитная разведка: 1 geo-search + N keyword-searches (`CATEGORY_KEYWORDS` для 7 категорий) → дедуп по vk_id (first source wins) → one-shot `groups.getById` с `fields=description,members_count,activity,status,screen_name,photo_200` для enrichment. exclude_vk_ids фильтрует уже-добавленные / отклонённые.
+- **`modules/discovery/ai_categorizer.py`** — Groq prompt `llama-3.1-8b-instant` (temperature=0.2, max_tokens=300). Категории: admin/novost/reklama/sosed/kultura/sport/detsad/other (last as escape hatch). Возвращает `{success, category, confidence, is_info_page, reasoning, model}`. Robust JSON parsing (snimает ```json-fences```, регекс-fallback для гарбидж-обёрток). Все failure-modes → `{success: False, error}`.
+- **`tasks/discovery_tasks.py`** — `run_discovery_for_region_async(region_id, categories=None)`. Шаги: load Region → собрать exclude_ids (existing Community.vk_id + rejected candidates) → `discover_for_region` через `asyncio.to_thread` → `ai_categorizer` для каждой группы с `asyncio.Semaphore(4)` → upsert: новых INSERT, существующих pending/deferred UPDATE, approved/rejected — пропуск. Celery wrapper `tasks.discovery_tasks.run_discovery_for_region` для будущего шедулирования; импортируется опционально (если Celery недоступен — модуль остаётся usable).
+
+#### Web API + UI
+
+- **`web/api/discovery.py`**: GET `/cities?q=` (resolver VK), POST `/trigger` (sync — wizard ждёт), GET `/candidates` (фильтры status / min_confidence / only_info_pages), PATCH `/candidates/{id}` (approve создаёт Community через UNIQUE(region_id,vk_id), reject/defer обновляют статус), POST `/candidates/bulk` (массовый approve пропускает кандидатов без концретной категории / с `other`).
+- **`web/templates/region_new.html`** + **`web/static/js/region_new.js`** — wizard: code / name / center_city (auto-complete VK cities) / vk_group_id / neighbors. Submit → POST `/api/regions/` → POST `/api/discovery/trigger` → редирект на `/regions/<code>/discovery`.
+- **`web/templates/region_discovery.html`** + **`web/static/js/region_discovery.js`** — таблица кандидатов с inline-actions (Approve modal с выбором категории / Reject / Defer), фильтры (status / min_confidence / only_info_pages), bulk-операции, кнопка «Перезапустить discovery».
+- **`web/templates/base.html`** — пункт `+ Новый регион` в navbar dropdown «Контент».
+- **`main.py`** — router `discovery` + Jinja-pages `/regions/new`, `/regions/<code>/discovery`.
+
+#### Тесты (+60 — итого 330)
+
+- `tests/test_vk_monitor/test_vk_client_discovery.py` (17): search_groups, get_groups_by_ids, resolve_city.
+- `tests/test_discovery/test_vk_search.py` (10): search plan, dedup, city_id only for geo, exclude_ids, enrichment one-shot.
+- `tests/test_discovery/test_ai_categorizer.py` (16): pure helpers + e2e с fake Groq SDK через `sys.modules` injection.
+- `tests/test_api/test_discovery.py` (17): Pydantic, `/cities` 503, `/trigger` 400, PATCH candidate (404 / approve без category / approve через AI / approve с 'other' → 400).
+
+### Проверка / прогон
+
+- Локально: `pytest tests/ -q` — **330/330 зелёных** (было 270 → +60).
+- На проде: применить миграцию 011 через `scripts/migrate.py up`, restart `setka` (новый router и UI-pages).
+
+### Применение
+
+1. **Pull** на проде.
+2. `python3 scripts/migrate.py up` — применит 011.
+3. `systemctl restart setka` — нужен для подгрузки нового router'а и UI-templates. Celery worker рестартить **не нужно** (Celery wrapper опционален).
+4. Открыть `/regions/new`, создать тестовый регион, нажать «Создать и запустить discovery» — должно показать N кандидатов на `/regions/<code>/discovery`.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- ⏳ Weekly recheck `recheck_existing_communities()` — обновлять health_status / last_post_at / suggested_category. Celery beat schedule. Telegram-alert «по региону X: N новых / 1 dead / 2 changed_category». Следующая итерация big idea.
+- 🟢 Per-region keyword overrides (`region.config['discovery_keywords']`).
+- 🟢 Quota guard для Groq — кешировать ai-результаты per (vk_id, hash(description)).
+
+---
+
 ## 2026-05-22 — Fix [3] Unknown method при лайке + setup-dev pre-commit + закрытие устаревших PENDING
 
 **Тема сессии:** пользователь сообщил, что кнопка «лайк» в `/notifications` падает с «Не удалось лайкнуть: [3] Unknown method passed». Заодно подобрали два «висящих» техдолга, которые на самом деле уже закрыты прошлыми сессиями.

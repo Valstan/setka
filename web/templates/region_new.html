@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}+ Новый регион — SETKA{% endblock %}
+{% block nav_region_new %}active{% endblock %}
+{% block nav_section_content %}active{% endblock %}
+
+{% block content %}
+<div class="container my-4" style="max-width: 720px;">
+    <h2 class="mb-3"><i class="bi bi-plus-circle"></i> Новый регион</h2>
+    <p class="text-muted small">
+        После создания региона запустим VK-discovery: найдём по гео и ключевикам
+        кандидатов на сообщества (новости, объявления, культура и т.д.), Groq AI
+        предложит тематику, дальше модератор approve/reject из списка.
+    </p>
+
+    <form id="region-new-form" class="row g-3 needs-validation" novalidate>
+        <div class="col-md-4">
+            <label class="form-label">Код<span class="text-danger">*</span></label>
+            <input name="code" class="form-control" placeholder="mi, sovetsk, ..." required maxlength="50">
+            <div class="form-text">Латиница, без пробелов.</div>
+        </div>
+        <div class="col-md-8">
+            <label class="form-label">Название<span class="text-danger">*</span></label>
+            <input name="name" class="form-control" placeholder="МАЛМЫЖ - ИНФО" required maxlength="200">
+        </div>
+
+        <div class="col-md-6 position-relative">
+            <label class="form-label">Центр района<span class="text-danger">*</span></label>
+            <input name="center_city" id="center-city-input" class="form-control"
+                   placeholder="Малмыж" required maxlength="200" autocomplete="off">
+            <div class="form-text">При вводе подгрузим VK city_id для гео-поиска.</div>
+            <div id="city-suggestions" class="list-group position-absolute w-100 shadow-sm"
+                 style="z-index:1000; max-height:240px; overflow:auto; display:none;"></div>
+            <input type="hidden" name="vk_city_id" id="vk-city-id">
+        </div>
+
+        <div class="col-md-6">
+            <label class="form-label">VK город (resolved)</label>
+            <div class="input-group">
+                <input id="vk-city-label" class="form-control" readonly placeholder="—">
+                <button type="button" class="btn btn-outline-secondary" id="clear-city-btn"
+                        title="Сбросить выбранный город">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="form-text">Если пусто — geo-search пропустится, поиск только по ключевикам.</div>
+        </div>
+
+        <div class="col-md-6">
+            <label class="form-label">VK group_id (опц.)</label>
+            <input name="vk_group_id" class="form-control" placeholder="-123456789" type="number">
+            <div class="form-text">ID главной ИНФО-группы (если уже есть).</div>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">Соседи (опц.)</label>
+            <input name="neighbors" class="form-control" placeholder="советск,лебяж,уржум" maxlength="500">
+        </div>
+
+        <div class="col-12">
+            <button id="create-btn" class="btn btn-primary" type="submit">
+                <i class="bi bi-rocket-takeoff"></i> Создать регион и запустить discovery
+            </button>
+            <a class="btn btn-link" href="/regions">Отмена</a>
+        </div>
+    </form>
+
+    <div id="status" class="mt-3"></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/region_new.js?v=20260522"></script>
+{% endblock %}

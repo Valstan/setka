@@ -2,13 +2,14 @@
 VK API Client for SETKA project
 Handles all interactions with VK API
 """
-import vk_api
+
 import asyncio
+import logging
 import threading
 import time
-from typing import ClassVar, Dict, List, Any, Optional
-from datetime import datetime
-import logging
+from typing import Any, ClassVar, Dict, List, Optional
+
+import vk_api
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ class VKClient:
             if wait > 0:
                 time.sleep(wait)
             self._last_call_per_token[self.token] = time.monotonic()
-    
+
     def _init_session(self):
         """Initialize VK session"""
         try:
@@ -95,33 +96,26 @@ class VKClient:
         except Exception as e:
             logger.error(f"Failed to initialize VK session: {e}")
             raise
-    
+
     def get_wall_posts(
-        self, 
-        owner_id: int, 
-        count: int = 10,
-        offset: int = 0
+        self, owner_id: int, count: int = 10, offset: int = 0
     ) -> List[Dict[str, Any]]:
         """
         Get posts from VK community wall
-        
+
         Args:
             owner_id: VK group ID (negative for communities)
             count: Number of posts to fetch (max 100)
             offset: Offset for pagination
-            
+
         Returns:
             List of posts
         """
         try:
             self._enforce_rate_limit()
-            response = self.vk.wall.get(
-                owner_id=owner_id,
-                count=min(count, 100),
-                offset=offset
-            )
+            response = self.vk.wall.get(owner_id=owner_id, count=min(count, 100), offset=offset)
 
-            posts = response.get('items', [])
+            posts = response.get("items", [])
             logger.info(f"Fetched {len(posts)} posts from {owner_id}")
             return posts
 
@@ -163,11 +157,11 @@ class VKClient:
     def get_post_by_id(self, owner_id: int, post_id: int) -> Optional[Dict[str, Any]]:
         """
         Get specific post by ID
-        
+
         Args:
             owner_id: VK group ID
             post_id: Post ID
-            
+
         Returns:
             Post data or None
         """
@@ -186,14 +180,14 @@ class VKClient:
         except Exception as e:
             logger.error(f"Unexpected error getting post {owner_id}_{post_id}: {e}")
             return None
-    
+
     def get_group_info(self, group_id: int) -> Optional[Dict[str, Any]]:
         """
         Get information about VK group
-        
+
         Args:
             group_id: VK group ID (positive or negative)
-            
+
         Returns:
             Group info or None
         """
@@ -214,86 +208,208 @@ class VKClient:
         except Exception as e:
             logger.error(f"Unexpected error getting group info {group_id}: {e}")
             return None
-    
+
+    def search_groups(
+        self,
+        query: str,
+        city_id: Optional[int] = None,
+        count: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Search VK groups via ``groups.search``.
+
+        Используется модулем discovery для авто-регистрации сообществ.
+        ``city_id`` — численный VK city_id (через ``database.getCities``);
+        если задан, поиск ограничивается этим городом. ``count`` ≤ 1000.
+
+        Returns:
+            Список dict-ов ``{id, name, screen_name, members_count, photo_200, ...}``
+            из ``response.items``. На ошибке VK API — пустой список.
+        """
+        if not (query or "").strip():
+            return []
+        try:
+            self._enforce_rate_limit()
+            kwargs: Dict[str, Any] = {
+                "q": query,
+                "count": min(int(count), 1000),
+                "offset": int(offset),
+                "country_id": 1,  # Russia
+            }
+            if city_id:
+                kwargs["city_id"] = int(city_id)
+            response = self.vk.groups.search(**kwargs)
+            items = (response or {}).get("items", [])
+            logger.info(
+                "groups.search(q=%r, city_id=%s) → %d items",
+                query,
+                city_id,
+                len(items),
+            )
+            return items
+        except vk_api.exceptions.ApiError as e:
+            _log_vk_api_error(f"VK groups.search error (q={query!r})", e)
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected groups.search error (q={query!r}): {e}")
+            return []
+
+    def get_groups_by_ids(
+        self,
+        group_ids: List[int],
+        fields: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Batch ``groups.getById`` — до 500 id за вызов.
+
+        ``group_ids`` — список положительных id (для отрицательных делается abs).
+        ``fields`` — comma-separated extra fields VK API (например,
+        ``"description,members_count,activity,status"``).
+
+        Returns:
+            Объединённый список ``items`` со всех страниц. Ошибки одного chunk'а
+            не валят весь вызов (chunk пропускается, остальные продолжаются).
+        """
+        if not group_ids:
+            return []
+        out: List[Dict[str, Any]] = []
+        batch_size = 500
+        ids = [abs(int(g)) for g in group_ids]
+        for i in range(0, len(ids), batch_size):
+            chunk = ids[i : i + batch_size]
+            try:
+                self._enforce_rate_limit()
+                kwargs: Dict[str, Any] = {"group_ids": chunk}
+                if fields:
+                    kwargs["fields"] = fields
+                resp = self.vk.groups.getById(**kwargs)
+                if resp:
+                    out.extend(resp)
+            except vk_api.exceptions.ApiError as e:
+                _log_vk_api_error(f"VK groups.getById batch error (size={len(chunk)})", e)
+            except Exception as e:
+                logger.error(f"Unexpected groups.getById batch error (size={len(chunk)}): {e}")
+        return out
+
+    def resolve_city(
+        self,
+        query: str,
+        country_id: int = 1,
+        count: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Resolve city name → ``vk_city_id`` via ``database.getCities``.
+
+        Используется wizard'ом нового региона: модератор вводит «Малмыж»,
+        возвращается список ``[{id, title, region, area}, …]`` для dropdown.
+
+        ``q`` для ``database.getCities`` ищет по подстроке (case-insensitive),
+        VK сортирует по importance. ``count`` ≤ 100.
+
+        Returns:
+            Список dict с полями ``id`` (vk_city_id), ``title``, ``area``,
+            ``region``. На ошибке — пустой список.
+        """
+        if not (query or "").strip():
+            return []
+        try:
+            self._enforce_rate_limit()
+            response = self.vk.database.getCities(
+                country_id=int(country_id),
+                q=query,
+                count=min(int(count), 100),
+            )
+            items = (response or {}).get("items", [])
+            logger.info(
+                "database.getCities(q=%r) → %d cities",
+                query,
+                len(items),
+            )
+            return items
+        except vk_api.exceptions.ApiError as e:
+            _log_vk_api_error(f"VK database.getCities error (q={query!r})", e)
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected database.getCities error (q={query!r}): {e}")
+            return []
+
     def parse_attachments(self, post: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Parse post attachments (photos, videos, links, etc.)
-        
+
         Args:
             post: VK post data
-            
+
         Returns:
             List of parsed attachments
         """
         attachments = []
-        
-        if 'attachments' not in post:
+
+        if "attachments" not in post:
             return attachments
-        
-        for att in post['attachments']:
-            att_type = att.get('type')
-            
-            if att_type == 'photo':
-                photo = att['photo']
+
+        for att in post["attachments"]:
+            att_type = att.get("type")
+
+            if att_type == "photo":
+                photo = att["photo"]
                 # Get largest photo size
-                sizes = photo.get('sizes', [])
+                sizes = photo.get("sizes", [])
                 if sizes:
-                    largest = max(sizes, key=lambda x: x.get('width', 0) * x.get('height', 0))
-                    attachments.append({
-                        'type': 'photo',
-                        'url': largest.get('url'),
-                        'width': largest.get('width'),
-                        'height': largest.get('height')
-                    })
-            
-            elif att_type == 'video':
-                video = att['video']
-                attachments.append({
-                    'type': 'video',
-                    'title': video.get('title'),
-                    'duration': video.get('duration'),
-                    'views': video.get('views', 0)
-                })
-            
-            elif att_type == 'link':
-                link = att['link']
-                attachments.append({
-                    'type': 'link',
-                    'url': link.get('url'),
-                    'title': link.get('title')
-                })
-            
-            elif att_type == 'doc':
-                doc = att['doc']
-                attachments.append({
-                    'type': 'document',
-                    'title': doc.get('title'),
-                    'url': doc.get('url')
-                })
-        
+                    largest = max(sizes, key=lambda x: x.get("width", 0) * x.get("height", 0))
+                    attachments.append(
+                        {
+                            "type": "photo",
+                            "url": largest.get("url"),
+                            "width": largest.get("width"),
+                            "height": largest.get("height"),
+                        }
+                    )
+
+            elif att_type == "video":
+                video = att["video"]
+                attachments.append(
+                    {
+                        "type": "video",
+                        "title": video.get("title"),
+                        "duration": video.get("duration"),
+                        "views": video.get("views", 0),
+                    }
+                )
+
+            elif att_type == "link":
+                link = att["link"]
+                attachments.append(
+                    {"type": "link", "url": link.get("url"), "title": link.get("title")}
+                )
+
+            elif att_type == "doc":
+                doc = att["doc"]
+                attachments.append(
+                    {"type": "document", "title": doc.get("title"), "url": doc.get("url")}
+                )
+
         return attachments
-    
+
     def extract_post_stats(self, post: Dict[str, Any]) -> Dict[str, int]:
         """
         Extract statistics from post
-        
+
         Args:
             post: VK post data
-            
+
         Returns:
             Dictionary with stats
         """
         return {
-            'views': post.get('views', {}).get('count', 0),
-            'likes': post.get('likes', {}).get('count', 0),
-            'reposts': post.get('reposts', {}).get('count', 0),
-            'comments': post.get('comments', {}).get('count', 0)
+            "views": post.get("views", {}).get("count", 0),
+            "likes": post.get("likes", {}).get("count", 0),
+            "reposts": post.get("reposts", {}).get("count", 0),
+            "comments": post.get("comments", {}).get("count", 0),
         }
-    
+
     async def get_user_info(self) -> Optional[Dict[str, Any]]:
         """
         Get current user information
-        
+
         Returns:
             User info or None
         """
@@ -306,61 +422,51 @@ class VKClient:
         except Exception as e:
             logger.error(f"Error getting user info: {e}")
             return None
-    
+
     async def get_posts(
-        self, 
-        owner_id: int, 
-        count: int = 10,
-        offset: int = 0,
-        extended: int = 0
+        self, owner_id: int, count: int = 10, offset: int = 0, extended: int = 0
     ) -> Optional[Dict[str, Any]]:
         """
         Get posts from VK wall (async wrapper)
-        
+
         Args:
             owner_id: VK group ID (negative for communities)
             count: Number of posts to fetch (max 100)
             offset: Offset for pagination
             extended: Extended information
-            
+
         Returns:
             Posts data or None
         """
         try:
             await asyncio.to_thread(self._enforce_rate_limit)
             response = self.vk.wall.get(
-                owner_id=owner_id,
-                count=min(count, 100),
-                offset=offset,
-                extended=extended
+                owner_id=owner_id, count=min(count, 100), offset=offset, extended=extended
             )
             return response
         except Exception as e:
             logger.error(f"Error getting posts from {owner_id}: {e}")
             return None
-    
+
     async def get_groups(self, count: int = 10, extended: int = 1) -> Optional[Dict[str, Any]]:
         """
         Get user's groups
-        
+
         Args:
             count: Number of groups to fetch
             extended: Extended information
-            
+
         Returns:
             Groups data or None
         """
         try:
             await asyncio.to_thread(self._enforce_rate_limit)
-            response = self.vk.groups.get(
-                count=count,
-                extended=extended
-            )
+            response = self.vk.groups.get(count=count, extended=extended)
             return response
         except Exception as e:
             logger.error(f"Error getting groups: {e}")
             return None
-    
+
     async def get_messages(self, count: int = 10) -> Optional[Dict[str, Any]]:
         """
         Get user's conversations (used to probe `messages` permission).
@@ -379,7 +485,7 @@ class VKClient:
         except Exception as e:
             logger.error(f"Error getting messages: {e}")
             return None
-    
+
     async def check_token_validity(self) -> bool:
         """
         Check if token is still valid
@@ -415,58 +521,57 @@ class VKClient:
             # Pass through error_code so callers can implement smart retries
             # (e.g. publisher fallback to publish-token on code 15/27).
             return {
-                'error': {
-                    'error_code': int(getattr(e, 'code', 0) or 0),
-                    'error_msg': str(e),
+                "error": {
+                    "error_code": int(getattr(e, "code", 0) or 0),
+                    "error_msg": str(e),
                 }
             }
         except Exception as e:
             logger.error(f"Unexpected error in {method}: {e}")
-            return {'error': {'error_msg': str(e)}}
+            return {"error": {"error_msg": str(e)}}
 
 
 class VKTokenRotator:
     """Rotates between multiple VK tokens to avoid rate limits"""
-    
+
     def __init__(self, tokens: List[str]):
         """
         Initialize token rotator
-        
+
         Args:
             tokens: List of VK API tokens
         """
         self.tokens = tokens
         self.current_index = 0
         self.clients = [VKClient(token) for token in tokens if token]
-    
+
     def get_client(self) -> Optional[VKClient]:
         """
         Get next available VK client
-        
+
         Returns:
             VKClient instance or None if no clients available
         """
         if not self.clients:
             logger.error("No VK clients available")
             return None
-        
+
         client = self.clients[self.current_index]
         self.current_index = (self.current_index + 1) % len(self.clients)
-        
+
         return client
-    
+
     async def check_all_tokens(self) -> int:
         """
         Check validity of all tokens
-        
+
         Returns:
             Number of valid tokens
         """
         valid_count = 0
-        
+
         for client in self.clients:
             if await client.check_token_validity():
                 valid_count += 1
-        
-        return valid_count
 
+        return valid_count
