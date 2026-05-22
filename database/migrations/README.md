@@ -2,7 +2,8 @@
 
 ## Применение
 
-Миграции применяются **вручную** на прод-VPS под `postgres`:
+Предпочтительно через `scripts/migrate.py` (см. ниже). Если нужно
+накатить одну конкретную миграцию руками, по-прежнему работает:
 
 ```bash
 ssh setka-prod 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/NNN_*.sql'
@@ -14,6 +15,30 @@ ssh setka-prod 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/m
 После 009 (`ALTER DEFAULT PRIVILEGES`) `setka_user` автоматически
 получает GRANT на любые новые таблицы под postgres — explicit `GRANT`
 в новых миграциях больше не нужен.
+
+## Runner `scripts/migrate.py`
+
+С миграции 010 учётом применённых занимается таблица
+`applied_migrations` (filename, sha256, applied_at). Скрипт
+`scripts/migrate.py` (stdlib-only) сверяет содержимое каталога с этой
+таблицей и применяет недостающее по порядку (сортировка по имени файла).
+
+```bash
+# на прод-VPS
+ssh setka-prod 'cd /home/valstan/SETKA && python3 scripts/migrate.py status'
+ssh setka-prod 'cd /home/valstan/SETKA && python3 scripts/migrate.py up --dry-run'
+ssh setka-prod 'cd /home/valstan/SETKA && python3 scripts/migrate.py up'
+```
+
+Каждая миграция применяется в одной транзакции вместе с
+INSERT-ом в `applied_migrations` под `sudo -u postgres psql -v
+ON_ERROR_STOP=1`. Если SQL упал — транзакция откатывается, запись о
+применении не появляется. После правки уже применённой миграции
+`up` поправит её sha256 в таблице (`ON CONFLICT DO UPDATE`).
+
+010 — bootstrap-миграция: при первом `up` runner видит, что таблицы
+ещё нет, и применяет 010 первой. Backfill внутри 010 фиксирует 003-009
++ `add_sentiment_fields.sql` как «уже применены» с пустым sha256.
 
 ## Правила для новых миграций
 
@@ -77,6 +102,7 @@ ssh setka-prod 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/m
 | `007_vk_tokens_community_id.sql` | `vk_tokens.community_id` + частичный индекс |
 | `008_message_templates.sql` | Таблица `message_templates` (этап 4b) |
 | `009_alter_default_privileges.sql` | `ALTER DEFAULT PRIVILEGES` для `setka_user` |
+| `010_applied_migrations.sql` | Bookkeeping-таблица для `scripts/migrate.py` |
 | `add_sentiment_fields.sql` | `posts.sentiment_*` (legacy, без номера) |
 
 При добавлении новой миграции — обнови эту таблицу.

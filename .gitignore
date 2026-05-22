@@ -4,10 +4,12 @@
 # Игнорируем всё, кроме того, что должно жить в репо вместе с проектом:
 # - .claude/commands/  — slash-команды (/start, /reliz, /check, /sql, /celery, /logs, /finish)
 # - .claude/agents/    — кастомные субагенты (если появятся)
+# - .claude/settings.json — командная политика permissions (например, ssh setka-prod allowlist)
 # Остальное (worktrees, локальная сессия, settings.local.json конкретного компа) — локально.
 .claude/*
 !.claude/commands/
 !.claude/agents/
+!.claude/settings.json
 
 # Secure configuration files
 config/config_secure.py
