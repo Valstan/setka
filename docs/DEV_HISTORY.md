@@ -33,6 +33,32 @@
 
 ---
 
+## 2026-05-22 — Миграция 009: ALTER DEFAULT PRIVILEGES для setka_user
+
+**Тема сессии:** закрыть техдолг, выползший в инциденте после деплоя этапа 4b. Раньше на каждой новой таблице приходилось бы дописывать `GRANT ALL ... TO setka_user` (либо ловить 500-ки на проде, как с `message_templates`). Теперь — настроено централизованно.
+
+### Изменения
+
+#### `database/migrations/009_alter_default_privileges.sql` (новый)
+
+1. **`GRANT USAGE ON SCHEMA public TO setka_user`** — на случай восстановления из дампа, где схема создана postgres.
+2. **`GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO setka_user`** + **`GRANT USAGE, SELECT ON ALL SEQUENCES`** — выравнивает права для уже-существующих postgres-owned таблиц (regions, vk_tokens, posts, communities, filters, publish_schedules, message_templates). На случай, если по какой-то таблице GRANT не был выдан в прошлом.
+3. **`ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO setka_user`** + аналогичный для SEQUENCES — теперь любой будущий `CREATE TABLE`/`CREATE SEQUENCE` под postgres автоматически получит GRANT для setka_user. Будущие миграции не должны больше включать explicit `GRANT ALL ... TO setka_user`.
+
+Миграция идемпотентна (повторное применение — no-op).
+
+### Применение
+
+На проде: `ssh setka-prod 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/009_alter_default_privileges.sql'`.
+
+Restart сервисов **не требуется** — миграция меняет только права в каталоге postgres.
+
+### Хвосты, ушедшие в `PENDING_FOLLOWUPS.md`
+
+- ✅ Техдолг «GRANT в миграциях / ALTER DEFAULT PRIVILEGES» закрыт.
+
+---
+
 ## 2026-05-22 — Этап 4b: inline-reply, AI-черновик, шаблоны ответов, Telegram inline-кнопки
 
 **Тема сессии:** доделать обратную связь в модуле уведомлений по пунктам, которые отложили в этапе 4a-mini. Теперь модератор отвечает на коммент/сообщение прямо из `/notifications`, без переключения в VK; черновик можно попросить у Groq; на сообщения — выбор из шаблонов; пуш в Telegram содержит inline-кнопки с deep-link на нужный раздел кабинета.
