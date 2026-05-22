@@ -16,7 +16,7 @@ from pathlib import Path
 from _version import __version__ as APP_VERSION
 from database.connection import get_db_session, init_db, close_db
 from modules.module_activity_notifier import notify_system_startup
-from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher, parsing, parsing_stats, filtration
+from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher, parsing, parsing_stats, filtration, templates as templates_api
 
 # Setup logging
 logging.basicConfig(
@@ -110,6 +110,7 @@ app.include_router(publisher.router, prefix="/api/publisher", tags=["VK Publishe
 app.include_router(parsing.router, tags=["Parsing"])
 app.include_router(parsing_stats.router, tags=["Parsing Stats"])  # Postopus migration
 app.include_router(filtration.router, prefix="/api/filtration", tags=["Filtration"])
+app.include_router(templates_api.router, prefix="/api/templates", tags=["Message Templates"])
 
 
 @app.get("/")
@@ -140,6 +141,12 @@ async def communities_page(request: Request):
 async def notifications_page(request: Request):
     """Notifications page"""
     return templates.TemplateResponse("notifications.html", {"request": request})
+
+
+@app.get("/templates")
+async def templates_page(request: Request):
+    """Message templates CRUD page (etap 4b)"""
+    return templates.TemplateResponse("templates.html", {"request": request})
 
 
 @app.get("/tokens")

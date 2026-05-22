@@ -127,7 +127,7 @@
 </div>
 
 <!-- Suggested Posts Section -->
-<div class="row mb-4">
+<div class="row mb-4" id="section-suggested">
     <div class="col-12">
         <div class="card border-warning">
             <div class="card-header bg-warning bg-opacity-10">
@@ -157,7 +157,7 @@
 </div>
 
 <!-- Unread Messages Section -->
-<div class="row mb-4">
+<div class="row mb-4" id="section-messages">
     <div class="col-12">
         <div class="card border-info">
             <div class="card-header bg-info bg-opacity-10">
@@ -198,7 +198,7 @@
 </div>
 
 <!-- Recent Comments Section -->
-<div class="row mb-4">
+<div class="row mb-4" id="section-comments">
     <div class="col-12">
         <div class="card border-secondary">
             <div class="card-header bg-secondary bg-opacity-10">
@@ -231,6 +231,48 @@
 <div id="error-alert" class="alert alert-danger" style="display: none;" role="alert">
     <i class="bi bi-exclamation-triangle"></i>
     <strong>Ошибка:</strong> <span id="error-text"></span>
+</div>
+
+<!-- Reply Modal (etap 4b) — used by both comment-reply and message-reply -->
+<div class="modal fade" id="reply-modal" tabindex="-1" aria-labelledby="reply-modal-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="reply-modal-title">Ответ</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3" id="reply-context">
+                    <small class="text-muted">Контекст:</small>
+                    <blockquote class="border-start border-3 ps-2 mb-0 mt-1"
+                                style="white-space: pre-wrap; font-size: 0.9em;"
+                                id="reply-context-text"></blockquote>
+                </div>
+                <div class="mb-2 d-flex justify-content-between align-items-center">
+                    <label for="reply-textarea" class="form-label mb-0">Текст ответа</label>
+                    <div class="d-flex gap-2 align-items-center">
+                        <select id="reply-template-select" class="form-select form-select-sm"
+                                style="display:none; max-width: 200px;">
+                            <option value="">— Шаблон —</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="reply-ai-btn"
+                                onclick="generateAiDraft()">
+                            <i class="bi bi-stars"></i> AI-черновик
+                        </button>
+                    </div>
+                </div>
+                <textarea class="form-control" id="reply-textarea" rows="5"
+                          placeholder="Введите ответ от имени сообщества…"></textarea>
+                <div id="reply-status" class="mt-2 small"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="reply-send-btn" onclick="sendReply()">
+                    <i class="bi bi-send"></i> Отправить
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Activity Widget (etap 3) — внизу страницы, под живыми уведомлениями -->
@@ -275,6 +317,6 @@
 {% block extra_scripts %}
 {# Cache-busting: nginx serves /static with long-lived immutable cache headers #}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/static/js/notifications.js?v=20260521_4"></script>
+<script src="/static/js/notifications.js?v=20260522_4b"></script>
 {% endblock %}
 

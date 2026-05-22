@@ -4,7 +4,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadNotifications();
     await loadActivityWidget();
     await loadHotPosts();
+    // Deep-link from Telegram inline buttons: #section=messages|comments|suggested
+    scrollToHashSection();
 });
+
+function scrollToHashSection() {
+    const hash = (window.location.hash || '').replace(/^#/, '');
+    if (!hash) return;
+    const m = hash.match(/section=(\w+)/);
+    const section = m ? m[1] : null;
+    if (!section) return;
+    const el = document.getElementById(`section-${section}`);
+    if (!el) return;
+    // Slight delay so async content rendering completes before scrollIntoView.
+    setTimeout(() => {
+        el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        el.classList.add('border', 'border-3', 'border-primary', 'rounded');
+        setTimeout(() => el.classList.remove('border', 'border-3', 'border-primary', 'rounded'), 2500);
+    }, 400);
+}
 
 async function loadNotifications() {
     try {
@@ -245,14 +263,48 @@ function loadUnreadMessages(unreadMessages, deniedGroups) {
     let html = '<div class="list-group list-group-flush">';
 
     unreadMessages.forEach(notif => {
+        const groupId = notif.vk_group_id;
+        const positiveGid = Math.abs(groupId);
+        const regionName = escapeHtml(notif.region_name || '');
+        const conversations = notif.conversations || [];
+
+        // Per-conversation reply rows: extract peer_id + last message preview
+        let convRowsHtml = '';
+        if (conversations.length > 0) {
+            convRowsHtml = '<div class="list-group list-group-flush mt-2">';
+            conversations.forEach(c => {
+                const peer = c?.conversation?.peer || {};
+                const peerId = peer.id;
+                if (!peerId) return;
+                const lastMsg = c?.last_message || {};
+                const lastText = escapeHtml((lastMsg.text || '').slice(0, 180));
+                const peerLabel = `peer ${peerId}`;
+                convRowsHtml += `
+                    <div class="list-group-item py-2">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div class="flex-grow-1">
+                                <small class="text-muted">${peerLabel}</small>
+                                <div class="small" style="white-space: pre-wrap;">${lastText || '<em>(без текста)</em>'}</div>
+                            </div>
+                            <button class="btn btn-sm btn-outline-primary"
+                                    title="Ответить шаблоном или вручную"
+                                    onclick='openReplyModal({kind:"message", groupId:${groupId}, peerId:${peerId}, peerName:${JSON.stringify(peerLabel)}, text:${JSON.stringify(lastMsg.text || "")}, regionName:${JSON.stringify(notif.region_name || "")}})'>
+                                <i class="bi bi-reply"></i> Ответить
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+            convRowsHtml += '</div>';
+        }
+
         html += `
-            <a href="${notif.url}" target="_blank"
-               class="list-group-item list-group-item-action list-group-item-info">
+            <div class="list-group-item list-group-item-info">
                 <div class="d-flex justify-content-between align-items-start">
                     <div class="flex-grow-1">
                         <div class="d-flex align-items-center mb-2">
                             <i class="bi bi-geo-alt-fill text-info me-2"></i>
-                            <h6 class="mb-0">${notif.region_name}</h6>
+                            <h6 class="mb-0">${regionName}</h6>
                         </div>
                         <div class="d-flex align-items-center">
                             <i class="bi bi-chat-dots me-2 text-muted"></i>
@@ -266,13 +318,16 @@ function loadUnreadMessages(unreadMessages, deniedGroups) {
                                 Проверено: ${new Date(notif.checked_at).toLocaleTimeString('ru-RU')}
                             </small>
                         ` : ''}
+                        ${convRowsHtml}
                     </div>
-                    <div class="text-end">
-                        <i class="bi bi-box-arrow-up-right text-info fs-4"></i>
-                        <small class="d-block text-muted mt-1">Открыть в VK</small>
+                    <div class="text-end ms-2">
+                        <a href="${notif.url}" target="_blank" class="btn btn-sm btn-outline-info"
+                           title="Открыть в VK">
+                            <i class="bi bi-box-arrow-up-right"></i>
+                        </a>
                     </div>
                 </div>
-            </a>
+            </div>
         `;
     });
 
@@ -359,6 +414,10 @@ async function loadRecentComments(recentComments) {
                             <a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-secondary" title="Открыть в VK">
                                 <i class="bi bi-box-arrow-up-right"></i>
                             </a>
+                            <button class="btn btn-sm btn-outline-primary" title="Ответить от имени сообщества"
+                                    onclick='openReplyModal({kind:"comment", ownerId:${ownerId}, postId:${postId}, commentId:${cid}, text:${JSON.stringify(notif.text || "")}, regionName:${JSON.stringify(notif.community_name || notif.region_name || "")}})'>
+                                <i class="bi bi-reply"></i>
+                            </button>
                             <button class="btn btn-sm btn-outline-danger" title="Лайкнуть от имени сообщества"
                                     onclick="likeComment(${ownerId}, ${postId}, ${cid}, this)">
                                 <i class="bi bi-heart"></i>
@@ -461,6 +520,181 @@ async function loadHotPosts() {
         `).join('');
     } catch (e) { /* non-fatal */ }
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Reply modal (etap 4b): shared by comment-reply and message-reply
+// ─────────────────────────────────────────────────────────────────
+
+// State of the currently-open modal. Set by openReplyModal(),
+// consumed by sendReply() / generateAiDraft() / loadTemplatesIntoSelect().
+let _replyCtx = null;
+
+function openReplyModal(ctx) {
+    // ctx shape:
+    //   {kind:'comment', ownerId, postId, commentId, text, regionName}
+    //   {kind:'message', groupId, peerId, peerName, text, regionName}
+    _replyCtx = ctx;
+
+    const title = document.getElementById('reply-modal-title');
+    const ctxText = document.getElementById('reply-context-text');
+    const textarea = document.getElementById('reply-textarea');
+    const status = document.getElementById('reply-status');
+    const tplSelect = document.getElementById('reply-template-select');
+    const aiBtn = document.getElementById('reply-ai-btn');
+
+    textarea.value = '';
+    status.textContent = '';
+    status.className = 'mt-2 small';
+
+    if (ctx.kind === 'comment') {
+        title.textContent = `Ответить на комментарий — ${ctx.regionName || ''}`;
+        ctxText.textContent = ctx.text || '(нет текста)';
+        // Templates are for messages; AI is for both — show AI, hide templates.
+        tplSelect.style.display = 'none';
+        aiBtn.style.display = '';
+    } else if (ctx.kind === 'message') {
+        title.textContent = `Ответ в диалог — ${ctx.regionName || ''}${ctx.peerName ? ' / ' + ctx.peerName : ''}`;
+        ctxText.textContent = ctx.text || '(нет последнего сообщения)';
+        tplSelect.style.display = '';
+        aiBtn.style.display = '';
+        loadTemplatesIntoSelect(tplSelect);
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('reply-modal'));
+    modal.show();
+    setTimeout(() => textarea.focus(), 250);
+}
+
+async function loadTemplatesIntoSelect(selectEl) {
+    selectEl.innerHTML = '<option value="">— Шаблон —</option>';
+    try {
+        const resp = await fetch('/api/templates/');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        for (const t of (data.templates || [])) {
+            const opt = document.createElement('option');
+            opt.value = t.body;
+            opt.textContent = t.title;
+            selectEl.appendChild(opt);
+        }
+    } catch (e) { /* non-fatal */ }
+    selectEl.onchange = () => {
+        if (selectEl.value) {
+            document.getElementById('reply-textarea').value = selectEl.value;
+            selectEl.value = '';
+        }
+    };
+}
+
+async function generateAiDraft() {
+    if (!_replyCtx) return;
+    const btn = document.getElementById('reply-ai-btn');
+    const textarea = document.getElementById('reply-textarea');
+    const status = document.getElementById('reply-status');
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Генерация…';
+    status.textContent = '';
+    try {
+        const resp = await fetch('/api/notifications/comments/draft', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                text: _replyCtx.text || '',
+                region_name: _replyCtx.regionName || null,
+                style: 'friendly',
+            }),
+        });
+        const data = await resp.json();
+        if (data.success === false || !data.draft) {
+            status.className = 'mt-2 small text-danger';
+            status.textContent = `AI не смог сгенерировать: ${data.error || '—'}`;
+        } else {
+            textarea.value = data.draft;
+            status.className = 'mt-2 small text-muted';
+            status.textContent = `черновик ${data.model || 'AI'} — отредактируйте перед отправкой`;
+        }
+    } catch (e) {
+        status.className = 'mt-2 small text-danger';
+        status.textContent = `Ошибка AI: ${e.message}`;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+    }
+}
+
+async function sendReply() {
+    if (!_replyCtx) return;
+    const textarea = document.getElementById('reply-textarea');
+    const sendBtn = document.getElementById('reply-send-btn');
+    const status = document.getElementById('reply-status');
+    const message = (textarea.value || '').trim();
+    if (!message) {
+        status.className = 'mt-2 small text-danger';
+        status.textContent = 'Введите текст ответа';
+        return;
+    }
+    const orig = sendBtn.innerHTML;
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Отправка…';
+    status.textContent = '';
+
+    let url, body, itemId, notifType;
+    if (_replyCtx.kind === 'comment') {
+        url = '/api/notifications/comments/reply';
+        body = {
+            owner_id: _replyCtx.ownerId,
+            post_id: _replyCtx.postId,
+            comment_id: _replyCtx.commentId,
+            message,
+        };
+        itemId = String(_replyCtx.commentId);
+        notifType = 'recent_comment';
+    } else {
+        url = '/api/notifications/messages/reply';
+        body = {
+            group_id: _replyCtx.groupId,
+            peer_id: _replyCtx.peerId,
+            message,
+        };
+        itemId = String(_replyCtx.peerId);
+        notifType = 'unread_message';
+    }
+
+    try {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            status.className = 'mt-2 small text-success';
+            status.textContent = `✅ Отправлено (via ${data.via || '?'})`;
+            // Auto-mark as handled & close modal after a beat.
+            fetch('/api/notifications/handled', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({notification_type: notifType, item_id: itemId}),
+            }).catch(() => {});
+            setTimeout(() => {
+                bootstrap.Modal.getInstance(document.getElementById('reply-modal'))?.hide();
+                loadNotifications();
+            }, 900);
+        } else {
+            status.className = 'mt-2 small text-danger';
+            status.textContent = `Не отправилось: [${data.error_code || '?'}] ${data.error || '—'}`;
+        }
+    } catch (e) {
+        status.className = 'mt-2 small text-danger';
+        status.textContent = `Ошибка: ${e.message}`;
+    } finally {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = orig;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────
 
 async function checkNotificationsNow() {
     const btn = document.getElementById('check-now-btn');

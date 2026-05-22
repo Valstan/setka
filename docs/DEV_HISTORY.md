@@ -33,6 +33,99 @@
 
 ---
 
+## 2026-05-22 — Этап 4b: inline-reply, AI-черновик, шаблоны ответов, Telegram inline-кнопки
+
+**Тема сессии:** доделать обратную связь в модуле уведомлений по пунктам, которые отложили в этапе 4a-mini. Теперь модератор отвечает на коммент/сообщение прямо из `/notifications`, без переключения в VK; черновик можно попросить у Groq; на сообщения — выбор из шаблонов; пуш в Telegram содержит inline-кнопки с deep-link на нужный раздел кабинета.
+
+### Backend
+
+#### `modules/notifications/vk_actions.py`
+
+Добавлены две функции рядом с уже существующим `like_comment`:
+
+- **`reply_to_comment(*, owner_id, post_id, comment_id, message, user_token, community_tokens)`** — `wall.createComment(reply_to_comment=..., from_group=positive_owner_id)`. `from_group` явно проставляется, чтобы у админ-user-токена коммент тоже шёл от имени сообщества (без него — от личного аккаунта). Тот же двойной маршрут с fallback community→user (errors 15/27).
+- **`send_message(*, group_id, peer_id, message, user_token, community_tokens, random_id=None)`** — `messages.send(peer_id=, message=, random_id=, group_id=positive)`. `random_id` опциональный (auto-generated если не передали), что позволяет UI не заботиться о дедупликации, но даёт возможность вызывать с идемпотентным id при ретрае.
+- Empty/whitespace `message` короткозамыкается без VK-вызова (нет шанса случайно отправить пустую строку).
+
+#### `modules/notifications/ai_drafter.py` (новый)
+
+- `draft_comment_reply(*, original_text, region_name=None, style=None)` — Groq-вызов через официальный SDK, обёрнутый в `asyncio.to_thread`. Модель `llama-3.1-8b-instant`, `max_tokens=400`, temperature=0.6. Системный промпт жёстко ограничивает поведение: не давать обещаний от лица администрации, без смайликов в нейтральном/критическом контексте, не повторять текст коммента. Стили: `short`, `friendly`, `formal` (по умолчанию friendly).
+- Все ошибки (нет API-ключа, нет groq-SDK, network/429, пустой ответ AI) возвращаются как `{success: False, error}` — никогда не raise.
+
+#### `database/models.py` + `database/migrations/008_message_templates.sql`
+
+- Новая модель `MessageTemplate(id, title, body, category, is_active, created_at, updated_at)`.
+- Миграция идемпотентна: `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS` на `category` (partial) и `is_active` (partial WHERE TRUE).
+- Шаблоны общие на все регионы (модератор один).
+
+#### `web/api/templates.py` (новый)
+
+- CRUD `GET/POST/PUT/DELETE /api/templates/`. `GET ?include_inactive=1` — для управляющей страницы; без флага — только активные (для dropdown в reply-модалке).
+- `title.strip()`, `body.strip()` на входе, `category` нормализуется в `None` для пустой строки.
+
+#### `web/api/notifications.py`
+
+- Вынесен общий хелпер `_load_vk_routing()` — возвращает `(user_token, community_tokens)`. Используется тремя endpoint'ами (`/comments/like`, `/comments/reply`, `/messages/reply`), убирает копипасту routing-логики.
+- Новые endpoint'ы: `POST /comments/reply`, `POST /comments/draft`, `POST /messages/reply`.
+- В `check_all_now` в `notifications_data` для Telegram-алёрта добавлен `comments_count`, чтобы в pus'е появлялась отдельная кнопка для комментов.
+
+#### `modules/notifications/telegram_alert.py`
+
+- Новый `_build_reply_keyboard(dashboard_url, notifications_data)` — собирает `InlineKeyboardMarkup`: первая строка всегда «📬 Открыть кабинет» (без неё бот не имеет смысла), вторая строка — кнопки **только** для категорий с count > 0 (`💬 Ответить (N)` / `💭 Комменты (N)` / `📝 Предложки (N)`), каждая ведёт на `/notifications#section=...`.
+- Webhook-кнопки сознательно НЕ реализованы — это требует бот-сервера и значительно больше работы. URL-кнопка → deep-link на кабинет → дальше click в браузере. Один лишний клик, но без infrastructure debt.
+- `send_telegram_notifications_alert` принимает дополнительный `comments_count`, проставляет `reply_markup=` на отправке.
+
+### UI
+
+#### `web/templates/notifications.html`
+
+- Новая Bootstrap-модалка `#reply-modal` (`reply-context-text`, `reply-textarea`, `reply-status`, `reply-template-select`, `reply-ai-btn`, `reply-send-btn`). Универсальная — рендерит контекст коммента или сообщения в зависимости от `_replyCtx.kind`.
+- Секции получили anchor-id: `#section-suggested`, `#section-messages`, `#section-comments` — для deep-link из Telegram.
+- Cache-bust JS: `notifications.js?v=20260522_4b`.
+
+#### `web/static/js/notifications.js`
+
+- `openReplyModal(ctx)` — открывает модалку, заполняет контекст. Для `kind='message'` показывает dropdown шаблонов (`loadTemplatesIntoSelect`) и грузит их через `GET /api/templates/`.
+- `generateAiDraft()` — кнопка ✨ AI-черновик, POST в `/comments/draft`, при успехе подставляет в textarea, при ошибке — красный inline-статус.
+- `sendReply()` — общий отправщик для comment-reply и message-reply (выбирает url + body по `_replyCtx.kind`). При успехе автоматически отмечает item как handled и перезагружает уведомления.
+- `loadRecentComments` — добавлена кнопка `↩ Ответить` в правый столбец карточки коммента.
+- `loadUnreadMessages` — теперь рендерит per-conversation подкарточки с preview последнего сообщения и кнопкой `↩ Ответить` (peer_id берётся из `c.conversation.peer.id`).
+- `scrollToHashSection()` — на загрузке парсит `#section=...`, плавно скроллит к секции и подсвечивает её рамкой на 2.5 сек.
+
+#### `web/templates/templates.html` + `web/static/js/templates_admin.js` (новые)
+
+- Полноценный CRUD-экран `/templates`: таблица (категория, название, превью текста, статус) + модалка-редактор (заголовок до 120 символов, тело textarea, категория, чек-бокс «активен»).
+- В `base.html` добавлен пункт навигации «Шаблоны ответов» в разделе Система.
+
+#### `main.py`
+
+- Подключён router `templates as templates_api` под `/api/templates`.
+- Добавлен GET `/templates` (Jinja-page).
+
+### Тесты
+
+- **`tests/test_notifications/test_vk_actions.py`** — расширен с 4 до 12 тестов: `reply_to_comment` (happy community, fallback на 15, empty rejected без VK-вызова, message trimmed); `send_message` (happy, negative group_id abs'ится, empty rejected, random_id auto-generated).
+- **`tests/test_notifications/test_ai_drafter.py`** (новый, 7 тестов): empty input short-circuit, missing API key, happy path с trim, empty AI response → failure, exception caught, prompt включает region_name + style, неизвестный стиль → friendly fallback.
+- **`tests/test_api/test_templates.py`** (новый, 9 тестов): валидация Pydantic (требует title+body, cap 120 chars, category optional), endpoint behaviour через `_FakeSession` (default filters inactive, include_inactive=1 не фильтрует, create trims payload, update 404, delete 404, delete happy path).
+- **`tests/test_notifications/test_telegram_inline_buttons.py`** (новый, 4 теста): always-present primary button, секции только для count>0, trailing `#` не дублируется, счётчики попадают в текст кнопки.
+
+Итого +28 тестов (+ исходные 216 = 244 ожидается).
+
+### Применение
+
+1. **Миграция** до restart: `ssh setka-prod 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/008_message_templates.sql'`. Идемпотентна — можно запускать повторно.
+2. `git pull` + `sudo systemctl restart setka setka-celery-worker setka-celery-beat`.
+3. Открыть `/templates`, создать 3-5 типовых шаблонов (спасибо/перенаправим/новости в группе).
+4. Открыть `/notifications` — у комментов теперь кнопка ↩, у каждого диалога в сообщениях тоже.
+5. Следующий Telegram-алёрт придёт с inline-кнопками.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- 🟢 Полноценный Telegram-бот с webhook + `bot.set_webhook` + `wall.createComment`/`messages.send` прямо из bot-handler (без перехода в браузер). Сейчас URL-кнопки → веб-кабинет. Это «фича роскоши», не блокер.
+- 🟢 Per-region шаблоны (region_id nullable + UI-фильтр) — если потребуется. Пока шаблоны общие.
+
+---
+
 ## 2026-05-21 — Token routing fix: wall.repost минует community, глобальный rate-limit на VALSTAN
 
 **Тема сессии:** пользователь спросил почему дайджесты публикуются через VALSTAN, а не через community-tokens регионов. Аудит показал: **дайджесты (wall.post) УЖЕ идут через community-tokens** (см. лог 14:05-14:06, 10 групп подряд `Published post ... (via community-token)`). Жалоба основана на косметическом баге логирования `Reposted ... (via community-token)` — после fallback там уже publish-token. Параллельно сразу две проблемы оставались:

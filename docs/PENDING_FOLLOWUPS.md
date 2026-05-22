@@ -22,16 +22,21 @@ _Сейчас нет._
 
 ### Рефакторинг модуля уведомлений VK (этапы 1-5)
 
-Этапы 0, 1, 2, 3, 4a-mini, 5 + hot-fix-2 закрыты 2026-05-21 (см. [`DEV_HISTORY.md`](DEV_HISTORY.md)):
+Все этапы закрыты:
+
+2026-05-21:
 - 0 — Fallback на user-token при VK error 15/27 + `keep_if_empty` в storage.
 - 1 — Полный сбор комментариев: пагинация по offset, thread.items, `max_total_comments` 300→5000 safety cap.
 - 2 — BaseVKChecker (DRY), удалён UnifiedNotificationsChecker и dead-code, окно 8-22 только в crontab.
 - 3 — Storage history + виджет «активность за 24ч» (Chart.js) + API `/history` `/stats`.
-- 4a-mini — `like_comment` от имени сообщества, mark-as-handled (7d), виджет «Горячие посты» (top-5 ≥5 комментов за 24ч).
-- 5 — Prometheus метрики (`notifications_check_*`, `notifications_zero_streak`) + token-health watchdog с Telegram-alert и 6h cooldown.
+- 4a-mini — `like_comment` от имени сообщества, mark-as-handled (7d), виджет «Горячие посты».
+- 5 — Prometheus метрики + token-health watchdog с Telegram-alert и 6h cooldown.
 - hot-fix-2 — VKClient.api_call propagates error_code + regex fallback в `_invoke`.
 
-Дальше план — этап 4b (то что отложили). Плюс новые техдолги по ходу сессии:
+2026-05-22:
+- 4b — Inline-reply на коммент (`wall.createComment` + `from_group`); AI-черновик через Groq (`llama-3.1-8b-instant`); шаблонные ответы на сообщения + CRUD-страница `/templates` + миграция 008; Telegram inline-кнопки с deep-link на `#section=...`. Доделано всё, что откладывалось.
+
+Техдолги по audit'у token routing (продолжаются):
 
 ### 🆕 Техдолги по audit'у token routing
 
@@ -39,6 +44,12 @@ _Сейчас нет._
 - ✅ VK Captcha rate-limit — добавлен `GLOBAL_PUBLISH_INTERVAL_SECONDS=1.5` (class-var на VKPublisher).
 - ✅ Косметика лога `via=community-token` после fallback — `_call_wall_post` теперь возвращает `(response, via_label)`, метка вычисляется по фактическому пути.
 - ✅ wall.repost больше не пробует community-token (VK API физически не поддерживает) — добавлен `_USER_TOKEN_ONLY_METHODS={'wall.repost'}`.
+
+Закрыто 2026-05-22 (см. `DEV_HISTORY.md`, этап 4b):
+- ✅ Inline-reply на коммент из карточки `/notifications`.
+- ✅ AI-черновик через Groq в модалке ответа (кнопка ✨).
+- ✅ Шаблонные ответы на сообщения сообщества + CRUD-страница `/templates`.
+- ✅ Telegram inline-кнопки с deep-link на `/notifications#section=...`.
 
 Остаются:
 
@@ -50,11 +61,7 @@ _Сейчас нет._
   - `scripts/run_production_workflow.py` — manual test script, обновить или удалить.
 - **Глобальный rate-limit на parse-token VITA** (по аналогии с VALSTAN): сейчас vk_api lib сама sleep'ит при rate-limit hit, но это per-session — при множестве параллельных парсеров (если когда-нибудь увеличим concurrency Celery worker'а) может зацепиться.
 
-### Этап 4 — UI обратной связи (всё ещё в плане)
-
-- **Этап 4a — UI обратной связи (часть 1).** Inline-ответ из SETKA (`wall.createComment`); **лайк коммента от имени сообщества** (`likes.add` через community-token, кнопка-сердечко); mark-as-handled / архив (Redis `setka:notifications:handled:{id}` TTL 7 дней); виджет «Горячие посты» (топ-5 за сутки с >10 комментариев).
-- **Этап 4b — UI обратной связи (часть 2).** **Шаблонные ответы на сообщения** (`messages.send` через community-token + отдельный экран `/templates` для CRUD шаблонов); **AI-черновик** через Groq (кнопка «Сгенерировать ответ» → редактируемая textarea); Telegram-бот inline-кнопка «Ответить из SETKA».
-- **Этап 5 — Мониторинг.** Prometheus метрика `notifications_check_total{type,result}`. Алёрт в Telegram «3 автопроверки подряд возвращают error 27 — токены сломаны».
+_Все запланированные этапы (0, 1, 2, 3, 4a-mini, 4b, 5) закрыты. См. `DEV_HISTORY.md`._
 
 ---
 
@@ -100,6 +107,8 @@ _Сейчас нет._
 - **UI «История публикаций» по регионам и темам** — `web/templates/publications.html`? Сейчас контроль идёт через VK-стены, нет своего удобного просмотра.
 - **«Тёмный режим» для UI** — `/regions`, `/posts`, `/filtration` — длинные таблицы, ночью глаза вытекают.
 - **`/regions/<code>/diagnostics`** — кнопка «прогнать пайплайн без публикации» в UI: видно, что отфильтровалось, что собрал aggregator, что попало бы в дайджест.
+- **Полноценный Telegram-бот с webhook** — `bot.set_webhook` + `wall.createComment`/`messages.send` прямо из bot-handler без перехода в браузер. Сейчас (этап 4b) — URL-кнопки на `/notifications#section=...`, требуют один лишний клик. Это «фича роскоши», не блокер.
+- **Per-region шаблоны ответов** — `message_templates.region_id NULL = all` + UI-фильтр. Пока шаблоны общие на все регионы (моде­ратор один).
 
 ---
 

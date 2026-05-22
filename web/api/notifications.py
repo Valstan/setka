@@ -150,6 +150,32 @@ async def list_handled(notification_type: str):
     return {'notification_type': notification_type, 'ids': sorted(storage.get_handled_set(notification_type))}
 
 
+async def _load_vk_routing():
+    """Return (user_token, community_tokens) for the VK action endpoints.
+
+    Centralised so all `comments/like`, `comments/reply`, `messages/reply`
+    endpoints follow the exact same routing without copy-paste drift.
+    """
+    from database.connection import AsyncSessionLocal
+    from database.models import VKToken
+    from config.runtime import VK_TOKENS
+    from sqlalchemy import select
+
+    vk_token = VK_TOKENS.get("VALSTAN")
+    if not vk_token:
+        return None, {}
+
+    async with AsyncSessionLocal() as session:
+        q = await session.execute(
+            select(VKToken).where(
+                VKToken.community_id.isnot(None),
+                VKToken.is_active.is_(True),
+            )
+        )
+        community_tokens = {t.community_id: t.token for t in q.scalars()}
+    return vk_token, community_tokens
+
+
 class LikeCommentRequest(BaseModel):
     """POST /comments/like body."""
     owner_id: int
@@ -165,29 +191,111 @@ async def like_comment_endpoint(req: LikeCommentRequest):
     user-token if community-token fails with VK error 15/27 (no `manage` /
     no access). Idempotent — VK keeps a single like per (user, target).
     """
-    from database.connection import AsyncSessionLocal
-    from database.models import VKToken
     from modules.notifications.vk_actions import like_comment
-    from config.runtime import VK_TOKENS
-    from sqlalchemy import select
 
-    vk_token = VK_TOKENS.get("VALSTAN")
+    vk_token, community_tokens = await _load_vk_routing()
     if not vk_token:
         return {'success': False, 'error': 'VK token not found'}
-
-    async with AsyncSessionLocal() as session:
-        q = await session.execute(
-            select(VKToken).where(
-                VKToken.community_id.isnot(None),
-                VKToken.is_active.is_(True),
-            )
-        )
-        community_tokens = {t.community_id: t.token for t in q.scalars()}
 
     return like_comment(
         owner_id=req.owner_id,
         post_id=req.post_id,
         comment_id=req.comment_id,
+        user_token=vk_token,
+        community_tokens=community_tokens,
+    )
+
+
+class ReplyCommentRequest(BaseModel):
+    """POST /comments/reply body (etap 4b)."""
+    owner_id: int
+    post_id: int
+    comment_id: int
+    message: str
+
+
+@router.post("/comments/reply")
+async def reply_to_comment_endpoint(req: ReplyCommentRequest):
+    """Reply to a comment from the group account (etap 4b).
+
+    Calls VK `wall.createComment(reply_to_comment=..., from_group=1)` —
+    new comment appears under the original thread, attributed to the
+    community. Same two-token routing as like_comment.
+    """
+    from modules.notifications.vk_actions import reply_to_comment
+
+    if not (req.message or "").strip():
+        return {'success': False, 'error': 'message is empty'}
+
+    vk_token, community_tokens = await _load_vk_routing()
+    if not vk_token:
+        return {'success': False, 'error': 'VK token not found'}
+
+    return reply_to_comment(
+        owner_id=req.owner_id,
+        post_id=req.post_id,
+        comment_id=req.comment_id,
+        message=req.message,
+        user_token=vk_token,
+        community_tokens=community_tokens,
+    )
+
+
+class DraftReplyRequest(BaseModel):
+    """POST /comments/draft body (etap 4b)."""
+    text: str             # original comment text
+    region_name: str | None = None
+    style: str | None = None  # 'short' | 'friendly' | 'formal' (optional hint)
+
+
+@router.post("/comments/draft")
+async def draft_reply_endpoint(req: DraftReplyRequest):
+    """Generate a draft reply via Groq (etap 4b).
+
+    Returns {'draft': str, 'model': str} on success or
+    {'success': False, 'error': str} on AI failure. The frontend pastes the
+    draft into the reply textarea; the operator edits and sends manually.
+    """
+    from modules.notifications.ai_drafter import draft_comment_reply
+
+    if not (req.text or "").strip():
+        return {'success': False, 'error': 'text is empty'}
+
+    return await draft_comment_reply(
+        original_text=req.text,
+        region_name=req.region_name,
+        style=req.style,
+    )
+
+
+class SendMessageRequest(BaseModel):
+    """POST /messages/reply body (etap 4b)."""
+    group_id: int  # positive or negative; we abs() it
+    peer_id: int   # VK user id or chat peer
+    message: str
+
+
+@router.post("/messages/reply")
+async def send_message_endpoint(req: SendMessageRequest):
+    """Send a direct message from the group to a conversation (etap 4b).
+
+    Used by the templates UI to answer DMs to the community account. Routes
+    through the community-token (preferred; user-token usually lacks the
+    `messages` scope).
+    """
+    from modules.notifications.vk_actions import send_message
+
+    if not (req.message or "").strip():
+        return {'success': False, 'error': 'message is empty'}
+
+    vk_token, community_tokens = await _load_vk_routing()
+    if not vk_token:
+        return {'success': False, 'error': 'VK token not found'}
+
+    return send_message(
+        group_id=req.group_id,
+        peer_id=req.peer_id,
+        message=req.message,
         user_token=vk_token,
         community_tokens=community_tokens,
     )
@@ -404,6 +512,7 @@ async def check_all_now():
                         notifications_data={
                             'suggested_count': len(suggested),
                             'messages_count': len(messages),
+                            'comments_count': len(current_comments),
                             'total_count': total_count,
                             'suggested_posts': suggested,
                             'unread_messages': messages,

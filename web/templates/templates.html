@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Шаблоны ответов - SETKA{% endblock %}
+{% block nav_templates %}active{% endblock %}
+{% block nav_section_system %}active{% endblock %}
+
+{% block content %}
+<div class="templates-page mx-auto" style="max-width: 1100px;">
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>
+                <i class="bi bi-chat-quote"></i> Шаблоны ответов
+            </h1>
+            <button class="btn btn-primary" onclick="openTemplateEditor()">
+                <i class="bi bi-plus-lg"></i> Новый шаблон
+            </button>
+        </div>
+        <p class="text-muted">
+            Используются в модалке ответа на VK-сообщения сообщества
+            (страница <a href="/notifications">Уведомления</a> → раздел
+            «Непрочитанные сообщения» → кнопка «Ответить»).
+        </p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body p-0">
+                <div id="templates-loading" class="text-center py-4">
+                    <div class="spinner-border spinner-border-sm text-secondary"></div>
+                    <p class="mt-2 text-muted mb-0">Загрузка…</p>
+                </div>
+                <div id="templates-empty" class="alert alert-info m-3" style="display:none;">
+                    Шаблонов пока нет. Создайте первый, чтобы быстро отвечать в диалогах.
+                </div>
+                <table class="table table-hover mb-0" id="templates-table" style="display:none;">
+                    <thead>
+                        <tr>
+                            <th style="width:12%;">Категория</th>
+                            <th style="width:25%;">Название</th>
+                            <th>Текст</th>
+                            <th style="width:10%;">Статус</th>
+                            <th style="width:130px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="templates-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Editor modal -->
+<div class="modal fade" id="template-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="template-modal-title">Новый шаблон</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="tpl-id">
+                <div class="row g-3">
+                    <div class="col-md-8">
+                        <label class="form-label">Название</label>
+                        <input type="text" class="form-control" id="tpl-title" maxlength="120"
+                               placeholder="например: «Спасибо за обращение»">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Категория</label>
+                        <input type="text" class="form-control" id="tpl-category" maxlength="50"
+                               placeholder="thanks / redirect / greeting…">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Текст</label>
+                        <textarea class="form-control" id="tpl-body" rows="6"
+                                  placeholder="Текст ответа от имени сообщества…"></textarea>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="tpl-is-active" checked>
+                            <label class="form-check-label" for="tpl-is-active">
+                                Активен (виден в dropdown)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div id="tpl-status" class="mt-2 small"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="saveTemplate()">
+                    <i class="bi bi-save"></i> Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/templates_admin.js?v=20260522_4b"></script>
+{% endblock %}

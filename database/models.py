@@ -229,6 +229,40 @@ class VKToken(Base):
         return self.token
 
 
+class MessageTemplate(Base):
+    """Шаблон ответа на сообщение сообщества (этап 4b).
+
+    Используется UI `/templates` для CRUD и dropdown'ом в модалке ответа
+    на VK direct message. Шаблоны общие на все регионы — это сознательно:
+    модератор обычно один, и шаблоны типа «спасибо за обращение, передадим»
+    не зависят от региона. Если когда-то понадобится per-region — добавим
+    region_id nullable + UI-фильтр.
+    """
+    __tablename__ = "message_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(120), nullable=False)
+    body = Column(Text, nullable=False)
+    category = Column(String(50), nullable=True, index=True)  # 'greeting', 'thanks', 'redirect', ...
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<MessageTemplate {self.id} {self.title!r}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "body": self.body,
+            "category": self.category,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class PublishSchedule(Base):
     """Расписание публикаций"""
     __tablename__ = "publish_schedules"
