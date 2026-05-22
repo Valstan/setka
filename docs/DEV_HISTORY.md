@@ -48,6 +48,52 @@
 
 ---
 
+## 2026-05-23 — Mailbox asymmetry — миграция на per-repo write
+
+**Тема сессии:** brain прислала [директиву](../mailbox/to-brain/2026-05-23-asymmetry-migration-done.md) (compliance=mandate, urgency=high) — старая симметричная схема mailbox'ов (обе стороны пишут в `brain_matrica/mailboxes/`) приводит к кросс-репо коммитам, merge-конфликтам и размытой ответственности. Переход на асимметричную: каждая сторона пишет **только в свой репо**, читает чужой через `git pull --ff-only`. ([asymmetry-fix письмо](../../brain_matrica/mailboxes/setka/from-brain/2026-05-23-mailbox-asymmetry-fix.md), [ADR-0001 v3](../../brain_matrica/adr/0001-brain-projects-mailboxes.md)).
+
+### Изменения
+
+- **`mailbox/`** — новая папка в setka репо:
+  - `mailbox/to-brain/.gitkeep` + `mailbox/README.md` (одна строка ссылки на ADR-0001).
+  - `mailbox/to-brain/2026-05-22-mailbox-protocol-acknowledged.md` — перенесён из `brain_matrica/mailboxes/setka/to-brain/`.
+  - `mailbox/to-brain/2026-05-22-pr-flow-acknowledged.md` — то же.
+  - `mailbox/to-brain/2026-05-22-compliance-acknowledged.md` — то же.
+  - `mailbox/to-brain/2026-05-23-asymmetry-migration-done.md` — подтверждение применения текущей директивы по шаблону из неё.
+  - Во всех 3 перенесённых ack-файлах ссылки на исходные директивы поправлены под относительный путь из setka (`../../../brain_matrica/mailboxes/setka/from-brain/ARCHIVE/...`). Добавлена секция «Примечание о схеме» — упоминание миграции.
+- **`.claude/commands/start.md`** — Шаг 0 «Mailbox check» переписан под асимметричную схему:
+  - 0.1: `cd ../brain_matrica && git pull --ff-only origin main` (read-only).
+  - 0.2: сканирование `mailboxes/setka/from-brain/*.md` (без DRAFTS/ARCHIVE) — без изменений.
+  - 0.3-0.5: retroactive compliance + формат `[urgency COMPLIANCE]` + таблица реакции — без изменений.
+  - 0.6: ответы → `setka/mailbox/to-brain/`, коммит в setka репо через PR.
+  - 0.7: архивация исходящих не делается (MVP).
+  - Раздел «Что НЕЛЬЗЯ» расширен: запрещены любые записи в `brain_matrica/` (включая `.last-seen`, `to-brain/`, `ARCHIVE/`).
+  - Убран шаг обновления `.last-seen`.
+- **`CLAUDE.md`** — раздел «Интеграция с brain_matrica» переписан: таблица «brain → setka / setka → brain» с явным владельцем репо каждой стороны; политика read-only к `brain_matrica/`.
+
+### Чего НЕ делал (намеренно)
+
+- **PR в brain_matrica** — не создаю. По новой схеме записи в `brain_matrica/` запрещены. brain заберёт это письмо через `cd ../setka && git pull --ff-only` у себя.
+- **Архивацию исходящего письма** `2026-05-23-mailbox-asymmetry-fix.md` в `brain_matrica/.../ARCHIVE/` — это зона brain'а.
+- **Удаление дублей** старых ack-файлов в `brain_matrica/mailboxes/setka/to-brain/` (PR brain_matrica#4) — это зона brain'а; директива явно говорит «эту папку brain больше не использует для приёма, она останется для совместимости».
+
+### Проверка / прогон
+
+- Тесты не запускались — правки только в `mailbox/`, slash-команды, markdown. Кода нет.
+- Pre-commit — то же.
+
+### Применение
+
+1. Merge PR на новой схеме (`gh pr merge --squash --delete-branch`).
+2. Прод-деплой **не нужен**: изменения только в `mailbox/`, `.claude/`, `docs/`.
+3. Следующий `/start` подхватит новую асимметричную схему автоматически.
+
+### Хвосты
+
+- Если brain в будущем захочет sticky-маркер «когда setka последний раз заходил» — добавлю `setka/mailbox/.last-seen` в свой репо (сейчас не делаю, директива не требует).
+
+---
+
 ## 2026-05-22 — brain_matrica onboarding: mailbox + PR-only flow
 
 **Тема сессии:** setka подключается к meta-репо `brain_matrica` (стратегический hub для всех проектов @valstan). Получены 3 директивных письма (все `mandate` — либо явно, либо по retroactive-правилу [ADR-0001 v2](../../brain_matrica/adr/0001-brain-projects-mailboxes.md#compliance-levels)): подключить mailbox-протокол, перейти на PR-only flow, отображать `compliance` levels (MAY/SHOULD/MUST по RFC 2119) в репортах. Реализованы все три в одном PR.
