@@ -165,18 +165,25 @@ class CandidatePatch(BaseModel):
 
 
 async def _approve_candidate(session, candidate: CommunityCandidate, category: str) -> Community:
-    """Create a Community row for an approved candidate. Idempotent via
-    composite UNIQUE(region_id, vk_id) — if already exists, just refresh it."""
+    """Create a Community row for an approved candidate.
+
+    Идемпотентность — на уровне ``(region_id, vk_id, category)``: одна VK-группа
+    может жить в `communities` с разными category одновременно (см.
+    database/migrations/011 — комментарий к idx_communities_region_vk).
+    Если запись с такой тройкой уже есть, освежаем её; иначе INSERT.
+    """
     existing: Optional[Community] = (
         await session.execute(
-            select(Community).where(
+            select(Community)
+            .where(
                 Community.region_id == candidate.region_id,
                 Community.vk_id == candidate.vk_id,
+                Community.category == category,
             )
+            .limit(1)
         )
     ).scalar_one_or_none()
     if existing is not None:
-        existing.category = category or existing.category
         existing.name = candidate.name or existing.name
         existing.screen_name = candidate.screen_name or existing.screen_name
         existing.is_active = True

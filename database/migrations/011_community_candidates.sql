@@ -48,20 +48,18 @@ ALTER TABLE communities ADD COLUMN IF NOT EXISTS suggested_category VARCHAR(50);
 CREATE INDEX IF NOT EXISTS idx_communities_health
     ON communities(health_status);
 
--- Composite UNIQUE(region_id, vk_id) — в рамках одного региона vk_id уникален.
--- Между регионами одна и та же группа может быть привязана к нескольким
--- (например, областная группа в нескольких районах).
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_indexes
-        WHERE schemaname = 'public'
-          AND indexname = 'uq_communities_region_vk'
-    ) THEN
-        CREATE UNIQUE INDEX uq_communities_region_vk
-            ON communities(region_id, vk_id);
-    END IF;
-END$$;
+-- Композитный индекс (region_id, vk_id) для быстрого exclude-фильтра в
+-- discovery («эта группа уже привязана к региону?»).
+--
+-- Изначально планировался UNIQUE, но на проде нашлись намеренные дубли:
+-- одна VK-группа привязана к региону С РАЗНЫМИ category (например,
+-- 'Первый Малмыжский' идёт и как novost, и как reklama — одна стена,
+-- двоятся в разные хвосты пайплайна). Это валидный кейс, не баг данных.
+-- Поэтому ограничение — обычный B-tree без UNIQUE; настоящая уникальность
+-- — на уровне (region_id, vk_id, category), но её не закладываем
+-- (пускай UI следит).
+CREATE INDEX IF NOT EXISTS idx_communities_region_vk
+    ON communities(region_id, vk_id);
 
 -- ─────────────────────────────────────────────────────────────────
 -- 3. community_candidates — буфер discovery до approve.

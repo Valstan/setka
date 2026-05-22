@@ -102,7 +102,10 @@ class Community(Base):
 
     __table_args__ = (
         Index("ix_communities_region_category", "region_id", "category"),
-        Index("uq_communities_region_vk", "region_id", "vk_id", unique=True),
+        # Композитный индекс (region_id, vk_id) — для discovery exclude-filter.
+        # НЕ unique: одна VK-группа может быть в communities несколько раз с
+        # разными category (см. database/migrations/011 — комментарий к индексу).
+        Index("idx_communities_region_vk", "region_id", "vk_id"),
     )
 
     def __repr__(self):
