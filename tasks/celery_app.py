@@ -164,7 +164,6 @@ def _maybe_send_telegram_notifications_alert() -> None:
 # Создаем Celery app
 # IMPORTANT: keep a single Celery runtime and explicitly include tasks that are scheduled by beat.
 app = Celery('setka', include=[
-    'tasks.correct_workflow_tasks',
     'tasks.parsing_tasks',
     'tasks.parsing_scheduler_tasks',  # Postopus migration
 ])
@@ -737,16 +736,6 @@ def cleanup_old_posts():
 
 # Расписания (Beat Schedule)
 app.conf.beat_schedule = {
-    # Основной workflow каждый час в X:05
-    'monitoring-hourly': {
-        'task': 'tasks.correct_workflow_tasks.run_correct_workflow',
-        'schedule': crontab(minute=5),  # Каждый час на 5-й минуте
-        'options': {
-            'expires': 3000,  # Task expires after 50 minutes
-            'catchup': False,  # Не догонять пропущенные запуски после простоев
-        }
-    },
-
     # Проверка предложенных постов каждый час с 8:00 до 22:00 в X:15
     'check-suggested-hourly': {
         'task': 'tasks.celery_app.check_suggested_posts',

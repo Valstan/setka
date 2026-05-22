@@ -48,6 +48,43 @@
 
 ---
 
+## 2026-05-22 — Удаление deprecated publisher-стека + correct_workflow
+
+**Тема сессии:** аудит дёрнул всех пользователей старого `vk_publisher.py` (без community-tokens). Оказалось, что половина — мёртвый код, который никем не зовётся (нет в Celery beat, нет в Celery include, нет в UI). Решено удалить deprecated цепочку целиком, а «миграцию на extended» оставить только для живого `web/api/publisher.py` (вынесено в 🟢 идеи).
+
+### Удалено (всё это deprecated, никто не зовёт)
+
+- **`modules/correct_workflow.py`** + **`tasks/correct_workflow_tasks.py`** — целая цепочка «правильного workflow». Метод `publish_digest_to_main_group` был **заглушкой** (только логировал, ничего не публиковал). Реальные дайджесты идут через `parse_and_publish_theme`. Из `tasks/celery_app.py` убран `include=` и beat-entry `monitoring-hourly` (каждый час в X:05).
+- **`modules/publisher/publisher.py`** (`ContentPublisher`) — multi-platform публикатор, использовал старый `vk_publisher.py` (без community-tokens).
+- **`modules/scheduler/scheduler.py`** (`ContentScheduler`) — оркестратор `VKMonitor → AI → ContentPublisher`. Использовался только из ниже-перечисленных deprecated файлов. `smart_scheduler.py` рядом — другой модуль, его НЕ трогали.
+- **`tasks/publishing_tasks.py`** — Celery таски `publish_scheduled_posts`/`publish_post`/`publish_region`/`check_publishers`. НЕ были зарегистрированы ни в `Celery(include=...)`, ни в `beat_schedule`.
+- **`tasks/test_info_tasks.py`** + **`modules/test_info_scheduler.py`** — отдельный «test info» планировщик. Тоже не в beat / не в include.
+- **`web/api/workflow.py`** — endpoint'ы `/api/workflow/status`, `/run-cycle`, `/publish`, `/schedule`, `/stats`. Grep по `web/` не нашёл ни одного UI-вызова. Из `main.py` убран импорт и `app.include_router(workflow.router, ...)`.
+- **`scripts/test_full_workflow.py`** — manual integration test для ContentPublisher.
+
+Заодно подтвердилось, что `modules/publisher/cross_region_repost.py` и `tasks/real_vk_workflow.py` (упомянутые как «удалить» в PENDING) **уже не существуют** — записи в PENDING были устаревшими.
+
+### Что НЕ удалено
+
+- **`web/api/publisher.py`** + **`web/templates/publisher.html`** (страница `/publisher`) — UI ручной публикации **живой**, использует кастомные методы старого `VKPublisher` (`get_group_info`, `get_target_group_id`, `publish_aggregated_post`). Этих методов нет в `vk_publisher_extended.VKPublisher`. Миграция требует либо расширения extended-API, либо переписывания endpoint-ов — это отдельная задача, висит в 🟢 идеях.
+- Manual-test scripts в `scripts/` (`test_publisher.py`, `test_vk_publisher.py`, `test_publish_to_region.py`, `test_production_automation.py`, `run_production_workflow.py`) — оставлены как archive. Не запускаются автоматически.
+
+### Применение
+
+- `git pull` + `sudo systemctl restart setka setka-celery-worker setka-celery-beat`. Миграции БД не нужны.
+- В celery-beat больше не будет ежечасной таски `monitoring-hourly` (раньше она в X:05 крутила заглушку, теперь — пусто).
+
+### Тесты
+
+- Локально: `pytest tests/ -q` — 244/244 зелёных.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- 🟢 Миграция `web/api/publisher.py` на extended (см. выше).
+- 🟡 Глобальный rate-limit на parse-token VITA — остаётся.
+
+---
+
 ## 2026-05-22 — Миграция 009: ALTER DEFAULT PRIVILEGES для setka_user
 
 **Тема сессии:** закрыть техдолг, выползший в инциденте после деплоя этапа 4b. Раньше на каждой новой таблице приходилось бы дописывать `GRANT ALL ... TO setka_user` (либо ловить 500-ки на проде, как с `message_templates`). Теперь — настроено централизованно.

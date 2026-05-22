@@ -16,7 +16,7 @@ from pathlib import Path
 from _version import __version__ as APP_VERSION
 from database.connection import get_db_session, init_db, close_db
 from modules.module_activity_notifier import notify_system_startup
-from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher, parsing, parsing_stats, filtration, templates as templates_api
+from web.api import health, regions, communities, posts, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher, parsing, parsing_stats, filtration, templates as templates_api
 
 # Setup logging
 # LOG_PATH задаётся в /etc/setka/setka.env на проде, по умолчанию — прод-путь
@@ -119,7 +119,6 @@ app.include_router(token_management.router, prefix="/api/tokens", tags=["Token M
 app.include_router(service_notifications.router, tags=["Service Notifications"])
 app.include_router(test_workflow.router, tags=["Test Workflow"])
 app.include_router(schedule_management.router, tags=["Schedule Management"])
-app.include_router(workflow.router, tags=["Workflow"])
 app.include_router(system_monitoring.router, tags=["System Monitoring"])
 app.include_router(task_monitoring.router, tags=["Task Monitoring"])
 app.include_router(publisher.router, prefix="/api/publisher", tags=["VK Publisher"])
