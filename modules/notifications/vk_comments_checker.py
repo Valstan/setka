@@ -12,8 +12,8 @@ VK Recent Comments Checker
 """
 
 import logging
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from vk_api.exceptions import ApiError
 
@@ -64,16 +64,17 @@ class VKCommentsChecker(BaseVKChecker):
         pages = 0
 
         while pages < self._PAGES_PER_POST_LIMIT:
+
             def call(api, _offset=offset):
                 return api.wall.getComments(
                     owner_id=owner_id,
                     post_id=post_id,
                     need_likes=0,
-                    extended=1,         # join profiles[]/groups[] (для имени автора)
-                    thread_items=1,     # вернуть thread.items (ответы на коммент)
+                    extended=1,  # join profiles[]/groups[] (для имени автора)
+                    thread_items=1,  # вернуть thread.items (ответы на коммент)
                     count=self._PAGE_SIZE,
                     offset=_offset,
-                    sort="desc",        # новые сверху → можно прерваться при выходе за cutoff
+                    sort="desc",  # новые сверху → можно прерваться при выходе за cutoff
                 )
 
             try:
@@ -151,13 +152,16 @@ class VKCommentsChecker(BaseVKChecker):
         из-за чего community-токены сюда не доходили (см. PR 2026-05-21).
         Теперь маршрут одинаковый с `check_post_comments_since` + fallback.
         """
+
         def call(api):
             return api.wall.get(owner_id=owner_id, count=count)
 
         try:
             resp, _via = self._call_with_fallback(owner_id, "wall.get", call)
         except ApiError as e:
-            logger.debug(f"VK API error while fetching wall for owner_id={owner_id}: {e} (code: {e.code})")
+            logger.debug(
+                f"VK API error while fetching wall for owner_id={owner_id}: {e} (code: {e.code})"
+            )
             return []
         except Exception as e:
             logger.warning(f"Error while fetching wall for owner_id={owner_id}: {e}")
@@ -217,8 +221,12 @@ class VKCommentsChecker(BaseVKChecker):
                     )
                     return self._sort_newest_first(notifications)
                 notif = self._build_comment_notification(
-                    c, post=p, owner_id=owner_id, post_id=post_id,
-                    post_url=post_url, now_iso=now_iso,
+                    c,
+                    post=p,
+                    owner_id=owner_id,
+                    post_id=post_id,
+                    post_url=post_url,
+                    now_iso=now_iso,
                 )
                 if notif is not None:
                     notifications.append(notif)
@@ -260,8 +268,7 @@ class VKCommentsChecker(BaseVKChecker):
             "has_attachments": bool(c.get("attachments")),
             "text": text,
             "post_url": post_url,
-            "commented_at": datetime.utcfromtimestamp(int(c_date)).isoformat()
-            if c_date else None,
+            "commented_at": datetime.utcfromtimestamp(int(c_date)).isoformat() if c_date else None,
             "checked_at": now_iso,
         }
 
@@ -332,8 +339,12 @@ class VKCommentsChecker(BaseVKChecker):
                         )
                         return self._sort_newest_first(notifications)
                     notif = self._build_comment_notification(
-                        c, post=post_context, owner_id=owner_id,
-                        post_id=int(post_id), post_url=post_url, now_iso=now_iso,
+                        c,
+                        post=post_context,
+                        owner_id=owner_id,
+                        post_id=int(post_id),
+                        post_url=post_url,
+                        now_iso=now_iso,
                     )
                     if notif is not None:
                         notifications.append(notif)
@@ -343,5 +354,3 @@ class VKCommentsChecker(BaseVKChecker):
             f"(main INFO groups only, threads included)"
         )
         return self._sort_newest_first(notifications)
-
-

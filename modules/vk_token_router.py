@@ -12,6 +12,7 @@ VK Token Router
 Для парсинга чужих сообществ community-токенов нет в принципе — там
 автоматически остаётся пользовательский токен.
 """
+
 from __future__ import annotations
 
 from typing import Dict

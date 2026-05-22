@@ -45,5 +45,3 @@ def run_coro(coro: Coroutine[Any, Any, T]) -> T:
         asyncio.set_event_loop(_loop)
 
     return _loop.run_until_complete(coro)
-
-

@@ -4,10 +4,12 @@ Notifications Storage
 Хранение уведомлений в Redis.
 Уведомления хранятся 24 часа и обновляются каждый час.
 """
+
 import json
 import logging
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import redis
 
 logger = logging.getLogger(__name__)
@@ -15,28 +17,25 @@ logger = logging.getLogger(__name__)
 
 class NotificationsStorage:
     """Хранилище уведомлений в Redis"""
-    
+
     def __init__(self, redis_host: str = "localhost", redis_port: int = 6379, redis_db: int = 1):
         """
         Инициализация хранилища
-        
+
         Args:
             redis_host: Хост Redis
             redis_port: Порт Redis
             redis_db: Номер БД Redis (используем 1, чтобы не мешать Celery в 0)
         """
         self.redis_client = redis.Redis(
-            host=redis_host,
-            port=redis_port,
-            db=redis_db,
-            decode_responses=True
+            host=redis_host, port=redis_port, db=redis_db, decode_responses=True
         )
         self.key_prefix = "setka:notifications"
-        
+
     def save_notifications(
         self,
         notifications: List[Dict[str, Any]],
-        notification_type: str = 'suggested_posts',
+        notification_type: str = "suggested_posts",
         keep_if_empty: bool = False,
         keep_window_hours: int = 6,
     ) -> bool:
@@ -70,21 +69,21 @@ class NotificationsStorage:
                         existing = json.loads(existing_raw)
                     except (ValueError, TypeError):
                         existing = None
-                    if existing and existing.get('notifications'):
-                        existing_ts = existing.get('timestamp')
+                    if existing and existing.get("notifications"):
+                        existing_ts = existing.get("timestamp")
                         if self._within_keep_window(existing_ts, keep_window_hours):
                             logger.info(
                                 "Keeping previous %d %s notifications "
                                 "(new result empty, prev age within %dh window)",
-                                len(existing['notifications']),
+                                len(existing["notifications"]),
                                 notification_type,
                                 keep_window_hours,
                             )
                             return False
 
             data = {
-                'timestamp': datetime.now().isoformat(),
-                'notifications': notifications,
+                "timestamp": datetime.now().isoformat(),
+                "notifications": notifications,
             }
 
             self.redis_client.setex(
@@ -111,54 +110,48 @@ class NotificationsStorage:
             return False
         age = datetime.now() - stored
         return age.total_seconds() < hours * 3600
-    
+
     def get_notifications(self) -> List[Dict[str, Any]]:
         """
         Получить текущие уведомления
-        
+
         Returns:
             Список уведомлений
         """
         try:
             key = f"{self.key_prefix}:suggested_posts"
             data_str = self.redis_client.get(key)
-            
+
             if not data_str:
                 return []
-            
+
             data = json.loads(data_str)
-            return data.get('notifications', [])
-            
+            return data.get("notifications", [])
+
         except Exception as e:
             logger.error(f"Failed to get notifications: {e}")
             return []
-    
+
     def get_notifications_with_timestamp(self) -> Dict[str, Any]:
         """
         Получить уведомления с timestamp последнего обновления
-        
+
         Returns:
             Dict с notifications и timestamp
         """
         try:
             key = f"{self.key_prefix}:suggested_posts"
             data_str = self.redis_client.get(key)
-            
+
             if not data_str:
-                return {
-                    'timestamp': None,
-                    'notifications': []
-                }
-            
+                return {"timestamp": None, "notifications": []}
+
             return json.loads(data_str)
-            
+
         except Exception as e:
             logger.error(f"Failed to get notifications: {e}")
-            return {
-                'timestamp': None,
-                'notifications': []
-            }
-    
+            return {"timestamp": None, "notifications": []}
+
     def get_messages_notifications(self) -> List[Dict[str, Any]]:
         """
         Получить уведомления о непрочитанных сообщениях
@@ -174,7 +167,7 @@ class NotificationsStorage:
                 return []
 
             data = json.loads(data_str)
-            return data.get('notifications', [])
+            return data.get("notifications", [])
 
         except Exception as e:
             logger.error(f"Failed to get messages notifications: {e}")
@@ -193,11 +186,11 @@ class NotificationsStorage:
             if not data_str:
                 return []
             data = json.loads(data_str)
-            return data.get('notifications', [])
+            return data.get("notifications", [])
         except Exception as e:
             logger.error(f"Failed to get messages denied groups: {e}")
             return []
-    
+
     def get_comments_notifications(self) -> List[Dict[str, Any]]:
         """
         Получить уведомления о свежих комментариях (за сутки)
@@ -213,7 +206,7 @@ class NotificationsStorage:
                 return []
 
             data = json.loads(data_str)
-            return data.get('notifications', [])
+            return data.get("notifications", [])
 
         except Exception as e:
             logger.error(f"Failed to get comments notifications: {e}")
@@ -222,7 +215,7 @@ class NotificationsStorage:
     def get_all_notifications(self) -> Dict[str, Any]:
         """
         Получить все уведомления (suggested posts + unread messages + recent comments)
-        
+
         Returns:
             Dict с объединёнными уведомлениями:
                 - suggested_posts: List
@@ -240,39 +233,39 @@ class NotificationsStorage:
             comments = self.get_comments_notifications()
 
             return {
-                'suggested_posts': suggested,
-                'unread_messages': messages,
-                'unread_messages_denied': messages_denied,
-                'recent_comments': comments,
-                'total_count': len(suggested) + len(messages) + len(comments),
-                'suggested_count': len(suggested),
-                'messages_count': len(messages),
-                'messages_denied_count': len(messages_denied),
-                'comments_count': len(comments),
-                'timestamp': None  # Будет установлен в API endpoint
+                "suggested_posts": suggested,
+                "unread_messages": messages,
+                "unread_messages_denied": messages_denied,
+                "recent_comments": comments,
+                "total_count": len(suggested) + len(messages) + len(comments),
+                "suggested_count": len(suggested),
+                "messages_count": len(messages),
+                "messages_denied_count": len(messages_denied),
+                "comments_count": len(comments),
+                "timestamp": None,  # Будет установлен в API endpoint
             }
 
         except Exception as e:
             logger.error(f"Failed to get all notifications: {e}")
             return {
-                'suggested_posts': [],
-                'unread_messages': [],
-                'unread_messages_denied': [],
-                'recent_comments': [],
-                'total_count': 0,
-                'suggested_count': 0,
-                'messages_count': 0,
-                'messages_denied_count': 0,
-                'comments_count': 0,
-                'timestamp': None
+                "suggested_posts": [],
+                "unread_messages": [],
+                "unread_messages_denied": [],
+                "recent_comments": [],
+                "total_count": 0,
+                "suggested_count": 0,
+                "messages_count": 0,
+                "messages_denied_count": 0,
+                "comments_count": 0,
+                "timestamp": None,
             }
-    
+
     # ────────────────────────────────────────────────────────────────
     # Run history (etap 3): per-type ring-buffer of recent check runs
     # ────────────────────────────────────────────────────────────────
 
-    HISTORY_MAX_ENTRIES = 48      # 24h × 2 runs/hour worst case
-    HISTORY_TTL_SECONDS = 90000   # 25h — slightly more than the window
+    HISTORY_MAX_ENTRIES = 48  # 24h × 2 runs/hour worst case
+    HISTORY_TTL_SECONDS = 90000  # 25h — slightly more than the window
 
     def save_run(
         self,
@@ -345,21 +338,21 @@ class NotificationsStorage:
                 'window_hours': 24,
             }
         """
-        result: Dict[str, Any] = {'types': {}, 'window_hours': 24}
-        for ntype in ('suggested_posts', 'unread_messages', 'recent_comments'):
+        result: Dict[str, Any] = {"types": {}, "window_hours": 24}
+        for ntype in ("suggested_posts", "unread_messages", "recent_comments"):
             runs = self.get_recent_runs(ntype, limit=self.HISTORY_MAX_ENTRIES)
-            with_results = [r for r in runs if r.get('count', 0) > 0]
-            total_items = sum(int(r.get('count') or 0) for r in runs)
-            durations = [float(r.get('duration_seconds') or 0) for r in runs]
+            with_results = [r for r in runs if r.get("count", 0) > 0]
+            total_items = sum(int(r.get("count") or 0) for r in runs)
+            durations = [float(r.get("duration_seconds") or 0) for r in runs]
             avg_duration = round(sum(durations) / len(durations), 3) if durations else 0.0
             last = runs[0] if runs else None
-            result['types'][ntype] = {
-                'total_runs': len(runs),
-                'with_results_runs': len(with_results),
-                'total_items': total_items,
-                'avg_duration_s': avg_duration,
-                'last_run_ts': last.get('ts') if last else None,
-                'last_run_count': int(last.get('count') or 0) if last else 0,
+            result["types"][ntype] = {
+                "total_runs": len(runs),
+                "with_results_runs": len(with_results),
+                "total_items": total_items,
+                "avg_duration_s": avg_duration,
+                "last_run_ts": last.get("ts") if last else None,
+                "last_run_count": int(last.get("count") or 0) if last else 0,
             }
         return result
 
@@ -411,7 +404,7 @@ class NotificationsStorage:
         try:
             prefix = f"{self.key_prefix}:handled:{notification_type}:"
             keys = self.redis_client.keys(f"{prefix}*") or []
-            return {k[len(prefix):] for k in keys}
+            return {k[len(prefix) :] for k in keys}
         except Exception as e:
             logger.error(f"Failed to get handled set for {notification_type}: {e}")
             return set()
@@ -421,10 +414,10 @@ class NotificationsStorage:
     def clear_notifications(self, notification_type: str = None) -> bool:
         """
         Очистить уведомления
-        
+
         Args:
             notification_type: Тип для очистки ('suggested_posts', 'unread_messages', 'recent_comments' или None для всех)
-        
+
         Returns:
             True если успешно
         """
@@ -441,10 +434,9 @@ class NotificationsStorage:
                 if keys:
                     self.redis_client.delete(*keys)
                 logger.info(f"Cleared all notifications ({len(keys) if keys else 0} keys)")
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to clear notifications: {e}")
             return False
-

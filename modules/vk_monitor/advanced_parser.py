@@ -7,23 +7,24 @@ Core parsing logic with full filtering pipeline.
 This is the heart of the parsing system - fetches posts from VK communities,
 applies all filters, and returns cleaned posts ready for digest building.
 """
+
 import logging
 import random
-from typing import List, Dict, Any, Optional, Set
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Set
 
-from modules.vk_monitor.vk_client import VKClient
-from utils.post_utils import lip_of_post, clear_copy_history, post_popularity
-from utils.vk_attachments import extract_vk_attachments, has_attachments
-from utils.text_utils import is_advertisement, check_blacklist
 from modules.deduplication.fingerprints import (
-    create_text_fingerprint,
-    create_text_core_fingerprint,
-    create_text_simhash,
     create_media_fingerprint,
+    create_text_core_fingerprint,
+    create_text_fingerprint,
+    create_text_simhash,
     simhash_hamming_distance,
     text_to_rafinad,
 )
+from modules.vk_monitor.vk_client import VKClient
+from utils.post_utils import clear_copy_history, lip_of_post, post_popularity
+from utils.text_utils import check_blacklist, is_advertisement
+from utils.vk_attachments import extract_vk_attachments, has_attachments
 
 logger = logging.getLogger(__name__)
 
@@ -57,15 +58,15 @@ def _post_age_hours_utc(
 class AdvancedVKParser:
     """
     Advanced VK post parser with full filtering pipeline.
-    
+
     Migrated from old_postopus parser.py with all filtering logic:
     1. Unwrap репостов, возраст, дедуп lip (work_table + батч)
     2. Фильтры black_id, реклама, blacklist, вложения, темы
     3. Дедуп текста и медиа внутри одного прогона
-    
+
     Returns filtered posts ready for digest building.
     """
-    
+
     def __init__(self, vk_client: VKClient):
         """
         Args:
@@ -76,27 +77,29 @@ class AdvancedVKParser:
         self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
         self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
         self._text_similarity_threshold = float(_TEXT_SIMILARITY_THRESHOLD)
-        self._max_simhash_hamming = self._compute_max_simhash_hamming(self._text_similarity_threshold)
+        self._max_simhash_hamming = self._compute_max_simhash_hamming(
+            self._text_similarity_threshold
+        )
         self._historical_text_simhashes: List[tuple[int, str]] = []
         self._batch_text_simhashes: Set[str] = set()
 
         # Parsing statistics (stat_mode)
         self.stats = {
-            'total_groups_checked': 0,
-            'total_posts_scanned': 0,
-            'posts_filtered_old': 0,
-            'posts_filtered_duplicate_lip': 0,
-            'posts_filtered_duplicate_text': 0,
-            'posts_filtered_duplicate_foto': 0,
-            'posts_filtered_black_id': 0,
-            'posts_filtered_no_region_words': 0,
-            'posts_filtered_advertisement': 0,
-            'posts_filtered_no_attachments': 0,
-            'posts_filtered_blacklist_text': 0,
-            'posts_final_count': 0,
-            'groups_with_posts': 0,
+            "total_groups_checked": 0,
+            "total_posts_scanned": 0,
+            "posts_filtered_old": 0,
+            "posts_filtered_duplicate_lip": 0,
+            "posts_filtered_duplicate_text": 0,
+            "posts_filtered_duplicate_foto": 0,
+            "posts_filtered_black_id": 0,
+            "posts_filtered_no_region_words": 0,
+            "posts_filtered_advertisement": 0,
+            "posts_filtered_no_attachments": 0,
+            "posts_filtered_blacklist_text": 0,
+            "posts_final_count": 0,
+            "groups_with_posts": 0,
         }
-    
+
     async def parse_posts_from_communities(
         self,
         community_ids: List[int],
@@ -111,9 +114,9 @@ class AdvancedVKParser:
     ) -> List[Dict[str, Any]]:
         """
         Parse posts from multiple communities with full filtering.
-        
+
         This is the main entry point, migrated from old_postopus parser().
-        
+
         Args:
             community_ids: List of VK community IDs to scan
             theme: Theme (novost, kultura, sport, etc.)
@@ -124,7 +127,7 @@ class AdvancedVKParser:
             count_per_community: Posts to fetch per community
             shuffle_communities: Randomize community order
             pipeline_settings: Слитые настройки из digest_filters (возраст, дедуп, лимит fetch)
-        
+
         Returns:
             List of filtered post data dicts
         """
@@ -134,7 +137,9 @@ class AdvancedVKParser:
             work_table_hash = []
         if recent_text_fingerprints is None:
             recent_text_fingerprints = []
-        recent_text_set: Set[str] = set(recent_text_fingerprints) if recent_text_fingerprints else set()
+        recent_text_set: Set[str] = (
+            set(recent_text_fingerprints) if recent_text_fingerprints else set()
+        )
         work_hash_set: Set[str] = set(work_table_hash or [])
 
         # Дедупликация внутри одного вызова parse_posts_from_communities
@@ -151,7 +156,9 @@ class AdvancedVKParser:
             self._text_similarity_threshold = float(_TEXT_SIMILARITY_THRESHOLD)
             effective_count = count_per_community
         else:
-            self._max_post_age_hours = float(pipeline_settings.get("max_post_age_hours", DIGEST_MAX_POST_AGE_HOURS))
+            self._max_post_age_hours = float(
+                pipeline_settings.get("max_post_age_hours", DIGEST_MAX_POST_AGE_HOURS)
+            )
             self._min_rafinad_core = int(
                 pipeline_settings.get("min_rafinad_len_core_dedup", _MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
             )
@@ -164,33 +171,37 @@ class AdvancedVKParser:
             self._text_similarity_threshold = float(
                 pipeline_settings.get("text_similarity_threshold", _TEXT_SIMILARITY_THRESHOLD)
             )
-            effective_count = int(pipeline_settings.get("posts_per_community_fetch", count_per_community))
-        self._max_simhash_hamming = self._compute_max_simhash_hamming(self._text_similarity_threshold)
+            effective_count = int(
+                pipeline_settings.get("posts_per_community_fetch", count_per_community)
+            )
+        self._max_simhash_hamming = self._compute_max_simhash_hamming(
+            self._text_similarity_threshold
+        )
         self._historical_text_simhashes = self._extract_text_simhashes(work_hash_set)
 
         # Shuffle communities (randomize fetch order)
         if shuffle_communities:
             random.shuffle(community_ids)
-        
+
         all_posts = []
-        
+
         # Fetch posts from all communities
         for community_id in community_ids:
-            self.stats['total_groups_checked'] += 1
-            
+            self.stats["total_groups_checked"] += 1
+
             try:
                 # Fetch posts from VK
                 posts = await self._fetch_community_posts(community_id, effective_count)
-                
+
                 if not posts:
                     continue
-                
-                self.stats['groups_with_posts'] += 1
-                
+
+                self.stats["groups_with_posts"] += 1
+
                 # Process each post
                 for post_data in posts:
-                    self.stats['total_posts_scanned'] += 1
-                    
+                    self.stats["total_posts_scanned"] += 1
+
                     # Apply full filtering pipeline
                     filtered = await self._filter_post(
                         post_data,
@@ -200,32 +211,36 @@ class AdvancedVKParser:
                         work_hash_set=work_hash_set,
                         recent_text_fingerprints=recent_text_set,
                     )
-                    
+
                     if filtered:
                         all_posts.append(filtered)
-                
+
             except Exception as e:
                 logger.error(f"❌ Failed to parse community {community_id}: {e}")
                 continue
-        
+
         # Sort by popularity
         all_posts.sort(
             key=lambda p: post_popularity(
-                views=p.get('views', {}).get('count', 0) if isinstance(p.get('views'), dict) else p.get('views', 0),
-                likes=p.get('likes', {}).get('count', 0),
-                comments=p.get('comments', {}).get('count', 0),
-                reposts=p.get('reposts', {}).get('count', 0),
+                views=(
+                    p.get("views", {}).get("count", 0)
+                    if isinstance(p.get("views"), dict)
+                    else p.get("views", 0)
+                ),
+                likes=p.get("likes", {}).get("count", 0),
+                comments=p.get("comments", {}).get("count", 0),
+                reposts=p.get("reposts", {}).get("count", 0),
             ),
             reverse=True,
         )
-        
-        self.stats['posts_final_count'] = len(all_posts)
-        
+
+        self.stats["posts_final_count"] = len(all_posts)
+
         logger.info(
             f"📊 Parsing complete: {len(all_posts)} posts from "
             f"{self.stats['total_groups_checked']} groups"
         )
-        
+
         return all_posts
 
     async def filter_posts_list(
@@ -276,7 +291,9 @@ class AdvancedVKParser:
             self._text_similarity_threshold = float(
                 pipeline_settings.get("text_similarity_threshold", _TEXT_SIMILARITY_THRESHOLD)
             )
-        self._max_simhash_hamming = self._compute_max_simhash_hamming(self._text_similarity_threshold)
+        self._max_simhash_hamming = self._compute_max_simhash_hamming(
+            self._text_similarity_threshold
+        )
         self._historical_text_simhashes = self._extract_text_simhashes(work_hash_set)
 
         all_posts: List[Dict[str, Any]] = []
@@ -295,7 +312,11 @@ class AdvancedVKParser:
 
         all_posts.sort(
             key=lambda p: post_popularity(
-                views=p.get("views", {}).get("count", 0) if isinstance(p.get("views"), dict) else p.get("views", 0),
+                views=(
+                    p.get("views", {}).get("count", 0)
+                    if isinstance(p.get("views"), dict)
+                    else p.get("views", 0)
+                ),
                 likes=p.get("likes", {}).get("count", 0),
                 comments=p.get("comments", {}).get("count", 0),
                 reposts=p.get("reposts", {}).get("count", 0),
@@ -310,26 +331,30 @@ class AdvancedVKParser:
         # Use VK client to get wall posts
         # Implementation depends on your VK client setup
 
-        if hasattr(self.vk_client, 'get_wall_posts'):
+        if hasattr(self.vk_client, "get_wall_posts"):
             # VKClient is synchronous, run in thread
             import asyncio
+
             posts = await asyncio.to_thread(
                 self.vk_client.get_wall_posts, -abs(community_id), count
             )
             # Add owner_id to each post (VK API may not include it for wall.get)
             for post in posts:
-                if 'owner_id' not in post:
-                    post['owner_id'] = -abs(community_id)
+                if "owner_id" not in post:
+                    post["owner_id"] = -abs(community_id)
             return posts
-        elif hasattr(self.vk_client, 'api_call'):
-            response = await self.vk_client.api_call('wall.get', {
-                'owner_id': -abs(community_id),  # Negative for groups
-                'count': count,
-            })
-            return response.get('items', [])
+        elif hasattr(self.vk_client, "api_call"):
+            response = await self.vk_client.api_call(
+                "wall.get",
+                {
+                    "owner_id": -abs(community_id),  # Negative for groups
+                    "count": count,
+                },
+            )
+            return response.get("items", [])
         else:
             raise NotImplementedError("VK client doesn't support wall.get")
-    
+
     async def _filter_post(
         self,
         post_data: Dict[str, Any],
@@ -387,7 +412,7 @@ class AdvancedVKParser:
                 return None
 
         # 7. Region words filter (for communities that require regional relevance)
-        if region_config and getattr(region_config, 'filter_group_by_region_words', None):
+        if region_config and getattr(region_config, "filter_group_by_region_words", None):
             community_vk_id = post_data.get("community_vk_id", owner_id)
             try:
                 community_key = str(abs(int(community_vk_id)))
@@ -545,11 +570,11 @@ class AdvancedVKParser:
             if simhash_hamming_distance(simhash, sh) <= self._max_simhash_hamming:
                 return True
         return False
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get parsing statistics (for stat_mode)."""
         return self.stats.copy()
-    
+
     def reset_stats(self):
         """Reset parsing statistics."""
         for key in self.stats:

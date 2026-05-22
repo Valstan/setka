@@ -4,13 +4,11 @@ VK Publisher - Publishes digest posts to VK groups
 Migrated from old_postopus bin/rw/post_msg.py and bin/rw/posting_post.py publishing logic.
 Handles VK API wall.post with proper error handling and token rotation.
 """
+
 import asyncio
 import logging
-from typing import Dict, Any, ClassVar, Optional, List, Tuple
 from datetime import datetime
-
-from utils.post_utils import lip_of_post
-from utils.vk_attachments import build_attachments_list
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 # Imported lazily inside __init__ to avoid hard deps for test fixtures.
 
@@ -57,7 +55,7 @@ class VKPublisher:
     # — VK docs explicitly state these need a user token. We don't even try
     # the community-token first to save a guaranteed-failure round trip and
     # to keep the publish-token rate-limit budget intact.
-    _USER_TOKEN_ONLY_METHODS = frozenset({'wall.repost'})
+    _USER_TOKEN_ONLY_METHODS = frozenset({"wall.repost"})
 
     def __init__(
         self,
@@ -74,8 +72,8 @@ class VKPublisher:
             community_tokens: {abs(group_id): token} per-community access tokens —
                 имеют приоритет над общим publish-токеном для своих групп.
         """
-        from modules.vk_monitor.vk_client import VKClient
         from config.runtime import get_publish_token
+        from modules.vk_monitor.vk_client import VKClient
 
         if vk_client is not None:
             # Use provided client (for tests that already set up correctly)
@@ -115,10 +113,11 @@ class VKPublisher:
         cli = self._community_clients.get(cid)
         if cli is None:
             from modules.vk_monitor.vk_client import VKClient
+
             cli = VKClient(tok)
             self._community_clients[cid] = cli
         return cli, True
-    
+
     async def publish_digest(
         self,
         group_id: int,
@@ -129,14 +128,14 @@ class VKPublisher:
     ) -> Dict[str, Any]:
         """
         Publish digest post to VK group.
-        
+
         Args:
             group_id: VK group ID (negative number)
             text: Post text
             attachments: List of VK attachment strings
             copyright_url: Copyright URL for attribution
             from_group: True = post as group, False = as user
-        
+
         Returns:
             VK API response dict with post_id, url, etc.
         """
@@ -148,37 +147,39 @@ class VKPublisher:
             logger.info(f"🧪 TEST POLYGON MODE: Posting to test group {target_group_id}")
         else:
             target_group_id = normalized_group_id
-        
+
         # Rate limiting
         await self._enforce_rate_limit(target_group_id)
-        
+
         # Prepare attachments
         attachments_str = ",".join(attachments) if attachments else ""
-        
+
         # Build wall.post parameters
         params = {
-            'owner_id': target_group_id,
-            'message': text,
-            'from_group': 1 if from_group else 0,
+            "owner_id": target_group_id,
+            "message": text,
+            "from_group": 1 if from_group else 0,
         }
-        
+
         if attachments_str:
-            params['attachments'] = attachments_str
-        
+            params["attachments"] = attachments_str
+
         if copyright_url:
-            params['copyright'] = copyright_url
-        
+            params["copyright"] = copyright_url
+
         # Execute wall.post под правильным клиентом (community-токен, если есть).
         client, _via_community = self._client_for_group(target_group_id)
         try:
             response, via = await self._call_wall_post(params, client=client)
 
-            post_id = response.get('post_id')
+            post_id = response.get("post_id")
             post_url = f"https://vk.com/wall{target_group_id}_{post_id}"
 
             logger.info(
                 "✅ Published post %s to group %s (via %s)",
-                post_id, target_group_id, via,
+                post_id,
+                target_group_id,
+                via,
             )
             logger.info(f"   URL: {post_url}")
 
@@ -186,23 +187,23 @@ class VKPublisher:
             self._last_post_time[target_group_id] = datetime.now()
 
             return {
-                'success': True,
-                'post_id': post_id,
-                'owner_id': target_group_id,
-                'url': post_url,
-                'text_length': len(text),
-                'attachments_count': len(attachments) if attachments else 0,
+                "success": True,
+                "post_id": post_id,
+                "owner_id": target_group_id,
+                "url": post_url,
+                "text_length": len(text),
+                "attachments_count": len(attachments) if attachments else 0,
             }
 
         except Exception as e:
             logger.error(f"❌ Failed to publish post to group {target_group_id}: {e}")
 
             return {
-                'success': False,
-                'error': str(e),
-                'group_id': target_group_id,
+                "success": False,
+                "error": str(e),
+                "group_id": target_group_id,
             }
-    
+
     async def publish_repost(
         self,
         group_id: int,
@@ -212,15 +213,15 @@ class VKPublisher:
     ) -> Dict[str, Any]:
         """
         Repost from another group.
-        
+
         Uses VK API wall.repost
-        
+
         Args:
             group_id: Target group ID
             source_owner_id: Source post owner ID
             source_post_id: Source post ID
             message: Optional message to add
-        
+
         Returns:
             VK API response dict
         """
@@ -230,21 +231,21 @@ class VKPublisher:
             target_group_id = self._normalize_group_owner_id(self.test_polygon_group_id)
         else:
             target_group_id = normalized_group_id
-        
+
         # Rate limiting
         await self._enforce_rate_limit(target_group_id)
-        
+
         # Build repost object string
         repost_object = f"wall{source_owner_id}_{source_post_id}"
-        
+
         # VK API expects `object` (e.g. wall-123_456), not an informal `repost` key.
         params = {
-            'object': repost_object,
-            'message': message,
+            "object": repost_object,
+            "message": message,
         }
         if target_group_id < 0:
-            params['group_id'] = abs(target_group_id)
-        
+            params["group_id"] = abs(target_group_id)
+
         # wall.repost is user-token-only per VK API; _call_wall_post recognises
         # this via _USER_TOKEN_ONLY_METHODS and routes through publish-token.
         # We still pass a client (community) just to keep the signature uniform,
@@ -252,46 +253,51 @@ class VKPublisher:
         client, _via_community = self._client_for_group(target_group_id)
         try:
             response, via = await self._call_wall_post(
-                params, method='wall.repost', client=client,
+                params,
+                method="wall.repost",
+                client=client,
             )
 
-            post_id = response.get('post_id')
-            success = response.get('success', 0) == 1
+            post_id = response.get("post_id")
+            success = response.get("success", 0) == 1
 
             if success:
                 post_url = f"https://vk.com/wall{target_group_id}_{post_id}"
                 logger.info(
                     "✅ Reposted %s_%s to %s (via %s)",
-                    source_owner_id, source_post_id, target_group_id, via,
+                    source_owner_id,
+                    source_post_id,
+                    target_group_id,
+                    via,
                 )
 
                 self._last_post_time[target_group_id] = datetime.now()
 
                 return {
-                    'success': True,
-                    'post_id': post_id,
-                    'owner_id': target_group_id,
-                    'url': post_url,
-                    'reposted': True,
+                    "success": True,
+                    "post_id": post_id,
+                    "owner_id": target_group_id,
+                    "url": post_url,
+                    "reposted": True,
                 }
             else:
                 return {
-                    'success': False,
-                    'error': 'VK API returned success=0',
+                    "success": False,
+                    "error": "VK API returned success=0",
                 }
 
         except Exception as e:
             logger.error(f"❌ Failed to repost to group {target_group_id}: {e}")
 
             return {
-                'success': False,
-                'error': str(e),
+                "success": False,
+                "error": str(e),
             }
-    
+
     async def _call_wall_post(
         self,
         params: Dict[str, Any],
-        method: str = 'wall.post',
+        method: str = "wall.post",
         client=None,
     ) -> Tuple[Dict, str]:
         """
@@ -316,7 +322,7 @@ class VKPublisher:
         if method in self._USER_TOKEN_ONLY_METHODS:
             await self._enforce_publish_token_rate_limit()
             response = await self._invoke(self.vk_client, method, params)
-            return response, 'publish-token'
+            return response, "publish-token"
 
         primary_client = client if client is not None else self.vk_client
         is_publish_token = primary_client is self.vk_client
@@ -325,20 +331,18 @@ class VKPublisher:
             if is_publish_token:
                 await self._enforce_publish_token_rate_limit()
             response = await self._invoke(primary_client, method, params)
-            return response, ('publish-token' if is_publish_token else 'community-token')
+            return response, ("publish-token" if is_publish_token else "community-token")
         except _VKApiCallError as e:
-            if (
-                not is_publish_token
-                and e.code in self._COMMUNITY_FALLBACK_CODES
-            ):
+            if not is_publish_token and e.code in self._COMMUNITY_FALLBACK_CODES:
                 logger.info(
                     "wall publish via community-token failed (code %s on %s), "
                     "retrying via publish-token",
-                    e.code, method,
+                    e.code,
+                    method,
                 )
                 await self._enforce_publish_token_rate_limit()
                 response = await self._invoke(self.vk_client, method, params)
-                return response, 'community-fallback-publish'
+                return response, "community-fallback-publish"
             raise Exception(f"VK API error: {e.message}") from e
 
     @classmethod
@@ -368,39 +372,40 @@ class VKPublisher:
 
     async def _invoke(self, target_client, method: str, params: Dict[str, Any]) -> Dict:
         """Single VK API call; raises _VKApiCallError on VK error payload."""
-        if hasattr(target_client, 'api_call'):
+        if hasattr(target_client, "api_call"):
             import asyncio
             import inspect
-            api_call_method = getattr(target_client, 'api_call')
+
+            api_call_method = getattr(target_client, "api_call")
             if inspect.iscoroutinefunction(api_call_method):
                 response = await api_call_method(method, params)
             else:
                 response = await asyncio.get_event_loop().run_in_executor(
                     None, api_call_method, method, params
                 )
-        elif hasattr(target_client, 'method'):
+        elif hasattr(target_client, "method"):
             response = target_client.method(method, params)
         else:
             raise NotImplementedError("VK client doesn't support API calls")
 
-        if isinstance(response, dict) and 'error' in response:
-            err = response.get('error', {}) or {}
-            message = str(err.get('error_msg') or 'Unknown error')
-            code = int(err.get('error_code') or 0)
+        if isinstance(response, dict) and "error" in response:
+            err = response.get("error", {}) or {}
+            message = str(err.get("error_msg") or "Unknown error")
+            code = int(err.get("error_code") or 0)
             if code == 0:
                 # VKClient.api_call historically returned {'error': {'error_msg': str(ApiError)}}
                 # without an explicit error_code. The string form starts with "[NN] ..." —
                 # parse it as a fallback so the retry-on-15/27 logic still works.
                 import re
-                m = re.match(r'^\[(\d+)\]', message)
+
+                m = re.match(r"^\[(\d+)\]", message)
                 if m:
                     code = int(m.group(1))
             raise _VKApiCallError(code=code, message=message)
 
-        if isinstance(response, dict) and 'response' in response:
-            return response['response']
+        if isinstance(response, dict) and "response" in response:
+            return response["response"]
         return response
-
 
     async def _enforce_rate_limit(self, group_id: int):
         """Enforce minimum interval between posts to same group."""

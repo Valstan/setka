@@ -7,12 +7,11 @@ All values must come from environment (recommended: /etc/setka/setka.env loaded 
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
-import ast
-from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Set
+from typing import Any, Dict, Optional, Set
 from urllib.parse import urlparse
 
 
@@ -49,7 +48,8 @@ def _load_json_env(name: str, default: Any) -> Any:
                 repaired = raw.strip()
                 if repaired.startswith("{") and repaired.endswith("}"):
                     # Quote keys: {foo:1,bar:baz} -> {"foo":1,"bar":baz}
-                    repaired = re.sub(r'([{,])\s*([A-Za-z0-9_]+)\s*:', r'\1"\2":', repaired)
+                    repaired = re.sub(r"([{,])\s*([A-Za-z0-9_]+)\s*:", r'\1"\2":', repaired)
+
                     # Quote bareword string values (but keep numbers/bools/null unquoted).
                     def _quote_bare_value(m: re.Match[str]) -> str:
                         val = m.group(1)
@@ -60,9 +60,11 @@ def _load_json_env(name: str, default: Any) -> Any:
                         # number?
                         if re.fullmatch(r"-?\\d+(\\.\\d+)?", val):
                             return f":{val}{tail}"
-                        return f":\"{val}\"{tail}"
+                        return f':"{val}"{tail}'
 
-                    repaired = re.sub(r':\s*([A-Za-z_][A-Za-z0-9_\-]*)\s*([,}])', _quote_bare_value, repaired)
+                    repaired = re.sub(
+                        r":\s*([A-Za-z_][A-Za-z0-9_\-]*)\s*([,}])", _quote_bare_value, repaired
+                    )
                     return json.loads(repaired)
             except Exception:
                 pass
@@ -103,6 +105,7 @@ def _parse_redis_url(redis_url: str) -> Dict[str, Any]:
         "db": db,
         "ssl": u.scheme == "rediss",
     }
+
 
 def _parse_database_url(database_url: str) -> Dict[str, Any]:
     # Normalize scheme for urlparse
@@ -160,6 +163,7 @@ if isinstance(VK_TOKENS_JSON, dict):
 
 VK_PUBLISH_TOKEN_NAME = _getenv("VK_PUBLISH_TOKEN_NAME", "VALSTAN")
 
+
 def get_publish_token() -> Optional[str]:
     """Get the VK token designated for publishing."""
     if VK_PUBLISH_TOKEN_NAME and VK_PUBLISH_TOKEN_NAME.upper() in VK_TOKENS:
@@ -168,6 +172,7 @@ def get_publish_token() -> Optional[str]:
     if VK_TOKENS:
         return next(iter(VK_TOKENS.values()))
     return None
+
 
 def validate_publish_token(token: str, token_name: str = "") -> bool:
     """
@@ -179,9 +184,11 @@ def validate_publish_token(token: str, token_name: str = "") -> bool:
         return False
     return token == publish_token
 
+
 def get_parse_tokens() -> Dict[str, str]:
     """Get all VK tokens (all can be used for parsing)."""
     return dict(VK_TOKENS)
+
 
 # Some code expects MAIN/AUX split; map everything to MAIN by default
 VK_MAIN_TOKENS = {name: {"token": token} for name, token in VK_TOKENS.items()}
@@ -249,5 +256,3 @@ def get_copy_setka_target_region_codes() -> Optional[Set[str]]:
     if not raw or not str(raw).strip():
         return None
     return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
-
-

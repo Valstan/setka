@@ -4,26 +4,19 @@ Digest Builder - Assembles multiple posts into a single VK digest post
 Migrated from old_postopus bin/rw/posting_post.py
 Builds formatted digests with headers, attribution, hashtags, and media attachments.
 """
-from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass, field
-from datetime import datetime
 
-from utils.post_utils import (
-    lip_of_post,
-    url_of_post,
-    extract_source_attribution,
-    format_post_stats,
-)
-from utils.vk_attachments import (
-    extract_vk_attachments,
-    build_attachments_list,
-    count_attachments,
-)
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+from utils.post_utils import extract_source_attribution, lip_of_post
+from utils.text_utils import truncate_text
+from utils.vk_attachments import build_attachments_list, extract_vk_attachments
 
 
 @dataclass
 class DigestPost:
     """A single post included in the digest"""
+
     post_data: Dict[str, Any]
     source_attribution: str
     text: str
@@ -35,6 +28,7 @@ class DigestPost:
 @dataclass
 class DigestResult:
     """Result of digest building"""
+
     text: str
     attachments_list: List[str]  # VK API attachment strings
     post_count: int
@@ -47,9 +41,9 @@ class DigestResult:
 class DigestBuilder:
     """
     Builds digest posts from multiple source posts.
-    
+
     Migrated from old_postopus posting_post() function.
-    
+
     Features:
     - Adds header from region config (zagolovki)
     - Adds source attribution: @url (group_name)
@@ -58,10 +52,10 @@ class DigestBuilder:
     - Sorts posts by popularity
     - Tracks lip hashes to prevent re-publishing
     """
-    
+
     # VK limits
     MAX_TEXT_LENGTH = 4096  # VK post text limit
-    MAX_ATTACHMENTS = 10    # VK wall.post media limit
+    MAX_ATTACHMENTS = 10  # VK wall.post media limit
     MAX_POSTS_PER_DIGEST = 3  # Maximum number of posts in a single digest
 
     # Default header
@@ -69,7 +63,7 @@ class DigestBuilder:
 
     # Post separator emoji (from old_postopus style)
     POST_MARKER = "✍ "
-    
+
     def __init__(
         self,
         header: str = "",
@@ -98,10 +92,12 @@ class DigestBuilder:
         self.max_text_length = max_text_length
         self.repost_mode = repost_mode
         self.max_posts_per_digest = (
-            int(max_posts_per_digest) if max_posts_per_digest is not None else self.MAX_POSTS_PER_DIGEST
+            int(max_posts_per_digest)
+            if max_posts_per_digest is not None
+            else self.MAX_POSTS_PER_DIGEST
         )
         self.max_posts_per_digest = max(1, min(self.max_posts_per_digest, 10))
-    
+
     def build_digest(
         self,
         posts: List[Dict[str, Any]],
@@ -159,16 +155,16 @@ class DigestBuilder:
                 break
 
             # Extract post info
-            owner_id = post_data.get('owner_id', post_data.get('from_id', 0))
-            post_id = post_data.get('id', 0)
-            post_text = post_data.get('text', '') or ''
+            owner_id = post_data.get("owner_id", post_data.get("from_id", 0))
+            post_id = post_data.get("id", 0)
+            post_text = post_data.get("text", "") or ""
 
             # Skip posts with no text (problem 3)
             if not post_text.strip():
                 continue
 
             # Get group name (ключи в group_names — по abs(owner_id))
-            community_vk_id = post_data.get('community_vk_id', owner_id)
+            community_vk_id = post_data.get("community_vk_id", owner_id)
             try:
                 aid = abs(int(community_vk_id if community_vk_id is not None else owner_id))
             except (TypeError, ValueError):
@@ -176,7 +172,9 @@ class DigestBuilder:
             group_name = group_names.get(str(aid), "") if aid else ""
 
             # Build the complete post entry
-            post_entry = self._format_post_entry(post_data, post_text, owner_id, post_id, group_name)
+            post_entry = self._format_post_entry(
+                post_data, post_text, owner_id, post_id, group_name
+            )
 
             # Extract attachments to check if they fit
             attachments = extract_vk_attachments(post_data)
@@ -232,13 +230,13 @@ class DigestBuilder:
 
         # Truncate attachments to VK limit
         if len(flat_attachments) > self.MAX_ATTACHMENTS:
-            flat_attachments = flat_attachments[:self.MAX_ATTACHMENTS]
+            flat_attachments = flat_attachments[: self.MAX_ATTACHMENTS]
 
         max_attachments_exceeded = len(flat_attachments) > self.MAX_ATTACHMENTS
 
         return DigestResult(
             text=full_text,
-            attachments_list=flat_attachments[:self.MAX_ATTACHMENTS],
+            attachments_list=flat_attachments[: self.MAX_ATTACHMENTS],
             post_count=len(posts_included),
             total_length=len(full_text),
             posts_included=posts_included,
@@ -282,7 +280,7 @@ class DigestBuilder:
             parts.append(f"{self.POST_MARKER}[без текста]")
 
         # Empty line between text and attribution only when attribution is present
-        if not post_data.get('hide_attribution'):
+        if not post_data.get("hide_attribution"):
             parts.append("")
             attribution = extract_source_attribution(post_data, group_name)
             parts.append(attribution)
@@ -292,50 +290,54 @@ class DigestBuilder:
     def _sort_by_popularity(self, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Sort posts by popularity score (descending)."""
         from utils.post_utils import post_popularity
-        
+
         def get_score(post_data):
             return post_popularity(
-                views=post_data.get('views', {}).get('count', 0) if isinstance(post_data.get('views'), dict) else post_data.get('views', 0),
-                likes=post_data.get('likes', {}).get('count', 0),
-                comments=post_data.get('comments', {}).get('count', 0),
-                reposts=post_data.get('reposts', {}).get('count', 0),
+                views=(
+                    post_data.get("views", {}).get("count", 0)
+                    if isinstance(post_data.get("views"), dict)
+                    else post_data.get("views", 0)
+                ),
+                likes=post_data.get("likes", {}).get("count", 0),
+                comments=post_data.get("comments", {}).get("count", 0),
+                reposts=post_data.get("reposts", {}).get("count", 0),
             )
-        
+
         return sorted(posts, key=get_score, reverse=True)
-    
+
     def _available_length(self, current_parts: List[str], post_number: int) -> int:
         """Calculate available length for current post."""
         current_length = sum(len(part) for part in current_parts)
-        
+
         # Estimate remaining length needed
         # Reserve some space for hashtags and future posts
         reserved = 200  # Hashtags + spacing
         remaining = self.max_text_length - current_length - reserved
-        
+
         # Don't let single post take more than 40% of space
         max_per_post = int(self.max_text_length * 0.4)
-        
+
         return min(remaining, max_per_post)
-    
+
     def _build_hashtag_text(self) -> str:
         """Build hashtag string for digest."""
         hashtags = []
-        
+
         # Add theme hashtags
         hashtags.extend(self.hashtags)
-        
+
         # Add local hashtag
         if self.local_hashtag:
             hashtags.append(self.local_hashtag)
-        
+
         if not hashtags:
             return ""
-        
+
         # Format as hashtags
-        formatted = [f"#{tag}" if not tag.startswith('#') else tag for tag in hashtags]
-        
+        formatted = [f"#{tag}" if not tag.startswith("#") else tag for tag in hashtags]
+
         return " ".join(formatted)
-    
+
     def estimate_post_capacity(
         self,
         avg_post_length: int = 200,
@@ -343,26 +345,28 @@ class DigestBuilder:
     ) -> int:
         """
         Estimate how many posts can fit in digest.
-        
+
         Args:
             avg_post_length: Average post text length
             avg_attachments: Average attachments per post
-        
+
         Returns:
             Estimated number of posts
         """
         # Text capacity
-        header_length = (len(str(self.header).strip()) + 2) if (self.header and str(self.header).strip()) else 0
+        header_length = (
+            (len(str(self.header).strip()) + 2) if (self.header and str(self.header).strip()) else 0
+        )
         hashtag_length = len(self._build_hashtag_text()) + 2
         available = self.max_text_length - header_length - hashtag_length
-        
+
         # Each post needs: text + attribution + newline
         post_overhead = 50  # Attribution + spacing
         posts_by_text = available // (avg_post_length + post_overhead)
-        
+
         # Attachment capacity
         posts_by_attachments = self.MAX_ATTACHMENTS // max(avg_attachments, 1)
-        
+
         # Take minimum
         return min(posts_by_text, posts_by_attachments, self.max_posts_per_digest)
 
@@ -370,11 +374,11 @@ class DigestBuilder:
 class TextOnlyDigestBuilder(DigestBuilder):
     """
     Builds text-only digest (no media attachments).
-    
+
     Migrated from old_postopus post_bezfoto() function.
     Used for advertising digests where images aren't needed.
     """
-    
+
     def build_digest(
         self,
         posts: List[Dict[str, Any]],
@@ -383,13 +387,13 @@ class TextOnlyDigestBuilder(DigestBuilder):
         """Build text-only digest."""
         # Use parent build but strip attachments
         result = super().build_digest(posts, group_names)
-        
+
         # Clear attachments
         result.attachments_list = []
         result.max_attachments_exceeded = False
-        
+
         return result
-    
+
     def build_bezfoto_digest(
         self,
         text_items: List[str],
@@ -398,37 +402,37 @@ class TextOnlyDigestBuilder(DigestBuilder):
     ) -> DigestResult:
         """
         Build digest from text-only items (bezfoto).
-        
+
         Args:
             text_items: List of text items to include
             header: Digest header
             hashtag: Single hashtag for digest
-        
+
         Returns:
             DigestResult
         """
         parts = []
-        
+
         # Add header
         if header:
             parts.append(header)
             parts.append("")
-        
+
         # Add text items (limit to 15 as in old_postopus)
         for i, item in enumerate(text_items[:15]):
             parts.append(f"{i+1}. {item}")
             parts.append("")
-        
+
         # Add hashtag
         if hashtag:
-            tag = hashtag if hashtag.startswith('#') else f"#{hashtag}"
+            tag = hashtag if hashtag.startswith("#") else f"#{hashtag}"
             parts.append(tag)
-        
+
         # Join and truncate
         full_text = "\n".join(parts)
         if len(full_text) > self.max_text_length:
             full_text = truncate_text(full_text, self.max_text_length, "\n\n...")
-        
+
         return DigestResult(
             text=full_text,
             attachments_list=[],

@@ -2,6 +2,7 @@
 
 These power the "activity over 24h" widget on /notifications.
 """
+
 import json
 from unittest.mock import MagicMock, patch
 

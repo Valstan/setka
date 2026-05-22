@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from utils.vk_wall_links import extract_wall_post_refs_from_text
 
 logger = logging.getLogger(__name__)
@@ -134,37 +135,38 @@ async def run_kirov_oblast_digest(
     theme: str = THEME_OBLAST,
     test_mode: bool = False,
 ) -> Dict[str, Any]:
+    from types import SimpleNamespace
+
+    from config.runtime import get_parse_tokens
     from database.models import Community, Region
     from database.models_extended import RegionConfig, WorkTable
+    from modules.deduplication.digest_history import (
+        GLOBAL_REGION_WORK_THEME,
+        TARGET_GROUP_POSTS_SCAN_LIMIT,
+        append_unique_limited,
+        build_region_dedup_sets,
+        extract_source_lips_from_target_group_posts,
+    )
+    from modules.deduplication.fingerprints import (
+        create_media_fingerprint,
+        create_text_core_fingerprint,
+        create_text_fingerprint,
+        create_text_simhash,
+        text_to_rafinad,
+    )
     from modules.digest_pipeline_settings import get_effective_pipeline_settings
-    from modules.publisher.digest_splitter import DigestSplitter
     from modules.publisher.digest_builder import DigestBuilder
+    from modules.publisher.digest_splitter import DigestSplitter
     from modules.publisher.postopus_digest_headers import (
-        resolve_digest_header,
         resolve_digest_hashtags,
+        resolve_digest_header,
         resolve_mourning_digest_format,
     )
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_monitor.advanced_parser import AdvancedVKParser
     from modules.vk_monitor.vk_client import VKClient
-    from config.runtime import get_parse_tokens
     from utils.post_utils import lip_of_post
     from utils.text_utils import is_advertisement
-    from modules.deduplication.fingerprints import (
-        create_text_fingerprint,
-        create_text_core_fingerprint,
-        create_text_simhash,
-        create_media_fingerprint,
-        text_to_rafinad,
-    )
-    from modules.deduplication.digest_history import (
-        GLOBAL_REGION_WORK_THEME,
-        TARGET_GROUP_POSTS_SCAN_LIMIT,
-        build_region_dedup_sets,
-        extract_source_lips_from_target_group_posts,
-        append_unique_limited,
-    )
-    from types import SimpleNamespace
 
     result = await session.execute(select(Region).where(Region.code == region_code))
     region = result.scalars().first()
@@ -379,6 +381,7 @@ async def run_kirov_oblast_digest(
     # Community-токены: для своей публикации Кировской области используем
     # community-токен этой группы (если сохранён в /tokens).
     from modules.vk_token_router import load_community_tokens
+
     community_tokens = await load_community_tokens(session)
 
     results = []
@@ -397,17 +400,21 @@ async def run_kirov_oblast_digest(
             logger.warning(
                 "Oblast: empty regular digest after build, skipping publish "
                 "(region=%s theme=%s candidates=%d)",
-                region.code, theme, len(regular_posts),
+                region.code,
+                theme,
+                len(regular_posts),
             )
             debug_counters["filtered_posts_empty_digest"] = len(regular_posts)
         else:
-            selected_by_lip.update({
-                lip_of_post(
-                    p.get("owner_id", p.get("from_id", 0)),
-                    p.get("id", 0),
-                ): p
-                for p in regular_posts
-            })
+            selected_by_lip.update(
+                {
+                    lip_of_post(
+                        p.get("owner_id", p.get("from_id", 0)),
+                        p.get("id", 0),
+                    ): p
+                    for p in regular_posts
+                }
+            )
             vk_pub = VKPublisher(
                 test_polygon_mode=test_mode,
                 community_tokens=community_tokens,
@@ -433,16 +440,20 @@ async def run_kirov_oblast_digest(
             logger.warning(
                 "Oblast: empty mourning digest after build, skipping publish "
                 "(region=%s theme=%s candidates=%d)",
-                region.code, theme, len(mourning_posts),
+                region.code,
+                theme,
+                len(mourning_posts),
             )
         else:
-            selected_by_lip.update({
-                lip_of_post(
-                    p.get("owner_id", p.get("from_id", 0)),
-                    p.get("id", 0),
-                ): p
-                for p in mourning_posts
-            })
+            selected_by_lip.update(
+                {
+                    lip_of_post(
+                        p.get("owner_id", p.get("from_id", 0)),
+                        p.get("id", 0),
+                    ): p
+                    for p in mourning_posts
+                }
+            )
             vk_pub2 = VKPublisher(
                 test_polygon_mode=test_mode,
                 community_tokens=community_tokens,

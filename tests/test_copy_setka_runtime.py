@@ -1,7 +1,5 @@
 """Тесты конфигурации сетевого хаба copy/setka (без VK/БД)."""
 
-import pytest
-
 
 def test_copy_setka_source_group_id_parses(monkeypatch):
     monkeypatch.setenv("COPY_SETKA_SOURCE_GROUP_ID", "-123456")

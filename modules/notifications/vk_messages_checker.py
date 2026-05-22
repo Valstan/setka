@@ -13,9 +13,11 @@ VK API:
   2. User token с scope `messages` и admin-правами на группу (fallback).
      Вызывается С `group_id`-параметром.
 """
+
 import logging
-from typing import List, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List
+
 from vk_api.exceptions import ApiError
 
 from modules.notifications.base_checker import BaseVKChecker
@@ -48,45 +50,47 @@ class VKMessagesChecker(BaseVKChecker):
             # У community-токена параметр group_id не нужен (он подразумевается).
             # User-токен требует group_id явно.
             if via_community:
-                result = api.messages.getConversations(count=200, filter='unread')
+                result = api.messages.getConversations(count=200, filter="unread")
             else:
                 result = api.messages.getConversations(
                     group_id=positive_id,
                     count=200,
-                    filter='unread',
+                    filter="unread",
                 )
-            
-            unread_count = result.get('count', 0)
-            items = result.get('items', [])
+
+            unread_count = result.get("count", 0)
+            items = result.get("items", [])
 
             try:
                 if via_community:
                     stats = api.messages.getConversations(count=1)
                 else:
                     stats = api.messages.getConversations(group_id=positive_id, count=1)
-                total_conversations = stats.get('count', 0)
+                total_conversations = stats.get("count", 0)
             except (ApiError, Exception) as e:
                 logger.debug(f"Failed to get total conversations for group {group_id}: {e}")
                 total_conversations = 0
 
             logger.info(
                 "Group %s: %s unread messages (total=%s, via=%s)",
-                group_id, unread_count, total_conversations,
+                group_id,
+                unread_count,
+                total_conversations,
                 "community-token" if via_community else "user-token",
             )
-            
+
             # Ссылка на раздел сообщений группы
             messages_url = f"https://vk.com/gim{positive_id}"
-            
+
             return {
-                'has_unread': unread_count > 0,
-                'unread_count': unread_count,
-                'total_conversations': total_conversations,
-                'group_id': group_id,
-                'url': messages_url,
-                'conversations': items[:5] if items else []  # Первые 5 для preview
+                "has_unread": unread_count > 0,
+                "unread_count": unread_count,
+                "total_conversations": total_conversations,
+                "group_id": group_id,
+                "url": messages_url,
+                "conversations": items[:5] if items else [],  # Первые 5 для preview
             }
-            
+
         except ApiError as e:
             # Обработка ошибок VK API
             if e.code == 15:  # Access denied
@@ -97,26 +101,26 @@ class VKMessagesChecker(BaseVKChecker):
                 logger.warning(f"Messages are disabled for group {group_id}")
             else:
                 logger.error(f"VK API error for group {group_id}: {e} (code: {e.code})")
-            
+
             return {
-                'has_unread': False,
-                'unread_count': 0,
-                'total_conversations': 0,
-                'group_id': group_id,
-                'error': str(e),
-                'error_code': e.code
+                "has_unread": False,
+                "unread_count": 0,
+                "total_conversations": 0,
+                "group_id": group_id,
+                "error": str(e),
+                "error_code": e.code,
             }
-            
+
         except Exception as e:
             logger.error(f"Error checking messages for group {group_id}: {e}")
             return {
-                'has_unread': False,
-                'unread_count': 0,
-                'total_conversations': 0,
-                'group_id': group_id,
-                'error': str(e)
+                "has_unread": False,
+                "unread_count": 0,
+                "total_conversations": 0,
+                "group_id": group_id,
+                "error": str(e),
             }
-    
+
     async def check_all_region_groups(self, region_groups: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Проверить непрочитанные сообщения во всех главных группах регионов.
@@ -133,76 +137,82 @@ class VKMessagesChecker(BaseVKChecker):
         denied_groups: List[Dict[str, Any]] = []
 
         for group_info in region_groups:
-            if not group_info.get('vk_group_id'):
+            if not group_info.get("vk_group_id"):
                 continue
 
-            result = self.check_unread_messages(group_info['vk_group_id'])
+            result = self.check_unread_messages(group_info["vk_group_id"])
 
-            if result.get('error_code') is not None:
-                denied_groups.append({
-                    'region_id': group_info['region_id'],
-                    'region_name': group_info['region_name'],
-                    'region_code': group_info['region_code'],
-                    'vk_group_id': result['group_id'],
-                    'error_code': result['error_code'],
-                    'error': result.get('error', ''),
-                })
+            if result.get("error_code") is not None:
+                denied_groups.append(
+                    {
+                        "region_id": group_info["region_id"],
+                        "region_name": group_info["region_name"],
+                        "region_code": group_info["region_code"],
+                        "vk_group_id": result["group_id"],
+                        "error_code": result["error_code"],
+                        "error": result.get("error", ""),
+                    }
+                )
                 continue
 
-            if result['has_unread']:
-                notifications.append({
-                    'type': 'unread_messages',
-                    'region_id': group_info['region_id'],
-                    'region_name': group_info['region_name'],
-                    'region_code': group_info['region_code'],
-                    'vk_group_id': result['group_id'],
-                    'unread_count': result['unread_count'],
-                    'total_conversations': result['total_conversations'],
-                    'url': result['url'],
-                    'checked_at': datetime.now().isoformat(),
-                })
-                logger.info(f"💬 {group_info['region_name']}: {result['unread_count']} unread messages")
+            if result["has_unread"]:
+                notifications.append(
+                    {
+                        "type": "unread_messages",
+                        "region_id": group_info["region_id"],
+                        "region_name": group_info["region_name"],
+                        "region_code": group_info["region_code"],
+                        "vk_group_id": result["group_id"],
+                        "unread_count": result["unread_count"],
+                        "total_conversations": result["total_conversations"],
+                        "url": result["url"],
+                        "checked_at": datetime.now().isoformat(),
+                    }
+                )
+                logger.info(
+                    f"💬 {group_info['region_name']}: {result['unread_count']} unread messages"
+                )
 
         logger.info(
             "Messages check: %d groups with unread, %d groups denied",
-            len(notifications), len(denied_groups),
+            len(notifications),
+            len(denied_groups),
         )
         return {
-            'notifications': notifications,
-            'denied_groups': denied_groups,
+            "notifications": notifications,
+            "denied_groups": denied_groups,
         }
 
 
 if __name__ == "__main__":
     # Простой тест
     import asyncio
-    import sys
     import os
-    
+    import sys
+
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     from config.runtime import VK_TOKENS
-    
+
     async def test():
         vk_token = VK_TOKENS.get("VALSTAN")
         if not vk_token:
             print("❌ VK token not found")
             return
-        
+
         checker = VKMessagesChecker(vk_token)
-        
+
         print("Testing VK Messages Checker...")
-        
+
         # Тест на группе Малмыж Инфо
         result = checker.check_unread_messages(-158787639)
         print(f"\nResult: {result}")
-        
-        if result['has_unread']:
+
+        if result["has_unread"]:
             print(f"✅ Found {result['unread_count']} unread messages!")
             print(f"   URL: {result['url']}")
         else:
             print("ℹ️  No unread messages")
-            if 'error' in result:
+            if "error" in result:
                 print(f"   Error: {result['error']}")
-    
-    asyncio.run(test())
 
+    asyncio.run(test())

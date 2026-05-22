@@ -4,13 +4,13 @@ Utilities for digest history deduplication.
 - Region-wide LIP/hash aggregation across all themes
 - LIP extraction from published digest texts in target region wall
 """
+
 from __future__ import annotations
 
 from typing import Any, Iterable, List, Set, Tuple
 
 from utils.post_utils import lip_of_post
 from utils.vk_wall_links import extract_wall_post_refs_from_text
-
 
 GLOBAL_REGION_WORK_THEME = "__region_global__"
 TARGET_GROUP_POSTS_SCAN_LIMIT = 100

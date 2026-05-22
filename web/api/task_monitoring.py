@@ -1,9 +1,11 @@
 """
 API endpoints for Celery task monitoring
 """
-from fastapi import APIRouter, Depends
-from typing import Dict, List, Any
+
 import logging
+from typing import Dict
+
+from fastapi import APIRouter
 
 from modules.celery_task_monitor import celery_task_monitor
 from utils.timezone import now_moscow
@@ -19,21 +21,18 @@ async def get_recent_tasks(limit: int = 20):
     try:
         tasks = celery_task_monitor.get_recent_tasks(limit)
         formatted_tasks = [celery_task_monitor.format_task_for_display(task) for task in tasks]
-        
+
         return {
             "success": True,
             "data": {
                 "tasks": formatted_tasks,
                 "count": len(formatted_tasks),
-                "timestamp": now_moscow().isoformat()
-            }
+                "timestamp": now_moscow().isoformat(),
+            },
         }
     except Exception as e:
         logger.error(f"Error getting recent tasks: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/active", response_model=Dict)
@@ -42,21 +41,18 @@ async def get_active_tasks():
     try:
         tasks = celery_task_monitor.get_active_tasks()
         formatted_tasks = [celery_task_monitor.format_task_for_display(task) for task in tasks]
-        
+
         return {
             "success": True,
             "data": {
                 "tasks": formatted_tasks,
                 "count": len(formatted_tasks),
-                "timestamp": now_moscow().isoformat()
-            }
+                "timestamp": now_moscow().isoformat(),
+            },
         }
     except Exception as e:
         logger.error(f"Error getting active tasks: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/scheduled", response_model=Dict)
@@ -65,21 +61,18 @@ async def get_scheduled_tasks():
     try:
         tasks = celery_task_monitor.get_scheduled_tasks()
         formatted_tasks = [celery_task_monitor.format_task_for_display(task) for task in tasks]
-        
+
         return {
             "success": True,
             "data": {
                 "tasks": formatted_tasks,
                 "count": len(formatted_tasks),
-                "timestamp": now_moscow().isoformat()
-            }
+                "timestamp": now_moscow().isoformat(),
+            },
         }
     except Exception as e:
         logger.error(f"Error getting scheduled tasks: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/statistics", response_model=Dict)
@@ -87,20 +80,14 @@ async def get_task_statistics():
     """Получить статистику задач"""
     try:
         stats = celery_task_monitor.get_task_statistics()
-        
+
         return {
             "success": True,
-            "data": {
-                "statistics": stats,
-                "timestamp": now_moscow().isoformat()
-            }
+            "data": {"statistics": stats, "timestamp": now_moscow().isoformat()},
         }
     except Exception as e:
         logger.error(f"Error getting task statistics: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/overview", response_model=Dict)
@@ -111,34 +98,31 @@ async def get_tasks_overview():
         active_tasks = celery_task_monitor.get_active_tasks()
         scheduled_tasks = celery_task_monitor.get_scheduled_tasks()
         stats = celery_task_monitor.get_task_statistics()
-        
+
         # Форматируем задачи
-        formatted_recent = [celery_task_monitor.format_task_for_display(task) for task in recent_tasks]
-        formatted_active = [celery_task_monitor.format_task_for_display(task) for task in active_tasks]
-        formatted_scheduled = [celery_task_monitor.format_task_for_display(task) for task in scheduled_tasks]
-        
+        formatted_recent = [
+            celery_task_monitor.format_task_for_display(task) for task in recent_tasks
+        ]
+        formatted_active = [
+            celery_task_monitor.format_task_for_display(task) for task in active_tasks
+        ]
+        formatted_scheduled = [
+            celery_task_monitor.format_task_for_display(task) for task in scheduled_tasks
+        ]
+
         return {
             "success": True,
             "data": {
-                "completed_tasks": {
-                    "tasks": formatted_recent,
-                    "count": len(formatted_recent)
-                },
-                "active_tasks": {
-                    "tasks": formatted_active,
-                    "count": len(formatted_active)
-                },
+                "completed_tasks": {"tasks": formatted_recent, "count": len(formatted_recent)},
+                "active_tasks": {"tasks": formatted_active, "count": len(formatted_active)},
                 "scheduled_tasks": {
                     "tasks": formatted_scheduled,
-                    "count": len(formatted_scheduled)
+                    "count": len(formatted_scheduled),
                 },
                 "statistics": stats,
-                "timestamp": now_moscow().isoformat()
-            }
+                "timestamp": now_moscow().isoformat(),
+            },
         }
     except Exception as e:
         logger.error(f"Error getting tasks overview: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}

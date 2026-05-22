@@ -1,6 +1,7 @@
 """
 Извлечение ссылок на посты ВК (wall) из текста дайджестов и постов.
 """
+
 from __future__ import annotations
 
 import re

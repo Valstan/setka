@@ -4,13 +4,12 @@ VK error code 27 (Group authorization failed) is what we hit in prod when a
 community access token was created without `manage` scope. Before the fix the
 checker silently returned count=0; now it retries via the user-token.
 """
+
 from unittest.mock import MagicMock, patch
 
-import pytest
 from vk_api.exceptions import ApiError
 
 from modules.notifications.vk_suggested_checker import VKSuggestedChecker
-
 
 GROUP_ID = -158787639  # Малмыж - ИНФО, отрицательный
 COMMUNITY_TOKEN = "vk1.community.fake"
@@ -34,9 +33,7 @@ def _build_checker_with_community_token():
         instance = MagicMock()
         instance.get_api.return_value = MagicMock(name="user-api")
         m.return_value = instance
-        checker = VKSuggestedChecker(
-            USER_TOKEN, community_tokens={abs(GROUP_ID): COMMUNITY_TOKEN}
-        )
+        checker = VKSuggestedChecker(USER_TOKEN, community_tokens={abs(GROUP_ID): COMMUNITY_TOKEN})
     return checker
 
 

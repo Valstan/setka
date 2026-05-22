@@ -15,13 +15,13 @@ Stored in Region.config (JSON) as:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from typing import Any, Dict, Optional, List, Tuple
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import select
 
 from database.connection import AsyncSessionLocal
 from database.models import Region
-from sqlalchemy import select
-
 
 # For now we use the standard Test-Info topic list as "known topics" for UI.
 # Later this can be driven by schedules / DB taxonomy.
@@ -83,16 +83,26 @@ def _coerce_str(v: Any, default: str) -> str:
     return str(v)
 
 
-def _merge_settings(base: DigestTemplateSettings, override: Dict[str, Any]) -> DigestTemplateSettings:
+def _merge_settings(
+    base: DigestTemplateSettings, override: Dict[str, Any]
+) -> DigestTemplateSettings:
     if not override:
         return base
     return DigestTemplateSettings(
         title=_coerce_str(override.get("title"), base.title),
         footer=_coerce_str(override.get("footer"), base.footer),
-        include_source_links=_coerce_bool(override.get("include_source_links"), base.include_source_links),
-        include_topic_hashtag=_coerce_bool(override.get("include_topic_hashtag"), base.include_topic_hashtag),
-        include_region_hashtags=_coerce_bool(override.get("include_region_hashtags"), base.include_region_hashtags),
-        topic_hashtag_override=_coerce_str(override.get("topic_hashtag_override"), base.topic_hashtag_override),
+        include_source_links=_coerce_bool(
+            override.get("include_source_links"), base.include_source_links
+        ),
+        include_topic_hashtag=_coerce_bool(
+            override.get("include_topic_hashtag"), base.include_topic_hashtag
+        ),
+        include_region_hashtags=_coerce_bool(
+            override.get("include_region_hashtags"), base.include_region_hashtags
+        ),
+        topic_hashtag_override=_coerce_str(
+            override.get("topic_hashtag_override"), base.topic_hashtag_override
+        ),
     )
 
 
@@ -188,5 +198,3 @@ async def get_effective_digest_settings_for_region(
         return None
     settings, _raw = compute_effective_digest_settings(region, topic)
     return asdict(settings)
-
-

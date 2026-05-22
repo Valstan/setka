@@ -1,4 +1,5 @@
 """Tests for handled-mark storage methods (etap 4a)."""
+
 from unittest.mock import MagicMock, patch
 
 from modules.notifications.storage import NotificationsStorage

@@ -5,13 +5,10 @@ beyond the first 100, full loss of thread.items (replies). New behaviour:
 loop offset+=100 while the freshest comment of the page is still inside the
 24h window; per-comment thread.items unpacked into the flat result.
 """
+
 from unittest.mock import MagicMock, patch
 
-import pytest
-from vk_api.exceptions import ApiError
-
 from modules.notifications.vk_comments_checker import VKCommentsChecker
-
 
 OWNER = -123456789
 POST = 42
@@ -69,9 +66,7 @@ def test_pagination_three_pages():
 
     assert len(result) == 250
     assert checker.vk.wall.getComments.call_count == 3
-    offsets = [
-        call.kwargs["offset"] for call in checker.vk.wall.getComments.call_args_list
-    ]
+    offsets = [call.kwargs["offset"] for call in checker.vk.wall.getComments.call_args_list]
     assert offsets == [0, 100, 200]
 
 
@@ -98,7 +93,9 @@ def test_thread_items_flattened():
     checker.vk.wall.getComments.return_value = _page(
         [
             _comment(
-                1, LATER, text="root",
+                1,
+                LATER,
+                text="root",
                 thread_items=[
                     _comment(2, LATER + 1, text="reply 1"),
                     _comment(3, LATER + 2, text="reply 2"),
@@ -127,7 +124,9 @@ def test_thread_items_outside_cutoff_skipped():
     checker.vk.wall.getComments.return_value = _page(
         [
             _comment(
-                1, LATER, text="parent in window",
+                1,
+                LATER,
+                text="parent in window",
                 thread_items=[
                     _comment(2, LATER + 1, text="reply in window"),
                     _comment(3, CUTOFF - 999, text="reply old"),
@@ -161,12 +160,14 @@ def test_pagination_terminates_when_total_reached():
 def test_safety_cap_warns_but_returns_what_we_have():
     """50 pages × 100 = 5000 — if VK keeps returning more, we stop and warn."""
     checker = _make_checker()
+
     # Always return a full page of in-window comments → would loop forever
     def gen_page(call_idx):
         return _page(
             [_comment(100 * call_idx + i, LATER) for i in range(100)],
             total=10000,
         )
+
     checker.vk.wall.getComments.side_effect = [gen_page(i) for i in range(60)]
 
     result = checker.check_post_comments_since(OWNER, POST, CUTOFF)

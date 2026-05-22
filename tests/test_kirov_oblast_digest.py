@@ -10,17 +10,17 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from modules.digest_pipeline_settings import POSTOPUS_DIGEST_THEMES
 from modules.kirov_oblast_digest import (
     DEFAULT_REGION_CODE,
-    THEME_OBLAST,
     OBLAST_LOOKBACK_HOURS,
+    THEME_OBLAST,
     _defaults_dict,
-    _is_recent_enough,
     _is_oblast_source_digest_text,
+    _is_recent_enough,
     _is_religious_text,
     _resolve_source_region_codes,
 )
-from modules.digest_pipeline_settings import POSTOPUS_DIGEST_THEMES
 
 
 def test_postopus_themes_includes_oblast():
@@ -64,9 +64,7 @@ def test_defaults_dict_empty_and_nested():
 async def test_resolve_source_region_codes_explicit_list_excludes_oblast():
     session = AsyncMock()
     cfg = SimpleNamespace(
-        digest_filters={
-            "defaults": {"oblast_source_region_codes": ["mi", "ur", "kirov_obl", "  "]}
-        }
+        digest_filters={"defaults": {"oblast_source_region_codes": ["mi", "ur", "kirov_obl", "  "]}}
     )
     out = await _resolve_source_region_codes(session, "kirov_obl", cfg)
     assert out == ["mi", "ur"]

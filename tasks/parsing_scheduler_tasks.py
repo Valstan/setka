@@ -4,12 +4,14 @@ Celery tasks for Postopus migration - replaces crontab scheduling
 Migrated from old_postopus crontab entries to Celery Beat schedule.
 Each theme/region combination gets its own scheduled task.
 """
-from celery import shared_task
+
 import asyncio
 import logging
-from typing import Dict, Any, List
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Any, Dict, List
+
+from celery import shared_task
 
 from utils.celery_asyncio import run_coro
 
@@ -30,37 +32,38 @@ def parse_and_publish_theme(
     Main parsing and publishing task for a region/theme.
     Celery-compatible: uses run_coro (one event loop per worker process).
     """
-    from database.models_extended import ParsingStats, RegionConfig, WorkTable
+    from sqlalchemy import select
+
+    from config.runtime import get_parse_tokens
     from database.connection import AsyncSessionLocal
     from database.models import Community, Region
-    from modules.vk_monitor.advanced_parser import AdvancedVKParser
-    from modules.vk_monitor.vk_client import VKClient
-    from modules.publisher.digest_builder import DigestBuilder
-    from modules.publisher.digest_splitter import DigestSplitter
-    from modules.publisher.postopus_digest_headers import (
-        resolve_digest_header,
-        resolve_digest_hashtags,
-        resolve_mourning_digest_format,
-    )
-    from modules.digest_pipeline_settings import get_effective_pipeline_settings
-    from modules.publisher.vk_publisher_extended import VKPublisher
-    from config.runtime import get_parse_tokens
-    from utils.post_utils import lip_of_post
-    from modules.deduplication.fingerprints import (
-        create_text_fingerprint,
-        create_text_core_fingerprint,
-        create_text_simhash,
-        create_media_fingerprint,
-        text_to_rafinad,
-    )
+    from database.models_extended import ParsingStats, RegionConfig, WorkTable
     from modules.deduplication.digest_history import (
         GLOBAL_REGION_WORK_THEME,
         TARGET_GROUP_POSTS_SCAN_LIMIT,
+        append_unique_limited,
         build_region_dedup_sets,
         extract_source_lips_from_target_group_posts,
-        append_unique_limited,
     )
-    from sqlalchemy import select
+    from modules.deduplication.fingerprints import (
+        create_media_fingerprint,
+        create_text_core_fingerprint,
+        create_text_fingerprint,
+        create_text_simhash,
+        text_to_rafinad,
+    )
+    from modules.digest_pipeline_settings import get_effective_pipeline_settings
+    from modules.publisher.digest_builder import DigestBuilder
+    from modules.publisher.digest_splitter import DigestSplitter
+    from modules.publisher.postopus_digest_headers import (
+        resolve_digest_hashtags,
+        resolve_digest_header,
+        resolve_mourning_digest_format,
+    )
+    from modules.publisher.vk_publisher_extended import VKPublisher
+    from modules.vk_monitor.advanced_parser import AdvancedVKParser
+    from modules.vk_monitor.vk_client import VKClient
+    from utils.post_utils import lip_of_post
 
     start_time = datetime.now()
 
@@ -90,9 +93,7 @@ def parse_and_publish_theme(
             )
             region_config = result.scalars().first()
             if not region_config:
-                logger.warning(
-                    f"RegionConfig not found for {region_code}; using safe defaults"
-                )
+                logger.warning(f"RegionConfig not found for {region_code}; using safe defaults")
                 region_config = SimpleNamespace(
                     region_code=region_code,
                     zagolovki={},
@@ -109,8 +110,7 @@ def parse_and_publish_theme(
             # 2. Get work table
             result = await session.execute(
                 select(WorkTable).where(
-                    WorkTable.region_code == region_code,
-                    WorkTable.theme == theme
+                    WorkTable.region_code == region_code, WorkTable.theme == theme
                 )
             )
             work_table = result.scalars().first()
@@ -137,19 +137,17 @@ def parse_and_publish_theme(
                 await session.commit()
 
             # 3. Get region
-            region_result = await session.execute(
-                select(Region).where(Region.code == region_code)
-            )
+            region_result = await session.execute(select(Region).where(Region.code == region_code))
             region = region_result.scalars().first()
             if not region or not region.vk_group_id:
-                return {'success': False, 'error': f'No VK group ID for region {region_code}'}
+                return {"success": False, "error": f"No VK group ID for region {region_code}"}
 
             # 4. Get communities for this theme
             communities_result = await session.execute(
                 select(Community.vk_id).where(
                     Community.region_id == region.id,
                     Community.category == theme,
-                    Community.is_active == True
+                    Community.is_active == True,
                 )
             )
             community_ids = [row[0] for row in communities_result.fetchall()]
@@ -161,13 +159,12 @@ def parse_and_publish_theme(
                 )
                 fallback_result = await session.execute(
                     select(Community.vk_id).where(
-                        Community.region_id == region.id,
-                        Community.is_active == True
+                        Community.region_id == region.id, Community.is_active == True
                     )
                 )
                 community_ids = [row[0] for row in fallback_result.fetchall()]
             if not community_ids:
-                return {'success': False, 'error': 'No communities found'}
+                return {"success": False, "error": "No communities found"}
 
             # Имена сообществ для кликабельных ссылок «источник» в дайджесте
             comm_meta = await session.execute(
@@ -179,7 +176,7 @@ def parse_and_publish_theme(
             parse_tokens = get_parse_tokens()
             parse_token = next(iter(parse_tokens.values())) if parse_tokens else None
             if not parse_token:
-                return {'success': False, 'error': 'No VK tokens configured'}
+                return {"success": False, "error": "No VK tokens configured"}
             vk_client = VKClient(parse_token)
             parser = AdvancedVKParser(vk_client)
             pipeline_eff = get_effective_pipeline_settings(region_config, theme)
@@ -190,11 +187,16 @@ def parse_and_publish_theme(
             region_lips, region_hashes = build_region_dedup_sets(all_wt_result.scalars().all())
             try:
                 target_group_posts = await asyncio.to_thread(
-                    vk_client.get_wall_posts, -abs(int(region.vk_group_id)), TARGET_GROUP_POSTS_SCAN_LIMIT, 0
+                    vk_client.get_wall_posts,
+                    -abs(int(region.vk_group_id)),
+                    TARGET_GROUP_POSTS_SCAN_LIMIT,
+                    0,
                 )
                 region_lips.update(extract_source_lips_from_target_group_posts(target_group_posts))
             except Exception as e:
-                logger.warning("Failed to load target group digest history for %s: %s", region_code, e)
+                logger.warning(
+                    "Failed to load target group digest history for %s: %s", region_code, e
+                )
 
             posts = await parser.parse_posts_from_communities(
                 community_ids=community_ids,
@@ -220,6 +222,7 @@ def parse_and_publish_theme(
             # экономя rate-limit VALSTAN/VITA. Если для группы такого токена нет,
             # VKPublisher автоматически уйдёт на publish-токен (VALSTAN).
             from modules.vk_token_router import load_community_tokens
+
             community_tokens = await load_community_tokens(session)
 
             results = []
@@ -240,16 +243,20 @@ def parse_and_publish_theme(
                     logger.warning(
                         "Empty regular digest after build, skipping publish "
                         "(region=%s theme=%s candidates=%d)",
-                        region.code, theme, len(regular_posts),
+                        region.code,
+                        theme,
+                        len(regular_posts),
                     )
                 else:
-                    selected_by_lip.update({
-                        lip_of_post(
-                            p.get("owner_id", p.get("from_id", 0)),
-                            p.get("id", 0),
-                        ): p
-                        for p in regular_posts
-                    })
+                    selected_by_lip.update(
+                        {
+                            lip_of_post(
+                                p.get("owner_id", p.get("from_id", 0)),
+                                p.get("id", 0),
+                            ): p
+                            for p in regular_posts
+                        }
+                    )
 
                     vk_publisher = VKPublisher(
                         test_polygon_mode=test_mode,
@@ -260,11 +267,13 @@ def parse_and_publish_theme(
                         text=digest.text,
                         attachments=digest.attachments_list,
                     )
-                    results.append(('regular', digest, publish_result))
+                    results.append(("regular", digest, publish_result))
 
             # Mourning digest
             if mourning_posts:
-                mourning_header, mourning_tags, mourning_local_hashtag = resolve_mourning_digest_format()
+                mourning_header, mourning_tags, mourning_local_hashtag = (
+                    resolve_mourning_digest_format()
+                )
                 mourning_builder = DigestBuilder(
                     header=mourning_header,
                     hashtags=mourning_tags,
@@ -272,21 +281,27 @@ def parse_and_publish_theme(
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
                     max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
                 )
-                mourning_digest = mourning_builder.build_digest(mourning_posts, group_names=group_names)
+                mourning_digest = mourning_builder.build_digest(
+                    mourning_posts, group_names=group_names
+                )
                 if mourning_digest.post_count == 0 or not mourning_digest.text.strip():
                     logger.warning(
                         "Empty mourning digest after build, skipping publish "
                         "(region=%s theme=%s candidates=%d)",
-                        region.code, theme, len(mourning_posts),
+                        region.code,
+                        theme,
+                        len(mourning_posts),
                     )
                 else:
-                    selected_by_lip.update({
-                        lip_of_post(
-                            p.get("owner_id", p.get("from_id", 0)),
-                            p.get("id", 0),
-                        ): p
-                        for p in mourning_posts
-                    })
+                    selected_by_lip.update(
+                        {
+                            lip_of_post(
+                                p.get("owner_id", p.get("from_id", 0)),
+                                p.get("id", 0),
+                            ): p
+                            for p in mourning_posts
+                        }
+                    )
 
                     vk_pub = VKPublisher(
                         test_polygon_mode=test_mode,
@@ -297,7 +312,7 @@ def parse_and_publish_theme(
                         text=mourning_digest.text,
                         attachments=mourning_digest.attachments_list,
                     )
-                    results.append(('mourning', mourning_digest, mourning_pub))
+                    results.append(("mourning", mourning_digest, mourning_pub))
 
             # 8. Update work table
             all_included = []
@@ -352,15 +367,15 @@ def parse_and_publish_theme(
 
             # 9. Return result
             total_published = sum(d.post_count for _, d, _ in results)
-            first_url = results[0][2].get('url') if results else None
+            first_url = results[0][2].get("url") if results else None
             return {
-                'success': all(r[2].get('success', False) for r in results) if results else True,
-                'posts_published': total_published,
-                'published_url': first_url,
-                'mourning_posts': len(mourning_posts),
-                'regular_posts': len(regular_posts),
-                'digests_count': len(results),
-                'stats': parser_stats,
+                "success": all(r[2].get("success", False) for r in results) if results else True,
+                "posts_published": total_published,
+                "published_url": first_url,
+                "mourning_posts": len(mourning_posts),
+                "regular_posts": len(regular_posts),
+                "digests_count": len(results),
+                "stats": parser_stats,
             }
 
     try:
@@ -369,28 +384,46 @@ def parse_and_publish_theme(
 
         # Save stats (sync-friendly)
         try:
+
             async def _save_stats():
                 async with AsyncSessionLocal() as session:
                     record = ParsingStats(
-                        region_code=region_code, theme=theme,
-                        run_date=start_time, run_type='scheduled',
+                        region_code=region_code,
+                        theme=theme,
+                        run_date=start_time,
+                        run_type="scheduled",
                         duration_seconds=(datetime.now() - start_time).total_seconds(),
-                        success=result.get('success', False),
-                        total_groups_checked=result.get('stats', {}).get('total_groups_checked', 0),
-                        total_posts_scanned=result.get('stats', {}).get('total_posts_scanned', 0),
-                        posts_filtered_old=result.get('stats', {}).get('posts_filtered_old', 0),
-                        posts_filtered_duplicate_lip=result.get('stats', {}).get('posts_filtered_duplicate_lip', 0),
-                        posts_filtered_duplicate_text=result.get('stats', {}).get('posts_filtered_duplicate_text', 0),
-                        posts_filtered_duplicate_foto=result.get('stats', {}).get('posts_filtered_duplicate_foto', 0),
-                        posts_filtered_black_id=result.get('stats', {}).get('posts_filtered_black_id', 0),
-                        posts_filtered_no_region_words=result.get('stats', {}).get('posts_filtered_no_region_words', 0),
-                        posts_filtered_advertisement=result.get('stats', {}).get('posts_filtered_advertisement', 0),
-                        posts_filtered_no_attachments=result.get('stats', {}).get('posts_filtered_no_attachments', 0),
-                        posts_final_count=result.get('stats', {}).get('posts_final_count', 0),
+                        success=result.get("success", False),
+                        total_groups_checked=result.get("stats", {}).get("total_groups_checked", 0),
+                        total_posts_scanned=result.get("stats", {}).get("total_posts_scanned", 0),
+                        posts_filtered_old=result.get("stats", {}).get("posts_filtered_old", 0),
+                        posts_filtered_duplicate_lip=result.get("stats", {}).get(
+                            "posts_filtered_duplicate_lip", 0
+                        ),
+                        posts_filtered_duplicate_text=result.get("stats", {}).get(
+                            "posts_filtered_duplicate_text", 0
+                        ),
+                        posts_filtered_duplicate_foto=result.get("stats", {}).get(
+                            "posts_filtered_duplicate_foto", 0
+                        ),
+                        posts_filtered_black_id=result.get("stats", {}).get(
+                            "posts_filtered_black_id", 0
+                        ),
+                        posts_filtered_no_region_words=result.get("stats", {}).get(
+                            "posts_filtered_no_region_words", 0
+                        ),
+                        posts_filtered_advertisement=result.get("stats", {}).get(
+                            "posts_filtered_advertisement", 0
+                        ),
+                        posts_filtered_no_attachments=result.get("stats", {}).get(
+                            "posts_filtered_no_attachments", 0
+                        ),
+                        posts_final_count=result.get("stats", {}).get("posts_final_count", 0),
                         published_to_test_polygon=test_mode,
                     )
                     session.add(record)
                     await session.commit()
+
             run_coro(_save_stats())
         except Exception as stats_err:
             logger.warning(f"Failed to save stats: {stats_err}")
@@ -400,50 +433,60 @@ def parse_and_publish_theme(
         logger.error(f"Task failed for {region_code}/{theme}: {e}")
         # Save failure stats
         try:
+
             async def _save_failure():
                 async with AsyncSessionLocal() as session:
                     record = ParsingStats(
-                        region_code=region_code, theme=theme,
-                        run_date=start_time, run_type='scheduled',
+                        region_code=region_code,
+                        theme=theme,
+                        run_date=start_time,
+                        run_type="scheduled",
                         duration_seconds=(datetime.now() - start_time).total_seconds(),
-                        success=False, error_message=str(e),
+                        success=False,
+                        error_message=str(e),  # noqa: F821 — closed over outer except clause
                     )
                     session.add(record)
                     await session.commit()
+
             run_coro(_save_failure())
         except Exception:
             pass
-        raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
+        raise self.retry(exc=e, countdown=60 * (2**self.request.retries))
 
 
 @shared_task
 def parse_reklama(region_code: str):
-    return parse_and_publish_theme.delay(region_code, 'reklama')
+    return parse_and_publish_theme.delay(region_code, "reklama")
+
 
 @shared_task
 def parse_novost(region_code: str):
-    return parse_and_publish_theme.delay(region_code, 'novost')
+    return parse_and_publish_theme.delay(region_code, "novost")
+
 
 @shared_task
 def parse_kultura(region_code: str):
-    return parse_and_publish_theme.delay(region_code, 'kultura')
+    return parse_and_publish_theme.delay(region_code, "kultura")
+
 
 @shared_task
 def parse_sport(region_code: str):
-    return parse_and_publish_theme.delay(region_code, 'sport')
+    return parse_and_publish_theme.delay(region_code, "sport")
+
 
 @shared_task
 def parse_sosed(region_code: str):
-    return parse_and_publish_theme.delay(region_code, 'sosed')
+    return parse_and_publish_theme.delay(region_code, "sosed")
 
 
 @shared_task
 def run_all_regions_theme(theme: str):
     """Run parsing for specific theme across all regions."""
-    from database.models import Region, Community
-    from database.models_extended import RegionConfig
+    from sqlalchemy import exists, select
+
     from database.connection import AsyncSessionLocal
-    from sqlalchemy import select, exists
+    from database.models import Community, Region
+    from database.models_extended import RegionConfig
 
     async def _get_regions():
         async with AsyncSessionLocal() as session:
@@ -480,4 +523,4 @@ def run_all_regions_theme(theme: str):
     for rc in regions:
         r = parse_and_publish_theme.delay(rc, theme)
         results.append(r)
-    return {'theme': theme, 'regions': regions, 'tasks': [r.id for r in results]}
+    return {"theme": theme, "regions": regions, "tasks": [r.id for r in results]}

@@ -4,6 +4,7 @@ Was a method on UnifiedNotificationsChecker; extracted into a module-level
 function so it can be reused by Celery tasks and the API endpoint without
 the wrapper class.
 """
+
 from __future__ import annotations
 
 import logging
@@ -42,20 +43,26 @@ def _build_reply_keyboard(
 
     second_row = []
     if messages_count > 0:
-        second_row.append(InlineKeyboardButton(
-            f"💬 Ответить ({messages_count})",
-            url=f"{base}#section=messages",
-        ))
+        second_row.append(
+            InlineKeyboardButton(
+                f"💬 Ответить ({messages_count})",
+                url=f"{base}#section=messages",
+            )
+        )
     if comments_count > 0:
-        second_row.append(InlineKeyboardButton(
-            f"💭 Комменты ({comments_count})",
-            url=f"{base}#section=comments",
-        ))
+        second_row.append(
+            InlineKeyboardButton(
+                f"💭 Комменты ({comments_count})",
+                url=f"{base}#section=comments",
+            )
+        )
     if suggested_count > 0:
-        second_row.append(InlineKeyboardButton(
-            f"📝 Предложки ({suggested_count})",
-            url=f"{base}#section=suggested",
-        ))
+        second_row.append(
+            InlineKeyboardButton(
+                f"📝 Предложки ({suggested_count})",
+                url=f"{base}#section=suggested",
+            )
+        )
     if second_row:
         rows.append(second_row)
 
@@ -95,18 +102,14 @@ async def send_telegram_notifications_alert(
     if suggested_count > 0:
         parts.append(f"📝 Предложенных постов: <b>{suggested_count}</b>")
         for n in (notifications_data.get("suggested_posts") or [])[:5]:
-            parts.append(
-                f"  • {n.get('region_name', '?')}: {n.get('suggested_count', 0)} пост(ов)"
-            )
+            parts.append(f"  • {n.get('region_name', '?')}: {n.get('suggested_count', 0)} пост(ов)")
         if suggested_count > 5:
             parts.append(f"  ... и ещё {suggested_count - 5} регион(ов)")
 
     if messages_count > 0:
         parts.append(f"\n💬 Непрочитанных сообщений: <b>{messages_count}</b>")
         for n in (notifications_data.get("unread_messages") or [])[:5]:
-            parts.append(
-                f"  • {n.get('region_name', '?')}: {n.get('unread_count', 0)} сообщ."
-            )
+            parts.append(f"  • {n.get('region_name', '?')}: {n.get('unread_count', 0)} сообщ.")
         if messages_count > 5:
             parts.append(f"  ... и ещё {messages_count - 5} регион(ов)")
 

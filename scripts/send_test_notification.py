@@ -4,19 +4,20 @@
 Send test Telegram notification
 """
 import asyncio
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from modules.monitoring.telegram_notifier import TelegramNotifier
 
 # Configuration
 # Import from config
 from config.runtime import TELEGRAM_TOKENS
+from modules.monitoring.telegram_notifier import TelegramNotifier
+
 BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 # Import from config
 from config.runtime import TELEGRAM_ALERT_CHAT_ID
+
 CHAT_ID = TELEGRAM_ALERT_CHAT_ID
 
 
@@ -27,10 +28,10 @@ async def send_test_messages():
     print("=" * 70)
     print(f"\n✅ Bot Token: {BOT_TOKEN[:20]}...")
     print(f"✅ Chat ID: {CHAT_ID}")
-    print(f"✅ Recipient: Валентин Савиных (@Valentin_Savinykh)")
-    
+    print("✅ Recipient: Валентин Савиных (@Valentin_Savinykh)")
+
     notifier = TelegramNotifier(BOT_TOKEN, CHAT_ID)
-    
+
     # Test 1: Simple message
     print("\n📤 Test 1: Sending simple message...")
     success = await notifier.send_message(
@@ -38,59 +39,60 @@ async def send_test_messages():
         "Если вы видите это - система уведомлений работает!\n\n"
         "✅ Telegram интеграция настроена успешно! 🚀"
     )
-    
+
     if success:
         print("   ✅ Сообщение отправлено!")
     else:
         print("   ❌ Ошибка отправки")
-    
+
     await asyncio.sleep(1)
-    
+
     # Test 2: Error alert
     print("\n📤 Test 2: Sending error alert...")
     success = await notifier.send_error_alert(
         "Тестовая ошибка для проверки системы",
         module="TestModule",
-        details="Это тестовое уведомление об ошибке.\nВсё работает корректно!"
+        details="Это тестовое уведомление об ошибке.\nВсё работает корректно!",
     )
-    
+
     if success:
         print("   ✅ Error alert отправлен!")
     else:
         print("   ❌ Ошибка отправки")
-    
+
     await asyncio.sleep(1)
-    
+
     # Test 3: Success notification
     print("\n📤 Test 3: Sending success notification...")
     success = await notifier.send_success_notification(
-        "VK мониторинг успешно загрузил 10 постов из сообществ!",
-        module="VKMonitor"
+        "VK мониторинг успешно загрузил 10 постов из сообществ!", module="VKMonitor"
     )
-    
+
     if success:
         print("   ✅ Success notification отправлено!")
     else:
         print("   ❌ Ошибка отправки")
-    
+
     await asyncio.sleep(1)
-    
+
     # Test 4: Stats report
     print("\n📤 Test 4: Sending stats report...")
-    success = await notifier.send_stats_report({
-        "regions": 14,
-        "communities": 2,
-        "posts": 10,
-        "new_posts": 10,
-        "analyzed": 0,
-        "published": 0
-    })
-    
+    success = await notifier.send_stats_report(
+        {
+            "regions": 14,
+            "communities": 2,
+            "posts": 10,
+            "new_posts": 10,
+            "analyzed": 0,
+            "published": 0,
+        }
+    )
+
     if success:
         print("   ✅ Stats report отправлен!")
     else:
         print("   ❌ Ошибка отправки")
-    
+
     print("\n" + "=" * 70)
     print("✅ Все тесты завершены!")
     print("=" * 70)
@@ -99,4 +101,3 @@ async def send_test_messages():
 
 if __name__ == "__main__":
     asyncio.run(send_test_messages())
-

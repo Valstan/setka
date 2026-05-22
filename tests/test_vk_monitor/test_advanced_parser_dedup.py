@@ -8,8 +8,12 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from modules.deduplication.fingerprints import (
+    create_text_fingerprint,
+    create_text_simhash,
+    text_to_rafinad,
+)
 from modules.vk_monitor.advanced_parser import AdvancedVKParser
-from modules.deduplication.fingerprints import create_text_fingerprint, create_text_simhash, text_to_rafinad
 
 
 class _DummyVk:
@@ -42,10 +46,20 @@ async def test_same_lip_twice_in_batch_second_rejected():
 
     p = _fresh_post(-100, 555, "Новость одинакового источника " * 5)
     r1 = await parser._filter_post(
-        p, "novost", None, [], set(), set(),
+        p,
+        "novost",
+        None,
+        [],
+        set(),
+        set(),
     )
     r2 = await parser._filter_post(
-        dict(p), "novost", None, [], set(), set(),
+        dict(p),
+        "novost",
+        None,
+        [],
+        set(),
+        set(),
     )
     assert r1 is not None
     assert r2 is None
@@ -62,10 +76,20 @@ async def test_same_text_different_lip_second_rejected():
 
     body = "Один и тот же текст новости для дедупа " * 4
     r1 = await parser._filter_post(
-        _fresh_post(-1, 1, body), "novost", None, [], set(), set(),
+        _fresh_post(-1, 1, body),
+        "novost",
+        None,
+        [],
+        set(),
+        set(),
     )
     r2 = await parser._filter_post(
-        _fresh_post(-2, 2, body), "novost", None, [], set(), set(),
+        _fresh_post(-2, 2, body),
+        "novost",
+        None,
+        [],
+        set(),
+        set(),
     )
     assert r1 is not None
     assert r2 is None
@@ -105,7 +129,9 @@ async def test_historical_simhash_rejected_on_90_percent_similarity():
     parser._batch_media_sigs = set()
     parser._batch_text_simhashes = set()
     parser._text_similarity_threshold = 0.90
-    parser._max_simhash_hamming = parser._compute_max_simhash_hamming(parser._text_similarity_threshold)
+    parser._max_simhash_hamming = parser._compute_max_simhash_hamming(
+        parser._text_similarity_threshold
+    )
     parser._min_rafinad_similarity = 20
 
     base_text = "Срочно в районе пройдет мероприятие в эту субботу на центральной площади"

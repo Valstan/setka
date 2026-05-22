@@ -2,31 +2,46 @@
 Extended SQLAlchemy models for Postopus migration
 Adds tables needed for full parity with old_postopus functionality
 """
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, Index, Float
-from sqlalchemy.orm import relationship
+
 from datetime import datetime
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
+from sqlalchemy.orm import relationship
+
 from database.connection import Base
 
 
 class ParsingStats(Base):
     """Статистика парсинга (из old_postopus stat_mode)"""
+
     __tablename__ = "parsing_stats"
 
     id = Column(Integer, primary_key=True, index=True)
     region_code = Column(String(50), nullable=False, index=True)  # mi, vp, ur, etc
     theme = Column(String(50), nullable=False, index=True)  # novost, kultura, sport, reklama, etc
-    
+
     # Execution info
     run_date = Column(DateTime, nullable=False, index=True)
     run_type = Column(String(20), default="scheduled")  # scheduled, manual, test
     duration_seconds = Column(Float, nullable=True)
     success = Column(Boolean, default=True)
     error_message = Column(Text, nullable=True)
-    
+
     # Scanning stats
     total_groups_checked = Column(Integer, default=0)
     total_posts_scanned = Column(Integer, default=0)
-    
+
     # Filter rejection stats
     posts_filtered_old = Column(Integer, default=0)
     posts_filtered_duplicate_lip = Column(Integer, default=0)
@@ -37,20 +52,20 @@ class ParsingStats(Base):
     posts_filtered_advertisement = Column(Integer, default=0)
     posts_filtered_no_attachments = Column(Integer, default=0)
     posts_filtered_blacklist_text = Column(Integer, default=0)
-    
+
     # Result stats
     posts_final_count = Column(Integer, default=0)
     groups_with_posts = Column(Integer, default=0)
-    
+
     # Publishing info
     published_post_id = Column(Integer, nullable=True)  # VK post ID
     published_url = Column(String(500), nullable=True)
     published_to_test_polygon = Column(Boolean, default=False)
-    
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
-        Index('ix_parsing_stats_region_theme_date', 'region_code', 'theme', 'run_date'),
+        Index("ix_parsing_stats_region_theme_date", "region_code", "theme", "run_date"),
     )
 
     def __repr__(self):
@@ -87,7 +102,7 @@ class ParsingStats(Base):
 
 class RegionConfig(Base):
     """Расширенная конфигурация региона (из MongoDB config collection)
-    
+
     Хранит все настройки которые были в MongoDB:
     - zagolovki (заголовки дайджестов по темам)
     - heshteg (хештеги по темам)
@@ -104,16 +119,17 @@ class RegionConfig(Base):
     - baraban (темы для addons roulette)
     - only_main_news
     """
+
     __tablename__ = "region_configs"
 
     id = Column(Integer, primary_key=True, index=True)
     region_code = Column(String(50), unique=True, nullable=False, index=True)  # mi, vp, ur, etc
-    
+
     # Digest configuration
     zagolovki = Column(JSON, nullable=True)  # {"novost": "Header", "kultura": "...", ...}
     heshteg = Column(JSON, nullable=True)  # {"novost": "новости", "kultura": "культура", ...}
     heshteg_local = Column(JSON, nullable=True)  # {"raicentr": "малмыж", ...}
-    
+
     # Filtering configuration
     black_id = Column(JSON, nullable=True)  # [owner_id1, owner_id2, ...]
     filter_group_by_region_words = Column(JSON, nullable=True)  # {group_id: [words]}
@@ -123,36 +139,38 @@ class RegionConfig(Base):
     # сёл/деревень тоже считались релевантными региону.
     localities = Column(JSON, nullable=True)  # ["Цепочкино", "Гоньба", ...]
     only_main_news = Column(JSON, nullable=True)  # [group_id1, group_id2, ...]
-    
+
     # Age thresholds (legacy / другие пайплайны)
-    time_old_post = Column(JSON, nullable=True)  # {"hard": 86400, "medium": 172800, "light": 604800}
+    time_old_post = Column(
+        JSON, nullable=True
+    )  # {"hard": 86400, "medium": 172800, "light": 604800}
 
     # Пайплайн дайджеста: defaults + by_topic (см. modules/digest_pipeline_settings.py)
     digest_filters = Column(JSON, nullable=True)
-    
+
     # Post limits
     text_post_maxsize_simbols = Column(Integer, default=4096)
-    
+
     # Blacklists
     delete_msg_blacklist = Column(JSON, nullable=True)  # ["слово1", "фраза2", ...]
     fast_del_msg_blacklist = Column(JSON, nullable=True)  # динамический черный список
     clear_text_blacklist = Column(JSON, nullable=True)  # regex patterns для очистки
-    
+
     # Neighbor configuration
     sosed = Column(String(500), nullable=True)  # "Малмыж - Инфо,Уржум - Инфо"
-    
+
     # Repost mode
     setka_regim_repost = Column(Boolean, default=False)  # True = repost, False = copy
-    
+
     # Addons roulette themes
     baraban = Column(JSON, nullable=True)  # ["novost", "kultura", "sport", ...]
-    
+
     # Repost words blacklist
     repost_words_blacklist = Column(JSON, nullable=True)  # слова для дисквалификации репостов
-    
+
     # MongoDB collection name mapping
     mongo_collection_name = Column(String(50), nullable=True)  # "mi", "vp", "ur", etc
-    
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -187,33 +205,32 @@ class RegionConfig(Base):
 
 class WorkTable(Base):
     """Рабочие таблицы из MongoDB (lip и hash для дедупликации)
-    
+
     В old_postopus каждая тема имела свою таблицу с lip (ID постов) и hash (фото/видео отпечатки).
     Теперь храним в PostgreSQL.
     """
+
     __tablename__ = "work_tables"
 
     id = Column(Integer, primary_key=True, index=True)
     region_code = Column(String(50), nullable=False, index=True)  # mi, vp, ur, etc
     theme = Column(String(50), nullable=False, index=True)  # novost, kultura, sport, etc
-    
+
     # Published post IDs (lip = "{abs(owner_id)}_{id}")
     lip = Column(JSON, nullable=True)  # ["123456_789", "987654_321", ...]
-    
+
     # Photo/video fingerprint hashes (histogram MD5)
     hash = Column(JSON, nullable=True)  # ["md5hash1", "md5hash2", ...]
-    
+
     # Bezfoto (text-only posts waiting to be published)
     bezfoto = Column(JSON, nullable=True)  # [{"text": "...", "source": "..."}, ...]
-    
+
     # All bezfoto archive (published text-only posts)
     all_bezfoto = Column(JSON, nullable=True)  # archived text-only posts
-    
+
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    __table_args__ = (
-        Index('ix_work_tables_region_theme', 'region_code', 'theme', unique=True),
-    )
+    __table_args__ = (Index("ix_work_tables_region_theme", "region_code", "theme", unique=True),)
 
     def __repr__(self):
         return f"<WorkTable {self.region_code}/{self.theme}>"
@@ -233,43 +250,46 @@ class WorkTable(Base):
 
 class ScheduledPublication(Base):
     """Запланированные публикации (для Smart Scheduler)
-    
+
     Таблица для хранения запланированных публикаций которые ещё не выполнены.
     """
+
     __tablename__ = "scheduled_publications"
 
     id = Column(Integer, primary_key=True, index=True)
     region_id = Column(Integer, ForeignKey("regions.id"), nullable=False)
-    
+
     # Publication details
     theme = Column(String(50), nullable=False)  # novost, kultura, etc
     category = Column(String(50), nullable=False)  # same as theme for now
-    
+
     # Scheduled time
     scheduled_for = Column(DateTime, nullable=False, index=True)
-    
+
     # Content (prepared digest)
     content = Column(Text, nullable=True)  # prepared digest text
     attachments = Column(JSON, nullable=True)  # prepared attachments
     post_ids = Column(JSON, nullable=True)  # [post_id1, post_id2, ...] included in digest
-    
+
     # Status
-    status = Column(String(20), default="scheduled", index=True)  # scheduled, processing, published, failed, cancelled
+    status = Column(
+        String(20), default="scheduled", index=True
+    )  # scheduled, processing, published, failed, cancelled
     published_at = Column(DateTime, nullable=True)
     published_vk_post_id = Column(Integer, nullable=True)
     published_url = Column(String(500), nullable=True)
     error_message = Column(Text, nullable=True)
-    
+
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow)
     created_by = Column(String(50), default="scheduler")  # scheduler, manual, api
-    
+
     # Relationships
     region = relationship("Region", backref="scheduled_publications")
 
     __table_args__ = (
-        Index('ix_scheduled_pub_region_status', 'region_id', 'status'),
-        Index('ix_scheduled_pub_scheduled_for', 'scheduled_for'),
+        Index("ix_scheduled_pub_region_status", "region_id", "status"),
+        Index("ix_scheduled_pub_scheduled_for", "scheduled_for"),
     )
 
     def __repr__(self):

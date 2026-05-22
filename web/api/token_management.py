@@ -2,13 +2,15 @@
 VK Tokens Management API
 API для управления токенами VK через веб-интерфейс
 """
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
-from typing import List, Dict, Any
-from pydantic import BaseModel, Field
-from datetime import datetime
+
 import logging
+from datetime import datetime
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
 from database.models import VKToken
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class TokenResponse(BaseModel):
     """Ответ с информацией о токене"""
+
     id: int
     name: str
     token: str  # Маскированный токен
@@ -37,6 +40,7 @@ class TokenResponse(BaseModel):
 
 class TokenUpdateRequest(BaseModel):
     """Запрос на обновление токена"""
+
     token: str | None = Field(None, min_length=10, description="VK API токен (опционально)")
     validate_token: bool = Field(True, description="Валидировать токен после обновления")
     is_active: bool | None = Field(None, description="Включить/выключить токен (опционально)")
@@ -44,6 +48,7 @@ class TokenUpdateRequest(BaseModel):
 
 class TokenCreateRequest(BaseModel):
     """Запрос на создание токена"""
+
     name: str = Field(..., min_length=2, max_length=50, description="Имя токена (например VALSTAN)")
     token: str = Field(..., min_length=10, description="VK API токен")
     validate_token: bool = Field(True, description="Валидировать токен после создания")
@@ -54,6 +59,7 @@ class TokenCreateRequest(BaseModel):
 
 class TokenValidationResponse(BaseModel):
     """Ответ валидации токена"""
+
     name: str
     is_valid: bool
     validation_status: str
@@ -101,7 +107,11 @@ class CommunityTokenRow(BaseModel):
 
 
 class CommunityTokenUpsert(BaseModel):
-    token: str = Field(..., min_length=10, description="Community access token, выпущенный в Управление → Работа с API")
+    token: str = Field(
+        ...,
+        min_length=10,
+        description="Community access token, выпущенный в Управление → Работа с API",
+    )
     validate_token: bool = True
 
 
@@ -115,9 +125,7 @@ async def list_community_tokens(db: AsyncSession = Depends(get_db_session)):
     )
     regions = list(regions_q.scalars())
 
-    tokens_q = await db.execute(
-        select(VKToken).where(VKToken.community_id.isnot(None))
-    )
+    tokens_q = await db.execute(select(VKToken).where(VKToken.community_id.isnot(None)))
     tokens_by_cid: Dict[int, VKToken] = {t.community_id: t for t in tokens_q.scalars()}
 
     rows: List[CommunityTokenRow] = []
@@ -125,29 +133,37 @@ async def list_community_tokens(db: AsyncSession = Depends(get_db_session)):
         cid = abs(int(r.vk_group_id))
         t = tokens_by_cid.get(cid)
         if t:
-            rows.append(CommunityTokenRow(
-                region_id=r.id,
-                region_name=r.name,
-                region_code=r.code,
-                vk_group_id=r.vk_group_id,
-                community_id=cid,
-                token_id=t.id,
-                token_name=t.name,
-                token_masked=(t.token[:12] + "…" + t.token[-4:]) if t.token and len(t.token) > 20 else "(short)",
-                is_active=bool(t.is_active),
-                validation_status=t.validation_status or "unknown",
-                last_validated=t.last_validated.isoformat() if t.last_validated else None,
-                error_message=t.error_message,
-                permissions=t.permissions if isinstance(t.permissions, list) else None,
-            ))
+            rows.append(
+                CommunityTokenRow(
+                    region_id=r.id,
+                    region_name=r.name,
+                    region_code=r.code,
+                    vk_group_id=r.vk_group_id,
+                    community_id=cid,
+                    token_id=t.id,
+                    token_name=t.name,
+                    token_masked=(
+                        (t.token[:12] + "…" + t.token[-4:])
+                        if t.token and len(t.token) > 20
+                        else "(short)"
+                    ),
+                    is_active=bool(t.is_active),
+                    validation_status=t.validation_status or "unknown",
+                    last_validated=t.last_validated.isoformat() if t.last_validated else None,
+                    error_message=t.error_message,
+                    permissions=t.permissions if isinstance(t.permissions, list) else None,
+                )
+            )
         else:
-            rows.append(CommunityTokenRow(
-                region_id=r.id,
-                region_name=r.name,
-                region_code=r.code,
-                vk_group_id=r.vk_group_id,
-                community_id=cid,
-            ))
+            rows.append(
+                CommunityTokenRow(
+                    region_id=r.id,
+                    region_name=r.name,
+                    region_code=r.code,
+                    vk_group_id=r.vk_group_id,
+                    community_id=cid,
+                )
+            )
     return rows
 
 
@@ -163,9 +179,7 @@ async def upsert_community_token(
     cid = abs(int(community_id))
 
     region_q = await db.execute(
-        select(Region).where(
-            (Region.vk_group_id == cid) | (Region.vk_group_id == -cid)
-        )
+        select(Region).where((Region.vk_group_id == cid) | (Region.vk_group_id == -cid))
     )
     region = region_q.scalar_one_or_none()
     if not region:
@@ -189,10 +203,10 @@ async def upsert_community_token(
 
     if request.validate_token:
         v = await validate_community_token(token.token, cid)
-        token.validation_status = 'valid' if v['is_valid'] else 'invalid'
-        token.error_message = v.get('error_message')
-        token.user_info = v.get('user_info')
-        token.permissions = v.get('permissions')
+        token.validation_status = "valid" if v["is_valid"] else "invalid"
+        token.error_message = v.get("error_message")
+        token.user_info = v.get("user_info")
+        token.permissions = v.get("permissions")
         token.last_validated = datetime.now()
 
     await db.commit()
@@ -206,7 +220,11 @@ async def upsert_community_token(
         community_id=cid,
         token_id=token.id,
         token_name=token.name,
-        token_masked=(token.token[:12] + "…" + token.token[-4:]) if token.token and len(token.token) > 20 else "(short)",
+        token_masked=(
+            (token.token[:12] + "…" + token.token[-4:])
+            if token.token and len(token.token) > 20
+            else "(short)"
+        ),
         is_active=bool(token.is_active),
         validation_status=token.validation_status or "unknown",
         last_validated=token.last_validated.isoformat() if token.last_validated else None,
@@ -227,20 +245,20 @@ async def validate_community_token_endpoint(
         raise HTTPException(status_code=404, detail=f"No community token for {community_id}")
 
     v = await validate_community_token(token.token, cid)
-    token.validation_status = 'valid' if v['is_valid'] else 'invalid'
-    token.error_message = v.get('error_message')
-    token.user_info = v.get('user_info')
-    token.permissions = v.get('permissions')
+    token.validation_status = "valid" if v["is_valid"] else "invalid"
+    token.error_message = v.get("error_message")
+    token.user_info = v.get("user_info")
+    token.permissions = v.get("permissions")
     token.last_validated = datetime.now()
     await db.commit()
 
     return TokenValidationResponse(
         name=token.name,
-        is_valid=v['is_valid'],
+        is_valid=v["is_valid"],
         validation_status=token.validation_status,
-        error_message=v.get('error_message'),
-        user_info=v.get('user_info'),
-        permissions=v.get('permissions'),
+        error_message=v.get("error_message"),
+        user_info=v.get("user_info"),
+        permissions=v.get("permissions"),
     )
 
 
@@ -263,16 +281,14 @@ async def delete_community_token(
 async def get_token(token_name: str, db: AsyncSession = Depends(get_db_session)):
     """Получить конкретный токен"""
     try:
-        result = await db.execute(
-            select(VKToken).where(VKToken.name == token_name.upper())
-        )
+        result = await db.execute(select(VKToken).where(VKToken.name == token_name.upper()))
         token = result.scalar_one_or_none()
-        
+
         if not token:
             raise HTTPException(status_code=404, detail=f"Token {token_name} not found")
-        
+
         return TokenResponse(**token.to_dict())
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -282,21 +298,17 @@ async def get_token(token_name: str, db: AsyncSession = Depends(get_db_session))
 
 @router.put("/{token_name}", response_model=TokenResponse)
 async def update_token(
-    token_name: str, 
-    request: TokenUpdateRequest,
-    db: AsyncSession = Depends(get_db_session)
+    token_name: str, request: TokenUpdateRequest, db: AsyncSession = Depends(get_db_session)
 ):
     """Обновить токен"""
     try:
         # Найти токен
-        result = await db.execute(
-            select(VKToken).where(VKToken.name == token_name.upper())
-        )
+        result = await db.execute(select(VKToken).where(VKToken.name == token_name.upper()))
         token = result.scalar_one_or_none()
-        
+
         if not token:
             raise HTTPException(status_code=404, detail=f"Token {token_name} not found")
-        
+
         # Обновить флаг активности (если передан)
         if request.is_active is not None:
             token.is_active = request.is_active
@@ -304,27 +316,27 @@ async def update_token(
         # Обновить токен (если передан)
         if request.token is not None and request.token.strip() != "":
             token.token = request.token.strip()
-            token.validation_status = 'unknown'
+            token.validation_status = "unknown"
             token.error_message = None
-        
+
         # Валидировать токен если требуется
         if request.validate_token:
             if token.community_id:
                 validation_result = await validate_community_token(token.token, token.community_id)
             else:
                 validation_result = await validate_single_token(token.token)
-            token.validation_status = 'valid' if validation_result['is_valid'] else 'invalid'
-            token.error_message = validation_result.get('error_message')
-            token.user_info = validation_result.get('user_info')
-            token.permissions = validation_result.get('permissions')
+            token.validation_status = "valid" if validation_result["is_valid"] else "invalid"
+            token.error_message = validation_result.get("error_message")
+            token.user_info = validation_result.get("user_info")
+            token.permissions = validation_result.get("permissions")
             token.last_validated = datetime.now()
-        
+
         await db.commit()
         await db.refresh(token)
-        
+
         logger.info(f"Token {token_name} updated successfully")
         return TokenResponse(**token.to_dict())
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -359,13 +371,15 @@ async def add_token(request: TokenCreateRequest, db: AsyncSession = Depends(get_
 
         if request.validate_token:
             if vk_token.community_id:
-                validation_result = await validate_community_token(vk_token.token, vk_token.community_id)
+                validation_result = await validate_community_token(
+                    vk_token.token, vk_token.community_id
+                )
             else:
                 validation_result = await validate_single_token(vk_token.token)
-            vk_token.validation_status = 'valid' if validation_result['is_valid'] else 'invalid'
-            vk_token.error_message = validation_result.get('error_message')
-            vk_token.user_info = validation_result.get('user_info')
-            vk_token.permissions = validation_result.get('permissions')
+            vk_token.validation_status = "valid" if validation_result["is_valid"] else "invalid"
+            vk_token.error_message = validation_result.get("error_message")
+            vk_token.user_info = validation_result.get("user_info")
+            vk_token.permissions = validation_result.get("permissions")
             vk_token.last_validated = datetime.now()
 
         db.add(vk_token)
@@ -408,24 +422,22 @@ async def validate_token(token_name: str, db: AsyncSession = Depends(get_db_sess
     """Валидировать токен"""
     try:
         # Найти токен
-        result = await db.execute(
-            select(VKToken).where(VKToken.name == token_name.upper())
-        )
+        result = await db.execute(select(VKToken).where(VKToken.name == token_name.upper()))
         token = result.scalar_one_or_none()
-        
+
         if not token:
             raise HTTPException(status_code=404, detail=f"Token {token_name} not found")
-        
+
         if not token.token:
             return TokenValidationResponse(
                 name=token.name,
                 is_valid=False,
-                validation_status='invalid',
+                validation_status="invalid",
                 error_message="Token is empty",
                 user_info=None,
-                permissions=None
+                permissions=None,
             )
-        
+
         # Валидировать токен (community-токены — отдельная ветка, у них нет users.get)
         if token.community_id:
             validation_result = await validate_community_token(token.token, token.community_id)
@@ -433,21 +445,21 @@ async def validate_token(token_name: str, db: AsyncSession = Depends(get_db_sess
             validation_result = await validate_single_token(token.token)
 
         # Обновить статус в БД
-        token.validation_status = 'valid' if validation_result['is_valid'] else 'invalid'
-        token.error_message = validation_result.get('error_message')
-        token.user_info = validation_result.get('user_info')
-        token.permissions = validation_result.get('permissions')
+        token.validation_status = "valid" if validation_result["is_valid"] else "invalid"
+        token.error_message = validation_result.get("error_message")
+        token.user_info = validation_result.get("user_info")
+        token.permissions = validation_result.get("permissions")
         token.last_validated = datetime.now()
 
         await db.commit()
 
         return TokenValidationResponse(
             name=token.name,
-            is_valid=validation_result['is_valid'],
+            is_valid=validation_result["is_valid"],
             validation_status=token.validation_status,
-            error_message=validation_result.get('error_message'),
-            user_info=validation_result.get('user_info'),
-            permissions=validation_result.get('permissions')
+            error_message=validation_result.get("error_message"),
+            user_info=validation_result.get("user_info"),
+            permissions=validation_result.get("permissions"),
         )
 
     except HTTPException:
@@ -468,14 +480,16 @@ async def validate_all_tokens(db: AsyncSession = Depends(get_db_session)):
 
         for token in tokens:
             if not token.token:
-                validation_results.append(TokenValidationResponse(
-                    name=token.name,
-                    is_valid=False,
-                    validation_status='invalid',
-                    error_message="Token is empty",
-                    user_info=None,
-                    permissions=None
-                ))
+                validation_results.append(
+                    TokenValidationResponse(
+                        name=token.name,
+                        is_valid=False,
+                        validation_status="invalid",
+                        error_message="Token is empty",
+                        user_info=None,
+                        permissions=None,
+                    )
+                )
                 continue
 
             # Валидировать токен (community-токены — отдельная ветка)
@@ -483,28 +497,30 @@ async def validate_all_tokens(db: AsyncSession = Depends(get_db_session)):
                 validation_result = await validate_community_token(token.token, token.community_id)
             else:
                 validation_result = await validate_single_token(token.token)
-            
+
             # Обновить статус в БД
-            token.validation_status = 'valid' if validation_result['is_valid'] else 'invalid'
-            token.error_message = validation_result.get('error_message')
-            token.user_info = validation_result.get('user_info')
-            token.permissions = validation_result.get('permissions')
+            token.validation_status = "valid" if validation_result["is_valid"] else "invalid"
+            token.error_message = validation_result.get("error_message")
+            token.user_info = validation_result.get("user_info")
+            token.permissions = validation_result.get("permissions")
             token.last_validated = datetime.now()
-            
-            validation_results.append(TokenValidationResponse(
-                name=token.name,
-                is_valid=validation_result['is_valid'],
-                validation_status=token.validation_status,
-                error_message=validation_result.get('error_message'),
-                user_info=validation_result.get('user_info'),
-                permissions=validation_result.get('permissions')
-            ))
-        
+
+            validation_results.append(
+                TokenValidationResponse(
+                    name=token.name,
+                    is_valid=validation_result["is_valid"],
+                    validation_status=token.validation_status,
+                    error_message=validation_result.get("error_message"),
+                    user_info=validation_result.get("user_info"),
+                    permissions=validation_result.get("permissions"),
+                )
+            )
+
         await db.commit()
-        
+
         logger.info(f"Validated {len(tokens)} tokens")
         return validation_results
-        
+
     except Exception as e:
         logger.error(f"Error validating all tokens: {e}")
         await db.rollback()
@@ -519,6 +535,7 @@ async def validate_community_token(token: str, community_id: int) -> Dict[str, A
     Access denied. Для info берём `groups.getById` под этим же токеном.
     """
     import vk_api
+
     try:
         session = vk_api.VkApi(token=token)
         api = session.get_api()
@@ -530,49 +547,49 @@ async def validate_community_token(token: str, community_id: int) -> Dict[str, A
             r = api.groups.getById(group_id=abs(int(community_id)))
             if isinstance(r, list) and r:
                 group_info = r[0]
-            elif isinstance(r, dict) and r.get('groups'):
-                group_info = r['groups'][0]
+            elif isinstance(r, dict) and r.get("groups"):
+                group_info = r["groups"][0]
         except vk_api.exceptions.ApiError as e:
             return {
-                'is_valid': False,
-                'error_message': f"groups.getById failed: {e}",
-                'user_info': None,
-                'permissions': None,
+                "is_valid": False,
+                "error_message": f"groups.getById failed: {e}",
+                "user_info": None,
+                "permissions": None,
             }
 
         # 2) Проверим scope `messages` — главная цель этого токена.
         permissions: List[str] = []
         try:
             api.messages.getConversations(count=1)
-            permissions.append('messages.read')
+            permissions.append("messages.read")
         except vk_api.exceptions.ApiError as e:
             return {
-                'is_valid': False,
-                'error_message': f"messages.getConversations failed: {e}",
-                'user_info': group_info,
-                'permissions': [],
+                "is_valid": False,
+                "error_message": f"messages.getConversations failed: {e}",
+                "user_info": group_info,
+                "permissions": [],
             }
 
         # 3) Дополнительно проверим wall.get (часто доступен community-токену) —
         # это не критично для валидности, но полезно для UI.
         try:
             api.wall.get(owner_id=-abs(int(community_id)), count=1)
-            permissions.append('wall.read')
+            permissions.append("wall.read")
         except vk_api.exceptions.ApiError:
             pass
 
         return {
-            'is_valid': True,
-            'error_message': None,
-            'user_info': group_info,
-            'permissions': permissions,
+            "is_valid": True,
+            "error_message": None,
+            "user_info": group_info,
+            "permissions": permissions,
         }
     except Exception as e:
         return {
-            'is_valid': False,
-            'error_message': str(e),
-            'user_info': None,
-            'permissions': None,
+            "is_valid": False,
+            "error_message": str(e),
+            "user_info": None,
+            "permissions": None,
         }
 
 
@@ -584,10 +601,10 @@ async def validate_single_token(token: str) -> Dict[str, Any]:
 
         if not user_info:
             return {
-                'is_valid': False,
-                'error_message': 'Failed to get user info',
-                'user_info': None,
-                'permissions': None
+                "is_valid": False,
+                "error_message": "Failed to get user info",
+                "user_info": None,
+                "permissions": None,
             }
 
         # Получить права доступа.
@@ -596,23 +613,18 @@ async def validate_single_token(token: str) -> Dict[str, Any]:
         # значение на не-None, чтобы не репортить «есть permission», когда VK его отозвал.
         permissions = []
         if await vk_client.get_posts(owner_id=-1, count=1) is not None:
-            permissions.append('wall.read')
+            permissions.append("wall.read")
         if await vk_client.get_groups(count=1) is not None:
-            permissions.append('groups.read')
+            permissions.append("groups.read")
         if await vk_client.get_messages(count=1) is not None:
-            permissions.append('messages.read')
+            permissions.append("messages.read")
 
         return {
-            'is_valid': True,
-            'error_message': None,
-            'user_info': user_info,
-            'permissions': permissions
+            "is_valid": True,
+            "error_message": None,
+            "user_info": user_info,
+            "permissions": permissions,
         }
 
     except Exception as e:
-        return {
-            'is_valid': False,
-            'error_message': str(e),
-            'user_info': None,
-            'permissions': None
-        }
+        return {"is_valid": False, "error_message": str(e), "user_info": None, "permissions": None}

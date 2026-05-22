@@ -4,6 +4,7 @@ The point is to ensure that multiple VKClient *instances* sharing the same
 token honour the same interval — so a parallel-Celery scenario doesn't
 burst-call VK and earn captcha cooldown.
 """
+
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -70,9 +71,9 @@ def test_two_instances_share_per_token_limit():
     c2._enforce_rate_limit()  # second instance, same token → must wait
     elapsed = time.monotonic() - t0
 
-    assert elapsed >= interval * 0.9, (
-        f"two instances on same token didn't share limit (took {elapsed:.3f}s)"
-    )
+    assert (
+        elapsed >= interval * 0.9
+    ), f"two instances on same token didn't share limit (took {elapsed:.3f}s)"
 
 
 def test_different_tokens_do_not_block_each_other():
@@ -87,9 +88,7 @@ def test_different_tokens_do_not_block_each_other():
     c_b._enforce_rate_limit()  # different token, should pass immediately
     elapsed = time.monotonic() - t0
 
-    assert elapsed < interval * 0.5, (
-        f"different tokens unexpectedly blocked (took {elapsed:.3f}s)"
-    )
+    assert elapsed < interval * 0.5, f"different tokens unexpectedly blocked (took {elapsed:.3f}s)"
 
 
 def test_thread_safety_no_double_spend():
@@ -139,7 +138,5 @@ def test_api_call_invokes_rate_limit():
     client.api_call("users.get", {})
     elapsed = time.monotonic() - t0
 
-    assert elapsed >= interval * 0.9, (
-        f"api_call didn't enforce rate-limit (took {elapsed:.3f}s)"
-    )
+    assert elapsed >= interval * 0.9, f"api_call didn't enforce rate-limit (took {elapsed:.3f}s)"
     assert session.method.call_count == 2

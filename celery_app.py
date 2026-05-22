@@ -12,5 +12,3 @@ This module is a thin compatibility wrapper so code and docs can consistently us
 from tasks.celery_app import app  # noqa: F401
 
 __all__ = ["app"]
-
-

@@ -3,7 +3,9 @@ Unit tests for the advertisement filter.
 
 Tests do NOT require database or external services.
 """
+
 import pytest
+
 from modules.filters.ads_filter import AdvertisementFilter
 
 
@@ -76,7 +78,10 @@ class TestAdvertisementFilter:
     @pytest.mark.asyncio
     async def test_news_passes(self, ad_filter):
         """Regular news posts should pass."""
-        post = {"text": "Сегодня в городе прошла конференция по технологиям", "marked_as_ads": False}
+        post = {
+            "text": "Сегодня в городе прошла конференция по технологиям",
+            "marked_as_ads": False,
+        }
         context = {"theme": "novost"}
         result = await ad_filter.apply(post, context)
         assert result.passed is True
@@ -92,7 +97,10 @@ class TestAdvertisementFilter:
     @pytest.mark.asyncio
     async def test_suspicious_link_rejected(self, ad_filter):
         """Posts with vk.com/ads links should be rejected."""
-        post = {"text": "Реклама vk.com/ads/campaign купить недорого 100руб", "marked_as_ads": False}
+        post = {
+            "text": "Реклама vk.com/ads/campaign купить недорого 100руб",
+            "marked_as_ads": False,
+        }
         context = {"theme": "novost"}
         result = await ad_filter.apply(post, context)
         assert result.passed is False

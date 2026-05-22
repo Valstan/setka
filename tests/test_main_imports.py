@@ -8,6 +8,7 @@ main.py с цепочкой `web.api.*` импортов проходит мим
 Этот тест просто `import main` — если хоть один файл в цепочке роутеров
 или модулей не импортируется, тест упадёт.
 """
+
 import importlib
 
 
@@ -15,6 +16,7 @@ def test_main_module_imports():
     """`import main` должен пройти без ошибок (включая всю цепочку
     `web.api.*` роутеров и `modules.*` зависимостей)."""
     import main  # noqa: F401
+
     assert main.app is not None
 
 

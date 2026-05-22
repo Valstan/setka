@@ -9,13 +9,14 @@
 - Соседние регионы
 """
 
-from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
+from typing import Dict, List, Optional
 
 
 class CommunityCategory(Enum):
     """Категории сообществ для сбора информации"""
+
     ADMINISTRATION = "administration"  # Администрация
     CULTURE = "culture"  # Культура
     YOUTH = "youth"  # Молодежь
@@ -31,6 +32,7 @@ class CommunityCategory(Enum):
 @dataclass
 class RegionCommunityGroups:
     """Группы сообществ для сбора информации по тематикам"""
+
     administration: List[int] = None  # Администрация
     culture: List[int] = None  # Культура
     youth: List[int] = None  # Молодежь
@@ -41,7 +43,7 @@ class RegionCommunityGroups:
     advertising: List[int] = None  # Реклама
     entertainment: List[int] = None  # Развлекательные
     science_news: List[int] = None  # Новости науки
-    
+
     def __post_init__(self):
         """Инициализация пустых списков"""
         if self.administration is None:
@@ -69,6 +71,7 @@ class RegionCommunityGroups:
 @dataclass
 class RegionConfig:
     """Конфигурация региона"""
+
     code: str
     name: str
     main_group_id: int  # Главная группа для публикации
@@ -77,7 +80,7 @@ class RegionConfig:
     local_hashtags: List[str] = None
     community_groups: RegionCommunityGroups = None
     is_active: bool = True
-    
+
     def __post_init__(self):
         """Инициализация пустых списков"""
         if self.neighbors is None:
@@ -104,9 +107,8 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             news=[-144586105],  # Новости Арбаж
             entertainment=[-118213799, -220080924],  # Арбаж БАРАХОЛКА, Арбаж Любимый посёлок
             science_news=[-182055629],  # Арбажская центральная библиотека им А П Батуева
-        )
+        ),
     ),
-    
     "bal": RegionConfig(
         code="bal",
         name="БАЛТАСИ - ИНФО",
@@ -119,24 +121,33 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             culture=[-217063440, -217076405],  # РДК, библиотека
             preschool_education=[-216899854, -206139027],  # Детские сады
             news=[-113610369],  # Балтаси - Народные новости
-        )
+        ),
     ),
-    
     "klz": RegionConfig(
         code="klz",
         name="КИЛЬМЕЗЬ - ИНФО",
         main_group_id=-168172770,
         telegram_channel="@kilmez_info",
-        neighbors=["порез", "нема", "нолинск", "уржум", "малмыж", "вп", "балтаси", "кукмор", "сюмси", "можга"],
+        neighbors=[
+            "порез",
+            "нема",
+            "нолинск",
+            "уржум",
+            "малмыж",
+            "вп",
+            "балтаси",
+            "кукмор",
+            "сюмси",
+            "можга",
+        ],
         local_hashtags=["#кильмезь", "#кильмезский_район"],
         community_groups=RegionCommunityGroups(
             administration=[-215627184],  # Администрация Дамаскинского сел поселения
             culture=[-193415095, -185990658],  # ДШИ, ДДТ
             preschool_education=[-180254282, -185491282, -181515906],  # Детские сады
             news=[-144060930],  # Новости Кильмезь
-        )
+        ),
     ),
-    
     "kukmor": RegionConfig(
         code="kukmor",
         name="КУКМОР - ИНФО",
@@ -149,9 +160,8 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             culture=[-217078985, -211434090],  # Музей, РДК
             preschool_education=[-219289098, -216591981],  # Детские сады
             news=[-119193519],  # Наш Кукмор
-        )
+        ),
     ),
-    
     "leb": RegionConfig(
         code="leb",
         name="ЛЕБЯЖЬЕ - ИНФО",
@@ -164,9 +174,8 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             culture=[-180001471, -179667093],  # Дом творчества, Знамя Октября
             preschool_education=[-207553182],  # МБДОУ Детский сад 1
             news=[-145291342],  # Новости Лебяжье
-        )
+        ),
     ),
-    
     "mi": RegionConfig(
         code="mi",
         name="МАЛМЫЖ - ИНФО",
@@ -182,9 +191,8 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             sports=[-14193653, -224443019],  # Футбольный клуб, молодежь и спорт
             entertainment=[-193646189, -72660310],  # Аквариумистика МАЛМЫЖ, Добровольцы Малмыжа
             science_news=[-146341292],  # Малмыжская центральная детская библиотека
-        )
+        ),
     ),
-    
     "nema": RegionConfig(
         code="nema",
         name="НЕМА - ИНФО",
@@ -197,15 +205,23 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             culture=[-193878580],  # Центр дополнительного образования
             preschool_education=[-189782545],  # МКДОУ детский сад 1 Сказка
             news=[-179286260],  # Вестник труда Нема
-        )
+        ),
     ),
-    
     "nolinsk": RegionConfig(
         code="nolinsk",
         name="НОЛИНСК - ИНФО",
         main_group_id=-179306667,
         telegram_channel="@nolinsk_info",
-        neighbors=["советск", "лебяжье", "уржум", "нема", "кильмезь", "суна", "верхошижемье", "малмыж"],
+        neighbors=[
+            "советск",
+            "лебяжье",
+            "уржум",
+            "нема",
+            "кильмезь",
+            "суна",
+            "верхошижемье",
+            "малмыж",
+        ],
         local_hashtags=["#нолинск", "#нолинский_район"],
         community_groups=RegionCommunityGroups(
             administration=[-212248725],  # Администрация МО Нолинское городское поселение
@@ -213,11 +229,16 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             preschool_education=[-207534798, -207533949, -207533410],  # Детские сады
             news=[-179306667],  # НОЛИНСК - ИНФО | Афиша, новости, события
             orthodox_news=[-126618857],  # Приход Успенского собора г Нолинска
-            entertainment=[-85165516, -163848824],  # Детская театральная студия Радуга, Злой нолинчанин Нолинск
-            science_news=[-198355861, -211968372],  # КОГОБУ СШ с УИОП г Нолинска, Нолинский политехнический техникум
-        )
+            entertainment=[
+                -85165516,
+                -163848824,
+            ],  # Детская театральная студия Радуга, Злой нолинчанин Нолинск
+            science_news=[
+                -198355861,
+                -211968372,
+            ],  # КОГОБУ СШ с УИОП г Нолинска, Нолинский политехнический техникум
+        ),
     ),
-    
     "pizhanka": RegionConfig(
         code="pizhanka",
         name="ПИЖАНКА - ИНФО",
@@ -231,9 +252,8 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             preschool_education=[-207537617],  # МКДОУ д с Теремок
             news=[-145197036],  # Новости Пижанка
             orthodox_news=[-183268906],  # Храм Рождества Христова
-        )
+        ),
     ),
-    
     "sovetsk": RegionConfig(
         code="sovetsk",
         name="СОВЕТСК - ИНФО",
@@ -246,9 +266,8 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             culture=[-187487815, -202463683],  # РДНТ, краеведческий музей
             preschool_education=[-207530605, -209523108],  # Детские сады
             news=[-118690902],  # Новости Советск
-        )
+        ),
     ),
-    
     "test": RegionConfig(
         code="test",
         name="Тест-Инфо",
@@ -258,9 +277,8 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
         local_hashtags=["#тест"],
         community_groups=RegionCommunityGroups(
             administration=[-156168183],  # Администрация Малмыжского района (для тестов)
-        )
+        ),
     ),
-    
     "ur": RegionConfig(
         code="ur",
         name="УРЖУМ - ИНФО",
@@ -273,15 +291,23 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             culture=[-126990056, -217777091],  # КДЦ Уржума, Управление культуры
             preschool_education=[-212074880],  # детском доме Уржума
             news=[-189169977],  # Культурно информационный центр Пиляндыш
-        )
+        ),
     ),
-    
     "verhoshizhem": RegionConfig(
         code="verhoshizhem",
         name="ВЕРХОШИЖЕМЬЕ - ИНФО",
         main_group_id=-221515888,
         telegram_channel="@verhoshizhem_info",
-        neighbors=["советск", "лебяжье", "уржум", "нема", "кильмезь", "суна", "верхошижемье", "малмыж"],
+        neighbors=[
+            "советск",
+            "лебяжье",
+            "уржум",
+            "нема",
+            "кильмезь",
+            "суна",
+            "верхошижемье",
+            "малмыж",
+        ],
         local_hashtags=["#верхошижемье", "#верхошижемский_район"],
         community_groups=RegionCommunityGroups(
             administration=[-156863488],  # РДК п Верхошижемье
@@ -289,9 +315,8 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             preschool_education=[-177762466],  # МКДОУ детский сад №1 "Сказка"
             news=[-144589844],  # Новости Верхошижемье
             sports=[-82485303, -45500301],  # Спортивная школа, Субботний баскетбол
-        )
+        ),
     ),
-    
     "vp": RegionConfig(
         code="vp",
         name="ВЯТСКИЕ ПОЛЯНЫ - ИНФО",
@@ -304,66 +329,68 @@ REGIONS_CONFIG: Dict[str, RegionConfig] = {
             culture=[-209085784],  # IT-Клубе
             preschool_education=[-212691053],  # школе-интернате Сосновки
             news=[-62516242],  # ПВП
-        )
+        ),
     ),
 }
 
 
 class RegionConfigManager:
     """Менеджер конфигурации регионов"""
-    
+
     @staticmethod
     def get_region_config(region_code: str) -> Optional[RegionConfig]:
         """Получить конфигурацию региона по коду"""
         return REGIONS_CONFIG.get(region_code.lower())
-    
+
     @staticmethod
     def get_main_group_id(region_code: str) -> Optional[int]:
         """Получить ID главной группы региона"""
         config = RegionConfigManager.get_region_config(region_code)
         return config.main_group_id if config else None
-    
+
     @staticmethod
-    def get_community_groups_by_category(region_code: str, category: CommunityCategory) -> List[int]:
+    def get_community_groups_by_category(
+        region_code: str, category: CommunityCategory
+    ) -> List[int]:
         """Получить группы сообществ по категории"""
         config = RegionConfigManager.get_region_config(region_code)
         if not config:
             return []
-        
+
         category_field = category.value
         return getattr(config.community_groups, category_field, [])
-    
+
     @staticmethod
     def get_all_community_groups(region_code: str) -> List[int]:
         """Получить все группы сообществ региона"""
         config = RegionConfigManager.get_region_config(region_code)
         if not config:
             return []
-        
+
         all_groups = []
         for category in CommunityCategory:
             groups = RegionConfigManager.get_community_groups_by_category(region_code, category)
             all_groups.extend(groups)
-        
+
         return list(set(all_groups))  # Убираем дубликаты
-    
+
     @staticmethod
     def get_active_regions() -> List[str]:
         """Получить список активных регионов"""
         return [code for code, config in REGIONS_CONFIG.items() if config.is_active]
-    
+
     @staticmethod
     def get_region_neighbors(region_code: str) -> List[str]:
         """Получить список соседних регионов"""
         config = RegionConfigManager.get_region_config(region_code)
         return config.neighbors if config else []
-    
+
     @staticmethod
     def get_region_hashtags(region_code: str) -> List[str]:
         """Получить локальные хештеги региона"""
         config = RegionConfigManager.get_region_config(region_code)
         return config.local_hashtags if config else []
-    
+
     @staticmethod
     def get_telegram_channel(region_code: str) -> Optional[str]:
         """Получить Telegram канал региона"""
@@ -375,7 +402,7 @@ class RegionConfigManager:
 def get_vk_production_groups() -> Dict[str, int]:
     """Получить словарь главных групп для публикации (обратная совместимость)"""
     return {
-        region_code: config.main_group_id 
+        region_code: config.main_group_id
         for region_code, config in REGIONS_CONFIG.items()
         if config.is_active
     }

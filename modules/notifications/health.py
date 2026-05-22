@@ -5,6 +5,7 @@ VK access tokens: in particular, several consecutive auto-runs returning 0
 items. Fires a Telegram alert at most once per pattern occurrence (dedupe
 via a Redis flag with a cool-down).
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,17 +36,18 @@ def detect_zero_streaks(
     """
     storage = storage or NotificationsStorage()
     streaks: Dict[str, int] = {}
-    for ntype in ('suggested_posts', 'unread_messages', 'recent_comments'):
+    for ntype in ("suggested_posts", "unread_messages", "recent_comments"):
         runs: List[Dict[str, Any]] = storage.get_recent_runs(ntype)
         streak = 0
         for r in runs:
-            if int(r.get('count') or 0) == 0:
+            if int(r.get("count") or 0) == 0:
                 streak += 1
             else:
                 break
         streaks[ntype] = streak
         try:
             from monitoring.metrics import notifications_zero_streak
+
             notifications_zero_streak.labels(check_type=ntype).set(streak)
         except Exception:
             pass  # metrics module optional in some envs

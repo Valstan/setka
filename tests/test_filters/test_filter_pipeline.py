@@ -3,15 +3,16 @@ Unit tests for the filter pipeline and base filter classes.
 
 Tests do NOT require database or external services.
 """
-import pytest
-import asyncio
-from modules.filters.base import BaseFilter, FilterResult
-from modules.filters.pipeline import FilterPipeline, PipelineResult
 
+import pytest
+
+from modules.filters.base import BaseFilter, FilterResult
+from modules.filters.pipeline import FilterPipeline
 
 # ---------------------------------------------------------------------------
 # FilterResult tests
 # ---------------------------------------------------------------------------
+
 
 class TestFilterResult:
     """Tests for FilterResult dataclass."""
@@ -49,6 +50,7 @@ class TestFilterResult:
 # Concrete filter implementation for testing
 # ---------------------------------------------------------------------------
 
+
 class DummyFilter(BaseFilter):
     """A simple filter for testing."""
 
@@ -68,6 +70,7 @@ class AlwaysRejectFilter(BaseFilter):
 # ---------------------------------------------------------------------------
 # BaseFilter tests
 # ---------------------------------------------------------------------------
+
 
 class TestBaseFilter:
     """Tests for BaseFilter abstract class."""
@@ -133,6 +136,7 @@ class TestBaseFilter:
 # FilterPipeline tests
 # ---------------------------------------------------------------------------
 
+
 class TestFilterPipeline:
     """Tests for FilterPipeline."""
 
@@ -159,6 +163,7 @@ class TestFilterPipeline:
     @pytest.mark.asyncio
     async def test_partial_filter(self):
         """Some posts should pass and some should be filtered."""
+
         class HalfFilter(BaseFilter):
             async def apply(self, post, context):
                 if post.get("id") % 2 == 0:

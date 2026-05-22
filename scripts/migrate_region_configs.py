@@ -6,14 +6,18 @@ for all regions based on old_postopus MongoDB data.
 
 Run with: venv/bin/python scripts/migrate_region_configs.py
 """
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import asyncio
+
+from sqlalchemy import select
+
 from database.connection import AsyncSessionLocal
-from database.models_extended import RegionConfig
 from database.models import Region
-from sqlalchemy import select, insert, update
+from database.models_extended import RegionConfig
 
 # ============================================================================
 # OLD_POSTOPUS DATA — extracted from MongoDB postopus.config collection

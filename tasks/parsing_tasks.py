@@ -1,6 +1,7 @@
 """
 Celery task for safe VK parsing with progress tracking.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -9,12 +10,11 @@ import os
 import re
 import time
 import zipfile
-from datetime import datetime, timedelta
+from datetime import datetime
 from html import escape
 from typing import Any, Dict, List, Optional, Tuple
 
 from celery_app import app
-
 from config.runtime import VK_TOKENS
 from core.exceptions import (
     VKAccessDeniedException,
@@ -22,10 +22,9 @@ from core.exceptions import (
     VKRateLimitException,
     VKTokenInvalidException,
 )
-from modules.vk_monitor.vk_client_async import VKTokenRotatorAsync, VKClientAsync
+from modules.vk_monitor.vk_client_async import VKClientAsync, VKTokenRotatorAsync
 from utils.cache import get_cache
 from utils.celery_asyncio import run_coro
-
 
 OUTPUT_DIR = "/home/valstan/SETKA/logs/parser"
 JOB_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -127,7 +126,11 @@ async def _resolve_owner_id(client: VKClientAsync, source: str) -> Tuple[int, st
             await client._make_request("users.get", {"user_ids": numeric_id})
             return numeric_id, f"user_{numeric_id}"
 
-    if screen_name.startswith("club") or screen_name.startswith("public") or screen_name.startswith("event"):
+    if (
+        screen_name.startswith("club")
+        or screen_name.startswith("public")
+        or screen_name.startswith("event")
+    ):
         numeric_id = int(re.sub(r"\D", "", screen_name) or "0")
         if numeric_id:
             return -numeric_id, f"group_{numeric_id}"
@@ -159,47 +162,59 @@ def _parse_attachments(post: Dict[str, Any]) -> List[Dict[str, Any]]:
             sizes = photo.get("sizes", [])
             if sizes:
                 largest = max(sizes, key=lambda x: x.get("width", 0) * x.get("height", 0))
-                attachments.append({
-                    "type": "photo",
-                    "url": largest.get("url"),
-                })
+                attachments.append(
+                    {
+                        "type": "photo",
+                        "url": largest.get("url"),
+                    }
+                )
         elif att_type == "video":
             video = att.get("video", {})
-            attachments.append({
-                "type": "video",
-                "title": video.get("title"),
-                "video_id": f"video{video.get('owner_id')}_{video.get('id')}",
-                "owner_id": video.get("owner_id"),
-                "id": video.get("id"),
-            })
+            attachments.append(
+                {
+                    "type": "video",
+                    "title": video.get("title"),
+                    "video_id": f"video{video.get('owner_id')}_{video.get('id')}",
+                    "owner_id": video.get("owner_id"),
+                    "id": video.get("id"),
+                }
+            )
         elif att_type == "audio":
             audio = att.get("audio", {})
-            attachments.append({
-                "type": "audio",
-                "artist": audio.get("artist"),
-                "title": audio.get("title"),
-                "url": audio.get("url"),
-            })
+            attachments.append(
+                {
+                    "type": "audio",
+                    "artist": audio.get("artist"),
+                    "title": audio.get("title"),
+                    "url": audio.get("url"),
+                }
+            )
         elif att_type == "link":
             link = att.get("link", {})
-            attachments.append({
-                "type": "link",
-                "url": link.get("url"),
-                "title": link.get("title"),
-            })
+            attachments.append(
+                {
+                    "type": "link",
+                    "url": link.get("url"),
+                    "title": link.get("title"),
+                }
+            )
         elif att_type == "doc":
             doc = att.get("doc", {})
-            attachments.append({
-                "type": "document",
-                "title": doc.get("title"),
-                "url": doc.get("url"),
-            })
+            attachments.append(
+                {
+                    "type": "document",
+                    "title": doc.get("title"),
+                    "url": doc.get("url"),
+                }
+            )
         elif att_type == "poll":
             poll = att.get("poll", {})
-            attachments.append({
-                "type": "poll",
-                "question": poll.get("question"),
-            })
+            attachments.append(
+                {
+                    "type": "poll",
+                    "question": poll.get("question"),
+                }
+            )
     return attachments
 
 
@@ -213,9 +228,13 @@ def _render_html(posts: List[Dict[str, Any]], include: dict) -> str:
     ]
     for post in posts:
         lines.append("<div style='border:1px solid #ddd;padding:12px;margin:12px 0;'>")
-        lines.append(f"<div><strong>{escape(post['date'])}</strong> | <a href='{post['url']}'>Источник</a></div>")
+        lines.append(
+            f"<div><strong>{escape(post['date'])}</strong> | <a href='{post['url']}'>Источник</a></div>"
+        )
         if include.get("text"):
-            lines.append(f"<pre style='white-space:pre-wrap'>{escape(post.get('text') or '')}</pre>")
+            lines.append(
+                f"<pre style='white-space:pre-wrap'>{escape(post.get('text') or '')}</pre>"
+            )
         attachments = post.get("attachments", [])
         if attachments:
             lines.append("<ul>")
@@ -224,27 +243,43 @@ def _render_html(posts: List[Dict[str, Any]], include: dict) -> str:
                 if att_type == "photo" and include.get("photos"):
                     src = att.get("local_path") or att.get("url")
                     if src:
-                        lines.append(f"<li><img src='{src}' alt='photo' style='max-width:100%'></li>")
+                        lines.append(
+                            f"<li><img src='{src}' alt='photo' style='max-width:100%'></li>"
+                        )
                 elif att_type == "video" and include.get("videos"):
                     size_bytes = att.get("size_bytes") or 0
                     size_mb = f" ({size_bytes // (1024 * 1024)}MB)" if size_bytes else ""
                     if att.get("local_path"):
-                        lines.append(f"<li>Видео{size_mb}: <a href='{att.get('local_path')}'>{escape(att.get('title') or 'video')}</a></li>")
+                        lines.append(
+                            f"<li>Видео{size_mb}: <a href='{att.get('local_path')}'>{escape(att.get('title') or 'video')}</a></li>"
+                        )
                     else:
                         video_id = att.get("video_id")
-                        lines.append(f"<li>Видео{size_mb}: <a href='https://vk.com/{video_id}'>{escape(att.get('title') or 'video')}</a></li>")
+                        lines.append(
+                            f"<li>Видео{size_mb}: <a href='https://vk.com/{video_id}'>{escape(att.get('title') or 'video')}</a></li>"
+                        )
                 elif att_type == "audio" and include.get("audio"):
                     if att.get("local_path"):
-                        lines.append(f"<li>Аудио: <a href='{att.get('local_path')}'>{escape(att.get('artist') or '')} - {escape(att.get('title') or '')}</a></li>")
+                        lines.append(
+                            f"<li>Аудио: <a href='{att.get('local_path')}'>{escape(att.get('artist') or '')} - {escape(att.get('title') or '')}</a></li>"
+                        )
                     else:
-                        lines.append(f"<li>Аудио: {escape(att.get('artist') or '')} - {escape(att.get('title') or '')}</li>")
+                        lines.append(
+                            f"<li>Аудио: {escape(att.get('artist') or '')} - {escape(att.get('title') or '')}</li>"
+                        )
                 elif att_type == "link" and include.get("links"):
-                    lines.append(f"<li>Ссылка: <a href='{att.get('url')}'>{escape(att.get('title') or att.get('url') or '')}</a></li>")
+                    lines.append(
+                        f"<li>Ссылка: <a href='{att.get('url')}'>{escape(att.get('title') or att.get('url') or '')}</a></li>"
+                    )
                 elif att_type == "document" and include.get("docs"):
                     if att.get("local_path"):
-                        lines.append(f"<li>Документ: <a href='{att.get('local_path')}'>{escape(att.get('title') or '')}</a></li>")
+                        lines.append(
+                            f"<li>Документ: <a href='{att.get('local_path')}'>{escape(att.get('title') or '')}</a></li>"
+                        )
                     else:
-                        lines.append(f"<li>Документ: <a href='{att.get('url')}'>{escape(att.get('title') or '')}</a></li>")
+                        lines.append(
+                            f"<li>Документ: <a href='{att.get('url')}'>{escape(att.get('title') or '')}</a></li>"
+                        )
                 elif att_type == "poll" and include.get("polls"):
                     lines.append(f"<li>Опрос: {escape(att.get('question') or '')}</li>")
             lines.append("</ul>")
@@ -264,6 +299,7 @@ def _render_txt(posts: List[Dict[str, Any]]) -> str:
 
 async def _download_file(url: str, dest_path: str) -> bool:
     import aiohttp
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=30) as resp:
@@ -283,7 +319,9 @@ def _safe_filename(value: str) -> str:
     return value[:120] or "file"
 
 
-async def _download_attachments(posts: List[Dict[str, Any]], include: dict, attachments_dir: str) -> None:
+async def _download_attachments(
+    posts: List[Dict[str, Any]], include: dict, attachments_dir: str
+) -> None:
     os.makedirs(attachments_dir, exist_ok=True)
     counter = 0
 
@@ -310,7 +348,9 @@ async def _download_attachments(posts: List[Dict[str, Any]], include: dict, atta
                 counter += 1
 
 
-async def _download_videos(posts: List[Dict[str, Any]], include: dict, job_id: str, attachments_dir: str) -> None:
+async def _download_videos(
+    posts: List[Dict[str, Any]], include: dict, job_id: str, attachments_dir: str
+) -> None:
     if not include.get("videos"):
         return
     os.makedirs(attachments_dir, exist_ok=True)
@@ -333,27 +373,40 @@ async def _download_videos(posts: List[Dict[str, Any]], include: dict, job_id: s
             title = att.get("title") or video_key
             if await _is_video_skipped(job_id, video_key):
                 await _update_video_status(job_id, video_key, title, 0, "skipped")
-                await _add_video_report(job_id, f"[post {post_id}] {title}: пропущено пользователем")
+                await _add_video_report(
+                    job_id, f"[post {post_id}] {title}: пропущено пользователем"
+                )
                 att["skip_reason"] = "skipped"
                 continue
             client = await rotator.get_client()
             if not client:
                 await _update_video_status(job_id, video_key, title, 0, "error")
-                await _add_video_report(job_id, f"[post {post_id}] {title}: нет доступного VK клиента")
+                await _add_video_report(
+                    job_id, f"[post {post_id}] {title}: нет доступного VK клиента"
+                )
                 att["skip_reason"] = "no_client"
                 continue
             await _update_video_status(job_id, video_key, title, 0, "downloading")
             url = await _get_video_url(client, owner_id=owner_id, video_id=video_id)
             if not url:
                 await _update_video_status(job_id, video_key, title, 0, "no_url")
-                await _add_video_report(job_id, f"[post {post_id}] {title}: нет прямой ссылки на файл")
+                await _add_video_report(
+                    job_id, f"[post {post_id}] {title}: нет прямой ссылки на файл"
+                )
                 att["skip_reason"] = "no_url"
                 continue
             filename = _safe_filename(f"video_{video_key}.mp4")
             dest = os.path.join(attachments_dir, filename)
             remaining = max(0, MAX_TOTAL_VIDEO_BYTES - total_downloaded)
             ok, size_bytes, reason = await _download_video_with_progress(
-                job_id, client, video_key, title, url, dest, remaining_bytes=remaining, post_id=post_id
+                job_id,
+                client,
+                video_key,
+                title,
+                url,
+                dest,
+                remaining_bytes=remaining,
+                post_id=post_id,
             )
             if ok:
                 att["local_path"] = f"attachments/{filename}"
@@ -369,9 +422,12 @@ async def _download_videos(posts: List[Dict[str, Any]], include: dict, job_id: s
 
 async def _get_video_url(client: VKClientAsync, owner_id: int, video_id: int) -> Optional[str]:
     try:
-        response = await client._make_request("video.get", {
-            "videos": f"{owner_id}_{video_id}",
-        })
+        response = await client._make_request(
+            "video.get",
+            {
+                "videos": f"{owner_id}_{video_id}",
+            },
+        )
         items = response.get("items", [])
         if not items:
             return None
@@ -385,7 +441,9 @@ async def _get_video_url(client: VKClientAsync, owner_id: int, video_id: int) ->
         return None
 
 
-async def _update_video_status(job_id: str, video_id: str, title: str, progress: int, status: str) -> None:
+async def _update_video_status(
+    job_id: str, video_id: str, title: str, progress: int, status: str
+) -> None:
     cache = get_cache()
     job = await cache.get(_job_key(job_id)) or {}
     downloads = job.get("video_downloads", [])
@@ -448,25 +506,36 @@ async def _download_video_with_progress(
     post_id: Optional[int],
 ) -> tuple[bool, int, str]:
     import aiohttp
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=60) as resp:
                 if resp.status != 200:
                     await _update_video_status(job_id, video_id, title, 0, "error")
-                    await _add_video_report(job_id, f"[post {post_id}] {title}: ошибка загрузки (HTTP {resp.status})")
+                    await _add_video_report(
+                        job_id, f"[post {post_id}] {title}: ошибка загрузки (HTTP {resp.status})"
+                    )
                     return False, 0, "http_error"
                 total = int(resp.headers.get("Content-Length") or 0)
                 if total == 0:
                     await _update_video_status(job_id, video_id, title, 0, "no_size")
-                    await _add_video_report(job_id, f"[post {post_id}] {title}: размер неизвестен (нет Content-Length), пропущено")
+                    await _add_video_report(
+                        job_id,
+                        f"[post {post_id}] {title}: размер неизвестен (нет Content-Length), пропущено",
+                    )
                     return False, total, "no_size"
                 if total and total > MAX_VIDEO_SIZE_BYTES:
                     await _update_video_status(job_id, video_id, title, 0, "too_large")
-                    await _add_video_report(job_id, f"[post {post_id}] {title}: размер {total // (1024 * 1024)}MB > 200MB, пропущено")
+                    await _add_video_report(
+                        job_id,
+                        f"[post {post_id}] {title}: размер {total // (1024 * 1024)}MB > 200MB, пропущено",
+                    )
                     return False, total, "too_large"
                 if total and total > remaining_bytes:
                     await _update_video_status(job_id, video_id, title, 0, "limit_total")
-                    await _add_video_report(job_id, f"[post {post_id}] {title}: лимит 1000MB исчерпан, пропущено")
+                    await _add_video_report(
+                        job_id, f"[post {post_id}] {title}: лимит 1000MB исчерпан, пропущено"
+                    )
                     return False, total, "limit_total"
                 downloaded = 0
                 with open(dest_path, "wb") as f:
@@ -479,7 +548,9 @@ async def _download_video_with_progress(
                                     os.remove(dest_path)
                             except Exception:
                                 pass
-                            await _add_video_report(job_id, f"[post {post_id}] {title}: пропущено пользователем")
+                            await _add_video_report(
+                                job_id, f"[post {post_id}] {title}: пропущено пользователем"
+                            )
                             return False, total, "skipped"
                         f.write(chunk)
                         downloaded += len(chunk)
@@ -537,11 +608,14 @@ async def _collect_posts(
             if not client:
                 raise ValueError("Нет доступных VK токенов")
             try:
-                response = await client._make_request("wall.get", {
-                    "owner_id": owner_id,
-                    "count": min(batch_size, 100),
-                    "offset": offset,
-                })
+                response = await client._make_request(
+                    "wall.get",
+                    {
+                        "owner_id": owner_id,
+                        "count": min(batch_size, 100),
+                        "offset": offset,
+                    },
+                )
                 posts = response.get("items", [])
                 break
             except VKRateLimitException:
@@ -562,13 +636,15 @@ async def _collect_posts(
             if start_ts and post_ts < start_ts:
                 reached_old = True
                 break
-            collected.append({
-                "id": post.get("id"),
-                "date": datetime.fromtimestamp(post_ts).strftime("%Y-%m-%d %H:%M:%S"),
-                "text": post.get("text", ""),
-                "url": f"https://vk.com/wall{owner_id}_{post.get('id')}",
-                "attachments": _parse_attachments(post),
-            })
+            collected.append(
+                {
+                    "id": post.get("id"),
+                    "date": datetime.fromtimestamp(post_ts).strftime("%Y-%m-%d %H:%M:%S"),
+                    "text": post.get("text", ""),
+                    "url": f"https://vk.com/wall{owner_id}_{post.get('id')}",
+                    "attachments": _parse_attachments(post),
+                }
+            )
             if len(collected) >= limit:
                 break
 
@@ -600,20 +676,22 @@ def parse_vk_posts_task(job_id: str, payload: Dict[str, Any]):
     _cleanup_old_files(days=7)
 
     status = _get_job(job_id) or {}
-    status.update({
-        "status": "running",
-        "progress": 1,
-        "message": "Инициализация...",
-        "error": None,
-        "download_url": None,
-        "report_file": os.path.join(REPORTS_DIR, f"{job_id}.log"),
-        "video_limit": {
-            "used_bytes": 0,
-            "max_bytes": MAX_TOTAL_VIDEO_BYTES,
-            "used_mb": 0,
-            "max_mb": MAX_TOTAL_VIDEO_BYTES // (1024 * 1024),
-        },
-    })
+    status.update(
+        {
+            "status": "running",
+            "progress": 1,
+            "message": "Инициализация...",
+            "error": None,
+            "download_url": None,
+            "report_file": os.path.join(REPORTS_DIR, f"{job_id}.log"),
+            "video_limit": {
+                "used_bytes": 0,
+                "max_bytes": MAX_TOTAL_VIDEO_BYTES,
+                "used_mb": 0,
+                "max_mb": MAX_TOTAL_VIDEO_BYTES // (1024 * 1024),
+            },
+        }
+    )
     _set_job(job_id, status)
 
     try:
@@ -634,27 +712,44 @@ def parse_vk_posts_task(job_id: str, payload: Dict[str, Any]):
         include_render = include
         include_download = include
 
-        posts, owner_label = run_coro(_collect_posts(
-            tokens=tokens,
-            source=payload.get("source", ""),
-            date_from=payload.get("date_from"),
-            date_to=payload.get("date_to"),
-            limit=int(payload.get("limit", 200)),
-            job_id=job_id,
-        ))
+        posts, owner_label = run_coro(
+            _collect_posts(
+                tokens=tokens,
+                source=payload.get("source", ""),
+                date_from=payload.get("date_from"),
+                date_to=payload.get("date_to"),
+                limit=int(payload.get("limit", 200)),
+                job_id=job_id,
+            )
+        )
 
-        status.update({
-            "progress": 85,
-            "message": f"Собрано постов: {len(posts)}",
-        })
+        status.update(
+            {
+                "progress": 85,
+                "message": f"Собрано постов: {len(posts)}",
+            }
+        )
         _set_job(job_id, status)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         job_dir = os.path.join(OUTPUT_DIR, job_id)
         os.makedirs(job_dir, exist_ok=True)
         if download_attachments:
-            run_coro(_download_attachments(posts, include=include_download, attachments_dir=os.path.join(job_dir, "attachments")))
-            run_coro(_download_videos(posts, include=include_download, job_id=job_id, attachments_dir=os.path.join(job_dir, "attachments")))
+            run_coro(
+                _download_attachments(
+                    posts,
+                    include=include_download,
+                    attachments_dir=os.path.join(job_dir, "attachments"),
+                )
+            )
+            run_coro(
+                _download_videos(
+                    posts,
+                    include=include_download,
+                    job_id=job_id,
+                    attachments_dir=os.path.join(job_dir, "attachments"),
+                )
+            )
 
         html_path = os.path.join(job_dir, f"vk_export_{owner_label}_{timestamp}.html")
         txt_path = os.path.join(job_dir, f"vk_export_{owner_label}_{timestamp}.txt")
@@ -673,41 +768,49 @@ def parse_vk_posts_task(job_id: str, payload: Dict[str, Any]):
         current_job = _get_job(job_id) or {}
         if current_job.get("video_downloads"):
             status["video_downloads"] = current_job.get("video_downloads")
-        status.update({
-            "status": "done",
-            "progress": 100,
-            "message": "Готово",
-            "result_file": zip_path,
-        })
+        status.update(
+            {
+                "status": "done",
+                "progress": 100,
+                "message": "Готово",
+                "result_file": zip_path,
+            }
+        )
         _set_job(job_id, status)
         logger.info(f"Parsing completed: {zip_path}")
 
     except (VKTokenInvalidException, VKAccessDeniedException, VKRateLimitException) as e:
         logger.error(f"VK error: {e.message}")
-        status.update({
-            "status": "error",
-            "progress": status.get("progress", 0),
-            "message": "Ошибка VK API",
-            "error": e.message,
-        })
+        status.update(
+            {
+                "status": "error",
+                "progress": status.get("progress", 0),
+                "message": "Ошибка VK API",
+                "error": e.message,
+            }
+        )
         _set_job(job_id, status)
     except VKAPIException as e:
         logger.error(f"VK API error: {e.message}")
-        status.update({
-            "status": "error",
-            "progress": status.get("progress", 0),
-            "message": "Ошибка VK API",
-            "error": e.message,
-        })
+        status.update(
+            {
+                "status": "error",
+                "progress": status.get("progress", 0),
+                "message": "Ошибка VK API",
+                "error": e.message,
+            }
+        )
         _set_job(job_id, status)
     except Exception as e:
         logger.error(f"Parsing failed: {e}", exc_info=True)
-        status.update({
-            "status": "error",
-            "progress": status.get("progress", 0),
-            "message": "Ошибка парсинга",
-            "error": str(e),
-        })
+        status.update(
+            {
+                "status": "error",
+                "progress": status.get("progress", 0),
+                "message": "Ошибка парсинга",
+                "error": str(e),
+            }
+        )
         _set_job(job_id, status)
     finally:
         try:

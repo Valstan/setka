@@ -1,13 +1,10 @@
 """Tests for BaseVKChecker (shared scaffolding for the three VK checkers)."""
+
 from unittest.mock import MagicMock, patch
 
 from vk_api.exceptions import ApiError
 
-from modules.notifications.base_checker import (
-    BaseVKChecker,
-    COMMUNITY_FALLBACK_CODES,
-)
-
+from modules.notifications.base_checker import COMMUNITY_FALLBACK_CODES, BaseVKChecker
 
 GROUP = -123
 COMMUNITY_TOKEN = "vk1.community.fake"
@@ -16,7 +13,10 @@ USER_TOKEN = "vk1.user.fake"
 
 def _api_error(code: int) -> ApiError:
     return ApiError(
-        vk=None, method="wall.get", values={}, raw=None,
+        vk=None,
+        method="wall.get",
+        values={},
+        raw=None,
         error={"error_code": code, "error_msg": f"err {code}"},
     )
 

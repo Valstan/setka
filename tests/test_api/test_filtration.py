@@ -1,6 +1,7 @@
 """
 Unit tests for web.api.filtration helpers (без FastAPI/DB).
 """
+
 import pytest
 
 from web.api.filtration import FiltrationPutBody, _normalize_localities

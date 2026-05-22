@@ -4,6 +4,7 @@ Mirrors the suggested/comments fallback: when wall.post or wall.repost via a
 community client fails with VK code 15 or 27, the publisher should retry via
 its own publish-token client. Other errors propagate.
 """
+
 from unittest.mock import MagicMock
 
 
@@ -17,6 +18,7 @@ def _client_with_method_only(method_return):
     client = MagicMock(spec=["method"])
     client.method.return_value = method_return
     return client
+
 
 import pytest
 
@@ -121,12 +123,14 @@ async def test_fallback_on_code_27_when_only_in_error_msg():
     DOES try community first; wall.repost wouldn't).
     """
     publish_client = _client_with_method_only({"response": {"post_id": 777}})
-    community_client = _client_with_method_only({
-        "error": {
-            "error_msg": "[27] Group authorization failed: method is unavailable with group auth."
-            # NOTE: no 'error_code' key — this mimics legacy VKClient behaviour.
+    community_client = _client_with_method_only(
+        {
+            "error": {
+                "error_msg": "[27] Group authorization failed: method is unavailable with group auth."
+                # NOTE: no 'error_code' key — this mimics legacy VKClient behaviour.
+            }
         }
-    })
+    )
 
     publisher = _make_publisher(publish_client)
     response, via = await publisher._call_wall_post(
@@ -163,8 +167,9 @@ async def test_community_token_success_no_fallback():
 async def test_global_rate_limit_throttles_publish_token():
     """Two back-to-back publish-token calls must be ≥ GLOBAL_PUBLISH_INTERVAL_SECONDS
     apart. Verifies our defence against VK captcha after fallback bursts."""
-    from modules.publisher.vk_publisher_extended import VKPublisher
     import time
+
+    from modules.publisher.vk_publisher_extended import VKPublisher
 
     publish_client = _client_with_method_only({"response": {"post_id": 1}})
     publisher = _make_publisher(publish_client)
@@ -177,10 +182,14 @@ async def test_global_rate_limit_throttles_publish_token():
     try:
         t0 = time.monotonic()
         await publisher._call_wall_post(
-            params={"object": "wall-1_1"}, method="wall.repost", client=publish_client,
+            params={"object": "wall-1_1"},
+            method="wall.repost",
+            client=publish_client,
         )
         await publisher._call_wall_post(
-            params={"object": "wall-1_2"}, method="wall.repost", client=publish_client,
+            params={"object": "wall-1_2"},
+            method="wall.repost",
+            client=publish_client,
         )
         elapsed = time.monotonic() - t0
     finally:

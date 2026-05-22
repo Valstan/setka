@@ -5,6 +5,7 @@ later the automatic Celery task returned 0 (community-tokens broken).
 Without keep_if_empty the UI would show 0; with keep_if_empty=True we keep
 the previous result while it's young (default 6h window).
 """
+
 import json
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -22,10 +23,12 @@ def _make_storage():
 def test_keep_if_empty_preserves_recent_non_empty():
     storage = _make_storage()
     prev_ts = datetime.now().isoformat()
-    existing = json.dumps({
-        "timestamp": prev_ts,
-        "notifications": [{"region_id": 1, "suggested_count": 4}],
-    })
+    existing = json.dumps(
+        {
+            "timestamp": prev_ts,
+            "notifications": [{"region_id": 1, "suggested_count": 4}],
+        }
+    )
     storage.redis_client.get.return_value = existing
 
     saved = storage.save_notifications(
@@ -42,10 +45,12 @@ def test_keep_if_empty_replaces_old_non_empty():
     """If previous result is older than keep_window_hours — replace it."""
     storage = _make_storage()
     old_ts = (datetime.now() - timedelta(hours=10)).isoformat()
-    existing = json.dumps({
-        "timestamp": old_ts,
-        "notifications": [{"region_id": 1, "suggested_count": 4}],
-    })
+    existing = json.dumps(
+        {
+            "timestamp": old_ts,
+            "notifications": [{"region_id": 1, "suggested_count": 4}],
+        }
+    )
     storage.redis_client.get.return_value = existing
 
     saved = storage.save_notifications(
@@ -77,10 +82,12 @@ def test_keep_if_empty_writes_when_no_previous():
 def test_non_empty_result_always_writes():
     """Any non-empty result overwrites whatever was there, regardless of flag."""
     storage = _make_storage()
-    storage.redis_client.get.return_value = json.dumps({
-        "timestamp": datetime.now().isoformat(),
-        "notifications": [{"region_id": 5}],
-    })
+    storage.redis_client.get.return_value = json.dumps(
+        {
+            "timestamp": datetime.now().isoformat(),
+            "notifications": [{"region_id": 5}],
+        }
+    )
 
     saved = storage.save_notifications(
         [{"region_id": 1}],
@@ -95,10 +102,12 @@ def test_non_empty_result_always_writes():
 def test_default_behaviour_unchanged():
     """Without keep_if_empty (legacy callers) save always overwrites."""
     storage = _make_storage()
-    storage.redis_client.get.return_value = json.dumps({
-        "timestamp": datetime.now().isoformat(),
-        "notifications": [{"region_id": 5}],
-    })
+    storage.redis_client.get.return_value = json.dumps(
+        {
+            "timestamp": datetime.now().isoformat(),
+            "notifications": [{"region_id": 5}],
+        }
+    )
 
     saved = storage.save_notifications([], notification_type="suggested_posts")
 
@@ -109,10 +118,12 @@ def test_default_behaviour_unchanged():
 def test_keep_window_with_corrupt_timestamp():
     """If previous entry has unparseable timestamp, treat it as 'old' and overwrite."""
     storage = _make_storage()
-    storage.redis_client.get.return_value = json.dumps({
-        "timestamp": "not-a-date",
-        "notifications": [{"region_id": 1}],
-    })
+    storage.redis_client.get.return_value = json.dumps(
+        {
+            "timestamp": "not-a-date",
+            "notifications": [{"region_id": 1}],
+        }
+    )
 
     saved = storage.save_notifications(
         [],

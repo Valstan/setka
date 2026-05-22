@@ -1,9 +1,9 @@
 """
 Health check endpoints
 """
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from database.connection import get_db_session
+
+from fastapi import APIRouter
+
 from modules.monitoring.health_checker import HealthChecker
 
 router = APIRouter()
@@ -21,4 +21,3 @@ async def full_health_check():
     checker = HealthChecker()
     result = await checker.full_health_check()
     return result
-

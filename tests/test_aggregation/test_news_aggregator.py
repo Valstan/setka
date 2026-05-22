@@ -21,11 +21,7 @@ async def test_aggregate_returns_none_for_posts_without_text():
     aggregator = NewsAggregator()
     posts = [FakePost(text="   "), FakePost(text="")]
 
-    digest = await aggregator.aggregate(
-        posts=posts,
-        title="📰 Тест",
-        hashtags=["#test"]
-    )
+    digest = await aggregator.aggregate(posts=posts, title="📰 Тест", hashtags=["#test"])
 
     assert digest is None
 
@@ -35,11 +31,7 @@ async def test_aggregate_keeps_posts_with_text():
     aggregator = NewsAggregator()
     posts = [FakePost(text=""), FakePost(text="Короткий текст поста", views=150)]
 
-    digest = await aggregator.aggregate(
-        posts=posts,
-        title="📰 Тест",
-        hashtags=["#test"]
-    )
+    digest = await aggregator.aggregate(posts=posts, title="📰 Тест", hashtags=["#test"])
 
     assert digest is not None
     assert "Короткий текст поста" in digest.aggregated_text

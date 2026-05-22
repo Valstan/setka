@@ -10,6 +10,7 @@
 За один запуск обрабатывается не больше одного нового поста; wall.get — последние 10;
 история дублей (lip) — не больше 10 идентификаторов.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -174,6 +175,7 @@ async def execute_copy_setka_network(
     # Подгрузим community-токены: copy_setka льёт пост в стены наших регионов,
     # значит выгодно использовать community-токен каждой целевой группы.
     from modules.vk_token_router import load_community_tokens
+
     community_tokens = await load_community_tokens(session)
     publisher = VKPublisher(test_polygon_mode=test_mode, community_tokens=community_tokens)
 

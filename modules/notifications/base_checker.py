@@ -16,6 +16,7 @@ Before this base class each checker had its own copy of __init__, _api_for
 and (in comments_checker) _call_with_fallback. Three places to keep in sync
 is two too many — see DEV_HISTORY 2026-05-21 "Hot-fix VK community-tokens".
 """
+
 from __future__ import annotations
 
 import logging
@@ -106,7 +107,10 @@ class BaseVKChecker:
                 logger.info(
                     "%s group %s: community-token failed on %s with code %s, "
                     "retrying via user-token",
-                    self.CHECKER_NAME, group_id, op_name, e.code,
+                    self.CHECKER_NAME,
+                    group_id,
+                    op_name,
+                    e.code,
                 )
                 return fn(self.vk), "community-fallback-user"
             raise

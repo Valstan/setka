@@ -1,10 +1,12 @@
 """
 Notifications API endpoints
 """
-from fastapi import APIRouter
-from typing import List, Dict, Any
-from pydantic import BaseModel
+
 import logging
+from typing import List
+
+from fastapi import APIRouter
+from pydantic import BaseModel
 
 from modules.notifications.storage import NotificationsStorage
 
@@ -14,6 +16,7 @@ router = APIRouter()
 
 class NotificationResponse(BaseModel):
     """Notification response model"""
+
     region_id: int
     region_name: str
     region_code: str
@@ -25,6 +28,7 @@ class NotificationResponse(BaseModel):
 
 class NotificationsResponse(BaseModel):
     """Notifications with metadata"""
+
     timestamp: str | None
     count: int
     notifications: List[NotificationResponse]
@@ -34,50 +38,52 @@ class NotificationsResponse(BaseModel):
 async def get_all_notifications():
     """
     Получить все текущие уведомления (suggested posts + unread messages)
-    
+
     Returns:
         Dict с suggested posts и unread messages
     """
     storage = NotificationsStorage()
     data = storage.get_all_notifications()
-    
+
     # Добавляем timestamp последней проверки из Redis
     suggested_timestamp = None
     messages_timestamp = None
     comments_timestamp = None
-    
+
     try:
         # Получаем timestamp для suggested posts
         suggested_data = storage.get_notifications_with_timestamp()
-        if suggested_data.get('timestamp'):
-            suggested_timestamp = suggested_data['timestamp']
-        
+        if suggested_data.get("timestamp"):
+            suggested_timestamp = suggested_data["timestamp"]
+
         # Получаем timestamp для messages (если есть отдельный ключ)
         messages_key = f"{storage.key_prefix}:unread_messages"
         messages_data_str = storage.redis_client.get(messages_key)
         if messages_data_str:
             import json
+
             messages_data = json.loads(messages_data_str)
-            if messages_data.get('timestamp'):
-                messages_timestamp = messages_data['timestamp']
+            if messages_data.get("timestamp"):
+                messages_timestamp = messages_data["timestamp"]
 
         # Получаем timestamp для comments
         comments_key = f"{storage.key_prefix}:recent_comments"
         comments_data_str = storage.redis_client.get(comments_key)
         if comments_data_str:
             import json
+
             comments_data = json.loads(comments_data_str)
-            if comments_data.get('timestamp'):
-                comments_timestamp = comments_data['timestamp']
-        
+            if comments_data.get("timestamp"):
+                comments_timestamp = comments_data["timestamp"]
+
         # Используем более свежий timestamp (из 3 источников)
         candidates = [t for t in [suggested_timestamp, messages_timestamp, comments_timestamp] if t]
         if candidates:
-            data['timestamp'] = max(candidates)
-        
+            data["timestamp"] = max(candidates)
+
     except Exception as e:
         logger.warning(f"Could not get timestamp from Redis: {e}")
-    
+
     return data
 
 
@@ -85,7 +91,7 @@ async def get_all_notifications():
 async def get_suggested_notifications():
     """
     Получить только уведомления о предложенных постах
-    
+
     Returns:
         List уведомлений о suggested posts
     """
@@ -97,7 +103,7 @@ async def get_suggested_notifications():
 async def get_messages_notifications():
     """
     Получить только уведомления о непрочитанных сообщениях
-    
+
     Returns:
         List уведомлений о unread messages
     """
@@ -119,8 +125,9 @@ async def get_comments_notifications():
 
 class HandledRequest(BaseModel):
     """POST /handled body: mark notifications as handled."""
+
     notification_type: str  # 'recent_comment' | 'suggested_post' | 'unread_message'
-    item_id: str            # comment_id / post_id / group_id (as string for flexibility)
+    item_id: str  # comment_id / post_id / group_id (as string for flexibility)
 
 
 @router.post("/handled")
@@ -132,7 +139,7 @@ async def mark_handled(req: HandledRequest):
     """
     storage = NotificationsStorage()
     ok = storage.mark_handled(req.notification_type, req.item_id)
-    return {'success': ok, 'handled': ok}
+    return {"success": ok, "handled": ok}
 
 
 @router.delete("/handled")
@@ -140,14 +147,17 @@ async def unmark_handled(req: HandledRequest):
     """Undo: remove the handled mark."""
     storage = NotificationsStorage()
     ok = storage.unmark_handled(req.notification_type, req.item_id)
-    return {'success': ok}
+    return {"success": ok}
 
 
 @router.get("/handled/{notification_type}")
 async def list_handled(notification_type: str):
     """All currently-handled item_ids for the given type."""
     storage = NotificationsStorage()
-    return {'notification_type': notification_type, 'ids': sorted(storage.get_handled_set(notification_type))}
+    return {
+        "notification_type": notification_type,
+        "ids": sorted(storage.get_handled_set(notification_type)),
+    }
 
 
 async def _load_vk_routing():
@@ -156,10 +166,11 @@ async def _load_vk_routing():
     Centralised so all `comments/like`, `comments/reply`, `messages/reply`
     endpoints follow the exact same routing without copy-paste drift.
     """
+    from sqlalchemy import select
+
+    from config.runtime import VK_TOKENS
     from database.connection import AsyncSessionLocal
     from database.models import VKToken
-    from config.runtime import VK_TOKENS
-    from sqlalchemy import select
 
     vk_token = VK_TOKENS.get("VALSTAN")
     if not vk_token:
@@ -178,6 +189,7 @@ async def _load_vk_routing():
 
 class LikeCommentRequest(BaseModel):
     """POST /comments/like body."""
+
     owner_id: int
     post_id: int
     comment_id: int
@@ -195,7 +207,7 @@ async def like_comment_endpoint(req: LikeCommentRequest):
 
     vk_token, community_tokens = await _load_vk_routing()
     if not vk_token:
-        return {'success': False, 'error': 'VK token not found'}
+        return {"success": False, "error": "VK token not found"}
 
     return like_comment(
         owner_id=req.owner_id,
@@ -208,6 +220,7 @@ async def like_comment_endpoint(req: LikeCommentRequest):
 
 class ReplyCommentRequest(BaseModel):
     """POST /comments/reply body (etap 4b)."""
+
     owner_id: int
     post_id: int
     comment_id: int
@@ -225,11 +238,11 @@ async def reply_to_comment_endpoint(req: ReplyCommentRequest):
     from modules.notifications.vk_actions import reply_to_comment
 
     if not (req.message or "").strip():
-        return {'success': False, 'error': 'message is empty'}
+        return {"success": False, "error": "message is empty"}
 
     vk_token, community_tokens = await _load_vk_routing()
     if not vk_token:
-        return {'success': False, 'error': 'VK token not found'}
+        return {"success": False, "error": "VK token not found"}
 
     return reply_to_comment(
         owner_id=req.owner_id,
@@ -243,7 +256,8 @@ async def reply_to_comment_endpoint(req: ReplyCommentRequest):
 
 class DraftReplyRequest(BaseModel):
     """POST /comments/draft body (etap 4b)."""
-    text: str             # original comment text
+
+    text: str  # original comment text
     region_name: str | None = None
     style: str | None = None  # 'short' | 'friendly' | 'formal' (optional hint)
 
@@ -259,7 +273,7 @@ async def draft_reply_endpoint(req: DraftReplyRequest):
     from modules.notifications.ai_drafter import draft_comment_reply
 
     if not (req.text or "").strip():
-        return {'success': False, 'error': 'text is empty'}
+        return {"success": False, "error": "text is empty"}
 
     return await draft_comment_reply(
         original_text=req.text,
@@ -270,8 +284,9 @@ async def draft_reply_endpoint(req: DraftReplyRequest):
 
 class SendMessageRequest(BaseModel):
     """POST /messages/reply body (etap 4b)."""
+
     group_id: int  # positive or negative; we abs() it
-    peer_id: int   # VK user id or chat peer
+    peer_id: int  # VK user id or chat peer
     message: str
 
 
@@ -286,11 +301,11 @@ async def send_message_endpoint(req: SendMessageRequest):
     from modules.notifications.vk_actions import send_message
 
     if not (req.message or "").strip():
-        return {'success': False, 'error': 'message is empty'}
+        return {"success": False, "error": "message is empty"}
 
     vk_token, community_tokens = await _load_vk_routing()
     if not vk_token:
-        return {'success': False, 'error': 'VK token not found'}
+        return {"success": False, "error": "VK token not found"}
 
     return send_message(
         group_id=req.group_id,
@@ -311,40 +326,43 @@ async def get_hot_posts(min_comments: int = 5, limit: int = 5):
     storage = NotificationsStorage()
     comments = storage.get_comments_notifications()
     if not comments:
-        return {'posts': [], 'min_comments': min_comments, 'window_hours': 24}
+        return {"posts": [], "min_comments": min_comments, "window_hours": 24}
 
     by_post: dict = {}
-    handled_ids = storage.get_handled_set('recent_comment')
+    handled_ids = storage.get_handled_set("recent_comment")
     for c in comments:
-        url = c.get('post_url')
+        url = c.get("post_url")
         if not url:
             continue
-        bucket = by_post.setdefault(url, {
-            'post_url': url,
-            'region_name': c.get('region_name'),
-            'region_code': c.get('region_code'),
-            'vk_owner_id': c.get('vk_owner_id'),
-            'vk_post_id': c.get('vk_post_id'),
-            'total_comments': 0,
-            'unhandled_comments': 0,
-            'newest_at': None,
-            'preview': None,
-        })
-        bucket['total_comments'] += 1
-        if str(c.get('comment_id')) not in handled_ids:
-            bucket['unhandled_comments'] += 1
-        ts = c.get('commented_at')
-        if ts and (bucket['newest_at'] is None or ts > bucket['newest_at']):
-            bucket['newest_at'] = ts
-        if not bucket['preview']:
-            bucket['preview'] = (c.get('text') or '')[:120]
+        bucket = by_post.setdefault(
+            url,
+            {
+                "post_url": url,
+                "region_name": c.get("region_name"),
+                "region_code": c.get("region_code"),
+                "vk_owner_id": c.get("vk_owner_id"),
+                "vk_post_id": c.get("vk_post_id"),
+                "total_comments": 0,
+                "unhandled_comments": 0,
+                "newest_at": None,
+                "preview": None,
+            },
+        )
+        bucket["total_comments"] += 1
+        if str(c.get("comment_id")) not in handled_ids:
+            bucket["unhandled_comments"] += 1
+        ts = c.get("commented_at")
+        if ts and (bucket["newest_at"] is None or ts > bucket["newest_at"]):
+            bucket["newest_at"] = ts
+        if not bucket["preview"]:
+            bucket["preview"] = (c.get("text") or "")[:120]
 
-    hot = [b for b in by_post.values() if b['total_comments'] >= min_comments]
-    hot.sort(key=lambda b: (-b['unhandled_comments'], -b['total_comments']))
+    hot = [b for b in by_post.values() if b["total_comments"] >= min_comments]
+    hot.sort(key=lambda b: (-b["unhandled_comments"], -b["total_comments"]))
     return {
-        'posts': hot[:limit],
-        'min_comments': min_comments,
-        'window_hours': 24,
+        "posts": hot[:limit],
+        "min_comments": min_comments,
+        "window_hours": 24,
     }
 
 
@@ -362,13 +380,13 @@ async def get_history(notification_type: str = None):
     storage = NotificationsStorage()
     if notification_type:
         return {
-            'type': notification_type,
-            'runs': storage.get_recent_runs(notification_type),
+            "type": notification_type,
+            "runs": storage.get_recent_runs(notification_type),
         }
     return {
-        'suggested_posts': storage.get_recent_runs('suggested_posts'),
-        'unread_messages': storage.get_recent_runs('unread_messages'),
-        'recent_comments': storage.get_recent_runs('recent_comments'),
+        "suggested_posts": storage.get_recent_runs("suggested_posts"),
+        "unread_messages": storage.get_recent_runs("unread_messages"),
+        "recent_comments": storage.get_recent_runs("recent_comments"),
     }
 
 
@@ -387,10 +405,10 @@ async def clear_notifications():
     """Очистить все уведомления"""
     storage = NotificationsStorage()
     success = storage.clear_notifications()
-    
+
     return {
-        'success': success,
-        'message': 'Notifications cleared' if success else 'Failed to clear notifications'
+        "success": success,
+        "message": "Notifications cleared" if success else "Failed to clear notifications",
     }
 
 
@@ -411,40 +429,40 @@ async def check_all_now():
          появления.
       6. Если total > 0 — Telegram-алёрт.
     """
+    from datetime import datetime
+
+    from sqlalchemy import select
+
+    from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS, VK_TOKENS
     from database.connection import AsyncSessionLocal
     from database.models import Region, VKToken
-    from modules.notifications.vk_suggested_checker import VKSuggestedChecker
-    from modules.notifications.vk_messages_checker import VKMessagesChecker
     from modules.notifications.storage import NotificationsStorage
     from modules.notifications.telegram_alert import send_telegram_notifications_alert
+    from modules.notifications.vk_messages_checker import VKMessagesChecker
+    from modules.notifications.vk_suggested_checker import VKSuggestedChecker
     from modules.service_activity_notifier import (
-        notify_vk_notifications_check_start,
         notify_vk_notifications_check_complete,
+        notify_vk_notifications_check_start,
     )
-    from config.runtime import VK_TOKENS, TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID, SERVER
-    from sqlalchemy import select
-    from datetime import datetime
 
     try:
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Region).where(Region.vk_group_id.isnot(None))
-            )
+            result = await session.execute(select(Region).where(Region.vk_group_id.isnot(None)))
             regions = list(result.scalars())
 
             if not regions:
                 return {
-                    'success': False,
-                    'message': 'No regions with VK groups found',
-                    'total_count': 0,
+                    "success": False,
+                    "message": "No regions with VK groups found",
+                    "total_count": 0,
                 }
 
             region_groups = [
                 {
-                    'region_id': r.id,
-                    'region_name': r.name,
-                    'region_code': r.code,
-                    'vk_group_id': r.vk_group_id,
+                    "region_id": r.id,
+                    "region_name": r.name,
+                    "region_code": r.code,
+                    "vk_group_id": r.vk_group_id,
                 }
                 for r in regions
             ]
@@ -452,9 +470,9 @@ async def check_all_now():
             vk_token = VK_TOKENS.get("VALSTAN")
             if not vk_token:
                 return {
-                    'success': False,
-                    'message': 'VK token not found',
-                    'total_count': 0,
+                    "success": False,
+                    "message": "VK token not found",
+                    "total_count": 0,
                 }
 
             community_q = await session.execute(
@@ -474,8 +492,8 @@ async def check_all_now():
 
             messages_checker = VKMessagesChecker(vk_token, community_tokens=community_tokens)
             messages_result = await messages_checker.check_all_region_groups(region_groups)
-            messages = messages_result['notifications']
-            messages_denied = messages_result['denied_groups']
+            messages = messages_result["notifications"]
+            messages_denied = messages_result["denied_groups"]
 
             processing_time = (datetime.now() - start_time).total_seconds()
             notify_vk_notifications_check_complete(len(suggested), len(messages), processing_time)
@@ -483,14 +501,15 @@ async def check_all_now():
             # Сохраняем в Redis. Ручной запуск — без keep_if_empty: пользователь
             # явно сказал «обнови сейчас» и ожидает реального текущего состояния.
             storage = NotificationsStorage()
-            storage.save_notifications(suggested, 'suggested_posts')
-            storage.save_notifications(messages, 'unread_messages')
-            storage.save_notifications(messages_denied, 'unread_messages_denied')
+            storage.save_notifications(suggested, "suggested_posts")
+            storage.save_notifications(messages, "unread_messages")
+            storage.save_notifications(messages_denied, "unread_messages_denied")
 
             # Comments в фоне через Celery (избегаем nginx timeout)
             comments_queued = False
             try:
                 from tasks.celery_app import check_recent_comments as celery_check_recent_comments
+
                 celery_check_recent_comments.delay()
                 comments_queued = True
             except Exception as e:
@@ -504,32 +523,35 @@ async def check_all_now():
                 telegram_token = TELEGRAM_TOKENS.get("VALSTANBOT")
                 chat_id = TELEGRAM_ALERT_CHAT_ID
                 if telegram_token and chat_id:
-                    domain = SERVER.get('domain') or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+                    domain = (
+                        SERVER.get("domain")
+                        or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+                    )
                     dashboard_url = f"https://{domain}/notifications"
                     await send_telegram_notifications_alert(
                         bot_token=telegram_token,
                         chat_id=chat_id,
                         notifications_data={
-                            'suggested_count': len(suggested),
-                            'messages_count': len(messages),
-                            'comments_count': len(current_comments),
-                            'total_count': total_count,
-                            'suggested_posts': suggested,
-                            'unread_messages': messages,
+                            "suggested_count": len(suggested),
+                            "messages_count": len(messages),
+                            "comments_count": len(current_comments),
+                            "total_count": total_count,
+                            "suggested_posts": suggested,
+                            "unread_messages": messages,
                         },
                         dashboard_url=dashboard_url,
                     )
 
             return {
-                'success': True,
-                'timestamp': datetime.now().isoformat(),
-                'total_count': total_count,
-                'suggested_count': len(suggested),
-                'messages_count': len(messages),
-                'messages_denied_count': len(messages_denied),
-                'comments_count': len(current_comments),
-                'comments_queued': comments_queued,
-                'message': (
+                "success": True,
+                "timestamp": datetime.now().isoformat(),
+                "total_count": total_count,
+                "suggested_count": len(suggested),
+                "messages_count": len(messages),
+                "messages_denied_count": len(messages_denied),
+                "comments_count": len(current_comments),
+                "comments_queued": comments_queued,
+                "message": (
                     f"Found {len(suggested)} suggested posts, "
                     f"{len(messages)} unread messages, "
                     f"{len(current_comments)} recent comments"
@@ -539,8 +561,7 @@ async def check_all_now():
     except Exception as e:
         logger.error(f"Error in check_all_now: {e}", exc_info=True)
         return {
-            'success': False,
-            'message': str(e),
-            'total_count': 0,
+            "success": False,
+            "message": str(e),
+            "total_count": 0,
         }
-

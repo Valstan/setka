@@ -3,7 +3,6 @@ Tests for modules.filters.morphology — Russian word stem helpers.
 
 Unit-only: no DB / network.
 """
-import pytest
 
 from modules.filters.morphology import (
     expand_keywords,

@@ -5,8 +5,8 @@ This module provides fixtures that mock all external dependencies
 (PostgreSQL, Redis, VK API, Telegram, Groq) so unit tests run
 fast and without real infrastructure.
 """
+
 import os
-import sys
 
 # ---------------------------------------------------------------------------
 # Set dummy env vars BEFORE any SETKA module is imported.
@@ -15,15 +15,15 @@ import sys
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-import asyncio
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Database fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_db_session():
@@ -52,18 +52,21 @@ def mock_scalar_result():
         mock_result = mock_scalar_result(return_value=my_region)
         mock_db_session.execute.return_value = mock_result
     """
+
     def _make_mock(return_value=None):
         mock = MagicMock()
         mock.scalars().first.return_value = return_value
         mock.scalars().all.return_value = [return_value] if return_value else []
         mock.scalar_one_or_none.return_value = return_value
         return mock
+
     return _make_mock
 
 
 # ---------------------------------------------------------------------------
 # VK API fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_vk_api():
@@ -75,10 +78,7 @@ def mock_vk_api():
             ...
     """
     vk = MagicMock()
-    vk.method.return_value = {
-        "items": [],
-        "count": 0
-    }
+    vk.method.return_value = {"items": [], "count": 0}
     vk.auth = MagicMock()
     return vk
 
@@ -125,6 +125,7 @@ def sample_vk_post_ad():
 # Redis fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_redis():
     """
@@ -143,12 +144,14 @@ def mock_redis():
 # Region / context fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def sample_region():
     """
     Provide a sample Region model instance.
     """
     from database.models import Region
+
     return Region(
         id=1,
         code="mi",
@@ -186,6 +189,7 @@ def sample_filter_context(sample_region):
 # Groq AI fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_groq_client():
     """
@@ -202,6 +206,7 @@ def mock_groq_client():
 # Celery fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_celery_app():
     """
@@ -217,6 +222,7 @@ def mock_celery_app():
 # ---------------------------------------------------------------------------
 # Time helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def fixed_datetime():

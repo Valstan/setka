@@ -4,12 +4,12 @@ Also covers the historical bug where `_get_recent_wall_posts_with_comments`
 used `self.vk` directly instead of `_api_for(owner_id)`, bypassing
 community-tokens entirely.
 """
+
 from unittest.mock import MagicMock, patch
 
 from vk_api.exceptions import ApiError
 
 from modules.notifications.vk_comments_checker import VKCommentsChecker
-
 
 OWNER_ID = -158787639
 POST_ID = 1234
@@ -33,9 +33,7 @@ def _build_checker_with_community_token():
         instance = MagicMock()
         instance.get_api.return_value = MagicMock(name="user-api")
         m.return_value = instance
-        checker = VKCommentsChecker(
-            USER_TOKEN, community_tokens={abs(OWNER_ID): COMMUNITY_TOKEN}
-        )
+        checker = VKCommentsChecker(USER_TOKEN, community_tokens={abs(OWNER_ID): COMMUNITY_TOKEN})
     return checker
 
 
@@ -77,9 +75,7 @@ def test_wall_get_uses_community_token_not_self_vk():
         community_instance = MagicMock()
         community_instance.get_api.return_value = community_api
         m.return_value = community_instance
-        posts = checker._get_recent_wall_posts_with_comments(
-            owner_id=OWNER_ID, cutoff_ts=CUTOFF
-        )
+        posts = checker._get_recent_wall_posts_with_comments(owner_id=OWNER_ID, cutoff_ts=CUTOFF)
 
     assert len(posts) == 1
     assert posts[0]["id"] == 100
@@ -102,9 +98,7 @@ def test_wall_get_fallback_on_27():
         community_instance = MagicMock()
         community_instance.get_api.return_value = community_api
         m.return_value = community_instance
-        posts = checker._get_recent_wall_posts_with_comments(
-            owner_id=OWNER_ID, cutoff_ts=CUTOFF
-        )
+        posts = checker._get_recent_wall_posts_with_comments(owner_id=OWNER_ID, cutoff_ts=CUTOFF)
 
     assert len(posts) == 1
     assert posts[0]["id"] == 200

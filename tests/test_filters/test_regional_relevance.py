@@ -4,6 +4,7 @@ Tests for modules.filters.regional.RegionalRelevanceFilter — DB-backed
 
 Все обращения к SQLAlchemy мокаются (AsyncMock + side_effect).
 """
+
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -139,7 +140,9 @@ class TestRegionalRelevanceFilter:
 
     async def test_score_modifier_capped(self):
         region = _build_region()
-        cfg = RegionConfig(region_code="mi", region_words={"k": ["Малмыж", "Кукмор", "Уржум", "Лебяжье"]})
+        cfg = RegionConfig(
+            region_code="mi", region_words={"k": ["Малмыж", "Кукмор", "Уржум", "Лебяжье"]}
+        )
         session = _build_session(cfg)
         flt = RegionalRelevanceFilter()
         post = SimpleNamespace(text="Малмыж Кукмор Уржум Лебяжье — все районы Кировской области")

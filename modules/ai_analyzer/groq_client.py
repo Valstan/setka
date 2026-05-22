@@ -2,26 +2,28 @@
 Groq AI Client for post analysis
 Free and fast alternative to local AI models
 """
-from groq import Groq
-from typing import Dict, Any, Optional, List
-import logging
+
 import json
+import logging
+from typing import Any, Dict, List, Optional
+
+from groq import Groq
 
 logger = logging.getLogger(__name__)
 
 
 class GroqClient:
     """Client for Groq Cloud AI API"""
-    
+
     def __init__(self, api_key: Optional[str] = None):
         """
         Initialize Groq client
-        
+
         Args:
             api_key: Groq API key (get free at https://console.groq.com)
         """
         self.api_key = api_key or "GROQ_API_KEY_HERE"  # Will be set from config
-        
+
         # Инициализация официального SDK
         try:
             self.client = Groq(api_key=self.api_key)
@@ -31,25 +33,21 @@ class GroqClient:
         except Exception as e:
             logger.error(f"Failed to initialize Groq client: {e}")
             self.client = None
-        
-    async def analyze_post(
-        self,
-        text: str,
-        categories: List[str] = None
-    ) -> Dict[str, Any]:
+
+    async def analyze_post(self, text: str, categories: List[str] = None) -> Dict[str, Any]:
         """
         Analyze post text using AI
-        
+
         Args:
             text: Post text to analyze
             categories: List of possible categories
-            
+
         Returns:
             Dictionary with analysis results
         """
         if categories is None:
-            categories = ['novost', 'reklama', 'admin', 'kultura', 'sport', 'sosed']
-        
+            categories = ["novost", "reklama", "admin", "kultura", "sport", "sosed"]
+
         # Create prompt
         prompt = f"""Проанализируй этот пост из социальной сети и определи:
 
@@ -62,26 +60,25 @@ class GroqClient:
 
 Ответь строго в формате JSON:
 {{"category": "...", "relevance": 0-100, "is_spam": true/false, "reason": "..."}}"""
-        
+
         try:
             if not self.client:
                 logger.warning("Groq client not initialized, using fallback")
                 return self._fallback_analysis(text)
-            
+
             # Вызов через официальный SDK (синхронный)
             import asyncio
+
             completion = await asyncio.to_thread(
                 self.client.chat.completions.create,
                 model=self.model,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=200
+                max_tokens=200,
             )
-            
+
             content = completion.choices[0].message.content
-            
+
             # Try to parse JSON response
             try:
                 result = json.loads(content)
@@ -89,76 +86,81 @@ class GroqClient:
             except json.JSONDecodeError:
                 # Fallback if AI didn't return valid JSON
                 return {
-                    'category': 'novost',
-                    'relevance': 50,
-                    'is_spam': False,
-                    'reason': 'Failed to parse AI response',
-                    'raw_response': content
+                    "category": "novost",
+                    "relevance": 50,
+                    "is_spam": False,
+                    "reason": "Failed to parse AI response",
+                    "raw_response": content,
                 }
-                    
+
         except Exception as e:
             logger.error(f"Error calling Groq API: {e}")
             return self._fallback_analysis(text)
-    
+
     def _fallback_analysis(self, text: str) -> Dict[str, Any]:
         """
         Fallback analysis if API fails
         Simple keyword-based categorization
         """
         text_lower = text.lower()
-        
+
         # Simple keyword detection
-        spam_keywords = ['продам', 'куплю', 'продаю', 'продаётся', 'продается', 
-                         'закажи', 'заказать', 'скидка', 'акция']
-        admin_keywords = ['администрация', 'постановление', 'глава', 'губернатор']
-        kultura_keywords = ['концерт', 'выставка', 'библиотека', 'музей']
-        sport_keywords = ['соревнования', 'турнир', 'спорт', 'матч']
-        
-        category = 'novost'  # default
+        spam_keywords = [
+            "продам",
+            "куплю",
+            "продаю",
+            "продаётся",
+            "продается",
+            "закажи",
+            "заказать",
+            "скидка",
+            "акция",
+        ]
+        admin_keywords = ["администрация", "постановление", "глава", "губернатор"]
+        kultura_keywords = ["концерт", "выставка", "библиотека", "музей"]
+        sport_keywords = ["соревнования", "турнир", "спорт", "матч"]
+
+        category = "novost"  # default
         relevance = 50
         is_spam = False
-        
+
         # Check spam
         if any(keyword in text_lower for keyword in spam_keywords):
-            category = 'reklama'
+            category = "reklama"
             relevance = 30
             is_spam = True
         elif any(keyword in text_lower for keyword in admin_keywords):
-            category = 'admin'
+            category = "admin"
             relevance = 70
         elif any(keyword in text_lower for keyword in kultura_keywords):
-            category = 'kultura'
+            category = "kultura"
             relevance = 60
         elif any(keyword in text_lower for keyword in sport_keywords):
-            category = 'sport'
+            category = "sport"
             relevance = 65
-        
+
         return {
-            'category': category,
-            'relevance': relevance,
-            'is_spam': is_spam,
-            'reason': 'Fallback keyword-based analysis'
+            "category": category,
+            "relevance": relevance,
+            "is_spam": is_spam,
+            "reason": "Fallback keyword-based analysis",
         }
-    
-    async def batch_analyze(
-        self,
-        posts: List[Dict[str, str]]
-    ) -> List[Dict[str, Any]]:
+
+    async def batch_analyze(self, posts: List[Dict[str, str]]) -> List[Dict[str, Any]]:
         """
         Analyze multiple posts in batch
-        
+
         Args:
             posts: List of dicts with 'id' and 'text'
-            
+
         Returns:
             List of analysis results
         """
         results = []
-        
-        for post in posts:
-            result = await self.analyze_post(post['text'])
-            result['post_id'] = post['id']
-            results.append(result)
-        
-        return results
 
+        for post in posts:
+            result = await self.analyze_post(post["text"])
+            result["post_id"] = post["id"]
+            results.append(result)
+
+        return results

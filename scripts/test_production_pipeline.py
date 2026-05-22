@@ -3,39 +3,43 @@
 Test production parse_and_publish_theme task manually.
 Runs: parse_and_publish_theme(region_code='test', theme='novost', test_mode=False)
 """
-import sys, os
-sys.path.insert(0, '/home/valstan/SETKA')
+import os
+import sys
+
+sys.path.insert(0, "/home/valstan/SETKA")
 
 # Load env
-os.environ.setdefault('DATABASE_URL', '')  # Will be loaded from env file
+os.environ.setdefault("DATABASE_URL", "")  # Will be loaded from env file
 
 import asyncio
 from datetime import datetime
 
-async def main():
-    print("="*70)
-    print(f"PRODUCTION PIPELINE TEST: region='test', theme='novost'")
-    print(f"Time: {datetime.now()}")
-    print("="*70)
 
-    from database.models_extended import ParsingStats, RegionConfig, WorkTable
+async def main():
+    print("=" * 70)
+    print("PRODUCTION PIPELINE TEST: region='test', theme='novost'")
+    print(f"Time: {datetime.now()}")
+    print("=" * 70)
+
+    from sqlalchemy import select
+
+    from config.runtime import get_parse_tokens
     from database.connection import AsyncSessionLocal
     from database.models import Community, Region
-    from modules.vk_monitor.advanced_parser import AdvancedVKParser
-    from modules.vk_monitor.vk_client import VKClient
+    from database.models_extended import RegionConfig, WorkTable
     from modules.publisher.digest_builder import DigestBuilder
     from modules.publisher.digest_splitter import DigestSplitter
     from modules.publisher.postopus_digest_headers import (
-        resolve_digest_header,
         resolve_digest_hashtags,
+        resolve_digest_header,
         resolve_mourning_digest_format,
     )
     from modules.publisher.vk_publisher_extended import VKPublisher
-    from config.runtime import get_parse_tokens
-    from sqlalchemy import select
+    from modules.vk_monitor.advanced_parser import AdvancedVKParser
+    from modules.vk_monitor.vk_client import VKClient
 
-    region_code = 'test'
-    theme = 'novost'
+    region_code = "test"
+    theme = "novost"
     test_mode = False  # Real publish
 
     async with AsyncSessionLocal() as session:
@@ -55,10 +59,7 @@ async def main():
 
         # 2. Work table
         result = await session.execute(
-            select(WorkTable).where(
-                WorkTable.region_code == region_code,
-                WorkTable.theme == theme
-            )
+            select(WorkTable).where(WorkTable.region_code == region_code, WorkTable.theme == theme)
         )
         work_table = result.scalars().first()
         if work_table:
@@ -70,9 +71,7 @@ async def main():
             await session.commit()
 
         # 3. Communities
-        region_obj = await session.execute(
-            select(Region).where(Region.code == region_code)
-        )
+        region_obj = await session.execute(select(Region).where(Region.code == region_code))
         region_obj = region_obj.scalars().first()
         if not region_obj:
             print(f"❌ Region not found: {region_code}")
@@ -83,28 +82,27 @@ async def main():
             select(Community.vk_id, Community.name, Community.category).where(
                 Community.region_id == region_obj.id,
                 Community.category == theme,
-                Community.is_active == True
+                Community.is_active == True,
             )
         )
         communities = communities_result.fetchall()
         print(f"✅ Communities for '{theme}': {len(communities)}")
         for c in communities:
             print(f"   - {c[1]:40s} vk_id={c[0]}")
-        
+
         community_vk_ids = [c[0] for c in communities]
         if not community_vk_ids:
             print(f"⚠️ No communities for theme '{theme}' — trying all active")
             all_result = await session.execute(
                 select(Community.vk_id).where(
-                    Community.region_id == region_obj.id,
-                    Community.is_active == True
+                    Community.region_id == region_obj.id, Community.is_active == True
                 )
             )
             community_vk_ids = [row[0] for row in all_result.fetchall()]
             print(f"   Using {len(community_vk_ids)} all active communities instead")
 
         if not community_vk_ids:
-            print(f"❌ No communities at all!")
+            print("❌ No communities at all!")
             return
 
         # 4. Parse
@@ -122,7 +120,9 @@ async def main():
             count_per_community=20,
         )
         stats = parser.get_stats()
-        print(f"✅ Parsed {len(posts)} posts (scanned: {stats['total_posts_scanned']}, filtered dupes: {stats['posts_filtered_duplicate_lip']})")
+        print(
+            f"✅ Parsed {len(posts)} posts (scanned: {stats['total_posts_scanned']}, filtered dupes: {stats['posts_filtered_duplicate_lip']})"
+        )
 
         if not posts:
             print("⚠️ No posts after filtering")
@@ -163,11 +163,13 @@ async def main():
                 attachments=digest.attachments_list,
             )
             print(f"   Publish: {publish_result}")
-            results.append(('regular', digest, publish_result))
+            results.append(("regular", digest, publish_result))
 
         # Mourning digest
         if mourning_posts:
-            mourning_header, mourning_tags, mourning_local_hashtag = resolve_mourning_digest_format()
+            mourning_header, mourning_tags, mourning_local_hashtag = (
+                resolve_mourning_digest_format()
+            )
             mourning_builder = DigestBuilder(
                 header=mourning_header,
                 hashtags=mourning_tags,
@@ -175,7 +177,9 @@ async def main():
                 max_text_length=region_config.text_post_maxsize_simbols or 4096,
             )
             mourning_digest = mourning_builder.build_digest(mourning_posts, group_names=group_names)
-            print(f"\nMourning digest: {mourning_digest.post_count} posts, {mourning_digest.total_length} chars")
+            print(
+                f"\nMourning digest: {mourning_digest.post_count} posts, {mourning_digest.total_length} chars"
+            )
 
             vk_pub_m = VKPublisher(test_polygon_mode=test_mode)
             mourning_pub = await vk_pub_m.publish_digest(
@@ -184,7 +188,7 @@ async def main():
                 attachments=mourning_digest.attachments_list,
             )
             print(f"   Publish: {mourning_pub}")
-            results.append(('mourning', mourning_digest, mourning_pub))
+            results.append(("mourning", mourning_digest, mourning_pub))
 
         # Update work table
         all_included = []
@@ -200,14 +204,16 @@ async def main():
             print(f"\n💾 WorkTable updated: {len(existing)} LIP entries")
 
         # Summary
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         for kind, d, pr in results:
             print(f"{kind.upper()}: {d.post_count} posts → {pr.get('url', 'FAILED')}")
-        print("="*70)
+        print("=" * 70)
+
 
 try:
     asyncio.run(main())
 except Exception as e:
     print(f"❌ ERROR: {e}", file=sys.stderr)
     import traceback
+
     traceback.print_exc()

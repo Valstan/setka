@@ -7,8 +7,8 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from modules.publisher.postopus_digest_headers import (
-    resolve_digest_header,
     resolve_digest_hashtags,
+    resolve_digest_header,
     resolve_mourning_digest_format,
 )
 

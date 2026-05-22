@@ -16,7 +16,7 @@ sys.path.insert(0, "/home/valstan/SETKA")
 
 import vk_api  # noqa: E402
 
-from config.runtime import VK_TOKENS, VK_TEST_GROUP_ID  # noqa: E402
+from config.runtime import VK_TEST_GROUP_ID, VK_TOKENS  # noqa: E402
 
 
 def main() -> int:
@@ -43,10 +43,7 @@ def main() -> int:
         )
         return 1
     if not args.owner_id:
-        print(
-            "ERROR: owner_id is 0; set VK_TEST_GROUP_ID in env "
-            "or pass --owner-id explicitly."
-        )
+        print("ERROR: owner_id is 0; set VK_TEST_GROUP_ID in env " "or pass --owner-id explicitly.")
         return 1
 
     print(f"=== Testing token '{args.token_name}' against owner_id={args.owner_id} ===")
@@ -56,7 +53,9 @@ def main() -> int:
 
     try:
         user = api.users.get()
-        print(f"  users.get OK: {user[0].get('first_name')} {user[0].get('last_name')} (id={user[0].get('id')})")
+        print(
+            f"  users.get OK: {user[0].get('first_name')} {user[0].get('last_name')} (id={user[0].get('id')})"
+        )
     except Exception as exc:
         print(f"  users.get FAILED: {exc}")
         return 1

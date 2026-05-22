@@ -7,8 +7,9 @@ Digest Splitter — разделяет посты по тональности п
 
 Каждая группа затем передаётся в свой DigestBuilder.
 """
+
 import logging
-from typing import List, Dict, Any, Tuple
+from typing import Any, Dict, List, Tuple
 
 from modules.ai_analyzer.sentiment_analyzer import SentimentAnalyzer
 
@@ -43,16 +44,16 @@ class DigestSplitter:
         regular_posts = []
 
         for post in posts:
-            text = post.get('text', '') or ''
+            text = post.get("text", "") or ""
             if not text:
                 # Если текста нет — в regular
                 regular_posts.append(post)
                 continue
 
             sentiment = self.analyzer.analyze(text)
-            post['_sentiment'] = sentiment  # Cache for later use
+            post["_sentiment"] = sentiment  # Cache for later use
 
-            if sentiment['label'] == 'mourning':
+            if sentiment["label"] == "mourning":
                 mourning_posts.append(post)
             else:
                 regular_posts.append(post)
@@ -81,25 +82,27 @@ class DigestSplitter:
 
         # Distribution
         distribution = {
-            'mourning': len(mourning_posts),
-            'regular': len(regular_posts),
-            'total': len(posts),
+            "mourning": len(mourning_posts),
+            "regular": len(regular_posts),
+            "total": len(posts),
         }
 
         # What mourning markers were found?
         mourning_markers_found = []
         for post in mourning_posts:
-            sentiment = post.get('_sentiment', {})
-            wc = sentiment.get('word_counts', {})
-            if wc.get('mourning', 0) > 0:
-                mourning_markers_found.append({
-                    'lip': f"{abs(post.get('owner_id', 0))}_{post.get('id', 0)}",
-                    'mourning_count': wc['mourning'],
-                })
+            sentiment = post.get("_sentiment", {})
+            wc = sentiment.get("word_counts", {})
+            if wc.get("mourning", 0) > 0:
+                mourning_markers_found.append(
+                    {
+                        "lip": f"{abs(post.get('owner_id', 0))}_{post.get('id', 0)}",
+                        "mourning_count": wc["mourning"],
+                    }
+                )
 
         return {
-            'mourning_posts': mourning_posts,
-            'regular_posts': regular_posts,
-            'distribution': distribution,
-            'mourning_markers': mourning_markers_found,
+            "mourning_posts": mourning_posts,
+            "regular_posts": regular_posts,
+            "distribution": distribution,
+            "mourning_markers": mourning_markers_found,
         }

@@ -2,25 +2,36 @@
 Региональные фильтры
 Проверка релевантности контента для региона
 """
+
 import logging
 import time
-from typing import Any, List, Optional, Set, Tuple
+from typing import Any, Optional, Set, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .base import FastFilter, DBFilter, FilterResult
-from .morphology import find_matching_keywords, get_word_stem
 from database.models import Region
 from database.models_extended import RegionConfig
+
+from .base import DBFilter, FastFilter, FilterResult
+from .morphology import find_matching_keywords, get_word_stem
 
 logger = logging.getLogger(__name__)
 
 
 # Слова из названий регионов, которые не несут смысла для релевантности
 _GENERIC_NAME_TOKENS = {
-    "ИНФО", "INFO", "НОВОСТИ", "NEWS", "ГРУППА", "ОБЛАСТЬ",
-    "РАЙОН", "ГОРОД", "ПОСЁЛОК", "ПОСЕЛОК", "СЕЛО",
+    "ИНФО",
+    "INFO",
+    "НОВОСТИ",
+    "NEWS",
+    "ГРУППА",
+    "ОБЛАСТЬ",
+    "РАЙОН",
+    "ГОРОД",
+    "ПОСЁЛОК",
+    "ПОСЕЛОК",
+    "СЕЛО",
 }
 
 
@@ -58,7 +69,7 @@ class RegionalRelevanceFilter(DBFilter):
 
     async def apply(self, post: Any, context: dict) -> FilterResult:
         """Проверка релевантности для региона"""
-        session: Optional[AsyncSession] = context.get('session')
+        session: Optional[AsyncSession] = context.get("session")
 
         region, region_id = self._resolve_region(context)
 
@@ -66,7 +77,7 @@ class RegionalRelevanceFilter(DBFilter):
         if not session or (not region and not region_id):
             return FilterResult(passed=True)
 
-        if not hasattr(post, 'text') or not post.text:
+        if not hasattr(post, "text") or not post.text:
             return FilterResult(passed=True)
 
         # Получить ключевые слова региона
@@ -83,15 +94,13 @@ class RegionalRelevanceFilter(DBFilter):
             score_modifier = min(len(matches) * 5, 20)
 
             return FilterResult(
-                passed=True,
-                score_modifier=score_modifier,
-                metadata={'regional_matches': matches}
+                passed=True, score_modifier=score_modifier, metadata={"regional_matches": matches}
             )
         else:
             return FilterResult(
                 passed=False,
                 reason=f"Not regionally relevant (found {len(matches)} matches, need {self.required_matches})",
-                metadata={'matches': matches}
+                metadata={"matches": matches},
             )
 
     @staticmethod
@@ -101,12 +110,12 @@ class RegionalRelevanceFilter(DBFilter):
         В разных пайплайнах контекст приходит по-разному: production workflow
         кладёт ``region`` (объект), legacy-код — ``region_id``. Поддерживаем оба.
         """
-        region = context.get('region')
-        region_id = context.get('region_id')
+        region = context.get("region")
+        region_id = context.get("region_id")
         if region is None:
             return None, region_id
         if region_id is None:
-            region_id = getattr(region, 'id', None)
+            region_id = getattr(region, "id", None)
         return region, region_id
 
     async def _get_region_keywords(
@@ -116,7 +125,7 @@ class RegionalRelevanceFilter(DBFilter):
         region_id: Optional[int] = None,
     ) -> Set[str]:
         """Получить полный набор ключевых слов региона (с кешированием)."""
-        cache_key = region_id if region_id is not None else getattr(region, 'id', None)
+        cache_key = region_id if region_id is not None else getattr(region, "id", None)
         now = time.monotonic()
 
         if cache_key is not None:
@@ -126,9 +135,7 @@ class RegionalRelevanceFilter(DBFilter):
 
         # Догружаем регион, если в контексте был только id
         if region is None and region_id is not None:
-            result = await session.execute(
-                select(Region).where(Region.id == region_id)
-            )
+            result = await session.execute(select(Region).where(Region.id == region_id))
             region = result.scalar_one_or_none()
 
         if region is None:
@@ -148,7 +155,7 @@ class RegionalRelevanceFilter(DBFilter):
         cfg = cfg_result.scalar_one_or_none()
         if cfg is not None:
             keywords.update(self._extract_region_words(cfg.region_words))
-            localities = getattr(cfg, 'localities', None)
+            localities = getattr(cfg, "localities", None)
             if localities:
                 keywords.update(self._coerce_string_list(localities))
 
@@ -187,10 +194,7 @@ class RegionalRelevanceFilter(DBFilter):
         if region.name:
             # Убираем суффикс «- Инфо», нормализуем разделители, разбиваем
             cleaned = (
-                region.name.upper()
-                .replace(' - ИНФО', '')
-                .replace('-ИНФО', '')
-                .replace('-', ' ')
+                region.name.upper().replace(" - ИНФО", "").replace("-ИНФО", "").replace("-", " ")
             )
             for token in cleaned.split():
                 token = token.strip()
@@ -250,7 +254,7 @@ class NeighborRegionFilter(FastFilter):
 
     async def apply(self, post: Any, context: dict) -> FilterResult:
         """Проверка постов из соседних регионов"""
-        is_neighbor = context.get('is_neighbor_region', False)
+        is_neighbor = context.get("is_neighbor_region", False)
 
         if not is_neighbor:
             # Не из соседнего региона - пропускаем проверку
@@ -260,21 +264,17 @@ class NeighborRegionFilter(FastFilter):
             return FilterResult(passed=True)
 
         # Для соседей требуем хештег #Новости
-        if not hasattr(post, 'text') or not post.text:
-            return FilterResult(
-                passed=False,
-                reason="Neighbor region post without text"
-            )
+        if not hasattr(post, "text") or not post.text:
+            return FilterResult(passed=False, reason="Neighbor region post without text")
 
         text_lower = post.text.lower()
-        news_hashtags = ['#новости', '#news', 'новости']
+        news_hashtags = ["#новости", "#news", "новости"]
 
         has_hashtag = any(tag in text_lower for tag in news_hashtags)
 
         if not has_hashtag:
             return FilterResult(
-                passed=False,
-                reason="Neighbor region post without #Новости hashtag"
+                passed=False, reason="Neighbor region post without #Новости hashtag"
             )
 
         return FilterResult(passed=True, score_modifier=5)

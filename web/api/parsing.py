@@ -1,13 +1,15 @@
 """
 VK parsing API endpoints.
 """
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
-from typing import Optional
+
 import os
 import uuid
 from datetime import datetime
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from config.runtime import VK_TOKENS
 from utils.cache import get_cache
@@ -32,7 +34,7 @@ class ParsingRequest(BaseModel):
     include_docs: bool = False
     include_polls: bool = False
     date_from: Optional[str] = None  # YYYY-MM-DD
-    date_to: Optional[str] = None    # YYYY-MM-DD
+    date_to: Optional[str] = None  # YYYY-MM-DD
     limit: int = Field(200, ge=1, le=5000)
 
 
@@ -56,7 +58,9 @@ def _validate_date(date_str: Optional[str], field_name: str) -> Optional[datetim
     try:
         return datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Неверный формат {field_name}, нужен YYYY-MM-DD")
+        raise HTTPException(
+            status_code=400, detail=f"Неверный формат {field_name}, нужен YYYY-MM-DD"
+        )
 
 
 async def _set_job(job_id: str, payload: dict):
@@ -92,7 +96,9 @@ async def start_parsing(request: ParsingRequest):
     await redis_client.expire(ACTIVE_JOBS_KEY, JOB_TTL_SECONDS)
     if active_jobs > MAX_ACTIVE_JOBS:
         await redis_client.decr(ACTIVE_JOBS_KEY)
-        raise HTTPException(status_code=429, detail="Достигнут лимит одновременных задач, попробуйте позже")
+        raise HTTPException(
+            status_code=429, detail="Достигнут лимит одновременных задач, попробуйте позже"
+        )
 
     job_id = uuid.uuid4().hex
 
@@ -111,13 +117,10 @@ async def start_parsing(request: ParsingRequest):
     await _set_job(job_id, status_payload)
 
     from tasks.parsing_tasks import parse_vk_posts_task
+
     parse_vk_posts_task.delay(job_id, payload)
 
-    return ParsingStartResponse(
-        job_id=job_id,
-        status="queued",
-        message="Парсинг запущен"
-    )
+    return ParsingStartResponse(job_id=job_id, status="queued", message="Парсинг запущен")
 
 
 @router.get("/status/{job_id}")
