@@ -229,6 +229,30 @@ def test_cmd_up_bootstrap_when_table_absent(tmp_migrations, capsys):
     assert "'011_a.sql'" in write_calls[1].stdin
 
 
+def test_cmd_up_bootstrap_runs_first_even_when_earlier_pending(tmp_migrations):
+    """On a fresh DB with the historical migrations not yet recorded, 010 must
+    apply *before* 003-009 — those try to INSERT into applied_migrations and
+    the table has to exist first."""
+    _write(tmp_migrations, "003_first.sql", body="-- a\n")
+    _write(tmp_migrations, "008_eight.sql", body="-- h\n")
+    _write(tmp_migrations, "010_applied_migrations.sql", body="-- create table\n")
+    runner = FakeRunner(table_missing=True)
+    rc = migrate.cmd_up(runner=runner)
+    assert rc == 0
+    write_calls = [c for c in runner.calls if c.stdin is not None]
+    applied_order = []
+    for call in write_calls:
+        for name in ("003_first.sql", "008_eight.sql", "010_applied_migrations.sql"):
+            if f"'{name}'" in call.stdin:
+                applied_order.append(name)
+                break
+    assert applied_order == [
+        "010_applied_migrations.sql",
+        "003_first.sql",
+        "008_eight.sql",
+    ]
+
+
 def test_cmd_up_fails_on_psql_error(tmp_migrations, capsys):
     _write(tmp_migrations, "010_applied_migrations.sql")
     _write(tmp_migrations, "011_broken.sql", body="-- bad sql\n")

@@ -145,7 +145,19 @@ def apply_migration(migration: Migration, runner: PsqlRunner | None = None) -> N
 
 
 def _pending(migrations: Iterable[Migration], applied: set[str]) -> list[Migration]:
-    return [m for m in migrations if m.name not in applied]
+    """Return pending migrations in application order.
+
+    Filenames sort lexicographically (003 < 004 < ... < 010 < add_sentiment),
+    but the bootstrap migration must run *first* — every other migration's
+    apply step writes to ``applied_migrations``, which doesn't exist yet on
+    a fresh database. On the first ``up`` (applied set empty), we therefore
+    pull the bootstrap to the front. On subsequent runs the bootstrap is
+    already applied and the special case is a no-op.
+    """
+    pending = [m for m in migrations if m.name not in applied]
+    bootstrap = [m for m in pending if m.name == BOOTSTRAP_NAME]
+    rest = [m for m in pending if m.name != BOOTSTRAP_NAME]
+    return bootstrap + rest
 
 
 def cmd_status(runner: PsqlRunner | None = None) -> int:
