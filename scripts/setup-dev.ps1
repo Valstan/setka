@@ -34,8 +34,13 @@ if (-not (Test-Path "venv\Scripts\python.exe")) {
 Write-Host "[setup-dev] upgrading pip …" -ForegroundColor Cyan
 .\venv\Scripts\python.exe -m pip install --upgrade pip --quiet
 
-Write-Host "[setup-dev] installing requirements + test deps …" -ForegroundColor Cyan
-.\venv\Scripts\python.exe -m pip install -r requirements.txt pytest pytest-asyncio --quiet
+Write-Host "[setup-dev] installing requirements + test deps + pre-commit …" -ForegroundColor Cyan
+.\venv\Scripts\python.exe -m pip install -r requirements.txt pytest pytest-asyncio pre-commit --quiet
+
+if (Test-Path ".pre-commit-config.yaml") {
+    Write-Host "[setup-dev] installing pre-commit git hook …" -ForegroundColor Cyan
+    .\venv\Scripts\pre-commit.exe install | Out-Null
+}
 
 Write-Host "[setup-dev] pytest --collect-only sanity-check …" -ForegroundColor Cyan
 $collected = (.\venv\Scripts\python.exe -m pytest --collect-only -q 2>&1) | Select-String "tests collected"

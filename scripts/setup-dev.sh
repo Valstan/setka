@@ -44,8 +44,13 @@ fi
 echo "[setup-dev] upgrading pip …"
 ./venv/bin/python -m pip install --upgrade pip --quiet
 
-echo "[setup-dev] installing requirements + test deps …"
-./venv/bin/python -m pip install -r requirements.txt pytest pytest-asyncio --quiet
+echo "[setup-dev] installing requirements + test deps + pre-commit …"
+./venv/bin/python -m pip install -r requirements.txt pytest pytest-asyncio pre-commit --quiet
+
+if [[ -f ".pre-commit-config.yaml" ]]; then
+    echo "[setup-dev] installing pre-commit git hook …"
+    ./venv/bin/pre-commit install >/dev/null 2>&1 || true
+fi
 
 echo "[setup-dev] pytest --collect-only sanity-check …"
 COLLECTED="$(./venv/bin/python -m pytest --collect-only -q 2>&1 | grep -E 'tests collected' || true)"

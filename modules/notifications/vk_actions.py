@@ -1,15 +1,23 @@
 """VK write-actions for the notifications UI (etaps 4a + 4b).
 
 Implemented:
-- like_comment(...)    — likes.add(type='comment') from the group account.
+- like_comment(...)    — likes.add(type='comment'). USER-TOKEN ONLY (see below).
 - reply_to_comment(...) — wall.createComment(reply_to_comment=..., from_group=1).
 - send_message(...)     — messages.send to a conversation, from the group.
 
-All three follow the same two-token routing: try community-token first, fall
-back to admin user-token on VK errors 15/27 (community token lacks the needed
-scope). The `via` field in the response tells the UI which path actually
-succeeded so a future audit can spot regressions.
+Token routing:
+- ``reply_to_comment`` / ``send_message`` try community-token first, fall back
+  to admin user-token on VK errors 15/27 (community token lacks the scope).
+  The ``via`` field in the response tells the UI which path actually
+  succeeded so a future audit can spot regressions.
+- ``like_comment`` goes straight through the user-token. VK API explicitly
+  restricts ``likes.add`` to user access tokens — calling it with a community
+  token returns error 3 ``Unknown method passed`` (the method literally is
+  not exposed for that token class). The fallback set is {15, 27}, so the
+  generic retry would not even kick in. By going user-only we save one
+  doomed VK round-trip per like and avoid the misleading error in the UI.
 """
+
 from __future__ import annotations
 
 import logging
@@ -42,7 +50,9 @@ def _call_with_fallback(
     community_tokens: Dict[int, str],
 ):
     api, via_community = _api_for(
-        owner_id, user_token=user_token, community_tokens=community_tokens,
+        owner_id,
+        user_token=user_token,
+        community_tokens=community_tokens,
     )
     try:
         return fn(api), ("community-token" if via_community else "user-token")
@@ -51,7 +61,9 @@ def _call_with_fallback(
             logger.info(
                 "VK action %s for owner %s failed via community-token with code %s, "
                 "retrying via user-token",
-                op_name, owner_id, e.code,
+                op_name,
+                owner_id,
+                e.code,
             )
             api2 = vk_api.VkApi(token=user_token).get_api()
             return fn(api2), "community-fallback-user"
@@ -66,47 +78,51 @@ def like_comment(
     user_token: str,
     community_tokens: Optional[Dict[int, str]] = None,
 ) -> Dict:
-    """Like a comment under wall{owner_id}_{post_id} on behalf of the group.
+    """Like a comment under wall{owner_id}_{post_id} on behalf of the admin user.
 
     VK API: `likes.add(type='comment', owner_id=..., item_id=comment_id)`.
     Idempotent — VK keeps a single like per (user, target).
+
+    ``likes.add`` is **not** available for community tokens (VK returns error 3
+    "Unknown method passed"), so this function intentionally ignores the
+    optional ``community_tokens`` mapping and always goes through ``user_token``.
+    The signature still accepts ``community_tokens`` to keep the call-site
+    consistent with the other actions in this module — passing it is a no-op.
 
     Returns:
         {success, likes_count, via} on success.
         {success: False, error_code, error} on failure.
     """
-    community_tokens = community_tokens or {}
-
-    def call(api):
-        return api.likes.add(
-            type='comment',
+    del community_tokens  # likes.add is user-token-only — see module docstring.
+    try:
+        api = vk_api.VkApi(token=user_token).get_api()
+        resp = api.likes.add(
+            type="comment",
             owner_id=owner_id,
             item_id=comment_id,
         )
-
-    try:
-        resp, via = _call_with_fallback(
-            owner_id=owner_id,
-            op_name='likes.add(comment)',
-            fn=call,
-            user_token=user_token,
-            community_tokens=community_tokens,
-        )
-        likes = int((resp or {}).get('likes', 0))
+        likes = int((resp or {}).get("likes", 0))
         logger.info(
-            "✅ Liked comment wall%s_%s (cid=%s) — total likes: %d (via %s)",
-            owner_id, post_id, comment_id, likes, via,
+            "✅ Liked comment wall%s_%s (cid=%s) — total likes: %d (via user-token)",
+            owner_id,
+            post_id,
+            comment_id,
+            likes,
         )
-        return {'success': True, 'likes_count': likes, 'via': via}
+        return {"success": True, "likes_count": likes, "via": "user-token"}
     except ApiError as e:
         logger.warning(
             "Failed to like comment wall%s_%s (cid=%s): [%s] %s",
-            owner_id, post_id, comment_id, e.code, e,
+            owner_id,
+            post_id,
+            comment_id,
+            e.code,
+            e,
         )
-        return {'success': False, 'error_code': e.code, 'error': str(e)}
+        return {"success": False, "error_code": e.code, "error": str(e)}
     except Exception as e:
         logger.error("Unexpected error liking comment: %s", e)
-        return {'success': False, 'error_code': 0, 'error': str(e)}
+        return {"success": False, "error_code": 0, "error": str(e)}
 
 
 def reply_to_comment(
@@ -137,9 +153,9 @@ def reply_to_comment(
     message = (message or "").strip()
     if not message:
         return {
-            'success': False,
-            'error_code': 0,
-            'error': 'message is empty',
+            "success": False,
+            "error_code": 0,
+            "error": "message is empty",
         }
     positive_group_id = abs(int(owner_id))
 
@@ -155,26 +171,34 @@ def reply_to_comment(
     try:
         resp, via = _call_with_fallback(
             owner_id=owner_id,
-            op_name='wall.createComment',
+            op_name="wall.createComment",
             fn=call,
             user_token=user_token,
             community_tokens=community_tokens,
         )
-        new_cid = int((resp or {}).get('comment_id', 0)) or None
+        new_cid = int((resp or {}).get("comment_id", 0)) or None
         logger.info(
             "✅ Replied to comment wall%s_%s (parent_cid=%s) → new_cid=%s (via %s)",
-            owner_id, post_id, comment_id, new_cid, via,
+            owner_id,
+            post_id,
+            comment_id,
+            new_cid,
+            via,
         )
-        return {'success': True, 'comment_id': new_cid, 'via': via}
+        return {"success": True, "comment_id": new_cid, "via": via}
     except ApiError as e:
         logger.warning(
             "Failed to reply to comment wall%s_%s (parent_cid=%s): [%s] %s",
-            owner_id, post_id, comment_id, e.code, e,
+            owner_id,
+            post_id,
+            comment_id,
+            e.code,
+            e,
         )
-        return {'success': False, 'error_code': e.code, 'error': str(e)}
+        return {"success": False, "error_code": e.code, "error": str(e)}
     except Exception as e:
         logger.error("Unexpected error replying to comment: %s", e)
-        return {'success': False, 'error_code': 0, 'error': str(e)}
+        return {"success": False, "error_code": 0, "error": str(e)}
 
 
 def send_message(
@@ -207,9 +231,9 @@ def send_message(
     message = (message or "").strip()
     if not message:
         return {
-            'success': False,
-            'error_code': 0,
-            'error': 'message is empty',
+            "success": False,
+            "error_code": 0,
+            "error": "message is empty",
         }
     positive_group_id = abs(int(group_id))
     if random_id is None:
@@ -228,7 +252,7 @@ def send_message(
         # community-token; messages.send works the same way as a wall call here.
         resp, via = _call_with_fallback(
             owner_id=-positive_group_id,
-            op_name='messages.send',
+            op_name="messages.send",
             fn=call,
             user_token=user_token,
             community_tokens=community_tokens,
@@ -237,15 +261,21 @@ def send_message(
         new_mid = int(resp) if isinstance(resp, int) else None
         logger.info(
             "✅ Sent message to peer %s on behalf of group %s → mid=%s (via %s)",
-            peer_id, positive_group_id, new_mid, via,
+            peer_id,
+            positive_group_id,
+            new_mid,
+            via,
         )
-        return {'success': True, 'message_id': new_mid, 'via': via}
+        return {"success": True, "message_id": new_mid, "via": via}
     except ApiError as e:
         logger.warning(
             "Failed to send message to peer %s on group %s: [%s] %s",
-            peer_id, positive_group_id, e.code, e,
+            peer_id,
+            positive_group_id,
+            e.code,
+            e,
         )
-        return {'success': False, 'error_code': e.code, 'error': str(e)}
+        return {"success": False, "error_code": e.code, "error": str(e)}
     except Exception as e:
         logger.error("Unexpected error sending message: %s", e)
-        return {'success': False, 'error_code': 0, 'error': str(e)}
+        return {"success": False, "error_code": 0, "error": str(e)}

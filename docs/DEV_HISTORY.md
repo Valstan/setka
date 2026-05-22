@@ -48,6 +48,43 @@
 
 ---
 
+## 2026-05-22 — Fix [3] Unknown method при лайке + setup-dev pre-commit + закрытие устаревших PENDING
+
+**Тема сессии:** пользователь сообщил, что кнопка «лайк» в `/notifications` падает с «Не удалось лайкнуть: [3] Unknown method passed». Заодно подобрали два «висящих» техдолга, которые на самом деле уже закрыты прошлыми сессиями.
+
+### A. Fix like_comment — user-token only
+
+**Симптом:** в `logs/app.log` 2026-05-21 22:20 / 23:00 и 2026-05-22 14:41 — `WARNING - Failed to like comment wall…: [3] [3] Unknown method passed`. UI получает 400 и показывает «не удалось лайкнуть».
+
+**Причина:** `modules/notifications/vk_actions.py:like_comment` шёл через `_call_with_fallback`, который сначала пробует community-token. VK API НЕ разрешает `likes.add` с community-token — возвращает error code 3 «Unknown method passed» (метод буквально не expose'ится для этого класса токенов). Fallback-set в `_call_with_fallback` — `{15, 27}`, код 3 туда не попадает, поэтому retry на user-token не происходит.
+
+**Фикс:** `like_comment` теперь использует user-token напрямую, без `_call_with_fallback`. Сигнатура (`community_tokens=...`) сохранена для единообразия со списком других actions, но параметр игнорируется. Аналогия с `_USER_TOKEN_ONLY_METHODS={'wall.repost'}` в publisher.
+
+**`tests/test_notifications/test_vk_actions.py`** — два старых теста про community-token + fallback на 27 заменены одним: `test_like_comment_uses_only_user_token_even_with_community_configured` (проверяет, что `VkApi()` вызывается ровно с user-token, community-токен на VK не уходит). Сохранены `no_community_token` и `api_error_returns_failure` (переписан под user-api).
+
+### B. setup-dev + pre-commit install
+
+`scripts/setup-dev.ps1` / `.sh` уже существовали, но не ставили git-хук pre-commit. После свежего worktree приходилось руками делать `pre-commit install`, иначе хук не запускался при `git commit`. Добавлено: `pip install pre-commit` + `pre-commit install` (если есть `.pre-commit-config.yaml`).
+
+### C. Закрытие устаревших записей в `PENDING_FOLLOWUPS.md`
+
+- `main.py:25 хардкодит /home/valstan/SETKA/logs/app.log` — уже не хардкод, `main.py:45` использует `os.getenv("LOG_PATH", …)` с try/except и StreamHandler-fallback. Запись просто не была обновлена.
+- `venv создаётся вручную` — закрыто наличием `setup-dev.{ps1,sh}` (плюс сегодняшний `pre-commit install`-пункт).
+- 🟡 Новая запись: остались хардкоды `/home/valstan/SETKA/logs/parser*` в `web/api/parsing.py` и `tasks/parsing_tasks.py` (`OUTPUT_DIR`, `REPORTS_DIR`, `VIDEO_REPORT_PATH`, `os.makedirs` + `FileHandler` для `parser.log`). Не блокер, parser локально всё равно не запустится без VK-токенов.
+
+### Проверка / прогон
+
+- Локально: `pytest tests/test_notifications/test_vk_actions.py -v` — 11/11 зелёных. Полный pytest — следующим шагом перед коммитом.
+- На проде: ошибка [3] переcтанет появляться после `git pull` + `systemctl restart setka` (правка в FastAPI-handler-цепочке).
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- 🟡 Хардкоды parser-logs (см. выше).
+- 🟢 Cross-process rate-limit на Redis — остаётся.
+- 🟢 Big idea — модуль авто-регистрации регионов и сообществ — следующая тема.
+
+---
+
 ## 2026-05-22 — Migration runner + SSH allowlist + закрытие техдолгов
 
 **Тема сессии:** быстро добить три открытых техдолга из `PENDING_FOLLOWUPS.md` перед тем, как взяться за big idea (модуль авто-регистрации регионов).
