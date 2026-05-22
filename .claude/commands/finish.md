@@ -37,26 +37,52 @@ git log --oneline -5
    - «Появились **новые** техдолги или идеи?» — если да, добавить в `PENDING_FOLLOWUPS.md` с правильным приоритетом 🔴⏳🟡🟢.
    - «Есть **блокеры**, которые остаются на завтра?» — если да, поднять в раздел 🔴 в `PENDING_FOLLOWUPS.md`.
 
-## Шаг 4. Коммит (опционально)
+## Шаг 4. Коммит + PR (опционально)
 
 Если в `git status` есть uncommitted-файлы:
 
-`AskUserQuestion`: «Закоммитить накопленные правки локально (без push)?» Опции:
-- «Да, локальный commit» — закоммитить (не push'ить, не деплоить).
-- «Сделай commit + push на feature-ветку (без deploy)» — закоммитить и push'нуть, ничего на прод.
-- «Запусти `/reliz` — деплоим» — переключиться на `/reliz`.
+`AskUserQuestion`: «Что делать с накопленными правками?» Опции:
+- «Локальный commit (без push)» — закоммитить, ничего не пушить.
+- «Commit + push + PR (без deploy)» — закоммитить, push на feature-ветку, открыть PR. Без merge и без деплоя.
+- «Запусти `/reliz` — деплоим» — переключиться на `/reliz` (он сам ведёт через PR-flow + deploy).
 - «Нет, оставь как есть» — закончить без коммита.
 
-Если «локальный commit» или «commit + push»:
+**Direct push в `main` запрещён** ([ADR-0002](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)). Если сейчас на `main` — перед коммитом создать feature-ветку:
+
+```bash
+git checkout -b <type>/<slug>   # feat/, fix/, chore/, docs/, refactor/
+```
+
+Если «локальный commit»:
 
 ```bash
 git add docs/DEV_HISTORY.md docs/PENDING_FOLLOWUPS.md <other-paths>
 git commit -m "<conventional message>
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
-# опционально
-git push origin <branch>
 ```
+
+Если «commit + push + PR»:
+
+```bash
+git add docs/DEV_HISTORY.md docs/PENDING_FOLLOWUPS.md <other-paths>
+git commit -m "<conventional message>
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+
+git push -u origin <type>/<slug>
+
+gh pr create --title "..." --body "$(cat <<'EOF'
+## Summary
+- ...
+
+## Test plan
+- [ ] pytest зелёный локально
+EOF
+)"
+```
+
+PR оставляем открытым — merge и deploy через `/reliz` или вручную после ревью.
 
 ## Шаг 5. Финальный отчёт
 

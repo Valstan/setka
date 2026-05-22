@@ -1,14 +1,47 @@
 ---
-description: Открыть новую сессию разработки SETKA — git pull, прочитать source-of-truth, опционально проба прода, отчёт о состоянии.
-argument-hint: (без аргументов; `--no-prod` — пропустить SSH-probe)
-allowed-tools: Read, Bash, Glob, Grep, AskUserQuestion, mcp__ccd_session__mark_chapter
+description: Открыть новую сессию разработки SETKA — mailbox-проверка brain_matrica, git pull, прочитать source-of-truth, опционально проба прода, отчёт о состоянии.
+argument-hint: (без аргументов; `--no-prod` — пропустить SSH-probe; `--no-mailbox` — пропустить проверку brain mailbox)
+allowed-tools: Read, Write, Bash, Glob, Grep, AskUserQuestion, mcp__ccd_session__mark_chapter
 ---
 
 # /start — открыть новую сессию разработки SETKA
 
 Цель: за один заход войти в полный контекст проекта и доложить пользователю что нового, какие хвосты, чем заняться.
 
-**Никаких изменений** — только чтение, `git fetch`, опционально `git pull --ff-only` если безопасно.
+**Никаких изменений в коде** — только чтение, `git fetch`, опционально `git pull --ff-only` если безопасно. Запись разрешена только в `../brain_matrica/mailboxes/setka/.last-seen` (см. Шаг 0).
+
+## Шаг 0. Mailbox check (brain_matrica)
+
+setka управляется meta-репо [brain_matrica](../../../brain_matrica/) через систему почтовых ящиков ([ADR-0001](../../../brain_matrica/adr/0001-brain-projects-mailboxes.md)). Проверка делается **до** SoT-чтения.
+
+Если `$ARGUMENTS` содержит `--no-mailbox` — пропустить.
+
+1. **Найти WORKSPACE_ROOT.** brain_matrica лежит рядом — путь `../brain_matrica/` от корня setka. Если нет — отметить в отчёте «brain_matrica не найдена, mailbox-проверка пропущена», далее не выполнять Шаг 0.
+2. **Сканировать** `../brain_matrica/mailboxes/setka/from-brain/*.md` (только корень, **не** `DRAFTS/`, **не** `ARCHIVE/`).
+3. Для каждого письма прочитать frontmatter: `kind`, `urgency`, `compliance`, `topic`.
+4. **Retroactive-правило** для писем без `compliance` ([ADR-0001 v2](../../../brain_matrica/adr/0001-brain-projects-mailboxes.md#compliance-levels)):
+   - `kind: directive` без `compliance` → читать как `mandate`
+   - `kind: idea` без `compliance` → читать как `recommend`
+5. **Доложить пользователю** в формате `[urgency COMPLIANCE]` (compliance в верхнем регистре, через пробел) **до** обычного onboarding-workflow:
+   ```
+   📬 N писем от brain_matrica:
+   - [high MANDATE] 2026-05-22-pr-only-flow-directive.md — PR-only flow
+   - [normal SHOULD] 2026-05-NN-...md — topic
+   - [low MAY] 2026-05-NN-...md — topic
+   ```
+   Compliance-mapping: `mandate=MANDATE`, `recommend=SHOULD`, `suggest=MAY`.
+   Любое `urgency: high` или `compliance: mandate` упомянуть отдельно даже если письмо одно.
+6. **Записать** ISO-8601 timestamp (UTC) в `../brain_matrica/mailboxes/setka/.last-seen` (overwrite, одна строка). Это маркер последнего захода — brain использует его в reflection «X не заходил Y дней».
+7. **Реакция на письма** определяется compliance ([ADR-0001 §Compliance levels](../../../brain_matrica/adr/0001-brain-projects-mailboxes.md#compliance-levels)):
+   - `mandate` — применить обязательно; невозможно технически → `to-brain/` с `kind=feedback`, `urgency=high`, конкретный блокер.
+   - `recommend` — применить с возможной адаптацией; не подходит → `to-brain/` с обоснованием отказа (`kind=feedback`).
+   - `suggest` — по усмотрению; применил — feedback приветствуется, но не обязателен.
+8. **Не обрабатывать письма автоматически в /start** — только доклад. Обработка — после OK пользователя; затем письмо двигается в `from-brain/ARCHIVE/` с дописанной секцией `## Result` и acknowledgement-письмом в `to-brain/`. Все изменения в `brain_matrica` идут через PR (см. [ADR-0002](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)).
+
+**Что НЕЛЬЗЯ:**
+- Редактировать любые файлы `brain_matrica/` кроме `mailboxes/setka/` (включая `.last-seen` — это часть своего mailbox'а).
+- Писать напрямую в чужие mailboxes (`mailboxes/GONBA/`, `mailboxes/MatricaRMZ/` и пр.) — только через brain.
+- Удалять файлы из `from-brain/ARCHIVE/`.
 
 ## Шаг 1. Глава сессии
 
@@ -78,6 +111,7 @@ ssh -o ConnectTimeout=10 setka-prod "cd /home/valstan/SETKA && git log --oneline
 
 Структура (8-14 строк, на русском):
 
+0. **📬 Mailbox:** `N писем от brain_matrica` со списком `[urgency COMPLIANCE] slug — topic` (из Шага 0). Любые `MANDATE` / `high` выделить отдельно. Если писем нет — `📬 mailbox чист`.
 1. **Сессия:** `СЕТКА <дата>` — отмечена.
 2. **Что нового** (последняя запись из `DEV_HISTORY.md`): 1-2 строки.
 3. **Git:** ветка, ahead/behind, был ли `pull`, uncommitted-файлы (если есть).
@@ -85,9 +119,9 @@ ssh -o ConnectTimeout=10 setka-prod "cd /home/valstan/SETKA && git log --oneline
 5. **Прод** (если делали probe): systemd (active/inactive), `/api/health/full` (200/ошибка), последний коммит на проде.
 6. **🔴 Блокеры и ⏳ в процессе** из `PENDING_FOLLOWUPS.md`.
 7. **Самые свежие 🟡 техдолги** (топ-3) и 🟢 идеи (топ-3) — кратко.
-8. **Чем займёмся?** — открытый вопрос.
+8. **Чем займёмся?** — открытый вопрос. Если есть `MANDATE`-письма в mailbox — предложить их первыми.
 
-Если есть блокеры — подсветить отдельно. Если всё чисто — так и сказать.
+Если есть блокеры или `MANDATE`-почта — подсветить отдельно. Если всё чисто — так и сказать.
 
 ## Шаг 7. Напоминание для закрытия сессии
 

@@ -71,7 +71,16 @@ pre-commit run --all-files 2>&1 | tail -30
 
 Делать это **до** коммита, чтобы попало в тот же коммит.
 
-## Шаг 3. Commit
+## Шаг 3. Commit + ветка
+
+**PR-only flow** — direct push в `main` запрещён ([ADR-0002](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md), [POSTULATES §VI](../../../brain_matrica/docs/POSTULATES.md)). Исключение — hot-fix аварии прода (см. ниже §Hot-fix).
+
+Если сейчас на `main` — создать feature-ветку **до коммита**:
+
+```bash
+# Slug — kebab-case, описательный. Префикс — по сути правки.
+git checkout -b <type>/<slug>   # feat/, fix/, chore/, docs/, refactor/
+```
 
 `AskUserQuestion` — попросить короткое сообщение коммита (или предложить своё на основе `git diff --stat`). Conventional-commits prefix:
 
@@ -82,12 +91,7 @@ pre-commit run --all-files 2>&1 | tail -30
 - `chore:` — обслуживание (deps, configs)
 - `test:` — только тесты
 
-Шаги:
-
 ```bash
-# Если на main и нужна feature-ветка (для крупного релиза) — спросить
-# По умолчанию для SETKA коммитим прямо в main, как в существующей истории git log
-
 # Конкретные пути, НЕ git add -A
 git add docs/DEV_HISTORY.md docs/PENDING_FOLLOWUPS.md <other-paths>
 
@@ -103,13 +107,40 @@ EOF
 
 Покажи пользователю `git log -1 --stat` для подтверждения.
 
-## Шаг 4. Push
+## Шаг 4. Push + PR
 
 ```bash
-git push origin <branch>
+git push -u origin <type>/<slug>
+
+gh pr create --title "<short subject, под 70 символов>" --body "$(cat <<'EOF'
+## Summary
+- bullet 1
+- bullet 2
+
+## Test plan
+- [ ] pytest tests/ -q — N/N зелёных
+- [ ] pre-commit run --all-files (если правка кода)
+- [ ] /check skill после merge
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
 ```
 
-Если ветка не main — `git push -u origin <branch>` и опционально `gh pr create` (для SETKA редко используется, обычно прямо в main).
+Покажи пользователю URL созданного PR и `gh pr diff` для финального review. **Без явного OK пользователя на diff — не мержить.**
+
+После OK:
+
+```bash
+gh pr merge --squash --delete-branch
+git checkout main && git pull --ff-only
+```
+
+Merge-стратегия по умолчанию `--squash` (для коротких PR в 1-3 коммита). Длинные линейки коммитов, где история ценна — `--merge` вместо `--squash` (спросить пользователя).
+
+### Hot-fix исключение
+
+Прод упал, нужно зафиксить в течение часа? Допустим direct push в `main` ([ADR-0002 §8](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)), **но обязательный follow-up PR постфактум** с описанием инцидента (для audit trail). Спросить пользователя через `AskUserQuestion`: «Это hot-fix аварии прода? (иначе — через PR)».
 
 `AskUserQuestion`: «Продолжаем деплой на прод сейчас?» — варианты:
 - «Да, выкатываем»
