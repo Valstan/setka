@@ -119,6 +119,16 @@
 4. Открыть `/notifications` — у комментов теперь кнопка ↩, у каждого диалога в сообщениях тоже.
 5. Следующий Telegram-алёрт придёт с inline-кнопками.
 
+### Hot-fix 2026-05-22 (через 30 мин после деплоя): GRANT в миграции 008
+
+На проде сразу после restart `/api/templates/` отвечал 500 → `InsufficientPrivilegeError: permission denied for table message_templates`. Причина: миграция гонится из-под `sudo -u postgres psql ...`, owner таблицы — `postgres`, а приложение коннектится от `setka_user`. У других таблиц-«postgres-owned» (regions, vk_tokens) GRANT'ы уже были — это новая таблица их не унаследовала автоматически (ALTER DEFAULT PRIVILEGES не настроен).
+
+Сделано:
+- Руками выдал GRANT на проде: `GRANT ALL PRIVILEGES ON TABLE message_templates TO setka_user; GRANT USAGE, SELECT ON SEQUENCE message_templates_id_seq TO setka_user;`. API мгновенно стал отвечать 200.
+- Дописал те же два GRANT'а в конец `database/migrations/008_message_templates.sql` (идемпотентно). Чтобы будущий restore из pg_dump или повторный прогон не наступил на те же грабли.
+
+🟡 Записано в `PENDING_FOLLOWUPS.md`: все будущие миграции, создающие таблицы, должны включать `GRANT ALL PRIVILEGES ... TO setka_user` либо нужно настроить `ALTER DEFAULT PRIVILEGES` глобально (предпочтительнее).
+
 ### Хвосты в `PENDING_FOLLOWUPS.md`
 
 - 🟢 Полноценный Telegram-бот с webhook + `bot.set_webhook` + `wall.createComment`/`messages.send` прямо из bot-handler (без перехода в браузер). Сейчас URL-кнопки → веб-кабинет. Это «фича роскоши», не блокер.
