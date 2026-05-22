@@ -19,13 +19,29 @@ from modules.module_activity_notifier import notify_system_startup
 from web.api import health, regions, communities, posts, workflow, notifications, scheduler, vk_monitoring, token_management, service_notifications, test_workflow, schedule_management, system_monitoring, task_monitoring, publisher, parsing, parsing_stats, filtration, templates as templates_api
 
 # Setup logging
+# LOG_PATH задаётся в /etc/setka/setka.env на проде, по умолчанию — прод-путь
+# для обратной совместимости с уже-запущенными инсталляциями. Локально на
+# Windows/в worktree этот путь нужно перебить (LOG_PATH=./logs/app.log или
+# вообще пустая строка — тогда только StreamHandler).
+_log_path = os.getenv("LOG_PATH", "/home/valstan/SETKA/logs/app.log")
+_handlers: list[logging.Handler] = [logging.StreamHandler()]
+if _log_path:
+    try:
+        # Создаём директорию если её ещё нет (для свежих worktree'ев).
+        _log_dir = os.path.dirname(_log_path)
+        if _log_dir:
+            os.makedirs(_log_dir, exist_ok=True)
+        _handlers.insert(0, logging.FileHandler(_log_path))
+    except (OSError, PermissionError) as _e:
+        # Например, на Windows путь "/home/..." очевидно не создастся —
+        # logging молча падает обратно на stderr, чтобы не блокировать
+        # импорт main.py для локальных тестов / pytest --collect-only.
+        print(f"[main.py] LOG_PATH '{_log_path}' unavailable ({_e}); stderr only", flush=True)
+
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "WARNING").upper(), logging.WARNING),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/home/valstan/SETKA/logs/app.log'),
-        logging.StreamHandler()
-    ]
+    handlers=_handlers,
 )
 
 logger = logging.getLogger(__name__)
