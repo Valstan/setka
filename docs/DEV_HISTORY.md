@@ -48,6 +48,47 @@
 
 ---
 
+## 2026-05-22 — Global rate-limit на parse-token + идемпотентность миграций
+
+**Тема сессии:** закрыть оставшиеся техдолги по PENDING_FOLLOWUPS — global rate-limit на parse-токен (VITA/VALSTAN-парсинг) и привести миграции 003+004 к идемпотентному виду.
+
+### D1. Global per-token rate-limit в `VKClient`
+
+**`modules/vk_monitor/vk_client.py`** — добавлен class-level threading-based счётчик:
+
+- `GLOBAL_PARSE_INTERVAL_SECONDS = 0.4` (~2.5 req/sec — чуть ниже VK-документированного лимита 3 req/sec, запас на network jitter).
+- `_last_call_per_token: Dict[str, float]` + `_per_token_locks: Dict[str, threading.Lock]` + `_registry_lock`.
+- `_enforce_rate_limit()` — sleep'ит per-token до момента, когда с предыдущего вызова под тем же токеном прошло ≥ `GLOBAL_PARSE_INTERVAL_SECONDS`. Re-entrant-safe.
+- Вставлен в `get_wall_posts`, `get_posts_by_ids`, `get_post_by_id`, `get_group_info`, `api_call` (sync) + `get_user_info`, `get_posts`, `get_groups`, `get_messages` (async через `asyncio.to_thread`, чтобы не блокировать event loop).
+
+Аналог `GLOBAL_PUBLISH_INTERVAL_SECONDS=1.5` для VKPublisher, но parse-запросов в разы больше → интервал меньше. Защищает от регрессии, если когда-то увеличим concurrency Celery worker'а: сейчас при двух одновременных VKClient-instances с одним токеном (например, paral­лельный парс региона A и copy_setka) лимит реально шарится. Limit — per-process; для multi-process Celery worker (`-c N` prefork) понадобится общий счётчик через Redis (записал в идеи).
+
+### D2. Идемпотентность миграций 003 + 004
+
+- **`database/migrations/003_vk_tokens.sql`** — удалён дублирующийся блок (вся миграция была повторена ниже в файле — копипаст-bug). `CREATE TRIGGER update_vk_tokens_updated_at` обернут в `DROP TRIGGER IF EXISTS ...; CREATE TRIGGER ...` (PG < 15 не поддерживает `CREATE TRIGGER IF NOT EXISTS`). Все CREATE TABLE/INDEX/FUNCTION уже были с IF NOT EXISTS / OR REPLACE — оставлены.
+- **`database/migrations/004_update_vk_tokens.sql`** — удалён дублирующийся блок (тот же копипаст-bug). Все `ADD COLUMN IF NOT EXISTS` / `UPDATE WHERE NULL` — уже идемпотентны.
+- **`database/migrations/README.md`** (новый) — правила для будущих миграций: какие конструкции идемпотентны, что нельзя делать, как нумеровать, таблица применённых на текущую дату.
+
+005, 006, 007, 008, 009, add_sentiment_fields — уже идемпотентны (только IF NOT EXISTS / GRANT / ALTER DEFAULT PRIVILEGES), не трогали.
+
+`applied_migrations` таблица + миграционный runner — отдельная инфра-задача, не делалась. Оставлена в 🟡 на будущее.
+
+### Тесты
+
+- **`tests/test_vk_monitor/test_vk_client_rate_limit.py`** (новый, 6 тестов): первый вызов не sleep'ит; два back-to-back разделены интервалом; два VKClient на одном токене делят лимит; разные токены не блокируют друг друга; concurrent threads сериализуются; `api_call()` зовёт rate-limit.
+- Локально: `pytest tests/ -q` — **250/250 зелёных** (244 + 6 новых rate-limit).
+
+### Применение
+
+- `git pull` + `sudo systemctl restart setka setka-celery-worker setka-celery-beat`. Миграции БД не нужны (только файловые правки в 003/004; на проде они применены давным-давно, повторно гонять не надо).
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- 🟢 Cross-process rate-limit на Redis — если когда-то Celery worker станет multiprocess.
+- 🟡 `applied_migrations` runner — отдельная инфра-задача.
+
+---
+
 ## 2026-05-22 — Удаление deprecated publisher-стека + correct_workflow
 
 **Тема сессии:** аудит дёрнул всех пользователей старого `vk_publisher.py` (без community-tokens). Оказалось, что половина — мёртвый код, который никем не зовётся (нет в Celery beat, нет в Celery include, нет в UI). Решено удалить deprecated цепочку целиком, а «миграцию на extended» оставить только для живого `web/api/publisher.py` (вынесено в 🟢 идеи).

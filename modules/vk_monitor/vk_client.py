@@ -4,7 +4,9 @@ Handles all interactions with VK API
 """
 import vk_api
 import asyncio
-from typing import List, Dict, Any, Optional
+import threading
+import time
+from typing import ClassVar, Dict, List, Any, Optional
 from datetime import datetime
 import logging
 
@@ -23,14 +25,66 @@ def _log_vk_api_error(prefix: str, error: vk_api.exceptions.ApiError) -> None:
 
 
 class VKClient:
-    """VK API Client with token rotation and rate limiting"""
-    
+    """VK API Client with token rotation and rate limiting.
+
+    **Global per-token rate limit (added 2026-05-22).**
+
+    `vk_api` library уже sleep'ит при rate-limit (HTTP 6 / TooManyRequests),
+    но это per-VkApi-session. Если в одном процессе живут несколько `VKClient`
+    с одним и тем же токеном (например при одновременном parse'е нескольких
+    регионов через разные task'и), они НЕ видят счётчик друг друга и могут
+    разом отправить burst > 3 req/sec — VK ставит cooldown / captcha на токен.
+
+    Решение: class-level mapping `{token: last_call_ts}` под lock'ом. Любой
+    инстанс перед вызовом VK API ждёт `GLOBAL_PARSE_INTERVAL_SECONDS` с
+    момента последнего вызова **под тем же токеном**, во всех инстансах.
+
+    Limit: per-process. Если когда-то перейдём на multi-process Celery worker
+    (`-c N` с prefork), нужен будет общий счётчик через Redis. Пока не нужно.
+    """
+
+    # ~2.5 req/sec — чуть ниже VK-документированного лимита 3 req/sec,
+    # запас на jitter в сети. Аналог `GLOBAL_PUBLISH_INTERVAL_SECONDS=1.5`
+    # на VKPublisher, но parse-запросов в разы больше, поэтому интервал
+    # меньше.
+    GLOBAL_PARSE_INTERVAL_SECONDS: ClassVar[float] = 0.4
+
+    # Per-process state. Token используется как ключ — `id(self)` не подойдёт,
+    # потому что разные VKClient instances с одним токеном должны делить лимит.
+    _last_call_per_token: ClassVar[Dict[str, float]] = {}
+    _per_token_locks: ClassVar[Dict[str, threading.Lock]] = {}
+    _registry_lock: ClassVar[threading.Lock] = threading.Lock()
+
     def __init__(self, token: str):
         """Initialize VK client with token"""
         self.token = token
         self.session = None
         self.vk = None
         self._init_session()
+
+    def _enforce_rate_limit(self) -> None:
+        """Block (sleep) until `GLOBAL_PARSE_INTERVAL_SECONDS` since the last
+        VK API call under the same token. Re-entrant-safe via per-token lock.
+
+        Called from `api_call` and from sync wall/groups/getById wrappers.
+        Async wrappers (`get_posts`, `get_groups`, `get_messages`) — тоже
+        прокидываются через `asyncio.to_thread(self._enforce_rate_limit)`,
+        чтобы не блокировать event loop.
+        """
+        # Get/create the per-token lock atomically.
+        with self._registry_lock:
+            lock = self._per_token_locks.get(self.token)
+            if lock is None:
+                lock = threading.Lock()
+                self._per_token_locks[self.token] = lock
+
+        with lock:
+            last = self._last_call_per_token.get(self.token, 0.0)
+            now = time.monotonic()
+            wait = self.GLOBAL_PARSE_INTERVAL_SECONDS - (now - last)
+            if wait > 0:
+                time.sleep(wait)
+            self._last_call_per_token[self.token] = time.monotonic()
     
     def _init_session(self):
         """Initialize VK session"""
@@ -60,16 +114,17 @@ class VKClient:
             List of posts
         """
         try:
+            self._enforce_rate_limit()
             response = self.vk.wall.get(
                 owner_id=owner_id,
                 count=min(count, 100),
                 offset=offset
             )
-            
+
             posts = response.get('items', [])
             logger.info(f"Fetched {len(posts)} posts from {owner_id}")
             return posts
-            
+
         except vk_api.exceptions.ApiError as e:
             _log_vk_api_error(f"VK API error for {owner_id}", e)
             return []
@@ -95,6 +150,7 @@ class VKClient:
             chunk = refs[i : i + batch_size]
             posts_str = ",".join(f"{oid}_{pid}" for oid, pid in chunk)
             try:
+                self._enforce_rate_limit()
                 resp = self.vk.wall.getById(posts=posts_str)
                 if resp:
                     out.extend(resp)
@@ -116,13 +172,14 @@ class VKClient:
             Post data or None
         """
         try:
+            self._enforce_rate_limit()
             posts_str = f"{owner_id}_{post_id}"
             response = self.vk.wall.getById(posts=[posts_str])
-            
+
             if response:
                 return response[0]
             return None
-            
+
         except vk_api.exceptions.ApiError as e:
             _log_vk_api_error(f"VK API error getting post {owner_id}_{post_id}", e)
             return None
@@ -143,13 +200,14 @@ class VKClient:
         try:
             # Convert to positive ID if needed
             group_id = abs(group_id)
-            
+
+            self._enforce_rate_limit()
             response = self.vk.groups.getById(group_id=group_id)
-            
+
             if response:
                 return response[0]
             return None
-            
+
         except vk_api.exceptions.ApiError as e:
             _log_vk_api_error(f"VK API error getting group info {group_id}", e)
             return None
@@ -240,6 +298,7 @@ class VKClient:
             User info or None
         """
         try:
+            await asyncio.to_thread(self._enforce_rate_limit)
             response = self.vk.users.get()
             if response:
                 return response[0]
@@ -268,6 +327,7 @@ class VKClient:
             Posts data or None
         """
         try:
+            await asyncio.to_thread(self._enforce_rate_limit)
             response = self.vk.wall.get(
                 owner_id=owner_id,
                 count=min(count, 100),
@@ -291,6 +351,7 @@ class VKClient:
             Groups data or None
         """
         try:
+            await asyncio.to_thread(self._enforce_rate_limit)
             response = self.vk.groups.get(
                 count=count,
                 extended=extended
@@ -309,6 +370,7 @@ class VKClient:
         succeeds when the token actually carries the `messages` scope.
         """
         try:
+            await asyncio.to_thread(self._enforce_rate_limit)
             response = self.vk.messages.getConversations(count=count)
             return response
         except vk_api.exceptions.ApiError as e:
@@ -345,6 +407,7 @@ class VKClient:
             VK API response dict
         """
         try:
+            self._enforce_rate_limit()
             response = self.session.method(method, params)
             return response
         except vk_api.exceptions.ApiError as e:
