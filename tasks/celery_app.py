@@ -11,34 +11,35 @@ Tasks:
 Запуск:
     # Worker
     celery -A tasks.celery_app worker --loglevel=info
-    
+
     # Beat scheduler
     celery -A tasks.celery_app beat --loglevel=info
 """
-import sys
-import os
-import logging
-from datetime import datetime, timedelta
 
-# Добавляем корневую директорию в PYTHONPATH
+import os
+import sys
+
+# Добавляем корневую директорию в PYTHONPATH — должно быть ДО любых проектных
+# импортов, иначе flake8 ругается E402 на нижестоящие `from utils...` / `from
+# config...`. Делаем самый минимум на верху, остальные импорты — ниже.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from celery import Celery
-from celery.schedules import crontab
-import asyncio
-import hashlib
-import json
+import hashlib  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+from datetime import datetime, timedelta  # noqa: E402
 
-from utils.celery_asyncio import run_coro
+from celery import Celery  # noqa: E402
+from celery.schedules import crontab  # noqa: E402
+
+from utils.celery_asyncio import run_coro  # noqa: E402
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # --- Telegram alerts for Notifications ---
+
 
 def _pick_telegram_bot_token(telegram_tokens: dict) -> str | None:
     # Prefer historically used names, then fall back to any configured token.
@@ -63,9 +64,10 @@ def _maybe_send_telegram_notifications_alert() -> None:
     so that suggested/messages/comments are aggregated into a single alert.
     """
     try:
-        from modules.notifications.storage import NotificationsStorage
-        from config.runtime import TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID
         import requests
+
+        from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from modules.notifications.storage import NotificationsStorage
 
         storage = NotificationsStorage()
         data = storage.get_all_notifications()
@@ -163,18 +165,22 @@ def _maybe_send_telegram_notifications_alert() -> None:
 
 # Создаем Celery app
 # IMPORTANT: keep a single Celery runtime and explicitly include tasks that are scheduled by beat.
-app = Celery('setka', include=[
-    'tasks.parsing_tasks',
-    'tasks.parsing_scheduler_tasks',  # Postopus migration
-])
-app.config_from_object('config.celery_config')
+app = Celery(
+    "setka",
+    include=[
+        "tasks.parsing_tasks",
+        "tasks.parsing_scheduler_tasks",  # Postopus migration
+        "tasks.discovery_tasks",  # community discovery + weekly recheck
+    ],
+)
+app.config_from_object("config.celery_config")
 
 
-@app.task(name='tasks.celery_app.run_vk_monitoring')
+@app.task(name="tasks.celery_app.run_vk_monitoring")
 def run_vk_monitoring():
     """
     Запуск production workflow для мониторинга VK.
-    
+
     Выполняется каждый час в :05 минут.
     Сканирует все активные регионы, применяет фильтры,
     делает AI scoring и создает дайджесты.
@@ -182,37 +188,29 @@ def run_vk_monitoring():
     logger.info("=" * 80)
     logger.info("Starting VK monitoring workflow...")
     logger.info("=" * 80)
-    
+
     try:
         from scripts.run_production_workflow import ProductionWorkflow
-        
+
         # Создаем и запускаем workflow
         workflow = ProductionWorkflow()
         result = run_coro(workflow.run())
-        
+
         logger.info("VK monitoring completed successfully!")
         logger.info(f"Result: {result}")
-        
-        return {
-            'success': True,
-            'timestamp': datetime.now().isoformat(),
-            'result': result
-        }
-        
+
+        return {"success": True, "timestamp": datetime.now().isoformat(), "result": result}
+
     except Exception as e:
         logger.error(f"VK monitoring failed: {e}", exc_info=True)
-        return {
-            'success': False,
-            'timestamp': datetime.now().isoformat(),
-            'error': str(e)
-        }
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
-@app.task(name='tasks.celery_app.create_daily_digest')
+@app.task(name="tasks.celery_app.create_daily_digest")
 def create_daily_digest():
     """
     Создание дневного дайджеста для всех регионов.
-    
+
     Выполняется каждый день в 18:00.
     Собирает топ-посты за день, создает дайджесты,
     готовит к публикации.
@@ -220,106 +218,103 @@ def create_daily_digest():
     logger.info("=" * 80)
     logger.info("Creating daily digest...")
     logger.info("=" * 80)
-    
+
     try:
+        from sqlalchemy import and_, select
+
         from database.connection import AsyncSessionLocal
-        from database.models import Region, Post
+        from database.models import Post, Region
         from modules.aggregation.aggregator import NewsAggregator
-        from sqlalchemy import select, and_
-        
+
         async def create_digest():
             async with AsyncSessionLocal() as session:
                 # Получаем все активные регионы
                 result = await session.execute(
-                    select(Region).where(Region.is_active == True)
+                    select(Region).where(Region.is_active == True)  # noqa: E712
                 )
                 regions = list(result.scalars())
-                
+
                 aggregator = NewsAggregator(session)
                 digests = []
-                
+
                 # Создаем дайджест для каждого региона
                 for region in regions:
                     logger.info(f"Creating digest for {region.name}...")
-                    
+
                     # Получаем посты за последние 24 часа
                     cutoff_time = datetime.now() - timedelta(hours=24)
                     posts_result = await session.execute(
-                        select(Post).where(
+                        select(Post)
+                        .where(
                             and_(
                                 Post.region_id == region.id,
                                 Post.date_published >= cutoff_time,
-                                Post.ai_analyzed == True
+                                Post.ai_analyzed == True,  # noqa: E712
                             )
-                        ).order_by(Post.ai_score.desc()).limit(10)
+                        )
+                        .order_by(Post.ai_score.desc())
+                        .limit(10)
                     )
                     posts = list(posts_result.scalars())
-                    
+
                     if not posts:
                         logger.warning(f"No posts found for {region.name}")
                         continue
-                    
+
                     # Создаем дайджест
-                    digest = await aggregator.create_digest(
-                        posts=posts,
-                        region=region,
-                        max_posts=5
-                    )
-                    
+                    digest = await aggregator.create_digest(posts=posts, region=region, max_posts=5)
+
                     if digest:
-                        digests.append({
-                            'region': region.name,
-                            'posts_count': len(digest.source_posts),
-                            'total_views': digest.total_views,
-                            'text_length': len(digest.aggregated_text)
-                        })
-                        logger.info(f"Digest created for {region.name}: {len(digest.source_posts)} posts")
-                
+                        digests.append(
+                            {
+                                "region": region.name,
+                                "posts_count": len(digest.source_posts),
+                                "total_views": digest.total_views,
+                                "text_length": len(digest.aggregated_text),
+                            }
+                        )
+                        logger.info(
+                            f"Digest created for {region.name}: {len(digest.source_posts)} posts"
+                        )
+
                 return digests
-        
+
         digests = run_coro(create_digest())
-        
+
         logger.info(f"Daily digest completed! Created {len(digests)} digests")
-        
-        return {
-            'success': True,
-            'timestamp': datetime.now().isoformat(),
-            'digests': digests
-        }
-        
+
+        return {"success": True, "timestamp": datetime.now().isoformat(), "digests": digests}
+
     except Exception as e:
         logger.error(f"Daily digest failed: {e}", exc_info=True)
-        return {
-            'success': False,
-            'timestamp': datetime.now().isoformat(),
-            'error': str(e)
-        }
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
-@app.task(name='tasks.celery_app.check_suggested_posts')
+@app.task(name="tasks.celery_app.check_suggested_posts")
 def check_suggested_posts():
     """
     Проверка предложенных постов в главных группах регионов.
-    
+
     Выполняется каждый час с 8:00 до 22:00.
     Проверяет все главные группы регионов (с префиксом ИНФО) на наличие
     предложенных постов от посетителей.
-    
+
     Результаты сохраняются в Redis и отправляются в Telegram.
     """
     logger.info("=" * 80)
     logger.info("Checking suggested posts in region groups...")
     logger.info("=" * 80)
-    
+
     try:
-        from database.connection import AsyncSessionLocal
-        from database.models import Region, VKToken
-        from modules.notifications.vk_suggested_checker import VKSuggestedChecker
-        from modules.notifications.storage import NotificationsStorage
-        from modules.vk_token_router import load_community_tokens
-        from config.runtime import VK_TOKENS
         from sqlalchemy import select
-        
+
+        from config.runtime import VK_TOKENS
+        from database.connection import AsyncSessionLocal
+        from database.models import Region
+        from modules.notifications.storage import NotificationsStorage
+        from modules.notifications.vk_suggested_checker import VKSuggestedChecker
+        from modules.vk_token_router import load_community_tokens
+
         async def check():
             # Получаем все регионы с главными группами
             async with AsyncSessionLocal() as session:
@@ -330,24 +325,24 @@ def check_suggested_posts():
                     )
                 )
                 regions = list(result.scalars())
-                
+
                 if not regions:
                     logger.warning("No regions with VK groups found")
                     return []
-                
+
                 logger.info(f"Checking {len(regions)} region groups...")
-                
+
                 # Подготавливаем данные для проверки
                 region_groups = [
                     {
-                        'region_id': r.id,
-                        'region_name': r.name,
-                        'region_code': r.code,
-                        'vk_group_id': r.vk_group_id
+                        "region_id": r.id,
+                        "region_name": r.name,
+                        "region_code": r.code,
+                        "vk_group_id": r.vk_group_id,
                     }
                     for r in regions
                 ]
-                
+
                 # Проверяем предложенные посты
                 vk_token = VK_TOKENS.get("VALSTAN")
                 if not vk_token:
@@ -367,12 +362,12 @@ def check_suggested_posts():
                 storage = NotificationsStorage()
                 storage.save_notifications(
                     notifications,
-                    'suggested_posts',
+                    "suggested_posts",
                     keep_if_empty=True,
                 )
                 # История проверок (этап 3): для виджета «активность за 24ч».
                 storage.save_run(
-                    'suggested_posts',
+                    "suggested_posts",
                     count=len(notifications),
                     duration_seconds=run_duration,
                     success=True,
@@ -380,19 +375,21 @@ def check_suggested_posts():
                 # Prometheus (etap 5)
                 try:
                     from monitoring.metrics import (
-                        notifications_check_total,
                         notifications_check_duration_seconds,
+                        notifications_check_total,
                         notifications_items_found_total,
                     )
-                    result_label = 'ok' if notifications else 'empty'
+
+                    result_label = "ok" if notifications else "empty"
                     notifications_check_total.labels(
-                        check_type='suggested', result=result_label,
+                        check_type="suggested",
+                        result=result_label,
                     ).inc()
                     notifications_check_duration_seconds.labels(
-                        check_type='suggested',
+                        check_type="suggested",
                     ).observe(run_duration)
                     notifications_items_found_total.labels(
-                        check_type='suggested',
+                        check_type="suggested",
                     ).inc(len(notifications))
                 except Exception as _e:
                     logger.debug("metrics emit failed: %s", _e)
@@ -404,22 +401,18 @@ def check_suggested_posts():
         notifications = run_coro(check())
 
         return {
-            'success': True,
-            'timestamp': datetime.now().isoformat(),
-            'notifications_count': len(notifications),
-            'notifications': notifications,
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "notifications_count": len(notifications),
+            "notifications": notifications,
         }
-        
+
     except Exception as e:
         logger.error(f"Failed to check suggested posts: {e}", exc_info=True)
-        return {
-            'success': False,
-            'timestamp': datetime.now().isoformat(),
-            'error': str(e)
-        }
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
-@app.task(name='tasks.celery_app.check_unread_messages')
+@app.task(name="tasks.celery_app.check_unread_messages")
 def check_unread_messages():
     """Проверка непрочитанных сообщений в главных группах регионов.
 
@@ -432,13 +425,14 @@ def check_unread_messages():
     logger.info("=" * 80)
 
     try:
-        from database.connection import AsyncSessionLocal
-        from database.models import Region, VKToken
-        from modules.notifications.vk_messages_checker import VKMessagesChecker
-        from modules.notifications.storage import NotificationsStorage
-        from modules.vk_token_router import load_community_tokens
-        from config.runtime import VK_TOKENS
         from sqlalchemy import select
+
+        from config.runtime import VK_TOKENS
+        from database.connection import AsyncSessionLocal
+        from database.models import Region
+        from modules.notifications.storage import NotificationsStorage
+        from modules.notifications.vk_messages_checker import VKMessagesChecker
+        from modules.vk_token_router import load_community_tokens
 
         async def check():
             async with AsyncSessionLocal() as session:
@@ -458,10 +452,10 @@ def check_unread_messages():
 
                 region_groups = [
                     {
-                        'region_id': r.id,
-                        'region_name': r.name,
-                        'region_code': r.code,
-                        'vk_group_id': r.vk_group_id
+                        "region_id": r.id,
+                        "region_name": r.name,
+                        "region_code": r.code,
+                        "vk_group_id": r.vk_group_id,
                     }
                     for r in regions
                 ]
@@ -478,14 +472,14 @@ def check_unread_messages():
                 run_start = datetime.now()
                 result = await checker.check_all_region_groups(region_groups)
                 run_duration = (datetime.now() - run_start).total_seconds()
-                notifications = result['notifications']
-                denied_groups = result['denied_groups']
+                notifications = result["notifications"]
+                denied_groups = result["denied_groups"]
 
                 storage = NotificationsStorage()
-                storage.save_notifications(notifications, 'unread_messages')
-                storage.save_notifications(denied_groups, 'unread_messages_denied')
+                storage.save_notifications(notifications, "unread_messages")
+                storage.save_notifications(denied_groups, "unread_messages_denied")
                 storage.save_run(
-                    'unread_messages',
+                    "unread_messages",
                     count=len(notifications),
                     denied_count=len(denied_groups),
                     duration_seconds=run_duration,
@@ -493,54 +487,53 @@ def check_unread_messages():
                 )
                 try:
                     from monitoring.metrics import (
-                        notifications_check_total,
                         notifications_check_duration_seconds,
+                        notifications_check_total,
                         notifications_items_found_total,
                     )
+
                     if denied_groups and not notifications:
-                        result_label = 'denied'
+                        result_label = "denied"
                     elif notifications:
-                        result_label = 'ok'
+                        result_label = "ok"
                     else:
-                        result_label = 'empty'
+                        result_label = "empty"
                     notifications_check_total.labels(
-                        check_type='messages', result=result_label,
+                        check_type="messages",
+                        result=result_label,
                     ).inc()
                     notifications_check_duration_seconds.labels(
-                        check_type='messages',
+                        check_type="messages",
                     ).observe(run_duration)
                     notifications_items_found_total.labels(
-                        check_type='messages',
+                        check_type="messages",
                     ).inc(len(notifications))
                 except Exception as _e:
                     logger.debug("metrics emit failed: %s", _e)
 
                 logger.info(
                     "Found %d groups with unread messages (%d denied access)",
-                    len(notifications), len(denied_groups),
+                    len(notifications),
+                    len(denied_groups),
                 )
                 return notifications, denied_groups
 
         notifications, denied_groups = run_coro(check())
 
         return {
-            'success': True,
-            'timestamp': datetime.now().isoformat(),
-            'notifications_count': len(notifications),
-            'notifications': notifications,
-            'denied_count': len(denied_groups),
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "notifications_count": len(notifications),
+            "notifications": notifications,
+            "denied_count": len(denied_groups),
         }
 
     except Exception as e:
         logger.error(f"Failed to check unread messages: {e}", exc_info=True)
-        return {
-            'success': False,
-            'timestamp': datetime.now().isoformat(),
-            'error': str(e)
-        }
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
-@app.task(name='tasks.celery_app.check_recent_comments')
+@app.task(name="tasks.celery_app.check_recent_comments")
 def check_recent_comments():
     """Проверка комментариев за последние 24 часа в главных ИНФО-группах регионов.
 
@@ -555,13 +548,14 @@ def check_recent_comments():
     logger.info("=" * 80)
 
     try:
+        from sqlalchemy import select
+
+        from config.runtime import VK_TOKENS
         from database.connection import AsyncSessionLocal
         from database.models import Region
-        from modules.notifications.vk_comments_checker import VKCommentsChecker
         from modules.notifications.storage import NotificationsStorage
+        from modules.notifications.vk_comments_checker import VKCommentsChecker
         from modules.vk_token_router import load_community_tokens
-        from config.runtime import VK_TOKENS
-        from sqlalchemy import select
 
         cutoff_dt = datetime.utcnow() - timedelta(hours=24)
         cutoff_ts = int(cutoff_dt.timestamp())
@@ -589,19 +583,20 @@ def check_recent_comments():
                     # Дополнительный фильтр по префиксу/маркеру ИНФО
                     if "ИНФО" not in (region_name or ""):
                         continue
-                    region_groups.append({
-                        "region_id": region_id,
-                        "region_code": region_code,
-                        "region_name": region_name,
-                        "vk_group_id": vk_group_id
-                    })
+                    region_groups.append(
+                        {
+                            "region_id": region_id,
+                            "region_code": region_code,
+                            "region_name": region_name,
+                            "vk_group_id": vk_group_id,
+                        }
+                    )
 
                 community_tokens = await load_community_tokens(session)
                 checker = VKCommentsChecker(vk_token, community_tokens=community_tokens)
                 run_start = datetime.now()
                 notifications = await checker.check_recent_comments_for_region_groups(
-                    region_groups=region_groups,
-                    cutoff_ts=cutoff_ts
+                    region_groups=region_groups, cutoff_ts=cutoff_ts
                 )
                 run_duration = (datetime.now() - run_start).total_seconds()
 
@@ -611,30 +606,32 @@ def check_recent_comments():
                 storage = NotificationsStorage()
                 storage.save_notifications(
                     notifications,
-                    'recent_comments',
+                    "recent_comments",
                     keep_if_empty=True,
                 )
                 storage.save_run(
-                    'recent_comments',
+                    "recent_comments",
                     count=len(notifications),
                     duration_seconds=run_duration,
                     success=True,
                 )
                 try:
                     from monitoring.metrics import (
-                        notifications_check_total,
                         notifications_check_duration_seconds,
+                        notifications_check_total,
                         notifications_items_found_total,
                     )
-                    result_label = 'ok' if notifications else 'empty'
+
+                    result_label = "ok" if notifications else "empty"
                     notifications_check_total.labels(
-                        check_type='comments', result=result_label,
+                        check_type="comments",
+                        result=result_label,
                     ).inc()
                     notifications_check_duration_seconds.labels(
-                        check_type='comments',
+                        check_type="comments",
                     ).observe(run_duration)
                     notifications_items_found_total.labels(
-                        check_type='comments',
+                        check_type="comments",
                     ).inc(len(notifications))
                 except Exception as _e:
                     logger.debug("metrics emit failed: %s", _e)
@@ -652,390 +649,385 @@ def check_recent_comments():
         # вернули 0 — намёк на сломанный токен, шлём отдельный alert
         # (с собственным cooldown, чтобы не спамить).
         try:
-            from config.runtime import TELEGRAM_TOKENS, TELEGRAM_ALERT_CHAT_ID, SERVER
+            from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
             from modules.notifications.health import maybe_alert_broken_tokens
 
             telegram_token = TELEGRAM_TOKENS.get("VALSTANBOT")
             chat_id = TELEGRAM_ALERT_CHAT_ID
-            domain = SERVER.get('domain') or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+            domain = (
+                SERVER.get("domain")
+                or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+            )
             dashboard_url = f"https://{domain}/notifications"
 
-            run_coro(maybe_alert_broken_tokens(
-                telegram_token=telegram_token,
-                chat_id=chat_id,
-                dashboard_url=dashboard_url,
-            ))
+            run_coro(
+                maybe_alert_broken_tokens(
+                    telegram_token=telegram_token,
+                    chat_id=chat_id,
+                    dashboard_url=dashboard_url,
+                )
+            )
         except Exception as _e:
             logger.debug("token health watchdog failed: %s", _e)
 
         return {
-            'success': True,
-            'timestamp': datetime.now().isoformat(),
-            'comments_count': len(notifications),
-            'notifications': notifications
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "comments_count": len(notifications),
+            "notifications": notifications,
         }
 
     except Exception as e:
         logger.error(f"Failed to check recent comments: {e}", exc_info=True)
-        return {
-            'success': False,
-            'timestamp': datetime.now().isoformat(),
-            'error': str(e)
-        }
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
-@app.task(name='tasks.celery_app.cleanup_old_posts')
+@app.task(name="tasks.celery_app.cleanup_old_posts")
 def cleanup_old_posts():
     """
     Очистка старых постов из БД.
-    
+
     Выполняется каждый день в 03:00.
     Удаляет посты старше 30 дней для освобождения места.
     """
     logger.info("=" * 80)
     logger.info("Cleaning up old posts...")
     logger.info("=" * 80)
-    
+
     try:
+        from sqlalchemy import delete
+
         from database.connection import AsyncSessionLocal
         from database.models import Post
-        from sqlalchemy import delete
-        
+
         async def cleanup():
             async with AsyncSessionLocal() as session:
                 # Удаляем посты старше 30 дней
                 cutoff_date = datetime.now() - timedelta(days=30)
-                
+
                 result = await session.execute(
                     delete(Post).where(Post.date_published < cutoff_date)
                 )
-                
+
                 deleted_count = result.rowcount
                 await session.commit()
-                
+
                 return deleted_count
-        
+
         deleted_count = run_coro(cleanup())
-        
+
         logger.info(f"Cleanup completed! Deleted {deleted_count} old posts")
-        
+
         return {
-            'success': True,
-            'timestamp': datetime.now().isoformat(),
-            'deleted_count': deleted_count
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "deleted_count": deleted_count,
         }
-        
+
     except Exception as e:
         logger.error(f"Cleanup failed: {e}", exc_info=True)
-        return {
-            'success': False,
-            'timestamp': datetime.now().isoformat(),
-            'error': str(e)
-        }
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
 # Расписания (Beat Schedule)
 app.conf.beat_schedule = {
     # Проверка предложенных постов каждый час с 8:00 до 22:00 в X:15
-    'check-suggested-hourly': {
-        'task': 'tasks.celery_app.check_suggested_posts',
-        'schedule': crontab(minute=15, hour='8-22'),  # Каждый час 8-22 на 15-й минуте
-        'options': {
-            'expires': 3000,
-            'catchup': False,
-        }
+    "check-suggested-hourly": {
+        "task": "tasks.celery_app.check_suggested_posts",
+        "schedule": crontab(minute=15, hour="8-22"),  # Каждый час 8-22 на 15-й минуте
+        "options": {
+            "expires": 3000,
+            "catchup": False,
+        },
     },
-
     # Проверка непрочитанных сообщений каждый час с 8:00 до 22:00 в X:16
-    'check-unread-messages-hourly': {
-        'task': 'tasks.celery_app.check_unread_messages',
-        'schedule': crontab(minute=16, hour='8-22'),  # Каждый час 8-22 на 16-й минуте
-        'options': {
-            'expires': 3000,
-            'catchup': False,
-        }
+    "check-unread-messages-hourly": {
+        "task": "tasks.celery_app.check_unread_messages",
+        "schedule": crontab(minute=16, hour="8-22"),  # Каждый час 8-22 на 16-й минуте
+        "options": {
+            "expires": 3000,
+            "catchup": False,
+        },
     },
-
     # Проверка комментариев за сутки каждый час с 8:00 до 22:00 в X:17
-    'check-recent-comments-hourly': {
-        'task': 'tasks.celery_app.check_recent_comments',
-        'schedule': crontab(minute=17, hour='8-22'),  # Каждый час 8-22 на 17-й минуте
-        'options': {
-            'expires': 3000,
-            'catchup': False,
-        }
+    "check-recent-comments-hourly": {
+        "task": "tasks.celery_app.check_recent_comments",
+        "schedule": crontab(minute=17, hour="8-22"),  # Каждый час 8-22 на 17-й минуте
+        "options": {
+            "expires": 3000,
+            "catchup": False,
+        },
     },
-
     # Дневной дайджест в 18:00
-    'digest-daily': {
-        'task': 'tasks.celery_app.create_daily_digest',
-        'schedule': crontab(hour=18, minute=0),  # 18:00 каждый день
-        'options': {
-            'expires': 3000,
-            'catchup': False,
-        }
+    "digest-daily": {
+        "task": "tasks.celery_app.create_daily_digest",
+        "schedule": crontab(hour=18, minute=0),  # 18:00 каждый день
+        "options": {
+            "expires": 3000,
+            "catchup": False,
+        },
     },
-
     # Очистка старых постов в 03:00
-    'cleanup-daily': {
-        'task': 'tasks.celery_app.cleanup_old_posts',
-        'schedule': crontab(hour=3, minute=0),  # 03:00 каждый день
-        'options': {
-            'expires': 3000,
-            'catchup': False,
-        }
+    "cleanup-daily": {
+        "task": "tasks.celery_app.cleanup_old_posts",
+        "schedule": crontab(hour=3, minute=0),  # 03:00 каждый день
+        "options": {
+            "expires": 3000,
+            "catchup": False,
+        },
     },
-
     # ========================================================================
     # POSTOPUS MIGRATION: Crontab replacement → Celery Beat
     # Original crontab entries migrated from old_postopus
     # ========================================================================
-
     # Reklama (ads): 5 10,14,19 * * *
-    'postopus-reklama-10': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=5, hour=10),
-        'args': ('reklama',),
-        'options': {'expires': 3600},
+    "postopus-reklama-10": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=5, hour=10),
+        "args": ("reklama",),
+        "options": {"expires": 3600},
     },
-    'postopus-reklama-14': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=5, hour=14),
-        'args': ('reklama',),
-        'options': {'expires': 3600},
+    "postopus-reklama-14": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=5, hour=14),
+        "args": ("reklama",),
+        "options": {"expires": 3600},
     },
-    'postopus-reklama-19': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=5, hour=19),
-        'args': ('reklama',),
-        'options': {'expires': 3600},
+    "postopus-reklama-19": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=5, hour=19),
+        "args": ("reklama",),
+        "options": {"expires": 3600},
     },
-
     # Sosed (neighbor news): 15 10,20 * * *
-    'postopus-sosed-10': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=10),
-        'args': ('sosed',),
-        'options': {'expires': 3600},
+    "postopus-sosed-10": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=10),
+        "args": ("sosed",),
+        "options": {"expires": 3600},
     },
-    'postopus-sosed-20': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=20),
-        'args': ('sosed',),
-        'options': {'expires': 3600},
+    "postopus-sosed-20": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=20),
+        "args": ("sosed",),
+        "options": {"expires": 3600},
     },
-
     # Novost (news): 40 6,11,12,16,18,20 * * *
-    'postopus-novost-6': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=40, hour=6),
-        'args': ('novost',),
-        'options': {'expires': 3600},
+    "postopus-novost-6": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=40, hour=6),
+        "args": ("novost",),
+        "options": {"expires": 3600},
     },
-    'postopus-novost-11': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=40, hour=11),
-        'args': ('novost',),
-        'options': {'expires': 3600},
+    "postopus-novost-11": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=40, hour=11),
+        "args": ("novost",),
+        "options": {"expires": 3600},
     },
-    'postopus-novost-12': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=40, hour=12),
-        'args': ('novost',),
-        'options': {'expires': 3600},
+    "postopus-novost-12": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=40, hour=12),
+        "args": ("novost",),
+        "options": {"expires": 3600},
     },
-    'postopus-novost-16': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=40, hour=16),
-        'args': ('novost',),
-        'options': {'expires': 3600},
+    "postopus-novost-16": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=40, hour=16),
+        "args": ("novost",),
+        "options": {"expires": 3600},
     },
-    'postopus-novost-18': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=40, hour=18),
-        'args': ('novost',),
-        'options': {'expires': 3600},
+    "postopus-novost-18": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=40, hour=18),
+        "args": ("novost",),
+        "options": {"expires": 3600},
     },
-    'postopus-novost-20': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=40, hour=20),
-        'args': ('novost',),
-        'options': {'expires': 3600},
+    "postopus-novost-20": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=40, hour=20),
+        "args": ("novost",),
+        "options": {"expires": 3600},
     },
-
-    # Кировская область (областной дайджест из ссылок в районных постах): 45 мин — после волн novost :40
-    'postopus-kirov-oblast-6': {
-        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
-        'schedule': crontab(minute=45, hour=6),
-        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
-        'options': {'expires': 3600},
+    # Кировская область (областной дайджест из ссылок в районных постах):
+    # 45 мин — после волн novost :40
+    "postopus-kirov-oblast-6": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=45, hour=6),
+        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+        "options": {"expires": 3600},
     },
-    'postopus-kirov-oblast-11': {
-        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
-        'schedule': crontab(minute=45, hour=11),
-        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
-        'options': {'expires': 3600},
+    "postopus-kirov-oblast-11": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=45, hour=11),
+        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+        "options": {"expires": 3600},
     },
-    'postopus-kirov-oblast-12': {
-        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
-        'schedule': crontab(minute=45, hour=12),
-        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
-        'options': {'expires': 3600},
+    "postopus-kirov-oblast-12": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=45, hour=12),
+        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+        "options": {"expires": 3600},
     },
-    'postopus-kirov-oblast-16': {
-        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
-        'schedule': crontab(minute=45, hour=16),
-        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
-        'options': {'expires': 3600},
+    "postopus-kirov-oblast-16": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=45, hour=16),
+        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+        "options": {"expires": 3600},
     },
-    'postopus-kirov-oblast-18': {
-        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
-        'schedule': crontab(minute=45, hour=18),
-        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
-        'options': {'expires': 3600},
+    "postopus-kirov-oblast-18": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=45, hour=18),
+        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+        "options": {"expires": 3600},
     },
-    'postopus-kirov-oblast-20': {
-        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
-        'schedule': crontab(minute=45, hour=20),
-        'kwargs': {'region_code': 'kirov_obl', 'theme': 'oblast'},
-        'options': {'expires': 3600},
+    "postopus-kirov-oblast-20": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=45, hour=20),
+        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+        "options": {"expires": 3600},
     },
-
     # Kultura (culture): 20 7,13,16,19,21 * * *
-    'postopus-kultura-7': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=7),
-        'args': ('kultura',),
-        'options': {'expires': 3600},
+    "postopus-kultura-7": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=7),
+        "args": ("kultura",),
+        "options": {"expires": 3600},
     },
-    'postopus-kultura-13': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=13),
-        'args': ('kultura',),
-        'options': {'expires': 3600},
+    "postopus-kultura-13": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=13),
+        "args": ("kultura",),
+        "options": {"expires": 3600},
     },
-    'postopus-kultura-16': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=16),
-        'args': ('kultura',),
-        'options': {'expires': 3600},
+    "postopus-kultura-16": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=16),
+        "args": ("kultura",),
+        "options": {"expires": 3600},
     },
-    'postopus-kultura-19': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=19),
-        'args': ('kultura',),
-        'options': {'expires': 3600},
+    "postopus-kultura-19": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=19),
+        "args": ("kultura",),
+        "options": {"expires": 3600},
     },
-    'postopus-kultura-21': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=21),
-        'args': ('kultura',),
-        'options': {'expires': 3600},
+    "postopus-kultura-21": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=21),
+        "args": ("kultura",),
+        "options": {"expires": 3600},
     },
-
     # Sport: 30 12,19 * * *
-    'postopus-sport-12': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=30, hour=12),
-        'args': ('sport',),
-        'options': {'expires': 3600},
+    "postopus-sport-12": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=30, hour=12),
+        "args": ("sport",),
+        "options": {"expires": 3600},
     },
-    'postopus-sport-19': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=30, hour=19),
-        'args': ('sport',),
-        'options': {'expires': 3600},
+    "postopus-sport-19": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=30, hour=19),
+        "args": ("sport",),
+        "options": {"expires": 3600},
     },
-
     # Admin: 20 8,12,20 * * *
-    'postopus-admin-8': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=8),
-        'args': ('admin',),
-        'options': {'expires': 3600},
+    "postopus-admin-8": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=8),
+        "args": ("admin",),
+        "options": {"expires": 3600},
     },
-    'postopus-admin-12': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=12),
-        'args': ('admin',),
-        'options': {'expires': 3600},
+    "postopus-admin-12": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=12),
+        "args": ("admin",),
+        "options": {"expires": 3600},
     },
-    'postopus-admin-20': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=20),
-        'args': ('admin',),
-        'options': {'expires': 3600},
+    "postopus-admin-20": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=20),
+        "args": ("admin",),
+        "options": {"expires": 3600},
     },
-
     # Union: 30 11,17 * * *
-    'postopus-union-11': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=30, hour=11),
-        'args': ('union',),
-        'options': {'expires': 3600},
+    "postopus-union-11": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=30, hour=11),
+        "args": ("union",),
+        "options": {"expires": 3600},
     },
-    'postopus-union-17': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=30, hour=17),
-        'args': ('union',),
-        'options': {'expires': 3600},
+    "postopus-union-17": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=30, hour=17),
+        "args": ("union",),
+        "options": {"expires": 3600},
     },
-
     # Detsad: 30 13 * * *
-    'postopus-detsad-13': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=30, hour=13),
-        'args': ('detsad',),
-        'options': {'expires': 3600},
+    "postopus-detsad-13": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=30, hour=13),
+        "args": ("detsad",),
+        "options": {"expires": 3600},
     },
-
     # Addons (roulette): 20 6,11,18,22 * * *
-    'postopus-addons-6': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=6),
-        'args': ('addons',),
-        'options': {'expires': 3600},
+    "postopus-addons-6": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=6),
+        "args": ("addons",),
+        "options": {"expires": 3600},
     },
-    'postopus-addons-11': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=11),
-        'args': ('addons',),
-        'options': {'expires': 3600},
+    "postopus-addons-11": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=11),
+        "args": ("addons",),
+        "options": {"expires": 3600},
     },
-    'postopus-addons-18': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=18),
-        'args': ('addons',),
-        'options': {'expires': 3600},
+    "postopus-addons-18": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=18),
+        "args": ("addons",),
+        "options": {"expires": 3600},
     },
-    'postopus-addons-22': {
-        'task': 'tasks.parsing_scheduler_tasks.run_all_regions_theme',
-        'schedule': crontab(minute=20, hour=22),
-        'args': ('addons',),
-        'options': {'expires': 3600},
+    "postopus-addons-22": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=20, hour=22),
+        "args": ("addons",),
+        "options": {"expires": 3600},
     },
-
+    # Discovery health-recheck — еженедельно (ПН 04:00 MSK).
+    # Обходит все Region.is_active=True; для каждого Community.is_active=True
+    # делает wall.get + AI-категоризацию, обновляет health_status / last_post_at
+    # / checked_at / suggested_category. По итогам — Telegram-alert (если есть
+    # dead / dormant / changed_category). См. modules/discovery/health_check.py.
+    "discovery-recheck-weekly": {
+        "task": "tasks.discovery_tasks.recheck_all_active_regions",
+        "schedule": crontab(hour=4, minute=0, day_of_week="mon"),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
     # Copy Setka (network repost): 7,37 * * * *
-    'postopus-copy-setka-07': {
-        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
-        'schedule': crontab(minute=7),
-        'kwargs': {'region_code': 'copy', 'theme': 'setka'},
-        'options': {'expires': 1800},
+    "postopus-copy-setka-07": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=7),
+        "kwargs": {"region_code": "copy", "theme": "setka"},
+        "options": {"expires": 1800},
     },
-    'postopus-copy-setka-37': {
-        'task': 'tasks.parsing_scheduler_tasks.parse_and_publish_theme',
-        'schedule': crontab(minute=37),
-        'kwargs': {'region_code': 'copy', 'theme': 'setka'},
-        'options': {'expires': 1800},
+    "postopus-copy-setka-37": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=37),
+        "kwargs": {"region_code": "copy", "theme": "setka"},
+        "options": {"expires": 1800},
     },
 }
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Для отладки
     logger.info("Celery app configured successfully!")
     logger.info(f"Broker: {app.conf.broker_url}")
     logger.info(f"Backend: {app.conf.result_backend}")
     logger.info(f"Timezone: {app.conf.timezone}")
     logger.info(f"Beat schedule: {list(app.conf.beat_schedule.keys())}")
-

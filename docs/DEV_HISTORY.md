@@ -48,6 +48,61 @@
 
 ---
 
+## 2026-05-22 — Big idea, итерация 2: weekly health-recheck активных сообществ
+
+**Тема сессии:** доделать вторую часть big idea — еженедельная Celery-таска, которая обходит уже-добавленные `Community.is_active=True`, обновляет `health_status` / `last_post_at` / `checked_at` / `suggested_category` и шлёт Telegram-алёрт с итогами. Discovery новых кандидатов в этой итерации не делается (можно ad-hoc через UI или Celery-таску `run_discovery_for_region`).
+
+### Изменения
+
+#### Health-check core
+
+- **`modules/discovery/health_check.py`** (новый) — `check_community_health(client, community, region_name, dormant_days=60, posts_sample=10, now=None)`. Возвращает `CommunityHealth` (status / last_post_at / posts_sampled / suggested_category / error_code / reasoning). Логика:
+  - `wall.get` через `client.api_call("wall.get", ...)` — нужен raw `error_code`, обычный `get_wall_posts` глотает ApiError. VK errors **15/18/100/203** → `dead`. Прочие коды → transient, статус не двигаем.
+  - Пустая стена / последний пост старше `dormant_days` → `dormant`. AI на этом этапе **не дёргается** (экономит Groq quota).
+  - Свежие посты с текстом → 5 первых текстов в `categorize_candidate`. Если AI вернул `category != current && category != 'other' && confidence >= 70` → `changed_category, suggested_category=<new>`. Иначе → `active`.
+  - AI failure (нет ключа, 429, malformed JSON) → `active`. Лучше промолчать, чем фолз-позитивить.
+
+#### Recheck Celery-таски + Telegram alert
+
+- **`tasks/discovery_tasks.py`** — добавлены:
+  - `recheck_communities_for_region_async(region_id, dormant_days=None, posts_sample=10, max_concurrent=4)` — обход `Community.is_active=True` региона через `asyncio.Semaphore(4)`. In-place UPDATE `health_status` / `last_post_at` / `checked_at` / `suggested_category` (последнее очищается, если status не `changed_category`). Возвращает `{success, region, total, active, dormant, dead, changed_category, errors}`.
+  - `recheck_all_active_regions_async(send_telegram=True)` — обход `Region.is_active=True` последовательно (чтобы не разрывать VK rate-limit). По итогам — `_maybe_send_recheck_telegram_alert(reports)`.
+  - `_dormant_days_for_region(region)` — per-region override через `region.config['dormant_days']`, default 60.
+  - `_format_recheck_message(reports)` — HTML-сообщение с подкатегориями (💀 dead / 😴 dormant / 🔀 changed_category) и итогами. Регионы без non-active изменений в bullet-список не попадают.
+  - `_maybe_send_recheck_telegram_alert(reports)` — переиспользует паттерн pick TELEGRAM_TOKENS + `TELEGRAM_ALERT_CHAT_ID` из `tasks/celery_app.py`. Если ничего интересного нет — alert не шлётся.
+  - Celery wrappers: `tasks.discovery_tasks.recheck_communities_for_region` (ad-hoc по региону), `tasks.discovery_tasks.recheck_all_active_regions` (для beat).
+
+#### Beat schedule
+
+- **`tasks/celery_app.py`**:
+  - В `Celery(include=[...])` добавлен `'tasks.discovery_tasks'` (иначе beat не найдёт task'и при старте worker'а).
+  - Beat entry `discovery-recheck-weekly`: `crontab(hour=4, minute=0, day_of_week='mon')` — понедельник 04:00 MSK (timezone `Europe/Moscow` в `config/celery_config.py`). `expires=3600`, `catchup=False`.
+
+#### Тесты (+30 — итого 360)
+
+- **`tests/test_discovery/test_health_check.py`** (13): dead на error 15/203, transient (code 6) не меняет статус, пустая стена → dormant, старый пост > threshold → dormant, custom dormant_days override, AI подтвердил категорию → active, AI drift с confidence ≥ 70 → changed_category, drift с confidence < 70 → active, drift в `other` → active, AI failure → active, посты без текста → AI не дёргается, vk_id=0 → skipped без api_call.
+- **`tests/test_discovery/test_recheck_tasks.py`** (17): `_dormant_days_for_region` (default / invalid / override / non-positive), recheck без токена, recheck для несуществующего региона, region без communities, аггрегация counts + in-place fields, transient errors считаются отдельно, `recheck_all_active_regions_async` агрегирует и дёргает alert, пустой список регионов, `_has_interesting_findings` (true/false/failed-report), `_format_recheck_message` (per-region breakdown, skip regions без findings, failed-region отображается).
+
+### Проверка / прогон
+
+- Локально: `pytest tests/ -q` — **360/360 зелёных** (было 330 → +30).
+- На проде: миграции БД не нужны (поля заведены в 011 в предыдущей итерации). Достаточно `git pull` + рестарт worker+beat.
+
+### Применение
+
+1. **Pull** на проде.
+2. `systemctl restart setka-celery-worker setka-celery-beat` — нужен оба сервиса. Worker подхватит новые task'и из `tasks.discovery_tasks` (через `include=`), beat — новый entry `discovery-recheck-weekly`.
+3. Первый запуск пройдёт автоматически в ближайший понедельник 04:00 MSK. Для ad-hoc-проверки одного региона: `celery -A tasks.celery_app call tasks.discovery_tasks.recheck_communities_for_region --args='[<region_id>]'` или из Python shell.
+4. Опционально: для одного из регионов положить `region.config['dormant_days']` (например, 30 для активного района или 90 для тихого). Default 60.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- ⏳ закрыта (`recheck_existing_communities` готов).
+- 🟢 Discovery-rediscover-monthly (повторный поиск новых кандидатов через `run_discovery_for_region` по beat) — следующая итерация. Сейчас можно запускать вручную через UI.
+- 🟢 UI-страница `/communities?health_status=changed_category` с быстрым «applied suggested_category → обновить Community.category» — UX-улучшение.
+
+---
+
 ## 2026-05-22 — Big idea: модуль авто-регистрации регионов и сообществ (MVP)
 
 **Тема сессии:** реализовать MVP описанный в `PENDING_FOLLOWUPS.md` (🌍 big idea). Wizard добавления нового района → Celery-таска ищет VK-сообщества (`groups.search` по гео + ключевикам) → Groq AI-категоризатор предлагает тематику → UI «Найдено N кандидатов» с approve/reject. Без weekly recheck (вынесено в следующую итерацию).

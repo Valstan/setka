@@ -24,6 +24,12 @@ from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Community, CommunityCandidate, Region
 from modules.discovery.ai_categorizer import categorize_candidate
+from modules.discovery.health_check import (
+    DEFAULT_DORMANT_DAYS,
+    DEFAULT_POSTS_SAMPLE,
+    CommunityHealth,
+    check_community_health,
+)
 from modules.discovery.vk_search import DiscoveredGroup, discover_for_region
 from modules.vk_monitor.vk_client import VKClient
 
@@ -254,6 +260,295 @@ async def run_discovery_for_region_async(
     }
 
 
+# ─── Recheck (weekly health-check для already-added communities) ───
+#
+# Чисто read-write по `communities`: новых строк не создаём, только обновляем
+# health_status / last_post_at / checked_at / suggested_category. Discovery
+# rerun (поиск новых кандидатов) — отдельная задача и пока не шедулится.
+
+
+def _dormant_days_for_region(region: Region) -> int:
+    """Per-region override через ``region.config['dormant_days']``."""
+    try:
+        cfg = region.config or {}
+        val = int(cfg.get("dormant_days"))
+        if val > 0:
+            return val
+    except (TypeError, ValueError):
+        pass
+    return DEFAULT_DORMANT_DAYS
+
+
+async def _recheck_one(
+    client: VKClient,
+    community: Community,
+    region_name: str,
+    dormant_days: int,
+    posts_sample: int,
+    semaphore: asyncio.Semaphore,
+) -> CommunityHealth:
+    async with semaphore:
+        return await check_community_health(
+            client=client,
+            community=community,
+            region_name=region_name,
+            dormant_days=dormant_days,
+            posts_sample=posts_sample,
+        )
+
+
+async def recheck_communities_for_region_async(
+    region_id: int,
+    *,
+    dormant_days: Optional[int] = None,
+    posts_sample: int = DEFAULT_POSTS_SAMPLE,
+    max_concurrent: int = 4,
+) -> Dict[str, Any]:
+    """Health-check для всех ``is_active=True`` сообществ одного региона.
+
+    Перебирает Community → ``check_community_health`` → in-place UPDATE
+    полей ``health_status`` / ``last_post_at`` / ``checked_at`` /
+    ``suggested_category``. Не трогает строки, помеченные модератором
+    ``is_active=False`` (история постов остаётся валидной, но recheck
+    не нужен).
+
+    Возвращает структурированный отчёт ``{success, region, total, active,
+    dormant, dead, changed_category, errors}``. ``errors`` — счётчик
+    transient ошибок (VK rate-limit, network), не сменивших health_status.
+    """
+    token = _pick_parse_token()
+    if not token:
+        return {"success": False, "error": "no VK parse-token configured (VK_TOKENS empty)"}
+
+    async with AsyncSessionLocal() as session:
+        region: Optional[Region] = (
+            await session.execute(select(Region).where(Region.id == region_id))
+        ).scalar_one_or_none()
+        if region is None:
+            return {"success": False, "error": f"region {region_id} not found"}
+
+        rows = (
+            (
+                await session.execute(
+                    select(Community).where(
+                        Community.region_id == region_id,
+                        Community.is_active == True,  # noqa: E712 — SQLAlchemy boolean
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if not rows:
+            return {
+                "success": True,
+                "region": region.code,
+                "total": 0,
+                "active": 0,
+                "dormant": 0,
+                "dead": 0,
+                "changed_category": 0,
+                "errors": 0,
+            }
+
+        client = VKClient(token=token)
+        dd = dormant_days if dormant_days is not None else _dormant_days_for_region(region)
+        semaphore = asyncio.Semaphore(max_concurrent)
+        region_name = region.name or region.code
+
+        results: List[CommunityHealth] = await asyncio.gather(
+            *(_recheck_one(client, c, region_name, dd, posts_sample, semaphore) for c in rows),
+            return_exceptions=False,
+        )
+
+        now = datetime.utcnow()
+        counts = {"active": 0, "dormant": 0, "dead": 0, "changed_category": 0, "errors": 0}
+        by_id = {c.id: c for c in rows}
+        for res in results:
+            counts[res.status] = counts.get(res.status, 0) + 1
+            if res.error_code is not None and res.status not in ("dead",):
+                counts["errors"] += 1
+            row = by_id.get(res.community_id)
+            if row is None:
+                continue
+            row.health_status = res.status
+            if res.last_post_at is not None:
+                row.last_post_at = res.last_post_at
+            row.checked_at = now
+            # suggested_category пишем только для changed_category; в остальных
+            # случаях очищаем, чтобы UI не подсвечивал устаревшую подсказку.
+            row.suggested_category = (
+                res.suggested_category if res.status == "changed_category" else None
+            )
+
+        await session.commit()
+
+        return {
+            "success": True,
+            "region": region.code,
+            "total": len(rows),
+            **counts,
+        }
+
+
+async def recheck_all_active_regions_async(
+    *,
+    posts_sample: int = DEFAULT_POSTS_SAMPLE,
+    max_concurrent_per_region: int = 4,
+    send_telegram: bool = True,
+) -> Dict[str, Any]:
+    """Health-check по всем `Region.is_active=True`, последовательно.
+
+    Между регионами — последовательно, чтобы не разрывать rate-limit одного
+    VK-токена. Внутри региона — параллельно (Semaphore=4).
+
+    По итогам прогона отправляет агрегированный Telegram-alert (если
+    есть non-active изменения и настроены TELEGRAM_TOKENS/CHAT_ID).
+    """
+    async with AsyncSessionLocal() as session:
+        region_ids = [
+            r.id
+            for r in (
+                await session.execute(
+                    select(Region)
+                    .where(Region.is_active == True)  # noqa: E712 — SQLAlchemy boolean
+                    .order_by(Region.code)
+                )
+            )
+            .scalars()
+            .all()
+        ]
+
+    if not region_ids:
+        return {"success": True, "regions": [], "total_regions": 0}
+
+    reports: List[Dict[str, Any]] = []
+    for rid in region_ids:
+        report = await recheck_communities_for_region_async(
+            rid,
+            posts_sample=posts_sample,
+            max_concurrent=max_concurrent_per_region,
+        )
+        reports.append(report)
+
+    if send_telegram:
+        try:
+            _maybe_send_recheck_telegram_alert(reports)
+        except Exception as e:  # pragma: no cover — alerting не должен валить таску
+            logger.warning("recheck: telegram alert failed: %s", e)
+
+    return {
+        "success": True,
+        "total_regions": len(region_ids),
+        "regions": reports,
+    }
+
+
+def _has_interesting_findings(reports: List[Dict[str, Any]]) -> bool:
+    """True, если хотя бы один регион нашёл dead / dormant / changed_category."""
+    for r in reports:
+        if not r.get("success"):
+            continue
+        if any(r.get(k, 0) for k in ("dead", "dormant", "changed_category")):
+            return True
+    return False
+
+
+def _format_recheck_message(reports: List[Dict[str, Any]]) -> str:
+    """Telegram-сообщение (HTML) по итогам recheck'а."""
+    totals = {"dead": 0, "dormant": 0, "changed_category": 0, "errors": 0, "total": 0}
+    region_lines: List[str] = []
+    for r in reports:
+        if not r.get("success"):
+            region_lines.append(f"  • <b>{r.get('region', '?')}</b>: ошибка — {r.get('error', '')}")
+            continue
+        for k in totals:
+            totals[k] += int(r.get(k, 0) or 0)
+        non_active = (
+            (r.get("dead") or 0) + (r.get("dormant") or 0) + (r.get("changed_category") or 0)
+        )
+        if non_active == 0:
+            continue
+        parts: List[str] = []
+        if r.get("dead"):
+            parts.append(f"💀 dead: {r['dead']}")
+        if r.get("dormant"):
+            parts.append(f"😴 dormant: {r['dormant']}")
+        if r.get("changed_category"):
+            parts.append(f"🔀 changed_category: {r['changed_category']}")
+        region_lines.append(f"  • <b>{r.get('region', '?')}</b> — " + ", ".join(parts))
+
+    lines: List[str] = []
+    lines.append("<b>🔬 Discovery recheck</b>")
+    lines.append("")
+    lines.append(f"Регионов: <b>{len(reports)}</b>, сообществ проверено: <b>{totals['total']}</b>")
+    lines.append(
+        f"💀 dead: <b>{totals['dead']}</b>, "
+        f"😴 dormant: <b>{totals['dormant']}</b>, "
+        f"🔀 changed_category: <b>{totals['changed_category']}</b>"
+    )
+    if totals["errors"]:
+        lines.append(f"⚠ transient errors (не сместили статус): {totals['errors']}")
+    if region_lines:
+        lines.append("")
+        lines.extend(region_lines)
+    return "\n".join(lines)
+
+
+def _maybe_send_recheck_telegram_alert(reports: List[Dict[str, Any]]) -> None:
+    """Send Telegram digest if recheck found anything actionable.
+
+    Использует тот же паттерн, что и
+    ``tasks.celery_app._maybe_send_telegram_notifications_alert``:
+    pick первого работающего бот-токена + ``TELEGRAM_ALERT_CHAT_ID``.
+    """
+    if not _has_interesting_findings(reports):
+        logger.info("recheck: nothing to report, skipping Telegram alert")
+        return
+    try:
+        import requests
+
+        from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+    except ImportError as e:  # pragma: no cover
+        logger.warning("recheck: telegram deps missing: %s", e)
+        return
+
+    bot_token = None
+    for key in ("VALSTANBOT", "ALERT", "AFONYA"):
+        bot_token = (TELEGRAM_TOKENS or {}).get(key)
+        if bot_token:
+            break
+    if not bot_token:
+        bot_token = next(iter((TELEGRAM_TOKENS or {}).values()), None)
+    if not bot_token or not TELEGRAM_ALERT_CHAT_ID:
+        logger.info("recheck: telegram not configured, skipping alert")
+        return
+
+    text = _format_recheck_message(reports)
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={
+                "chat_id": TELEGRAM_ALERT_CHAT_ID,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.warning(
+                "recheck: telegram sendMessage failed: %s %s",
+                resp.status_code,
+                resp.text[:300],
+            )
+        else:
+            logger.info("recheck: telegram alert sent")
+    except Exception as e:  # pragma: no cover
+        logger.warning("recheck: telegram send error: %s", e)
+
+
 # ─── Celery wrapper (для будущего шедулирования) ───
 # Импортируем app только тут, чтобы тесты на async-core не тащили Celery.
 
@@ -265,6 +560,16 @@ try:
     def run_discovery_for_region(region_id: int, categories: Optional[List[str]] = None):
         """Celery task: запускает discovery для одного региона."""
         return _run_coro(run_discovery_for_region_async(region_id, categories=categories))
+
+    @_celery_app.task(name="tasks.discovery_tasks.recheck_communities_for_region")
+    def recheck_communities_for_region(region_id: int):
+        """Celery task: health-check для одного региона (ad-hoc, без beat)."""
+        return _run_coro(recheck_communities_for_region_async(region_id))
+
+    @_celery_app.task(name="tasks.discovery_tasks.recheck_all_active_regions")
+    def recheck_all_active_regions():
+        """Celery beat task: weekly recheck по всем активным регионам."""
+        return _run_coro(recheck_all_active_regions_async())
 
 except Exception as _import_err:  # pragma: no cover
     # При локальном импорте без Celery (например, в тестах web-API)

@@ -1,0 +1,381 @@
+"""Unit tests for tasks/discovery_tasks.py recheck-functions (вторая итерация
+big idea — модуль авто-регистрации регионов и сообществ).
+
+Покрываем:
+
+- ``recheck_communities_for_region_async`` — обход одного региона: пишет
+  health поля, пропускает is_active=False, корректно отчитывается.
+- ``recheck_all_active_regions_async`` — обход всех регионов, агрегирует
+  report, дёргает Telegram-alert.
+- Pure helpers: ``_format_recheck_message``, ``_has_interesting_findings``,
+  ``_dormant_days_for_region``.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from database.models import Community, Region
+from modules.discovery.health_check import CommunityHealth
+from tasks import discovery_tasks as dt
+
+# ───────── helpers ─────────
+
+
+class _FakeSession:
+    """Async ctx-manager that hands out canned execute() results in order."""
+
+    def __init__(self, plan):
+        self._plan = list(plan)
+        self.committed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_a):
+        return False
+
+    async def execute(self, _stmt):
+        step = self._plan.pop(0)
+        result = MagicMock()
+        if step["kind"] == "scalar_one":
+            result.scalar_one_or_none.return_value = step["value"]
+        elif step["kind"] == "scalars_all":
+            scalars = MagicMock()
+            scalars.all.return_value = step["value"]
+            result.scalars.return_value = scalars
+        return result
+
+    async def commit(self):
+        self.committed = True
+
+
+def _make_region(*, id_=1, code="mi", name="МАЛМЫЖ — ИНФО", config=None, is_active=True):
+    r = Region(id=id_, code=code, name=name, is_active=is_active, config=config or {})
+    return r
+
+
+def _make_community(*, id_, vk_id=100, category="novost", is_active=True):
+    c = Community(
+        id=id_, region_id=1, vk_id=vk_id, name=f"C{id_}", category=category, is_active=is_active
+    )
+    c.health_status = "active"
+    c.last_post_at = None
+    c.suggested_category = None
+    c.checked_at = None
+    return c
+
+
+def _health(community_id, status, *, suggested=None, error_code=None, last_post_at=None):
+    return CommunityHealth(
+        community_id=community_id,
+        vk_id=100,
+        status=status,
+        last_post_at=last_post_at,
+        posts_sampled=5,
+        suggested_category=suggested,
+        error_code=error_code,
+        reasoning=None,
+    )
+
+
+# ───────── _dormant_days_for_region ─────────
+
+
+def test_dormant_days_default_when_config_missing():
+    r = _make_region(config={})
+    assert dt._dormant_days_for_region(r) == dt.DEFAULT_DORMANT_DAYS
+
+
+def test_dormant_days_default_when_config_invalid():
+    r = _make_region(config={"dormant_days": "lots"})
+    assert dt._dormant_days_for_region(r) == dt.DEFAULT_DORMANT_DAYS
+
+
+def test_dormant_days_uses_region_override():
+    r = _make_region(config={"dormant_days": 14})
+    assert dt._dormant_days_for_region(r) == 14
+
+
+def test_dormant_days_ignores_non_positive_override():
+    r = _make_region(config={"dormant_days": 0})
+    assert dt._dormant_days_for_region(r) == dt.DEFAULT_DORMANT_DAYS
+
+
+# ───────── recheck_communities_for_region_async ─────────
+
+
+@pytest.mark.asyncio
+async def test_recheck_returns_failure_when_no_token():
+    with patch.object(dt, "_pick_parse_token", return_value=None):
+        out = await dt.recheck_communities_for_region_async(1)
+    assert out["success"] is False
+    assert "VK parse-token" in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_recheck_returns_failure_when_region_missing():
+    session = _FakeSession([{"kind": "scalar_one", "value": None}])
+    with patch.object(dt, "_pick_parse_token", return_value="tok"), patch.object(
+        dt, "AsyncSessionLocal", return_value=session
+    ):
+        out = await dt.recheck_communities_for_region_async(42)
+    assert out["success"] is False
+    assert "region 42 not found" in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_recheck_zero_communities_returns_empty_report():
+    region = _make_region()
+    session = _FakeSession(
+        [
+            {"kind": "scalar_one", "value": region},
+            {"kind": "scalars_all", "value": []},
+        ]
+    )
+    with patch.object(dt, "_pick_parse_token", return_value="tok"), patch.object(
+        dt, "AsyncSessionLocal", return_value=session
+    ):
+        out = await dt.recheck_communities_for_region_async(1)
+    assert out == {
+        "success": True,
+        "region": "mi",
+        "total": 0,
+        "active": 0,
+        "dormant": 0,
+        "dead": 0,
+        "changed_category": 0,
+        "errors": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_recheck_writes_health_fields_and_aggregates_counts():
+    region = _make_region()
+    c_active = _make_community(id_=1, vk_id=10)
+    c_dormant = _make_community(id_=2, vk_id=20)
+    c_dead = _make_community(id_=3, vk_id=30)
+    c_changed = _make_community(id_=4, vk_id=40)
+    communities = [c_active, c_dormant, c_dead, c_changed]
+    session = _FakeSession(
+        [
+            {"kind": "scalar_one", "value": region},
+            {"kind": "scalars_all", "value": communities},
+        ]
+    )
+    fixed_last_post = datetime(2026, 5, 20, 12, 0)
+    results = {
+        1: _health(1, "active", last_post_at=fixed_last_post),
+        2: _health(2, "dormant"),
+        3: _health(3, "dead", error_code=15),
+        4: _health(4, "changed_category", suggested="reklama"),
+    }
+
+    async def fake_check(*, client, community, **_kwargs):
+        return results[community.id]
+
+    with patch.object(dt, "_pick_parse_token", return_value="tok"), patch.object(
+        dt, "AsyncSessionLocal", return_value=session
+    ), patch.object(dt, "VKClient", MagicMock()), patch.object(
+        dt, "check_community_health", side_effect=fake_check
+    ):
+        out = await dt.recheck_communities_for_region_async(1)
+
+    assert out["success"] is True
+    assert out["total"] == 4
+    assert out["active"] == 1
+    assert out["dormant"] == 1
+    assert out["dead"] == 1
+    assert out["changed_category"] == 1
+    # dead не считается transient error'ом
+    assert out["errors"] == 0
+    # in-place поля проставлены
+    assert c_active.health_status == "active"
+    assert c_active.last_post_at == fixed_last_post
+    assert c_active.checked_at is not None
+    assert c_dead.health_status == "dead"
+    assert c_changed.health_status == "changed_category"
+    assert c_changed.suggested_category == "reklama"
+    # active не должен иметь suggested_category
+    assert c_active.suggested_category is None
+    assert session.committed is True
+
+
+@pytest.mark.asyncio
+async def test_recheck_counts_transient_errors():
+    region = _make_region()
+    c = _make_community(id_=1)
+    session = _FakeSession(
+        [
+            {"kind": "scalar_one", "value": region},
+            {"kind": "scalars_all", "value": [c]},
+        ]
+    )
+    # Transient: status остался прежним 'active', но error_code заполнен (e.g. 6).
+    transient = CommunityHealth(
+        community_id=1,
+        vk_id=100,
+        status="active",
+        last_post_at=None,
+        posts_sampled=0,
+        suggested_category=None,
+        error_code=6,
+        reasoning="rate limit",
+    )
+
+    async def fake_check(**_kwargs):
+        return transient
+
+    with patch.object(dt, "_pick_parse_token", return_value="tok"), patch.object(
+        dt, "AsyncSessionLocal", return_value=session
+    ), patch.object(dt, "VKClient", MagicMock()), patch.object(
+        dt, "check_community_health", side_effect=fake_check
+    ):
+        out = await dt.recheck_communities_for_region_async(1)
+    assert out["errors"] == 1
+    assert out["active"] == 1
+
+
+# ───────── recheck_all_active_regions_async ─────────
+
+
+@pytest.mark.asyncio
+async def test_recheck_all_aggregates_per_region_reports():
+    r1 = _make_region(id_=1, code="mi")
+    r2 = _make_region(id_=2, code="vp")
+    outer_session = _FakeSession([{"kind": "scalars_all", "value": [r1, r2]}])
+    per_region_reports = [
+        {
+            "success": True,
+            "region": "mi",
+            "total": 3,
+            "active": 2,
+            "dormant": 1,
+            "dead": 0,
+            "changed_category": 0,
+            "errors": 0,
+        },
+        {
+            "success": True,
+            "region": "vp",
+            "total": 5,
+            "active": 4,
+            "dormant": 0,
+            "dead": 1,
+            "changed_category": 0,
+            "errors": 0,
+        },
+    ]
+    plan = list(per_region_reports)
+
+    async def fake_recheck_region(region_id, **_kwargs):
+        return plan.pop(0)
+
+    with patch.object(dt, "AsyncSessionLocal", return_value=outer_session), patch.object(
+        dt, "recheck_communities_for_region_async", AsyncMock(side_effect=fake_recheck_region)
+    ), patch.object(dt, "_maybe_send_recheck_telegram_alert") as alert_mock:
+        out = await dt.recheck_all_active_regions_async()
+
+    assert out["success"] is True
+    assert out["total_regions"] == 2
+    assert [r["region"] for r in out["regions"]] == ["mi", "vp"]
+    alert_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_recheck_all_empty_regions_short_circuits():
+    outer_session = _FakeSession([{"kind": "scalars_all", "value": []}])
+    with patch.object(dt, "AsyncSessionLocal", return_value=outer_session):
+        out = await dt.recheck_all_active_regions_async()
+    assert out == {"success": True, "regions": [], "total_regions": 0}
+
+
+# ───────── _has_interesting_findings ─────────
+
+
+def test_has_interesting_findings_true_on_dead():
+    reports = [{"success": True, "region": "mi", "dead": 1, "dormant": 0, "changed_category": 0}]
+    assert dt._has_interesting_findings(reports) is True
+
+
+def test_has_interesting_findings_false_on_all_active():
+    reports = [{"success": True, "region": "mi", "dead": 0, "dormant": 0, "changed_category": 0}]
+    assert dt._has_interesting_findings(reports) is False
+
+
+def test_has_interesting_findings_ignores_failed_reports():
+    reports = [{"success": False, "error": "boom"}]
+    assert dt._has_interesting_findings(reports) is False
+
+
+# ───────── _format_recheck_message ─────────
+
+
+def test_format_message_includes_per_region_breakdown():
+    reports = [
+        {
+            "success": True,
+            "region": "mi",
+            "total": 5,
+            "active": 3,
+            "dormant": 1,
+            "dead": 1,
+            "changed_category": 0,
+            "errors": 0,
+        },
+        {
+            "success": True,
+            "region": "vp",
+            "total": 4,
+            "active": 2,
+            "dormant": 0,
+            "dead": 0,
+            "changed_category": 2,
+            "errors": 0,
+        },
+    ]
+    msg = dt._format_recheck_message(reports)
+    assert "Discovery recheck" in msg
+    assert "<b>mi</b>" in msg
+    assert "<b>vp</b>" in msg
+    assert "dead: 1" in msg
+    assert "changed_category: 2" in msg
+
+
+def test_format_message_skips_region_with_no_findings():
+    reports = [
+        {
+            "success": True,
+            "region": "mi",
+            "total": 5,
+            "active": 5,
+            "dormant": 0,
+            "dead": 0,
+            "changed_category": 0,
+            "errors": 0,
+        },
+        {
+            "success": True,
+            "region": "vp",
+            "total": 1,
+            "active": 0,
+            "dormant": 1,
+            "dead": 0,
+            "changed_category": 0,
+            "errors": 0,
+        },
+    ]
+    msg = dt._format_recheck_message(reports)
+    # mi с нулевыми non-active в детальной разбивке не должен попасть как bullet
+    assert msg.count("<b>mi</b>") == 0
+    assert "<b>vp</b>" in msg
+
+
+def test_format_message_shows_failed_regions():
+    reports = [{"success": False, "region": "mi", "error": "no token"}]
+    msg = dt._format_recheck_message(reports)
+    assert "ошибка" in msg
+    assert "no token" in msg
