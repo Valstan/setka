@@ -48,6 +48,47 @@
 
 ---
 
+## 2026-05-23 — Тесты на F821-восстановленные ветки + релиз сегодняшних PR на прод
+
+**Тема сессии:** закрыть последний 🟡 техдолг из «легаси-зачистки» 2026-05-22 — покрыть тестами 4 функции, в которых тогда восстанавливались импорты (`ContextFactory.create_from_region`, `retry_with_fallback`, `retry_with_circuit_breaker`, `truncate_text`-ветка в `digest_builder.py:434`). Эти ветки не вызывались в runtime — иначе ловили бы `NameError` в проде. Без тестов следующий aggressive autoflake опять снесёт импорты молча. Заодно — релиз сегодняшних PR на прод.
+
+### Изменения
+
+#### Тесты (+14, итого 379)
+
+- **`tests/test_core/__init__.py`** + **`tests/test_core/test_context_factory.py`** (3 теста): `ContextFactory.create_from_region` success-path (region из БД → ProcessingContext с правильными полями + split neighbors), не найден → `ValueError`, пустые neighbors → пустой список.
+- **`tests/test_utils/test_retry_utility.py`** (6 тестов): `retry_with_fallback` (primary succeeds first try / falls back after retries / both fail → SetkaException с details), `retry_with_circuit_breaker` (closed → success path, closed + fail → record + reraise, threshold → OPEN → не вызывает func, raises SetkaException). Helper `_named_async_mock` для проставления `__name__` на AsyncMock (нужно retry-логике для логов и details).
+- **`tests/test_utils/test_text_utils.py`** (5 тестов): `truncate_text` — короткий не меняется, пустая строка, длинный + default `...`, кастомный suffix, **integration через `TextOnlyDigestBuilder.build_bezfoto_digest`** (live-ветка F821 в `digest_builder.py:434`, мигрирована из old_postopus `post_bezfoto()`).
+
+#### Релиз сегодняшних PR на прод
+
+- `ssh setka 'cd /home/valstan/SETKA && git pull origin main'` — прод подтянул `2f88177 → 4191452` (PR #10 mailbox onboarding, #11 mailbox asymmetry, #12 branch protection + dev-worktree, #13 SETKA_LOGS_DIR, #14 setup-dev fallback).
+- `sudo systemctl restart setka setka-celery-worker setka-celery-beat` — все 3 active.
+- `curl http://127.0.0.1:8000/api/health/full` — **200**, status=healthy, БД 14 регионов / 715 communities, CPU 0.0%, mem 19.4%, disk 43.4%, warnings empty.
+- `tail celery-worker.log` — только фоновые WARNING `[15] Access denied: group is blocked` (известный паттерн, не связано с релизом).
+- Sanity: `parser.log` + `parser/` на проде существуют — `SETKA_LOGS_DIR` дефолт работает без явного env.
+
+#### Обнаружено по ходу: SSH alias `setka`, не `setka-prod`
+
+В `~/.ssh/config` реальный alias хоста — `setka` (`3931b3fe50ab.vps.myjino.ru:49237`), а CLAUDE.md, `.claude/commands/*.md`, `.claude/settings.json` (`Bash(ssh setka-prod:*)`) и slash-команды используют устаревшее имя `setka-prod`. Сегодня все попытки `ssh setka-prod` через Bash/PowerShell падали с `Could not resolve hostname`; пришлось переключиться на правильный alias на лету. Записан 🟡 техдолг в `PENDING_FOLLOWUPS.md` — нужно прогнать sweep по docs/settings/commands.
+
+### Проверка / прогон
+
+- Локально: `pytest tests/ -q` — **379/379 зелёных** (было 365 → +14).
+- `pre-commit run --all-files` — Passed.
+- На проде: см. блок «Релиз сегодняшних PR».
+
+### Применение
+
+- На проде: ничего не нужно — деплой сделан в этой же записи. Если PR с этими тестами тоже потом релизить — `git pull` + restart не требуется, тесты в прод-runtime не входят.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- Закрыт техдолг «Покрыть тестами восстановленные F821-ветки».
+- 🟡 Новый: SSH alias `setka-prod` → `setka` в docs/settings/commands.
+
+---
+
 ## 2026-05-23 — setup-dev.ps1: fallback на Python 3.12 + UTF-8 BOM
 
 **Тема сессии:** при bootstrap'е сегодняшнего dev-worktree скрипт `scripts/setup-dev.ps1` упал, потому что хардкодил `py -3.11`, а локально установлен только Python 3.12 (=прод). Bash-вариант `setup-dev.sh` уже умел fallback (`python3.11 → python3.12 → python3`), а PS — нет. Заодно вскрылся второй баг: файл без UTF-8 BOM, и PowerShell 5.1 на русской системной локали (cp1251) интерпретировал кириллицу как mojibake, ломая парсинг ещё до выполнения. Скрипт просто никто не пытался запустить после правок 2026-05-22, поэтому проблему не замечали.
