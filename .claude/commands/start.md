@@ -100,11 +100,12 @@ ref:
 
 Прочитай **полностью** в одном параллельном блоке:
 
-1. [`CLAUDE.md`](../../CLAUDE.md) — entry point, правила, lessons learned
-2. [`docs/AI_DEV_GUIDE.md`](../../docs/AI_DEV_GUIDE.md) — архитектурная картина
-3. [`docs/DEV_HISTORY.md`](../../docs/DEV_HISTORY.md) — что сделано в последних сессиях (читай первые ~300 строк, остальное по запросу)
-4. [`docs/PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) — открытые задачи и техдолги
-5. [`docs/START_HERE.md`](../../docs/START_HERE.md) — быстрые команды на проде
+1. [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md) — sticky-note с прошлой сессии: `Status`, текущая нитка, следующий шаг, failed approaches. **Если файла нет** или `Status: IDLE` — нет активной нитки, идём по обычному onboarding.
+2. [`CLAUDE.md`](../../CLAUDE.md) — entry point, правила, lessons learned
+3. [`docs/AI_DEV_GUIDE.md`](../../docs/AI_DEV_GUIDE.md) — архитектурная картина
+4. [`docs/DEV_HISTORY.md`](../../docs/DEV_HISTORY.md) — что сделано в последних сессиях (читай первые ~300 строк, остальное по запросу)
+5. [`docs/PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) — открытые задачи и техдолги
+6. [`docs/START_HERE.md`](../../docs/START_HERE.md) — быстрые команды на проде
 
 Memory-файлы автоматически подгружены через `MEMORY.md` — учитывай их (особенно `reference-prod-access`, `reference-local-env`, `feedback-prod-only-ssh`, `feedback-commit-devhistory`).
 
@@ -162,18 +163,19 @@ ssh -o ConnectTimeout=10 setka "cd /home/valstan/SETKA && git log --oneline -3" 
 
 0. **📬 Mailbox:** `N писем от brain_matrica` со списком `[urgency COMPLIANCE] slug — topic` (из Шага 0). Любые `MANDATE` / `high` выделить отдельно. Если писем нет — `📬 mailbox чист`.
 1. **Сессия:** `СЕТКА <дата>` — отмечена.
-2. **Что нового** (последняя запись из `DEV_HISTORY.md`): 1-2 строки.
-3. **Git:** ветка, ahead/behind, был ли `pull`, uncommitted-файлы (если есть).
-4. **Локально:** venv (есть/нет), `pytest --co` (N tests / ошибки).
-5. **Прод** (если делали probe): systemd (active/inactive), `/api/health/full` (200/ошибка), последний коммит на проде.
-6. **🔴 Блокеры и ⏳ в процессе** из `PENDING_FOLLOWUPS.md`.
-7. **Самые свежие 🟡 техдолги** (топ-3) и 🟢 идеи (топ-3) — кратко.
-8. **Чем займёмся?** — открытый вопрос. Если есть `MANDATE`-письма в mailbox — предложить их первыми.
+2. **Нитка из `SESSION_HANDOFF.md`**: если `Status: ACTIVE` — текущая нитка + следующий шаг дословно. Если `Status: IDLE` или файла нет — «Активной нитки нет, открытая стартовая позиция».
+3. **Что нового** (последняя запись из `DEV_HISTORY.md`): 1-2 строки.
+4. **Git:** ветка, ahead/behind, был ли `pull`, uncommitted-файлы (если есть).
+5. **Локально:** venv (есть/нет), `pytest --co` (N tests / ошибки).
+6. **Прод** (если делали probe): systemd (active/inactive), `/api/health/full` (200/ошибка), последний коммит на проде.
+7. **🔴 Блокеры и ⏳ в процессе** из `PENDING_FOLLOWUPS.md`.
+8. **Самые свежие 🟡 техдолги** (топ-3) и 🟢 идеи (топ-3) — кратко.
+9. **Чем займёмся?** — открытый вопрос. Приоритет: `MANDATE`-письма → активная нитка из handoff → 🔴 блокеры → выбор пользователя.
 
-Если есть блокеры или `MANDATE`-почта — подсветить отдельно. Если всё чисто — так и сказать.
+Если есть блокеры, `MANDATE`-почта или активная нитка с конкретным «следующим шагом» — подсветить отдельно. Если всё чисто — так и сказать.
 
 ## Шаг 7. Напоминание для закрытия сессии
 
 В конце ответа сноска:
 
-> При значимых правках — обнови `docs/DEV_HISTORY.md` (новый блок сверху, шаблон в шапке файла) и [`PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) **до коммита**. Команда `/reliz` ведёт через релиз; `/finish` — через закрытие сессии без деплоя.
+> При значимых правках — обнови `docs/DEV_HISTORY.md` (новый блок сверху, шаблон в шапке файла) и [`PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) **до коммита**. `/reliz` ведёт через релиз; `/finish` — через закрытие сессии без деплоя; [`/close_session`](close_session.md) — фиксирует [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md) (текущая нитка + следующий шаг) для непрерывности между сессиями.

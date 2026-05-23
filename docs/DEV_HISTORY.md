@@ -48,6 +48,42 @@
 
 ---
 
+## 2026-05-23 — `/close_session` + `docs/SESSION_HANDOFF.md` (sticky-note между сессиями)
+
+**Тема сессии:** в братских проектах ([Gonba](../../Gonba/.claude/commands/close_session.md), [MatricaRMZ](../../MatricaRMZ/.claude/commands/close_session.md)) есть `/close_session`, который перезаписывает `docs/SESSION_HANDOFF.md` — sticky-note с активной ниткой, следующим шагом, failed approaches. У setka такого не было — есть `DEV_HISTORY.md` (исторический лог) и `PENDING_FOLLOWUPS.md` (хвосты), но не было «куда мы шли». Создаём `/close_session` по образу братьев + адаптация под setka (PR-only flow, brain mailbox, SSH).
+
+### Изменения
+
+- **`.claude/commands/close_session.md`** — новая slash-команда. Структура аналогична Gonba/MatricaRMZ (шаги 1-6: контекст → AskUserQuestion → перезаписать handoff → синхронизация PENDING → commit+push → отчёт), но адаптирована под setka:
+  - Direct push в `main` запрещён ([ADR-0002](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)) — handoff коммит обязательно идёт через feature-ветку `chore/handoff-YYYY-MM-DD` (или присоединяется к ветке текущей нитки) + PR.
+  - Чётко разделена ответственность с `/finish` и `/reliz`: `/finish` фиксирует рабочие правки кода, `/close_session` — state of mind, `/reliz` деплоит на прод.
+  - Таблица «где что фиксируется» — `SESSION_HANDOFF` (нитка), `DEV_HISTORY` (хронология), `PENDING_FOLLOWUPS` (хвосты), `CLAUDE.md` (вечные уроки), `brain_matrica/adr/` (архитектурные решения), `mailbox/to-brain/` (исходящие brain'у).
+- **`docs/SESSION_HANDOFF.md`** — создан с initial content: `Status: IDLE` (большой техдолг flake8 закрыт за сегодня, нет активной нитки), 2-3 кандидатные стартовые точки на следующую сессию (мониторинг F601-фикса, dev-doctor, миграция publisher.py, ломка длинных строк).
+- **`CLAUDE.md`** — таблица «Источники правды» получила новую строку с `SESSION_HANDOFF.md` (вверху, перед `START_HERE`); таблица slash-команд — новую строку `/close_session`.
+- **`.claude/commands/start.md`** — Шаг 2 (Source of truth) теперь читает `SESSION_HANDOFF.md` первым (если есть; `Status: IDLE` или отсутствие файла — ОК); Шаг 6 (отчёт) — отдельный пункт «Нитка из SESSION_HANDOFF»; Шаг 7 (напоминание) — добавлена ссылка на `/close_session`.
+- **`.claude/commands/finish.md`** — описание расширено: соседние команды `/reliz` и `/close_session` с указанием «обычный flow конца дня: сначала `/finish` для рабочих правок, потом `/close_session` для handoff'а».
+
+### Чем НЕ занимались
+
+- Не меняли `/finish` функционально — он остаётся как есть, добавлены только ссылки на соседние команды.
+- Не создавали handoff-формат «накопительный» — следуем подходу Gonba/MatricaRMZ: handoff **перезаписывается** каждой `/close_session`, история через `git log -- docs/SESSION_HANDOFF.md` и `DEV_HISTORY.md`.
+
+### Проверка / прогон
+
+- Тестов нет — изменения только в markdown (docs + slash-команды). Pytest не задевает.
+- `pre-commit run --all-files` — для markdown black/isort/flake8 не запускаются (пути исключены).
+
+### Применение
+
+- На проде: **ничего не нужно** — изменения только в `.claude/commands/`, `docs/`, `CLAUDE.md`. Runtime не задевает.
+- В следующей сессии: `/start` подгрузит `SESSION_HANDOFF.md` первым, доложит про активную нитку (или её отсутствие). При закрытии — `/close_session` перезапишет файл и закоммитит через PR.
+
+### Хвосты
+
+_Нет — задача атомарная, всё сделано в одной сессии._
+
+---
+
 ## 2026-05-23 — Legacy flake8 cleanup PR 3: E402 (147 импортов → `# noqa: E402`) — завершение техдолга
 
 **Тема сессии:** третий и финальный PR техдолга «доочистка legacy flake8-ошибок». PR 1 закрыл E712 + мелочёвку, PR 2 закрыл E501 (см. ниже). PR 3 закрывает E402 (module-level import not at top of file) и **полностью убирает legacy-маскировку из `.pre-commit-config.yaml`** — `extend-ignore` теперь содержит только `E203,W503` (стандартный black ↔ pep8 конфликт). Все новые нарушения flake8 теперь падают в pre-commit.
