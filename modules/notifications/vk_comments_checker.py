@@ -97,14 +97,12 @@ class VKCommentsChecker(BaseVKChecker):
                 break
 
             page_kept_any = False
-            page_oldest_after_cutoff = False  # True если хотя бы один коммент страницы новее cutoff
 
             for c in items:
                 c_date = c.get("date")
                 if not c_date:
                     continue
                 if int(c_date) >= cutoff_ts:
-                    page_oldest_after_cutoff = True
                     recent.append(c)
                     page_kept_any = True
                     # Распаковка thread.items — ответы первого уровня.

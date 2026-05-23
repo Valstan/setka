@@ -64,8 +64,6 @@ class NeighborSharing:
         # Map region names to codes
         from scripts.migrate_mongodb_config import REGION_MAPPING
 
-        reverse_mapping = {v: k for k, v in REGION_MAPPING.items()}
-
         neighbor_codes = []
         for code, name in REGION_MAPPING.items():
             if name in neighbor_names:

@@ -332,7 +332,7 @@ async def recheck_communities_for_region_async(
                 await session.execute(
                     select(Community).where(
                         Community.region_id == region_id,
-                        Community.is_active == True,  # noqa: E712 — SQLAlchemy boolean
+                        Community.is_active.is_(True),
                     )
                 )
             )
@@ -411,9 +411,7 @@ async def recheck_all_active_regions_async(
             r.id
             for r in (
                 await session.execute(
-                    select(Region)
-                    .where(Region.is_active == True)  # noqa: E712 — SQLAlchemy boolean
-                    .order_by(Region.code)
+                    select(Region).where(Region.is_active.is_(True)).order_by(Region.code)
                 )
             )
             .scalars()

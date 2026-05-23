@@ -21,7 +21,7 @@ async def main():
         print("✅ Database tables created successfully!")
 
         # Test connection
-        async with engine.connect() as conn:
+        async with engine.connect():
             print("✅ Database connection test successful!")
 
     except Exception as e:

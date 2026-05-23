@@ -62,13 +62,13 @@ async def get_system_stats(db: AsyncSession = Depends(get_db_session)):
         total_regions = total_regions_result.scalar() or 0
 
         active_regions_result = await db.execute(
-            select(func.count(Region.id)).where(Region.is_active == True)
+            select(func.count(Region.id)).where(Region.is_active.is_(True))
         )
         active_regions = active_regions_result.scalar() or 0
 
         # Get communities count
         communities_result = await db.execute(
-            select(func.count(Community.id)).where(Community.is_active == True)
+            select(func.count(Community.id)).where(Community.is_active.is_(True))
         )
         communities_count = communities_result.scalar() or 0
 
@@ -88,7 +88,7 @@ async def get_system_stats(db: AsyncSession = Depends(get_db_session)):
         vk_tokens_total = vk_tokens_result.scalar() or 0
 
         active_vk_tokens_result = await db.execute(
-            select(func.count(VKToken.id)).where(VKToken.is_active == True)
+            select(func.count(VKToken.id)).where(VKToken.is_active.is_(True))
         )
         vk_tokens_active = active_vk_tokens_result.scalar() or 0
 
@@ -153,7 +153,7 @@ async def get_current_operations(db: AsyncSession = Depends(get_db_session)):
         recent_posts = recent_posts_result.scalars().all()
 
         # Get active regions
-        active_regions_result = await db.execute(select(Region).where(Region.is_active == True))
+        active_regions_result = await db.execute(select(Region).where(Region.is_active.is_(True)))
         active_regions = active_regions_result.scalars().all()
 
         # Get tracked operations (both active and recent)
@@ -286,7 +286,7 @@ async def get_regions_status(db: AsyncSession = Depends(get_db_session)):
             # Get communities count for region
             communities_count_result = await db.execute(
                 select(func.count(Community.id)).where(
-                    and_(Community.region_id == region.id, Community.is_active == True)
+                    and_(Community.region_id == region.id, Community.is_active.is_(True))
                 )
             )
             communities_count = communities_count_result.scalar() or 0
@@ -391,13 +391,11 @@ async def get_workflow_status():
 async def get_live_monitoring(db: AsyncSession = Depends(get_db_session)):
     """Get live monitoring data (all stats combined)"""
     try:
-        now = now_moscow()
-
         # Get all monitoring data sequentially to avoid concurrent session issues
         stats_result = await get_system_stats(db)
         operations_result = await get_current_operations(db)
         regions_result = await get_regions_status(db)
-        workflow_result = await get_workflow_status()
+        workflow_data = await _get_workflow_status_data()
 
         return {
             "success": True,
@@ -405,7 +403,7 @@ async def get_live_monitoring(db: AsyncSession = Depends(get_db_session)):
                 "stats": stats_result.get("data", {}),
                 "operations": operations_result.get("data", {}),
                 "regions": regions_result.get("data", {}),
-                "workflow": workflow_result.get("data", {}),
+                "workflow": workflow_data,
                 "timestamp": now_moscow().isoformat(),
             },
         }
@@ -415,15 +413,12 @@ async def get_live_monitoring(db: AsyncSession = Depends(get_db_session)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Helper function for workflow status
-async def get_workflow_status():
-    """Get workflow status (helper function)"""
+# Helper used by /live; the public endpoint at /workflow-status (defined above)
+# adds a {success, data} wrapper and a celery_status / work_hours summary.
+async def _get_workflow_status_data():
     try:
         work_hours_start = PRODUCTION_WORKFLOW_CONFIG.get("work_hours_start", 7)
         work_hours_end = PRODUCTION_WORKFLOW_CONFIG.get("work_hours_end", 22)
-
-        now = now_moscow()
-        current_hour = get_moscow_hour()
 
         if is_work_hours_moscow(work_hours_start, work_hours_end):
             return {

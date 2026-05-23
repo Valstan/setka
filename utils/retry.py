@@ -189,7 +189,7 @@ async def retry_with_circuit_breaker(func: Callable, circuit_breaker, *args, **k
         circuit_breaker.record_success()
         return result
 
-    except Exception as e:
+    except Exception:
         circuit_breaker.record_failure()
         raise
 

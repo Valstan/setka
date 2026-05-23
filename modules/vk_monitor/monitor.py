@@ -193,7 +193,7 @@ class VKMonitor:
             # Get active communities in region
             result = await session.execute(
                 select(Community).where(
-                    and_(Community.region_id == region.id, Community.is_active == True)
+                    and_(Community.region_id == region.id, Community.is_active.is_(True))
                 )
             )
             communities = result.scalars().all()
@@ -234,7 +234,7 @@ class VKMonitor:
         """
         async with AsyncSessionLocal() as session:
             # Get all active regions
-            result = await session.execute(select(Region).where(Region.is_active == True))
+            result = await session.execute(select(Region).where(Region.is_active.is_(True)))
             regions = result.scalars().all()
 
             total_communities = 0

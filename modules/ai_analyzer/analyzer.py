@@ -125,7 +125,7 @@ class PostAnalyzer:
         ):
             result = await session.execute(
                 select(Filter.pattern).where(
-                    and_(Filter.type == "blacklist_word", Filter.is_active == True)
+                    and_(Filter.type == "blacklist_word", Filter.is_active.is_(True))
                 )
             )
             _blacklist_cache_patterns = [p for p in result.scalars().all() if p]
@@ -289,7 +289,7 @@ class PostAnalyzer:
         async with AsyncSessionLocal() as session:
             # Get new posts
             result = await session.execute(
-                select(Post).where(Post.ai_analyzed == False).limit(limit)
+                select(Post).where(Post.ai_analyzed.is_(False)).limit(limit)
             )
             posts = result.scalars().all()
 
@@ -305,7 +305,7 @@ class PostAnalyzer:
 
             for post in posts:
                 try:
-                    analysis = await self.analyze_post(post, session)
+                    await self.analyze_post(post, session)
 
                     if post.status == "approved":
                         approved_count += 1

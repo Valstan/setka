@@ -74,7 +74,7 @@ async def get_vk_stats(db: AsyncSession = Depends(get_db_session)):
         # Count active tokens from database
         active_tokens_result = await db.execute(
             select(func.count(VKToken.id)).where(
-                VKToken.is_active == True, VKToken.validation_status == "valid"
+                VKToken.is_active.is_(True), VKToken.validation_status == "valid"
             )
         )
         active_tokens = active_tokens_result.scalar() or 0
@@ -219,7 +219,7 @@ async def get_carousel_status(db: AsyncSession = Depends(get_db_session)):
     try:
         # Simplified carousel status without carousel_manager dependency
         regions_result = await db.execute(
-            select(Region.code, Region.name).where(Region.is_active == True)
+            select(Region.code, Region.name).where(Region.is_active.is_(True))
         )
         regions = regions_result.fetchall()
 

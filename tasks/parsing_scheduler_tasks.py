@@ -147,7 +147,7 @@ def parse_and_publish_theme(
                 select(Community.vk_id).where(
                     Community.region_id == region.id,
                     Community.category == theme,
-                    Community.is_active == True,
+                    Community.is_active.is_(True),
                 )
             )
             community_ids = [row[0] for row in communities_result.fetchall()]
@@ -159,7 +159,7 @@ def parse_and_publish_theme(
                 )
                 fallback_result = await session.execute(
                     select(Community.vk_id).where(
-                        Community.region_id == region.id, Community.is_active == True
+                        Community.region_id == region.id, Community.is_active.is_(True)
                     )
                 )
                 community_ids = [row[0] for row in fallback_result.fetchall()]
@@ -495,7 +495,7 @@ def run_all_regions_theme(theme: str):
                 .where(
                     Community.region_id == Region.id,
                     Community.category == theme,
-                    Community.is_active == True,
+                    Community.is_active.is_(True),
                 )
                 .exists()
             )
@@ -503,13 +503,13 @@ def run_all_regions_theme(theme: str):
                 select(Community.id)
                 .where(
                     Community.region_id == Region.id,
-                    Community.is_active == True,
+                    Community.is_active.is_(True),
                 )
                 .exists()
             )
             result = await session.execute(
                 select(Region.code).where(
-                    Region.is_active == True,
+                    Region.is_active.is_(True),
                     Region.vk_group_id.isnot(None),
                     Region.code != "kirov_obl",
                     exists().where(RegionConfig.region_code == Region.code),

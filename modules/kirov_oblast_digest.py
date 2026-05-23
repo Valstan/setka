@@ -120,7 +120,7 @@ async def _resolve_source_region_codes(
 
     r = await session.execute(
         select(Region.code).where(
-            Region.is_active == True,
+            Region.is_active.is_(True),
             Region.vk_group_id.isnot(None),
             Region.code != oblast_code,
         )
@@ -362,7 +362,7 @@ async def run_kirov_oblast_digest(
         oblast_news_posts.append(p)
 
     comm_meta = await session.execute(
-        select(Community.vk_id, Community.name).where(Community.is_active == True)
+        select(Community.vk_id, Community.name).where(Community.is_active.is_(True))
     )
     group_names = {str(abs(row[0])): row[1] for row in comm_meta.fetchall()}
 

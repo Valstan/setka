@@ -48,6 +48,86 @@
 
 ---
 
+## 2026-05-23 — Legacy flake8 cleanup PR 1: E712 + мелочёвка (E722/F601/F811/F841/W291 + E303/E302/W391/F541)
+
+**Тема сессии:** в [`PENDING_FOLLOWUPS.md`](PENDING_FOLLOWUPS.md) с 2026-05-22 висел крупный техдолг — `extend-ignore` в `.pre-commit-config.yaml` маскировал ~330 реальных нарушений flake8 (E402=147, E501=96, E712=47, F841=18, W291=16, мелочёвка ещё ~12). Это маскировка, не починка. Цель сессии — закрыть E712 и всю мелочёвку одним PR, оставив E402 и E501 на следующие PR.
+
+По ходу обнаружились **2 реальных runtime-бага** под маской F601/F811.
+
+### Изменения
+
+#### 1. E712 (47 нарушений) — SQLAlchemy `== True/False` → `.is_(True/False)`
+
+Все 47 случаев — SQLAlchemy column comparisons в `.where(...)` / `.filter(...)`. Только две колонки: `is_active` (на `Region`/`Filter`/`VKToken`/`Community`) и `ai_analyzed` (на `Post`). Plain Python кейсов нет. Применил one-off Python скрипт с regex `(\w+\.(?:is_active|ai_analyzed))\s*==\s*(True|False)` → `.is_(\2)`. 51 правка в 23 файлах (47 «настоящих» + 4 строки, уже имевшие `# noqa: E712` в `tasks/celery_app.py` / `tasks/discovery_tasks.py` — попутно убрал теперь-уже-лишние noqa).
+
+Затронуто: `modules/{ai_analyzer,analytics,filters,vk_monitor,kirov_oblast_digest}/...`, `monitoring/metrics.py`, `scripts/{import_postopus_data,run_production_workflow,test_*,test_publisher,test_vk_*}.py`, `tasks/{celery_app,discovery_tasks,parsing_scheduler_tasks}.py`, `web/api/{communities,publisher,system_monitoring,vk_monitoring}.py`.
+
+#### 2. F601 (баг!) — `utils/text_utils.py:124,139` duplicate dict key
+
+`commercial_patterns` имел два списка под одинаковым ключом `2` → Python молча оставлял только второй («Calls to action», 7 паттернов: `звоните`, `пишите`, `тел.`, `whatsapp`…), а **первый («Prices and discounts», 12 паттернов: `цена`, `скидка`, `купить`, `заказать`, `\d+\s*руб`, `\d+\s*₽`…) полностью терялся**. Посты с ценами/скидками не детектировались как реклама. Объединил оба списка под ключом 2 — теперь фильтр работает как изначально задумано (восстановлены 12 потерянных паттернов). Поведение в проде станет **более агрессивным** на реклам с ценами; следить после деплоя.
+
+#### 3. F811 (баг!) — `web/api/system_monitoring.py:419` duplicate function
+
+Helper-функция `get_workflow_status` (line 419) шадоила endpoint с тем же именем (line 345, `@router.get("/workflow-status")`). Endpoint сам по себе работал через router-decorator (зарегистрирован первой функцией), но вызов `await get_workflow_status()` внутри `/api/system_monitoring/live` (`get_live_monitoring`) попадал в helper, который возвращает голый dict без `data`-обёртки. На `/live` приходило `workflow: {}` (потому что `.get("data", {})` от без-обёрточного dict давал пусто). Переименовал helper → `_get_workflow_status_data()`, в `get_live_monitoring` поменял на `workflow_data = await _get_workflow_status_data()` + `"workflow": workflow_data` (без `.get("data")`). Теперь `/live` отдаёт реальный workflow-статус.
+
+Заодно убрал 3 F841 в этом же файле (`now = now_moscow()` на :394, :425; `current_hour = get_moscow_hour()` на :426 — не использовались).
+
+#### 4. F811 (косметика) — `modules/notifications/vk_suggested_checker.py:128`
+
+В `if __name__ == "__main__":` блоке повторно импортировался `from datetime import datetime`, уже импортированный на line 17. Убрал дубль.
+
+#### 5. F841 unused locals (18) — точечная зачистка
+
+Удалены либо мёртвые объявления, либо переименованы в `_var`, либо `except X as e:` без использования → `except X:`. Файлы:
+- `modules/ai_analyzer/analyzer.py:308` — `analysis = await self.analyze_post(...)` — return не использовался (метод side-effect-меняет `post.status`); убрал binding.
+- `modules/filters/photo_duplicate_filter.py:191`, `monitoring/metrics.py:161`, `utils/retry.py:192` — `except Exception as e:` без использования `e` → `except Exception:`.
+- `modules/notifications/vk_comments_checker.py:107` — `page_oldest_after_cutoff` set'ался но никогда не читался; удалил.
+- `modules/publisher/neighbor_sharing.py:67`, `scripts/migrate_mongodb_config.py:330` — `reverse_mapping = {v: k for k, v in REGION_MAPPING.items()}` объявлен, но в цикле дальше использовался прямой `REGION_MAPPING.items()`; удалил dead init.
+- `modules/scheduler/smart_scheduler.py:319,320` — `best_day` / `day_names` вычислялись, но в дальнейшем коде использовались `weekdays`/`weekend`; удалил мёртвый блок.
+- `modules/system_status_notifier.py:357` — `topic = op_data.get(...)` не использовался; удалил.
+- `scripts/init_database.py:24` — `async with engine.connect() as conn:` → `async with engine.connect():` (тест-коннект, объект не нужен).
+- `scripts/test_publisher.py:45,179` — `publisher = VKPublisher(vk_token)` test-скрипт; оставил side-effect конструктор без binding: `VKPublisher(vk_token)`.
+- `web/api/communities.py:45,52,81` — три `group = vk_api_instance.groups.getById(...)` для проверки существования группы; убрал binding (нужен только side-effect, при ApiError ловится в `except`).
+- `web/api/regions.py:174` — `digest_template = cfg.get("digest_template")` в PUT endpoint'е не использовался (semantics — full replace через `new_dt`); удалил.
+
+#### 6. E722 bare `except:` (2) — `scripts/import_old_data.py:96,106`
+
+`except:` → `except Exception:`.
+
+#### 7. W291 trailing whitespace (16) — docstrings + SQL multi-line strings
+
+Black не трогает содержимое multi-line strings — поэтому W291 в docstrings (`telegram_notifier.py`, `smart_scheduler.py`, `test_info_post_collector.py`) и в triple-quoted SQL (`scripts/migrate_add_fingerprints.py` — 9 случаев) оставались. One-off Python: `line.rstrip()` по каждому файлу.
+
+#### 8. `.pre-commit-config.yaml`
+
+`extend-ignore` обрезан с `E203,W503,E402,E501,E712,F841,W291,E303,E722,F601,F811,E302,W391,F541` (14 кодов) до `E203,W503,E402,E501` (4 кода — стандартный black-conflict + два оставшихся техдолга). Комментарий обновлён: «E402/E501 будут зачищены отдельными PR; остальное зачищено 2026-05-23».
+
+### Проверка / прогон
+
+- `pytest tests/ -q` — **379/379 зелёных** (без изменений; SQLAlchemy `.is_(True)` производит идентичный SQL `IS TRUE`, поведение запросов не меняется).
+- `pre-commit run --all-files` — **black/isort/flake8 Passed**.
+- `flake8 --select=E712,F841,E722,F601,F811,W291,E303,E302,W391,F541 --extend-ignore=E203,W503 .` — **0 нарушений**.
+- Оставшиеся: только `E402` (147) и `E501` (96) — пойдут отдельными PR (план в [`PENDING_FOLLOWUPS.md`](PENDING_FOLLOWUPS.md)).
+
+### Применение
+
+- На проде: `git pull` + `sudo systemctl restart setka setka-celery-worker setka-celery-beat`. **Важно:** деплой включает поведенческое изменение фильтра рекламы (см. F601 fix выше) — посты с явными ценами/скидками теперь будут фильтроваться. Следить за `/posts?status=rejected` и `celery-worker.log` после релиза. Если ложно-позитивных слишком много — снизить вес price-patterns с 2 до 1 в `utils/text_utils.py`.
+- Миграций нет.
+
+### Что НЕ менялось
+
+- `docs/DEV_HISTORY.md` — это летопись, переписывать историю нельзя.
+- `old_postopus/` — папка не существует в текущем дереве; в exclude не добавлял.
+- `backup_legacy/` — также отсутствует.
+- E402 (147 нарушений) и E501 (96) — следующие PR.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- Обновлён 🟡 «Доочистка legacy flake8-ошибок»: маркировано «PR 1 закрыт», расписано что осталось (E402 через `# noqa: E402` с обоснованием, E501 через ручную ломку строк).
+- 🟢 идея «отслеживать F601 после релиза» — следить за объёмом отфильтрованных по price-patterns постов в первые сутки.
+
+---
+
 ## 2026-05-23 — SSH alias sweep: `setka-prod` → `setka`
 
 **Тема сессии:** в `~/.ssh/config` (Windows OpenSSH) реальный alias хоста — `setka` (`3931b3fe50ab.vps.myjino.ru:49237`), а в репо повсеместно использовалось устаревшее `setka-prod`. Сегодня при первом prod probe и при релизе #13 все попытки `ssh setka-prod` падали с `Could not resolve hostname`. `Bash(ssh setka-prod:*)` allow в `.claude/settings.json` тоже никогда не помогало — потому что Bash просто не находил хост в конфиге. Sweep по всем активным файлам репо.

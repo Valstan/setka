@@ -93,7 +93,7 @@ async def import_regions():
                     match = re.search(r"'post_group_vk': (-?\d+)", sample)
                     if match:
                         vk_group_id = int(match.group(1))
-                except:
+                except Exception:
                     pass
 
             if "sosed" in sample:
@@ -103,7 +103,7 @@ async def import_regions():
                     match = re.search(r"'sosed': '([^']+)'", sample)
                     if match:
                         neighbors = match.group(1)
-                except:
+                except Exception:
                     pass
 
             # Create region

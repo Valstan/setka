@@ -354,7 +354,6 @@ class SystemStatusNotifier:
                 for op_id, op_data in active_operations.items():
                     op_type = op_data.get("type", "unknown")
                     region = op_data.get("region", "Unknown")
-                    topic = op_data.get("topic", "Unknown")
 
                     # Добавляем специальную иконку для круглосуточных регионов
                     region_icon = ""

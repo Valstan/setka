@@ -125,7 +125,6 @@ if __name__ == "__main__":
     import asyncio
     import os
     import sys
-    from datetime import datetime
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     from config.runtime import VK_TOKENS

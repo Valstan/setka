@@ -165,7 +165,7 @@ class TrendingTopicsDetector:
                 .where(
                     and_(
                         Post.date_published >= cutoff_time,
-                        Post.ai_analyzed == True,
+                        Post.ai_analyzed.is_(True),
                         Post.status != "rejected",
                     )
                 )
@@ -240,7 +240,7 @@ class TrendingTopicsDetector:
                     and_(
                         Post.region_id == region.id,
                         Post.date_published >= cutoff_time,
-                        Post.ai_analyzed == True,
+                        Post.ai_analyzed.is_(True),
                     )
                 )
             )

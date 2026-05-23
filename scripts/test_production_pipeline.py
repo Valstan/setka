@@ -82,7 +82,7 @@ async def main():
             select(Community.vk_id, Community.name, Community.category).where(
                 Community.region_id == region_obj.id,
                 Community.category == theme,
-                Community.is_active == True,
+                Community.is_active.is_(True),
             )
         )
         communities = communities_result.fetchall()
@@ -95,7 +95,7 @@ async def main():
             print(f"⚠️ No communities for theme '{theme}' — trying all active")
             all_result = await session.execute(
                 select(Community.vk_id).where(
-                    Community.region_id == region_obj.id, Community.is_active == True
+                    Community.region_id == region_obj.id, Community.is_active.is_(True)
                 )
             )
             community_vk_ids = [row[0] for row in all_result.fetchall()]

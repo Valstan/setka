@@ -94,7 +94,7 @@ class ProductionWorkflow:
     async def get_vk_tokens(self) -> List[str]:
         """Получить активные VK токены из БД"""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(VKToken).where(VKToken.is_active == True))
+            result = await session.execute(select(VKToken).where(VKToken.is_active.is_(True)))
             tokens_objs = result.scalars().all()
             tokens = [t.token for t in tokens_objs if t.token]
             logger.info(f"Loaded {len(tokens)} VK tokens")
@@ -103,7 +103,7 @@ class ProductionWorkflow:
     async def load_filters(self) -> Dict[str, List[str]]:
         """Загрузить фильтры из БД"""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Filter).where(Filter.is_active == True))
+            result = await session.execute(select(Filter).where(Filter.is_active.is_(True)))
             filters = result.scalars().all()
 
             blacklist_words = []
@@ -259,7 +259,7 @@ class ProductionWorkflow:
                         and_(
                             Post.region_id == region.id,
                             Post.date_published >= recent_threshold,
-                            Post.ai_analyzed == False,  # Только необработанные
+                            Post.ai_analyzed.is_(False),  # Только необработанные
                         )
                     )
                     .limit(max_posts)
@@ -421,11 +421,11 @@ class ProductionWorkflow:
                 if region_codes:
                     result = await session.execute(
                         select(Region).where(
-                            and_(Region.code.in_(region_codes), Region.is_active == True)
+                            and_(Region.code.in_(region_codes), Region.is_active.is_(True))
                         )
                     )
                 else:
-                    result = await session.execute(select(Region).where(Region.is_active == True))
+                    result = await session.execute(select(Region).where(Region.is_active.is_(True)))
 
                 regions = list(result.scalars().all())
 
@@ -543,7 +543,7 @@ class ProductionWorkflow:
                             .where(
                                 and_(
                                     Post.region_id == region_id,
-                                    Post.ai_analyzed == True,
+                                    Post.ai_analyzed.is_(True),
                                     Post.status == "new",
                                     Post.date_published >= datetime.now() - timedelta(hours=24),
                                 )

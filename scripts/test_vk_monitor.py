@@ -26,7 +26,7 @@ from modules.vk_monitor.monitor import VKMonitor
 async def get_vk_tokens_from_db():
     """Get VK tokens from database"""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(VKToken).where(VKToken.is_active == True))
+        result = await session.execute(select(VKToken).where(VKToken.is_active.is_(True)))
         tokens_objs = result.scalars().all()
         return [t.token for t in tokens_objs if t.token]
 

@@ -153,7 +153,7 @@ class BlacklistIDFilter(DBFilter):
 
         # Загрузить из БД
         result = await session.execute(
-            select(Filter.pattern).where(Filter.type == "black_id", Filter.is_active == True)
+            select(Filter.pattern).where(Filter.type == "black_id", Filter.is_active.is_(True))
         )
 
         patterns = result.scalars().all()

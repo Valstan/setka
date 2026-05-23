@@ -67,7 +67,7 @@ async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode
                 and_(
                     Post.region_id == region.id,
                     Post.date_published >= cutoff_time,
-                    Post.ai_analyzed == True,
+                    Post.ai_analyzed.is_(True),
                 )
             )
             .order_by(Post.ai_score.desc())
@@ -81,7 +81,7 @@ async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode
 
             posts_result = await session.execute(
                 select(Post)
-                .where(and_(Post.region_id == region.id, Post.ai_analyzed == True))
+                .where(and_(Post.region_id == region.id, Post.ai_analyzed.is_(True)))
                 .order_by(Post.ai_score.desc())
                 .limit(max_posts * 2)
             )
