@@ -3,33 +3,31 @@
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log -- docs/SESSION_HANDOFF.md` и [`DEV_HISTORY.md`](DEV_HISTORY.md).
 
 **Status:** IDLE
-**Updated:** 2026-05-23
+**Updated:** 2026-05-24
 **Branch:** main
-**Last release in prod:** `0c951b0` (PR #17 — legacy flake8 cleanup PR 1). PR #18 + #19 в main, но прод-деплой не нужен (только `# noqa` комментарии).
+**Last release in prod:** `564cf27` (PR #20). Накатили накопившиеся PR #15-#20 за сессию 2026-05-24, среди них PR #17 с 2 runtime-баг-фиксами (F601 фильтр рекламы + F811 endpoint workflow_status). Health 200, все 3 сервиса active.
 
 ---
 
 ## Текущая нитка
 
-_Нет — большой техдолг «доочистка legacy flake8-ошибок» закрыт в 3 PR (#17/#18/#19) за сессию 2026-05-23._
+_Нет — релиз PR #15-#20 закрыт за сессию 2026-05-24._
 
 ## Следующий шаг
 
 _Открытая стартовая позиция:_
 
-1. **Понаблюдать** за объёмом отфильтрованных постов (рубрика `reklama`) на проде в ближайшие 24-48 часов — F601-фикс в `utils/text_utils.py:122` восстановил 12 потерянных price-patterns в `commercial_patterns` (см. [`PENDING_FOLLOWUPS.md`](PENDING_FOLLOWUPS.md), 🟢 раздел). Если ложно-позитивов слишком много — снизить вес price-patterns с 2 до 1.
-2. **Опционально** — взять одну из 🟢 идей: `scripts/dev-doctor.sh`, миграция `web/api/publisher.py` на extended VKPublisher, инкрементальная ломка длинных строк (помечены `# noqa: E501`).
+1. **🟡 Мониторинг F601-фикса** — активирован релизом 2026-05-24, PR #17 на проде. Следить за объёмом отфильтрованных постов с price-patterns (`цена/скидка/купить/\d+\s*руб/...`) в ближайшие 24-48 часов через `/posts?status=rejected` и `celery-worker.log`. Если ложно-позитивов слишком много — снизить вес price-patterns с 2 до 1 в `utils/text_utils.py`.
+2. **Опционально** — взять одну из 🟢 идей: `scripts/dev-doctor.sh`, миграция `web/api/publisher.py` на extended VKPublisher, инкрементальная ломка длинных строк (помечены `# noqa: E501`), `pyproject.toml` + `pip install -e .` (убрать ~115 `# noqa: E402`).
 3. **Или новая фича/багфикс** по запросу пользователя.
 
 ## Контекст
 
 - **План:** _нет активного плана — workflow ведут `DEV_HISTORY.md` + `PENDING_FOLLOWUPS.md`._
-- **Связанные коммиты последней сессии:**
-  - `ea1c8cf` — PR #19, E402 (147 импортов → `# noqa`) + финал `.pre-commit-config.yaml` (extend-ignore = `E203,W503`).
-  - `074210f` — PR #18, E501 (96 строк → `# noqa: E501`).
-  - `0c951b0` — PR #17, E712 (47) + мелочёвка + 2 runtime-бага (text_utils duplicate dict key, system_monitoring duplicate function).
-- **Прод:** `setka`, `setka-celery-worker`, `setka-celery-beat` — все active на момент закрытия сессии. `/api/health/full` → 200. Последний коммит на проде — `0c951b0` (PR #17). PR #18/#19 — runtime не меняют, можно не катить.
-- **Открытых PR:** нет.
+- **Релиз 2026-05-24:** прод `4191452` → `564cf27` (6 PR, 118 файлов, 1280 ins / 437 del). Миграций нет, deps не менялись. Restart всех 3 сервисов прошёл без проблем (`celery@... ready.` 00:57:42).
+- **F811 fix подтверждён:** `curl /api/monitoring/live` → `data.workflow` dict с 5 ключами (раньше `{}`).
+- **Прод:** все 3 сервиса active, `/api/health/full` → 200 (1.07 с).
+- **Открытых PR:** нет (после merge docs/release-2026-05-24).
 
 ## Открытые вопросы для пользователя
 
