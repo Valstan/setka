@@ -48,6 +48,33 @@
 
 ---
 
+## 2026-05-23 — setup-dev.ps1: fallback на Python 3.12 + UTF-8 BOM
+
+**Тема сессии:** при bootstrap'е сегодняшнего dev-worktree скрипт `scripts/setup-dev.ps1` упал, потому что хардкодил `py -3.11`, а локально установлен только Python 3.12 (=прод). Bash-вариант `setup-dev.sh` уже умел fallback (`python3.11 → python3.12 → python3`), а PS — нет. Заодно вскрылся второй баг: файл без UTF-8 BOM, и PowerShell 5.1 на русской системной локали (cp1251) интерпретировал кириллицу как mojibake, ломая парсинг ещё до выполнения. Скрипт просто никто не пытался запустить после правок 2026-05-22, поэтому проблему не замечали.
+
+### Изменения
+
+- **`scripts/setup-dev.ps1`** — переписан блок выбора интерпретатора по образцу `setup-dev.sh`: цикл по кандидатам `("-3.11", "-3.12", "-3")`, первый, для которого `py <flag> --version` вернёт 0, — выбран. Если ни один не нашёлся — exit 1 с подсказкой про python.org. При выборе не-3.11 — yellow warning, что 3.11 предпочтительнее (по `.pre-commit-config.yaml` исторической фиксации, хотя её сами убрали 2026-05-23 для гибкости). Также добавлен UTF-8 BOM (3 байта `EF BB BF` в начале), чтобы PS 5.1 не путал encoding на русских локалях.
+- **`CLAUDE.md`** — строка про локальный Python обновлена: `py -3.11` (preferred) + `py -3.12` (=прод) оба OK, `setup-dev.ps1` сам выбирает.
+
+### Проверка / прогон
+
+- Локально на Windows 11 / PS 5.1: `.\scripts\setup-dev.ps1` — `using py -3.12 (Python 3.12.3)`, yellow note про 3.11, venv детектирован, deps подтянулись, pre-commit hook поставлен, `365 tests collected`. Идемпотентно.
+- `pytest tests/ -q` — 365/365 зелёных.
+- `pre-commit run --all-files` — black/isort/flake8 Passed.
+
+### Что НЕ менялось
+
+- `setup-dev.sh` — уже умел fallback, не трогал.
+- `.pre-commit-config.yaml` — фиксация на 3.11 уже убрана 2026-05-23 (см. предыдущую запись).
+- Стиль вывода скрипта (color-coded Write-Host) — оставлен.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- Закрыт техдолг «`scripts/setup-dev.ps1` хардкодит `py -3.11`».
+
+---
+
 ## 2026-05-23 — Parser-логи через env SETKA_LOGS_DIR
 
 **Тема сессии:** последние оставшиеся хардкоды `/home/valstan/SETKA/logs/parser*` в `web/api/parsing.py` и `tasks/parsing_tasks.py` (`OUTPUT_DIR`, `REPORTS_DIR`, `VIDEO_REPORT_PATH`, `_init_logger` с `os.makedirs("/home/valstan/SETKA/logs")` + `FileHandler("parser.log")`). На Windows / в локальных тестах `os.makedirs("/home/valstan/SETKA/logs")` создавал мусорную ветку `C:\home\valstan\SETKA\logs\` на текущем диске. Закрываем по образцу `main.py:47` `LOG_PATH` — общий env с safe-fallback.
