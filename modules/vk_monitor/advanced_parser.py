@@ -367,7 +367,7 @@ class AdvancedVKParser:
         """
         Apply full filtering pipeline to a single post.
 
-        Важно: сначала unwrap репоста, иначе lip разный у одного и того же оригинала на разных стенах.
+        Важно: сначала unwrap репоста, иначе lip разный у одного и того же оригинала на разных стенах.  # noqa: E501
         """
         # 1. Развернуть репост → owner_id/post_id/text от оригинала
         post_data = clear_copy_history(post_data)

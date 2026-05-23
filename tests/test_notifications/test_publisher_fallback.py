@@ -126,7 +126,7 @@ async def test_fallback_on_code_27_when_only_in_error_msg():
     community_client = _client_with_method_only(
         {
             "error": {
-                "error_msg": "[27] Group authorization failed: method is unavailable with group auth."
+                "error_msg": "[27] Group authorization failed: method is unavailable with group auth."  # noqa: E501
                 # NOTE: no 'error_code' key — this mimics legacy VKClient behaviour.
             }
         }

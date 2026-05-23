@@ -49,7 +49,7 @@ def scan_next_region_task(self):
                 # Проверить, не превышен ли лимит активных сканирований
                 if len(carousel_manager.active_scans) >= carousel_manager.max_concurrent_scans:
                     logger.warning(
-                        f"Maximum concurrent scans ({carousel_manager.max_concurrent_scans}) reached"
+                        f"Maximum concurrent scans ({carousel_manager.max_concurrent_scans}) reached"  # noqa: E501
                     )
                     return {
                         "status": "skipped",
@@ -62,7 +62,7 @@ def scan_next_region_task(self):
 
                 if success:
                     logger.info(
-                        f"Successfully scanned region {task.region_code}: {task.posts_found} posts found"
+                        f"Successfully scanned region {task.region_code}: {task.posts_found} posts found"  # noqa: E501
                     )
                     return {
                         "status": "completed",
@@ -128,7 +128,7 @@ def validate_tokens_task():
                         results[name] = {
                             "is_valid": True,
                             "user_id": user_info.get("id"),
-                            "user_name": f"{user_info.get('first_name', '')} {user_info.get('last_name', '')}".strip(),
+                            "user_name": f"{user_info.get('first_name', '')} {user_info.get('last_name', '')}".strip(),  # noqa: E501
                         }
                         valid_tokens.append(name)
                     else:
@@ -177,7 +177,7 @@ def optimize_frequency_task():
                 result = await carousel_manager.optimize_scan_frequency(db)
 
                 logger.info(
-                    f"Frequency optimization completed: {result['recommended_interval_minutes']} minutes"
+                    f"Frequency optimization completed: {result['recommended_interval_minutes']} minutes"  # noqa: E501
                 )
 
                 return result

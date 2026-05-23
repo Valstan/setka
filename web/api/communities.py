@@ -254,7 +254,7 @@ async def add_community(
 
     logger = logging.getLogger(__name__)
     logger.info(
-        f"Adding community: region_id={community_data.region_id}, vk_id={community_data.vk_id!r}, category={community_data.category}"
+        f"Adding community: region_id={community_data.region_id}, vk_id={community_data.vk_id!r}, category={community_data.category}"  # noqa: E501
     )
 
     # Check if region exists

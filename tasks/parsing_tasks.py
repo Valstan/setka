@@ -249,7 +249,7 @@ def _render_html(posts: List[Dict[str, Any]], include: dict) -> str:
     for post in posts:
         lines.append("<div style='border:1px solid #ddd;padding:12px;margin:12px 0;'>")
         lines.append(
-            f"<div><strong>{escape(post['date'])}</strong> | <a href='{post['url']}'>Источник</a></div>"
+            f"<div><strong>{escape(post['date'])}</strong> | <a href='{post['url']}'>Источник</a></div>"  # noqa: E501
         )
         if include.get("text"):
             lines.append(
@@ -271,34 +271,34 @@ def _render_html(posts: List[Dict[str, Any]], include: dict) -> str:
                     size_mb = f" ({size_bytes // (1024 * 1024)}MB)" if size_bytes else ""
                     if att.get("local_path"):
                         lines.append(
-                            f"<li>Видео{size_mb}: <a href='{att.get('local_path')}'>{escape(att.get('title') or 'video')}</a></li>"
+                            f"<li>Видео{size_mb}: <a href='{att.get('local_path')}'>{escape(att.get('title') or 'video')}</a></li>"  # noqa: E501
                         )
                     else:
                         video_id = att.get("video_id")
                         lines.append(
-                            f"<li>Видео{size_mb}: <a href='https://vk.com/{video_id}'>{escape(att.get('title') or 'video')}</a></li>"
+                            f"<li>Видео{size_mb}: <a href='https://vk.com/{video_id}'>{escape(att.get('title') or 'video')}</a></li>"  # noqa: E501
                         )
                 elif att_type == "audio" and include.get("audio"):
                     if att.get("local_path"):
                         lines.append(
-                            f"<li>Аудио: <a href='{att.get('local_path')}'>{escape(att.get('artist') or '')} - {escape(att.get('title') or '')}</a></li>"
+                            f"<li>Аудио: <a href='{att.get('local_path')}'>{escape(att.get('artist') or '')} - {escape(att.get('title') or '')}</a></li>"  # noqa: E501
                         )
                     else:
                         lines.append(
-                            f"<li>Аудио: {escape(att.get('artist') or '')} - {escape(att.get('title') or '')}</li>"
+                            f"<li>Аудио: {escape(att.get('artist') or '')} - {escape(att.get('title') or '')}</li>"  # noqa: E501
                         )
                 elif att_type == "link" and include.get("links"):
                     lines.append(
-                        f"<li>Ссылка: <a href='{att.get('url')}'>{escape(att.get('title') or att.get('url') or '')}</a></li>"
+                        f"<li>Ссылка: <a href='{att.get('url')}'>{escape(att.get('title') or att.get('url') or '')}</a></li>"  # noqa: E501
                     )
                 elif att_type == "document" and include.get("docs"):
                     if att.get("local_path"):
                         lines.append(
-                            f"<li>Документ: <a href='{att.get('local_path')}'>{escape(att.get('title') or '')}</a></li>"
+                            f"<li>Документ: <a href='{att.get('local_path')}'>{escape(att.get('title') or '')}</a></li>"  # noqa: E501
                         )
                     else:
                         lines.append(
-                            f"<li>Документ: <a href='{att.get('url')}'>{escape(att.get('title') or '')}</a></li>"
+                            f"<li>Документ: <a href='{att.get('url')}'>{escape(att.get('title') or '')}</a></li>"  # noqa: E501
                         )
                 elif att_type == "poll" and include.get("polls"):
                     lines.append(f"<li>Опрос: {escape(att.get('question') or '')}</li>")
@@ -541,14 +541,14 @@ async def _download_video_with_progress(
                     await _update_video_status(job_id, video_id, title, 0, "no_size")
                     await _add_video_report(
                         job_id,
-                        f"[post {post_id}] {title}: размер неизвестен (нет Content-Length), пропущено",
+                        f"[post {post_id}] {title}: размер неизвестен (нет Content-Length), пропущено",  # noqa: E501
                     )
                     return False, total, "no_size"
                 if total and total > MAX_VIDEO_SIZE_BYTES:
                     await _update_video_status(job_id, video_id, title, 0, "too_large")
                     await _add_video_report(
                         job_id,
-                        f"[post {post_id}] {title}: размер {total // (1024 * 1024)}MB > 200MB, пропущено",
+                        f"[post {post_id}] {title}: размер {total // (1024 * 1024)}MB > 200MB, пропущено",  # noqa: E501
                     )
                     return False, total, "too_large"
                 if total and total > remaining_bytes:

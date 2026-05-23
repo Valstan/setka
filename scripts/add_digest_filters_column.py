@@ -20,7 +20,7 @@ async def main() -> None:
     async with eng.begin() as conn:
         await conn.execute(
             text(
-                "ALTER TABLE region_configs ADD COLUMN IF NOT EXISTS digest_filters JSONB DEFAULT NULL"
+                "ALTER TABLE region_configs ADD COLUMN IF NOT EXISTS digest_filters JSONB DEFAULT NULL"  # noqa: E501
             )
         )
     await eng.dispose()

@@ -54,7 +54,7 @@ def main() -> int:
     try:
         user = api.users.get()
         print(
-            f"  users.get OK: {user[0].get('first_name')} {user[0].get('last_name')} (id={user[0].get('id')})"
+            f"  users.get OK: {user[0].get('first_name')} {user[0].get('last_name')} (id={user[0].get('id')})"  # noqa: E501
         )
     except Exception as exc:
         print(f"  users.get FAILED: {exc}")

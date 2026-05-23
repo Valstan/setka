@@ -2,9 +2,9 @@
 Async runner helpers for Celery workers.
 
 Why this exists:
-- Many Celery tasks in SETKA are synchronous but call async code (SQLAlchemy async, VK async clients, etc.).
+- Many Celery tasks in SETKA are synchronous but call async code (SQLAlchemy async, VK async clients, etc.).  # noqa: E501
 - Using `asyncio.run()` inside Celery tasks creates a NEW event loop every call.
-- SQLAlchemy asyncpg connections (and the async engine pool) are bound to the loop they were created in.
+- SQLAlchemy asyncpg connections (and the async engine pool) are bound to the loop they were created in.  # noqa: E501
   Reusing pooled connections across different loops leads to errors like:
   "got Future attached to a different loop" / "Event loop is closed".
 

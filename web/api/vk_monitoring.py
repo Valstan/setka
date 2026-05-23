@@ -119,7 +119,7 @@ async def get_vk_stats(db: AsyncSession = Depends(get_db_session)):
         tokens_status = []
         for token in tokens:
             logger.info(
-                f"Processing token {token.name}: active={token.is_active}, status={token.validation_status}"
+                f"Processing token {token.name}: active={token.is_active}, status={token.validation_status}"  # noqa: E501
             )
             tokens_status.append(
                 {

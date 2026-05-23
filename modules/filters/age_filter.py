@@ -94,7 +94,7 @@ class AgeFilter(BaseFilter):
             self.stats["rejected"] += 1
             return FilterResult.reject(
                 self.name,
-                reason=f"Post too old: {age_hours:.1f}h > {max_age_hours:.1f}h (threshold: {threshold_key})",
+                reason=f"Post too old: {age_hours:.1f}h > {max_age_hours:.1f}h (threshold: {threshold_key})",  # noqa: E501
                 severity="low",
                 metadata={
                     "age_seconds": age_seconds,

@@ -99,7 +99,7 @@ async def test_filter_pipeline():
         print(f"✅ Прошли фильтры: {pipeline_result.passed_count}")
         print(f"❌ Отфильтровано: {pipeline_result.filtered_count}")
         print(
-            f"📈 Процент отсева: {(pipeline_result.filtered_count / pipeline_result.original_count * 100):.1f}%"
+            f"📈 Процент отсева: {(pipeline_result.filtered_count / pipeline_result.original_count * 100):.1f}%"  # noqa: E501
         )
         print(f"⏱️  Время обработки: {pipeline_result.processing_time:.3f}с")
 
@@ -135,7 +135,7 @@ async def test_filter_pipeline():
         if pipeline_result.filtered_count > 0:
             print(
                 f"\n💡 Из {pipeline_result.original_count} постов отфильтровано "
-                f"{pipeline_result.filtered_count} ({(pipeline_result.filtered_count/pipeline_result.original_count*100):.1f}%)"
+                f"{pipeline_result.filtered_count} ({(pipeline_result.filtered_count/pipeline_result.original_count*100):.1f}%)"  # noqa: E501
             )
             print("   Это нормально! В Postopus отсеивалось 80-90% контента.")
         else:

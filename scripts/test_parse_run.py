@@ -109,7 +109,7 @@ async def main():
         work_table = result.scalars().first()
         if work_table:
             logger.info(
-                f"Work table найден: {len(work_table.lip or [])} LIP записей, {len(work_table.hash or [])} hash записей"
+                f"Work table найден: {len(work_table.lip or [])} LIP записей, {len(work_table.hash or [])} hash записей"  # noqa: E501
             )
         else:
             logger.info("Work table не найден, создаём новый")
@@ -253,11 +253,11 @@ async def main():
         logger.info(f"  Mourning: {len(mourning_posts)}")
         logger.info(f"  Regular: {len(regular_posts)}")
         logger.info(
-            f'Обычный digest: {digest_result.post_count} постов (URL: {publish_results.get("regular", {}).get("url", "N/A")})'
+            f'Обычный digest: {digest_result.post_count} постов (URL: {publish_results.get("regular", {}).get("url", "N/A")})'  # noqa: E501
         )
         if mourning_digest_result:
             logger.info(
-                f'Mourning digest: {mourning_digest_result.post_count} постов (URL: {publish_results.get("mourning", {}).get("url", "N/A")})'
+                f'Mourning digest: {mourning_digest_result.post_count} постов (URL: {publish_results.get("mourning", {}).get("url", "N/A")})'  # noqa: E501
             )
         logger.info(f"Публикация токеном: {publish_token_name}")
         logger.info("=" * 80)
