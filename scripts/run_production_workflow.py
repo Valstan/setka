@@ -298,7 +298,7 @@ class ProductionWorkflow:
                         details={
                             "posts_before": len(posts),
                             "posts_after": len(filtered_posts),
-                            "rejection_rate": f"{100 * (1 - len(filtered_posts) / max(len(posts), 1)):.1f}%",
+                            "rejection_rate": f"{100 * (1 - len(filtered_posts) / max(len(posts), 1)):.1f}%",  # noqa: E501
                         },
                     )
 
@@ -318,7 +318,7 @@ class ProductionWorkflow:
                 logger.info(f"   Before: {len(posts)}")
                 logger.info(f"   After:  {len(filtered_posts)}")
                 logger.info(
-                    f"   Rejected: {len(posts) - len(filtered_posts)} ({100 * (1 - len(filtered_posts) / max(len(posts), 1)):.1f}%)"
+                    f"   Rejected: {len(posts) - len(filtered_posts)} ({100 * (1 - len(filtered_posts) / max(len(posts), 1)):.1f}%)"  # noqa: E501
                 )
 
                 # 5. Обновить scoring и пометить как обработанные
@@ -614,7 +614,7 @@ class ProductionWorkflow:
                                         notifier = get_telegram_notifier()
                                         if notifier:
                                             await notifier.send_error_notification(
-                                                f"Failed to publish digest for region {region_code}: {publish_error}",
+                                                f"Failed to publish digest for region {region_code}: {publish_error}",  # noqa: E501
                                                 {
                                                     "region_code": region_code,
                                                     "task_name": "publish_digest",
@@ -678,7 +678,7 @@ async def main():
     parser.add_argument(
         "--regions",
         nargs="+",
-        help="Region codes to process (e.g., mi nolinsk). If not specified, all active regions will be processed.",
+        help="Region codes to process (e.g., mi nolinsk). If not specified, all active regions will be processed.",  # noqa: E501
     )
     parser.add_argument(
         "--max-posts",

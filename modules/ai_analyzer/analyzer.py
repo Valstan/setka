@@ -323,7 +323,7 @@ class PostAnalyzer:
             await session.commit()
 
             logger.info(
-                f"Analysis complete: {analyzed_count} posts, {approved_count} approved, {rejected_count} rejected"
+                f"Analysis complete: {analyzed_count} posts, {approved_count} approved, {rejected_count} rejected"  # noqa: E501
             )
 
             return {

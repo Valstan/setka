@@ -27,7 +27,7 @@ async def run_migration():
         SELECT column_name
         FROM information_schema.columns
         WHERE table_name = 'posts'
-        AND column_name IN ('fingerprint_lip', 'fingerprint_media', 'fingerprint_text', 'fingerprint_text_core')
+        AND column_name IN ('fingerprint_lip', 'fingerprint_media', 'fingerprint_text', 'fingerprint_text_core')  # noqa: E501
         """
 
         result = await conn.execute(text(check_query))

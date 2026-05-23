@@ -24,10 +24,13 @@ repos:
       - id: flake8
         # Оставшиеся коды в ignore — это:
         #   - E203/W503 — стандартный конфликт black ↔ pep8, нужен всегда.
-        #   - E402/E501 — будут зачищены отдельными PR (cleanup legacy).
-        # Остальные группы (E712/F841/W291/E303/E722/F601/F811/E302/W391/F541)
-        # зачищены 2026-05-23 «Legacy flake8 cleanup PR 1».
+        #   - E402 — будет зачищен отдельным PR (cleanup legacy, через
+        #     # noqa: E402 с обоснованием на каждую `sys.path.insert`-import).
+        # E501 зачищен 2026-05-23 «Legacy flake8 cleanup PR 2» (96 строк
+        # получили # noqa: E501; новые длинные строки теперь ловятся).
+        # E712/F841/W291/E303/E722/F601/F811/E302/W391/F541 зачищены 2026-05-23
+        # «Legacy flake8 cleanup PR 1».
         args:
           - "--max-line-length=100"
-          - "--extend-ignore=E203,W503,E402,E501"
+          - "--extend-ignore=E203,W503,E402"
         exclude: ^(venv|build|dist)/

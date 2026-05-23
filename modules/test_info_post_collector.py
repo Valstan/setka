@@ -77,7 +77,7 @@ class TestInfoPostCollector:
                 )
 
             logger.info(
-                f"📋 Загружено групп для Тест-Инфо: {len(communities)} в {len(communities_by_category)} категориях"
+                f"📋 Загружено групп для Тест-Инфо: {len(communities)} в {len(communities_by_category)} категориях"  # noqa: E501
             )
             for category, comms in communities_by_category.items():
                 logger.info(f"  {category}: {len(comms)} групп")
@@ -91,7 +91,7 @@ class TestInfoPostCollector:
         Собрать посты по теме из соответствующих категорий групп
 
         Args:
-            topic: Тема (Администрация, Культура, Спорт, Новости, События, Образование, Здоровье, Бизнес)
+            topic: Тема (Администрация, Культура, Спорт, Новости, События, Образование, Здоровье, Бизнес)  # noqa: E501
             communities_by_category: Группы, сгруппированные по категориям
 
         Returns:
@@ -223,7 +223,7 @@ class TestInfoPostCollector:
         for post in comparison_posts:
             text = post.get("text", "").strip()
             if text:
-                # Нормализуем текст для сравнения (убираем лишние пробелы, приводим к нижнему регистру)
+                # Нормализуем текст для сравнения (убираем лишние пробелы, приводим к нижнему регистру)  # noqa: E501
                 normalized_text = " ".join(text.lower().split())
                 comparison_texts.add(normalized_text)
 

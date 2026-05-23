@@ -53,7 +53,7 @@ class ContentMixer:
             return []
 
         logger.info(
-            f"Creating balanced digest from {len(posts)} posts (max: {max_posts}, slot: {time_slot})"
+            f"Creating balanced digest from {len(posts)} posts (max: {max_posts}, slot: {time_slot})"  # noqa: E501
         )
 
         # Группировать по категориям
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     print(f"\n   Selected {len(digest)} posts:")
     for i, post in enumerate(digest, 1):
         print(
-            f"   {i}. {post.ai_category} (score: {post.ai_score}, sentiment: {post.sentiment_label})"
+            f"   {i}. {post.ai_category} (score: {post.ai_score}, sentiment: {post.sentiment_label})"  # noqa: E501
         )
 
     # Test stats

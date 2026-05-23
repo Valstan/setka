@@ -55,7 +55,7 @@ class StructuralDuplicateFilter(DBFilter):
         if duplicates:
             return FilterResult(
                 passed=False,
-                reason=f"Structural duplicate: LIP {lip} already exists ({len(duplicates)} duplicates)",
+                reason=f"Structural duplicate: LIP {lip} already exists ({len(duplicates)} duplicates)",  # noqa: E501
             )
 
         return FilterResult(passed=True)

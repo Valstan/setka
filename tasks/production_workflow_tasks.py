@@ -42,7 +42,7 @@ def run_production_workflow_all_regions_sync(self):
 
         if not (work_hours_start <= current_hour <= work_hours_end):
             logger.info(
-                f"😴 Outside work hours: {current_hour}:00 MSK (work: {work_hours_start}:00-{work_hours_end}:00)"
+                f"😴 Outside work hours: {current_hour}:00 MSK (work: {work_hours_start}:00-{work_hours_end}:00)"  # noqa: E501
             )
             return {
                 "success": False,
@@ -53,7 +53,7 @@ def run_production_workflow_all_regions_sync(self):
             }
 
         logger.info(
-            f"✅ Inside work hours: {current_hour}:00 MSK (work: {work_hours_start}:00-{work_hours_end}:00)"
+            f"✅ Inside work hours: {current_hour}:00 MSK (work: {work_hours_start}:00-{work_hours_end}:00)"  # noqa: E501
         )
 
         # Получаем все активные регионы
@@ -101,7 +101,7 @@ def run_production_workflow_all_regions_sync(self):
 
                 if not region_work_hours:
                     logger.info(
-                        f"😴 Region {region_name} outside work hours: {current_hour}:00 MSK (work: {work_hours_start}:00-{work_hours_end}:00)"
+                        f"😴 Region {region_name} outside work hours: {current_hour}:00 MSK (work: {work_hours_start}:00-{work_hours_end}:00)"  # noqa: E501
                     )
                     skipped_count += 1
                     continue

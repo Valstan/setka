@@ -400,7 +400,7 @@ if __name__ == "__main__":
         print(f"   Sentiment: {result['label']} (score: {result['score']})")
         print(f"   Emotions: {result['emotions']}")
         print(
-            f"   Words: +{result['word_counts']['positive']} ={result['word_counts']['neutral']} -{result['word_counts']['negative']}"
+            f"   Words: +{result['word_counts']['positive']} ={result['word_counts']['neutral']} -{result['word_counts']['negative']}"  # noqa: E501
         )
 
     # Test distribution

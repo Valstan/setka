@@ -71,7 +71,7 @@ class TokenValidator:
             result["groups_access"] = groups_access
 
             logger.info(
-                f"Token {name} is VALID - User: {user_info.get('first_name', 'Unknown')} {user_info.get('last_name', 'Unknown')}"
+                f"Token {name} is VALID - User: {user_info.get('first_name', 'Unknown')} {user_info.get('last_name', 'Unknown')}"  # noqa: E501
             )
 
         except Exception as e:
@@ -207,7 +207,7 @@ class TokenValidator:
 
             print(f"  • {name}")
             print(
-                f"    User: {user_info.get('first_name', 'Unknown')} {user_info.get('last_name', 'Unknown')}"
+                f"    User: {user_info.get('first_name', 'Unknown')} {user_info.get('last_name', 'Unknown')}"  # noqa: E501
             )
             print(f"    ID: {user_info.get('id', 'Unknown')}")
             print(f"    Permissions: {', '.join(permissions) if permissions else 'None'}")
