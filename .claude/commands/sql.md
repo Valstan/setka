@@ -13,7 +13,7 @@ allowed-tools: Bash, Read, Glob, AskUserQuestion
 ## Параметры подключения
 
 ```
-ssh setka-prod 'sudo -u postgres psql -d setka -c "<SQL>"'
+ssh setka 'sudo -u postgres psql -d setka -c "<SQL>"'
 ```
 
 (на проде sudo без пароля, БД `setka`, пользователь приложения — `setka_user`, для админ-запросов — `postgres`).
@@ -47,15 +47,15 @@ ssh setka-prod 'sudo -u postgres psql -d setka -c "<SQL>"'
 **Однострочный:**
 
 ```bash
-ssh -o ConnectTimeout=20 setka-prod 'sudo -u postgres psql -d setka -c "<SQL>"' 2>&1
+ssh -o ConnectTimeout=20 setka 'sudo -u postgres psql -d setka -c "<SQL>"' 2>&1
 ```
 
 **Многострочный/файловый:**
 
 ```bash
 # Залить временный файл и применить
-scp /tmp/setka-sql-$$.sql setka-prod:/tmp/setka-apply.sql
-ssh setka-prod 'sudo -u postgres psql -d setka -f /tmp/setka-apply.sql && rm /tmp/setka-apply.sql' 2>&1
+scp /tmp/setka-sql-$$.sql setka:/tmp/setka-apply.sql
+ssh setka 'sudo -u postgres psql -d setka -f /tmp/setka-apply.sql && rm /tmp/setka-apply.sql' 2>&1
 ```
 
 (или heredoc через ssh — на выбор).
@@ -82,9 +82,9 @@ ssh setka-prod 'sudo -u postgres psql -d setka -f /tmp/setka-apply.sql && rm /tm
    - «Отмена»
 4. При «да»:
    ```bash
-   scp database/migrations/<file>.sql setka-prod:/tmp/setka-migration.sql
-   ssh setka-prod 'sudo -u postgres psql -d setka -f /tmp/setka-migration.sql' 2>&1
-   ssh setka-prod 'rm /tmp/setka-migration.sql'
+   scp database/migrations/<file>.sql setka:/tmp/setka-migration.sql
+   ssh setka 'sudo -u postgres psql -d setka -f /tmp/setka-migration.sql' 2>&1
+   ssh setka 'rm /tmp/setka-migration.sql'
    ```
 5. Напомнить добавить в `DEV_HISTORY.md` запись «Миграция NNN применена на прод <дата>».
 
@@ -92,7 +92,7 @@ ssh setka-prod 'sudo -u postgres psql -d setka -f /tmp/setka-apply.sql && rm /tm
 
 - **Backup перед опасной операцией:** для `DROP TABLE` / `TRUNCATE` / массового `UPDATE` без явной микро-области — предложить через `AskUserQuestion` сначала сделать pg_dump:
   ```bash
-  ssh setka-prod "sudo -u postgres pg_dump -Fc -t <table> setka > /tmp/setka-<table>-$(date +%Y%m%d-%H%M).dump"
+  ssh setka "sudo -u postgres pg_dump -Fc -t <table> setka > /tmp/setka-<table>-$(date +%Y%m%d-%H%M).dump"
   ```
 - **Никогда не выполнять** mutating-запрос, который видит впервые, без явного «да».
 - **Никогда не повторять** опасную команду после отказа пользователя.

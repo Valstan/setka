@@ -48,6 +48,46 @@
 
 ---
 
+## 2026-05-23 — SSH alias sweep: `setka-prod` → `setka`
+
+**Тема сессии:** в `~/.ssh/config` (Windows OpenSSH) реальный alias хоста — `setka` (`3931b3fe50ab.vps.myjino.ru:49237`), а в репо повсеместно использовалось устаревшее `setka-prod`. Сегодня при первом prod probe и при релизе #13 все попытки `ssh setka-prod` падали с `Could not resolve hostname`. `Bash(ssh setka-prod:*)` allow в `.claude/settings.json` тоже никогда не помогало — потому что Bash просто не находил хост в конфиге. Sweep по всем активным файлам репо.
+
+### Изменения
+
+Replace_all `setka-prod` → `setka` в 13 файлах (через `Edit replace_all`):
+
+- **`CLAUDE.md`** (7 упоминаний): источник правды для AI; обновлены примеры ad-hoc команд, троублешутинг, описание REMOTE_ACCESS, фраза «Прод-хост в `~/.ssh/config`».
+- **`.claude/settings.json`**: `Bash(ssh setka-prod:*)` → `Bash(ssh setka:*)` — теперь classifier правильно пропускает.
+- **`.gitignore`**: комментарий про SSH allowlist.
+- **`.claude/commands/start.md`**: 4 упоминания (вкл. user-facing опцию «полный доступ ssh setka на сессию»).
+- **`.claude/commands/check.md`** (5), **`celery.md`** (1), **`logs.md`** (2), **`sql.md`** (7), **`reliz.md`** (8), **`finish.md`** (1) — все ssh-команды и упоминания в slash-командах.
+- **`database/migrations/README.md`** (4): примеры применения миграций.
+- **`scripts/migrate.py`** (1): пример в docstring.
+- **`docs/PENDING_FOLLOWUPS.md`**: закрыт сам техдолг + поправлена активная идея про `dev-doctor.sh`.
+
+### Что НЕ менялось
+
+- **`docs/DEV_HISTORY.md`** — это летопись прошлых сессий, переписывать историю нельзя (~17 упоминаний `setka-prod` остаются как есть).
+- **Закрытые техдолги в `docs/PENDING_FOLLOWUPS.md`** (~~zacherknutые~~ — про migrate / auto-mode classifier) — историческая запись, оставлены.
+- **`config/prometheus.yml`** — `cluster: 'setka-production'` это Prometheus label, не SSH alias. Не трогать.
+
+### Проверка / прогон
+
+- Локально: `pytest tests/ -q` — **379/379 зелёных** (без изменений, к runtime sweep не задевает).
+- `pre-commit run --all-files` — Passed.
+- Sanity grep: остаточные `setka-prod` только в `docs/DEV_HISTORY.md` (исторически) и в закрытых блоках `PENDING_FOLLOWUPS.md` — это OK.
+
+### Применение
+
+- На проде: **ничего не нужно** — изменения только в docs/settings/slash-commands, runtime не задевает.
+- Следующий раз `ssh setka …` в slash-командах сработает без `Could not resolve hostname`.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- Закрыт техдолг «SSH alias `setka-prod` vs `setka`» (он же был открыт сегодня — успели за одну сессию).
+
+---
+
 ## 2026-05-23 — Тесты на F821-восстановленные ветки + релиз сегодняшних PR на прод
 
 **Тема сессии:** закрыть последний 🟡 техдолг из «легаси-зачистки» 2026-05-22 — покрыть тестами 4 функции, в которых тогда восстанавливались импорты (`ContextFactory.create_from_region`, `retry_with_fallback`, `retry_with_circuit_breaker`, `truncate_text`-ветка в `digest_builder.py:434`). Эти ветки не вызывались в runtime — иначе ловили бы `NameError` в проде. Без тестов следующий aggressive autoflake опять снесёт импорты молча. Заодно — релиз сегодняшних PR на прод.

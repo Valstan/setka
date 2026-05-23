@@ -36,17 +36,17 @@ ls venv/Scripts/python.exe 2>/dev/null && echo 'venv: ok (windows)' || ls venv/b
 Параллельно по SSH:
 
 ```bash
-ssh -o ConnectTimeout=10 setka-prod "systemctl is-active setka setka-celery-worker setka-celery-beat" 2>&1
+ssh -o ConnectTimeout=10 setka "systemctl is-active setka setka-celery-worker setka-celery-beat" 2>&1
 
-ssh -o ConnectTimeout=10 setka-prod "curl -s -o /dev/null -w '/api/health/full: %{http_code} (%{time_total}s)\n' --max-time 15 http://127.0.0.1:8000/api/health/full" 2>&1
+ssh -o ConnectTimeout=10 setka "curl -s -o /dev/null -w '/api/health/full: %{http_code} (%{time_total}s)\n' --max-time 15 http://127.0.0.1:8000/api/health/full" 2>&1
 
-ssh -o ConnectTimeout=10 setka-prod "cd /home/valstan/SETKA && git log --oneline -3 && git status --short" 2>&1
+ssh -o ConnectTimeout=10 setka "cd /home/valstan/SETKA && git log --oneline -3 && git status --short" 2>&1
 
 # Сколько регионов опубликовалось в этот час
-ssh -o ConnectTimeout=10 setka-prod "redis-cli --scan --pattern 'setka:digest_last_published:*' | wc -l" 2>&1
+ssh -o ConnectTimeout=10 setka "redis-cli --scan --pattern 'setka:digest_last_published:*' | wc -l" 2>&1
 
 # Ошибки в worker за последний час
-ssh -o ConnectTimeout=10 setka-prod "journalctl -u setka-celery-worker --since '1 hour ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -5" 2>&1
+ssh -o ConnectTimeout=10 setka "journalctl -u setka-celery-worker --since '1 hour ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -5" 2>&1
 ```
 
 ## Шаг 3. Формат отчёта (таблица)

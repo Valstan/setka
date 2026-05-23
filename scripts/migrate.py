@@ -11,7 +11,7 @@ The runner shells out to ``sudo -u postgres psql -d setka -v ON_ERROR_STOP=1``
 for every read and write, so it must run on the prod VPS (or on any host
 where that sudo target works). Typical flow after ``git pull``::
 
-    ssh setka-prod 'cd /home/valstan/SETKA && python3 scripts/migrate.py up'
+    ssh setka 'cd /home/valstan/SETKA && python3 scripts/migrate.py up'
 
 Bootstrap: migration ``010_applied_migrations.sql`` creates the bookkeeping
 table itself. The runner detects an absent table on the first ``up`` and

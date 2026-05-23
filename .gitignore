@@ -4,7 +4,7 @@
 # Игнорируем всё, кроме того, что должно жить в репо вместе с проектом:
 # - .claude/commands/  — slash-команды (/start, /reliz, /check, /sql, /celery, /logs, /finish)
 # - .claude/agents/    — кастомные субагенты (если появятся)
-# - .claude/settings.json — командная политика permissions (например, ssh setka-prod allowlist)
+# - .claude/settings.json — командная политика permissions (например, ssh setka allowlist)
 # Остальное (worktrees, локальная сессия, settings.local.json конкретного компа) — локально.
 .claude/*
 !.claude/commands/
