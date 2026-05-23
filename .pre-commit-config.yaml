@@ -1,10 +1,9 @@
-# Default Python для всех хуков — 3.11 (локальные venv'ы worktree'ев).
-# Прод на 3.12, но для линтеров разница нерелевантна, важно — чтобы
-# pre-commit РЕАЛЬНО запускался на машине разработчика. Раньше был
-# `language_version: python3.12` на black, и pre-commit падал у всех
-# у кого нет 3.12 (см. DEV_HISTORY 2026-05-22 — incident в /reliz).
-default_language_version:
-  python: python3.11
+# Линтеры используют тот python, который запустил pre-commit (берётся из
+# активного venv). Black/isort/flake8 одинаково ведут себя на 3.11 и 3.12;
+# жёсткое прибитие к конкретной версии раньше дважды ломало pre-commit у
+# разработчиков, у которых её нет (DEV_HISTORY 2026-05-22 — black на 3.12;
+# 2026-05-23 — virtualenv не находил 3.11). CI прибит к 3.12 через
+# .github/workflows/ci.yml `python-version: ["3.12"]`.
 
 repos:
   - repo: https://github.com/psf/black
