@@ -22,15 +22,17 @@ repos:
     rev: 7.1.1
     hooks:
       - id: flake8
-        # Оставшиеся коды в ignore — это:
-        #   - E203/W503 — стандартный конфликт black ↔ pep8, нужен всегда.
-        #   - E402 — будет зачищен отдельным PR (cleanup legacy, через
-        #     # noqa: E402 с обоснованием на каждую `sys.path.insert`-import).
-        # E501 зачищен 2026-05-23 «Legacy flake8 cleanup PR 2» (96 строк
-        # получили # noqa: E501; новые длинные строки теперь ловятся).
-        # E712/F841/W291/E303/E722/F601/F811/E302/W391/F541 зачищены 2026-05-23
-        # «Legacy flake8 cleanup PR 1».
+        # Оставшиеся коды в ignore — только E203/W503: стандартный конфликт
+        # black ↔ pep8, без них black и flake8 ругаются друг на друга. Все
+        # остальные legacy-нарушения зачищены 2026-05-23 в 3 PR:
+        #   - PR 1: E712/F841/W291/E303/E722/F601/F811/E302/W391/F541
+        #     (+ 2 найденных runtime-бага в text_utils.py и system_monitoring.py).
+        #   - PR 2: E501 — 96 строк получили # noqa: E501.
+        #   - PR 3: E402 — 147 строк получили # noqa: E402 (типичная причина —
+        #     `sys.path.insert(0, ...)` перед импортами; рефакторинг через
+        #     pyproject.toml editable install — отдельная 🟢 идея).
+        # Новые нарушения по всем этим кодам теперь ловятся pre-commit'ом.
         args:
           - "--max-line-length=100"
-          - "--extend-ignore=E203,W503,E402"
+          - "--extend-ignore=E203,W503"
         exclude: ^(venv|build|dist)/

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from modules.publisher.digest_builder import DigestBuilder
-from modules.vk_monitor.advanced_parser import AdvancedVKParser
+from modules.publisher.digest_builder import DigestBuilder  # noqa: E402
+from modules.vk_monitor.advanced_parser import AdvancedVKParser  # noqa: E402
 
 
 def test_region_words_filter_logic():

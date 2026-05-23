@@ -11,9 +11,9 @@ print("=" * 70)
 print("DEEP VK TOKEN DIAGNOSTIC")
 print("=" * 70)
 
-import vk_api
+import vk_api  # noqa: E402
 
-from config.runtime import VK_TOKENS
+from config.runtime import VK_TOKENS  # noqa: E402
 
 for name in sorted(VK_TOKENS.keys()):
     token = VK_TOKENS[name]

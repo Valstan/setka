@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.operation_tracking import operation_tracker
+from modules.operation_tracking import operation_tracker  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

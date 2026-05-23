@@ -17,7 +17,7 @@ print("=== VK_PUBLISH_TOKEN_NAME ===")
 print(f"  {os.environ.get('VK_PUBLISH_TOKEN_NAME', 'NOT SET')}")
 
 print()
-from config.runtime import VK_PUBLISH_TOKEN_NAME, VK_TOKENS, get_publish_token
+from config.runtime import VK_PUBLISH_TOKEN_NAME, VK_TOKENS, get_publish_token  # noqa: E402
 
 print(f"  VK_TOKENS keys: {list(VK_TOKENS.keys())}")
 print(f"  VK_PUBLISH_TOKEN_NAME (from config): {VK_PUBLISH_TOKEN_NAME}")
@@ -35,9 +35,9 @@ else:
 # Test BOTH tokens
 print()
 print("=== Testing BOTH tokens ===")
-import vk_api
+import vk_api  # noqa: E402
 
-from modules.vk_monitor.vk_client import VKClient
+from modules.vk_monitor.vk_client import VKClient  # noqa: E402
 
 for token_name in ["VITA", "VALSTAN"]:
     token = VK_TOKENS.get(token_name)

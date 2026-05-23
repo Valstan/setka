@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from utils.post_utils import extract_source_attribution
+from utils.post_utils import extract_source_attribution  # noqa: E402
 
 
 def test_extract_source_attribution_wiki_link_with_group_name():

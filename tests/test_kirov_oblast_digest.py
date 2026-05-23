@@ -10,8 +10,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.digest_pipeline_settings import POSTOPUS_DIGEST_THEMES
-from modules.kirov_oblast_digest import (
+from modules.digest_pipeline_settings import POSTOPUS_DIGEST_THEMES  # noqa: E402
+from modules.kirov_oblast_digest import (  # noqa: E402
     DEFAULT_REGION_CODE,
     OBLAST_LOOKBACK_HOURS,
     THEME_OBLAST,

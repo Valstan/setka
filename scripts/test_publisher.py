@@ -15,14 +15,14 @@ import sys
 # Добавляем корневую директорию в PYTHONPATH
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta  # noqa: E402
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select  # noqa: E402
 
-from config.runtime import VK_TOKENS
-from database.connection import AsyncSessionLocal
-from database.models import Post, Region
-from modules.publisher.vk_publisher import VKPublisher
+from config.runtime import VK_TOKENS  # noqa: E402
+from database.connection import AsyncSessionLocal  # noqa: E402
+from database.models import Post, Region  # noqa: E402
+from modules.publisher.vk_publisher import VKPublisher  # noqa: E402
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")

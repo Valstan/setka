@@ -10,8 +10,8 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database.connection import AsyncSessionLocal
-from modules.deduplication import (
+from database.connection import AsyncSessionLocal  # noqa: E402
+from modules.deduplication import (  # noqa: E402
     DuplicationDetector,
     create_lip_fingerprint,
     create_media_fingerprint,

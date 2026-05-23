@@ -33,13 +33,13 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select  # noqa: E402
 
-from database.connection import AsyncSessionLocal
-from database.models import Filter, Post, Region, VKToken
-from modules.aggregation.aggregator import NewsAggregator
-from modules.core.scoring import calculate_post_score
-from modules.filters import (
+from database.connection import AsyncSessionLocal  # noqa: E402
+from database.models import Filter, Post, Region, VKToken  # noqa: E402
+from modules.aggregation.aggregator import NewsAggregator  # noqa: E402
+from modules.core.scoring import calculate_post_score  # noqa: E402
+from modules.filters import (  # noqa: E402
     BlacklistIDFilter,
     BlacklistWordFilter,
     CategoryFilter,
@@ -53,21 +53,21 @@ from modules.filters import (
     TextQualityFilter,
     ViewsRequirementFilter,
 )
-from modules.module_activity_notifier import (
+from modules.module_activity_notifier import (  # noqa: E402
     notify_publish_completed,
     notify_publish_started,
     notify_region_processing,
     notify_workflow_completed,
     notify_workflow_started,
 )
-from modules.operation_tracking import (
+from modules.operation_tracking import (  # noqa: E402
     end_operation_error,
     end_operation_success,
     start_filtering_operation,
     start_monitoring_operation,
     update_operation_progress,
 )
-from modules.vk_monitor.monitor import VKMonitor
+from modules.vk_monitor.monitor import VKMonitor  # noqa: E402
 
 
 class ProductionWorkflow:

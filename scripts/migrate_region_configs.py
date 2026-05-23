@@ -11,13 +11,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import asyncio
+import asyncio  # noqa: E402
 
-from sqlalchemy import select
+from sqlalchemy import select  # noqa: E402
 
-from database.connection import AsyncSessionLocal
-from database.models import Region
-from database.models_extended import RegionConfig
+from database.connection import AsyncSessionLocal  # noqa: E402
+from database.models import Region  # noqa: E402
+from database.models_extended import RegionConfig  # noqa: E402
 
 # ============================================================================
 # OLD_POSTOPUS DATA — extracted from MongoDB postopus.config collection

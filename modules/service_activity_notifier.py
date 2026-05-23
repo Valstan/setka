@@ -13,12 +13,12 @@ from typing import Any, Dict, Optional
 # Добавляем путь к проекту
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.service_notifications import (
+from modules.service_notifications import (  # noqa: E402
     NotificationType,
     ServiceNotification,
     service_notifications,
 )
-from utils.timezone import now_moscow
+from utils.timezone import now_moscow  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

@@ -16,7 +16,7 @@ import pymongo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.runtime import MONGO_CONNECTION
+from config.runtime import MONGO_CONNECTION  # noqa: E402
 
 MONGO_URI = MONGO_CONNECTION["uri"]
 

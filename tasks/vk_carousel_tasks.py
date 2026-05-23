@@ -16,7 +16,7 @@ from modules.vk_monitor.carousel_manager import carousel_manager
 logger = logging.getLogger(__name__)
 
 # Получить Celery app из основного файла
-from celery_app import app
+from celery_app import app  # noqa: E402
 
 
 @app.task(bind=True, name="vk_carousel.scan_next_region")

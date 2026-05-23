@@ -9,11 +9,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select
+from sqlalchemy import select  # noqa: E402
 
-from database.connection import AsyncSessionLocal
-from database.models import Post
-from modules.aggregation import NewsAggregator, PostClusterer
+from database.connection import AsyncSessionLocal  # noqa: E402
+from database.models import Post  # noqa: E402
+from modules.aggregation import NewsAggregator, PostClusterer  # noqa: E402
 
 
 async def test_aggregation():

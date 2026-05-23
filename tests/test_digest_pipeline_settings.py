@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.digest_pipeline_settings import get_effective_pipeline_settings
+from modules.digest_pipeline_settings import get_effective_pipeline_settings  # noqa: E402
 
 
 def test_effective_uses_defaults():

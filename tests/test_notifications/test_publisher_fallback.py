@@ -20,9 +20,9 @@ def _client_with_method_only(method_return):
     return client
 
 
-import pytest
+import pytest  # noqa: E402
 
-from modules.publisher.vk_publisher_extended import VKPublisher
+from modules.publisher.vk_publisher_extended import VKPublisher  # noqa: E402
 
 
 def _make_publisher(publish_client):

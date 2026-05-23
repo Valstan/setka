@@ -9,11 +9,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select
+from sqlalchemy import select  # noqa: E402
 
-from database.connection import AsyncSessionLocal
-from database.models import Post, Region
-from modules.filters import (
+from database.connection import AsyncSessionLocal  # noqa: E402
+from database.models import Post, Region  # noqa: E402
+from modules.filters import (  # noqa: E402
     BlacklistIDFilter,
     BlacklistWordFilter,
     DateFilter,

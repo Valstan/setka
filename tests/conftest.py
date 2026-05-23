@@ -15,10 +15,10 @@ import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Database fixtures

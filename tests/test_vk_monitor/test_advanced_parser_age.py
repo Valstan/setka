@@ -6,7 +6,10 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from modules.vk_monitor.advanced_parser import DIGEST_MAX_POST_AGE_HOURS, _post_age_hours_utc
+from modules.vk_monitor.advanced_parser import (  # noqa: E402
+    DIGEST_MAX_POST_AGE_HOURS,
+    _post_age_hours_utc,
+)
 
 
 def test_post_age_hours_fresh():
