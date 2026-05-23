@@ -48,6 +48,53 @@
 
 ---
 
+## 2026-05-23 — Branch protection rules для main + dev-worktree bootstrap
+
+**Тема сессии:** [ADR-0002](../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md) ввёл PR-only flow ещё 2026-05-22, но защита держалась только на дисциплине — технически любой `git push origin main` GitHub принимал. После того как первый PR на новой mailbox-схеме прошёл (#11), пора enforce'ить правило технически (ADR-0002 §D). Параллельно — поднят long-lived dev-worktree для гонки тестов локально вместо хождения на прод.
+
+### Изменения
+
+#### Branch protection (main)
+
+- **GitHub API** — `gh api -X PUT repos/Valstan/setka/branches/main/protection --input scripts/branch-protection.json`:
+  - `required_pull_request_reviews.required_approving_review_count=0` — PR обязателен, ревью — нет (@valstan один, ADR-0002 §4).
+  - `required_status_checks` = `test (3.12)` + `strict=true` — CI должен быть зелёным, ветка свежей перед merge.
+  - `enforce_admins=true` — даже owner не обходит protection случайно. Hot-fix §8 → разово снять через `gh api -X DELETE`.
+  - `allow_force_pushes=false` — ADR-0002 §7.
+  - `allow_deletions=false` — main нельзя удалить.
+- **`scripts/branch-protection.json`** — JSON-конфиг закоммичен в репо для воспроизводимости (если protection потеряна, восстанавливается одной командой).
+- **`docs/OPERATIONS.md` §8** — новый раздел «Hot-fix runbook»: пошаговая инструкция как временно снять protection при аварии, важность шага «вернуть обратно», что делать при флакающем CI.
+
+#### Dev-worktree bootstrap
+
+- **`.claude/worktrees/dev/`** — long-lived worktree на ветке `chore/dev-sandbox` (от main). Python 3.12 venv + requirements + pytest + pytest-asyncio + pre-commit. Pre-commit hook поставлен в общий `.git/hooks/`. Baseline: `pytest tests/ -q` → 360/360 зелёных за 18.3s.
+- Скрипт `scripts/setup-dev.ps1` хардкодит `py -3.11` — но 3.11 локально не установлен, использован 3.12 (как на проде).
+- **`.pre-commit-config.yaml`** — убран `default_language_version.python: python3.11`. Линтеры теперь идут на том python'е, что запустил pre-commit (берётся из venv). Прибитие к 3.11 ломало первый коммит из dev-worktree (virtualenv не находил интерпретер). Black/isort/flake8 идентично работают на 3.11/3.12; CI прибит к 3.12 через matrix в `.github/workflows/ci.yml`.
+
+### Проверка / прогон
+
+- Локально (dev-worktree): `pytest tests/ -q` — **360/360 зелёных**.
+- На GitHub: `gh api repos/Valstan/setka/branches/main/protection` — все правила применились (`enforce_admins.enabled=true`, `allow_force_pushes.enabled=false`, `allow_deletions.enabled=false`, `required_status_checks.contexts=["test (3.12)"]`, `strict=true`).
+- Smoke test «попробовать destructive op» намеренно скипнут — auto-mode classifier правильно отбивает force-push/delete против main; реальный smoke = успешный PR+merge через нормальный flow (этот же PR, требует зелёного CI и не позволяет direct push в main).
+
+### Применение
+
+- На GitHub: protection уже применён через `gh api`. Восстанавливается из `scripts/branch-protection.json`.
+- На проде: **ничего не нужно**. Изменения только в docs + scripts + GitHub config. Прод-деплой не требуется.
+
+### Что НЕ менялось
+
+- ADR-0002 §8 (hot-fix исключение) — flow тот же, просто теперь требует осознанного шага «снять protection → fix → вернуть» вместо «просто push».
+- Required approvals остался 0 — добавлю когда появится второй разработчик.
+- Required signed commits — не включаю, GPG-конфиг отдельная история.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- Закрыт техдолг «Branch protection rules на GitHub для main».
+- 🟡 `scripts/setup-dev.{ps1,sh}` хардкодит `py -3.11` / `python3.11` — стоит сделать fallback на 3.12, если 3.11 не найден (`.pre-commit-config.yaml` уже починен).
+
+---
+
 ## 2026-05-23 — Mailbox asymmetry — миграция на per-repo write
 
 **Тема сессии:** brain прислала [директиву](../mailbox/to-brain/2026-05-23-asymmetry-migration-done.md) (compliance=mandate, urgency=high) — старая симметричная схема mailbox'ов (обе стороны пишут в `brain_matrica/mailboxes/`) приводит к кросс-репо коммитам, merge-конфликтам и размытой ответственности. Переход на асимметричную: каждая сторона пишет **только в свой репо**, читает чужой через `git pull --ff-only`. ([asymmetry-fix письмо](../../brain_matrica/mailboxes/setka/from-brain/2026-05-23-mailbox-asymmetry-fix.md), [ADR-0001 v3](../../brain_matrica/adr/0001-brain-projects-mailboxes.md)).
