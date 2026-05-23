@@ -42,7 +42,7 @@ async def test_simple_publish():
         return False
 
     try:
-        publisher = VKPublisher(vk_token)
+        VKPublisher(vk_token)
 
         # Получаем информацию о группах пользователя
         logger.info("Getting user's groups...")
@@ -102,7 +102,7 @@ async def test_digest_creation():
                     and_(
                         Post.region_id == region.id,
                         Post.date_published >= cutoff_time,
-                        Post.ai_analyzed == True,
+                        Post.ai_analyzed.is_(True),
                     )
                 )
                 .order_by(Post.ai_score.desc())
@@ -117,7 +117,7 @@ async def test_digest_creation():
                 # Пробуем без ограничения по времени
                 posts_result = await session.execute(
                     select(Post)
-                    .where(and_(Post.region_id == region.id, Post.ai_analyzed == True))
+                    .where(and_(Post.region_id == region.id, Post.ai_analyzed.is_(True)))
                     .order_by(Post.ai_score.desc())
                     .limit(5)
                 )
@@ -176,7 +176,7 @@ async def test_full_workflow():
             logger.error("❌ VK token not found")
             return False
 
-        publisher = VKPublisher(vk_token)
+        VKPublisher(vk_token)
 
         async with AsyncSessionLocal() as session:
             # Получаем регион
@@ -190,7 +190,7 @@ async def test_full_workflow():
             # Получаем посты
             posts_result = await session.execute(
                 select(Post)
-                .where(and_(Post.region_id == region.id, Post.ai_analyzed == True))
+                .where(and_(Post.region_id == region.id, Post.ai_analyzed.is_(True)))
                 .order_by(Post.ai_score.desc())
                 .limit(5)
             )

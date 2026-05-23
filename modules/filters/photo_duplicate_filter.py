@@ -188,7 +188,7 @@ class PhotoDuplicateFilter(BaseFilter):
 
             if work_table and work_table.hash:
                 return set(work_table.hash)
-        except Exception as e:
+        except Exception:
             # Don't fail filter on DB errors
             pass
 

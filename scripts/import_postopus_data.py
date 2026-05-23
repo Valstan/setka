@@ -326,7 +326,7 @@ async def show_statistics():
 
         # Count active communities
         active_comm_result = await session.execute(
-            select(func.count(Community.id)).where(Community.is_active == True)
+            select(func.count(Community.id)).where(Community.is_active.is_(True))
         )
         active_communities_count = active_comm_result.scalar()
 

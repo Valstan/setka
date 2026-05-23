@@ -42,14 +42,14 @@ def extract_vk_id_from_input(vk_input: str, vk_api_instance) -> int:
         if numeric_id > 0:
             # Verify group exists
             try:
-                group = vk_api_instance.groups.getById(group_id=numeric_id)[0]
+                vk_api_instance.groups.getById(group_id=numeric_id)
                 return -numeric_id
             except Exception as e:
                 raise ValueError(f"Сообщество с ID {numeric_id} не найдено в VK: {str(e)}")
         else:
             # Already negative, verify it exists
             try:
-                group = vk_api_instance.groups.getById(group_id=abs(numeric_id))[0]
+                vk_api_instance.groups.getById(group_id=abs(numeric_id))
                 return numeric_id
             except Exception as e:
                 raise ValueError(f"Сообщество с ID {numeric_id} не найдено в VK: {str(e)}")
@@ -78,7 +78,7 @@ def extract_vk_id_from_input(vk_input: str, vk_api_instance) -> int:
             if screen_name.isdigit():
                 numeric_id = int(screen_name)
                 try:
-                    group = vk_api_instance.groups.getById(group_id=numeric_id)[0]
+                    vk_api_instance.groups.getById(group_id=numeric_id)
                     return -numeric_id
                 except Exception as e:
                     raise ValueError(f"Сообщество с ID {numeric_id} не найдено в VK: {str(e)}")
@@ -267,7 +267,7 @@ async def add_community(
     token_result = await db.execute(
         select(VKToken).where(
             VKToken.name == "VALSTAN",
-            VKToken.is_active == True,
+            VKToken.is_active.is_(True),
             VKToken.validation_status == "valid",
         )
     )

@@ -118,7 +118,7 @@ async def test_digest_publishing():
                 .join(Community)
                 .where(
                     and_(
-                        Post.ai_analyzed == True,
+                        Post.ai_analyzed.is_(True),
                         Post.status == "new",
                         Post.date_published
                         >= datetime.now().replace(hour=0, minute=0, second=0, microsecond=0),
@@ -188,7 +188,7 @@ async def test_region_publishing():
                 .where(
                     and_(
                         Region.code == "mi",
-                        Post.ai_analyzed == True,
+                        Post.ai_analyzed.is_(True),
                         Post.status == "new",
                         Post.date_published
                         >= datetime.now().replace(hour=0, minute=0, second=0, microsecond=0),

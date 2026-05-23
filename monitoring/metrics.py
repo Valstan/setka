@@ -158,7 +158,7 @@ def track_api_request(endpoint: str):
             try:
                 result = await func(*args, **kwargs)
                 return result
-            except Exception as e:
+            except Exception:
                 status = "error"
                 raise
             finally:
@@ -349,14 +349,14 @@ async def update_business_metrics():
         async with AsyncSessionLocal() as session:
             # Count active communities
             result = await session.execute(
-                select(func.count(Community.id)).where(Community.is_active == True)
+                select(func.count(Community.id)).where(Community.is_active.is_(True))
             )
             count = result.scalar()
             communities_monitored.set(count)
 
             # Count active regions
             result = await session.execute(
-                select(func.count(Region.id)).where(Region.is_active == True)
+                select(func.count(Region.id)).where(Region.is_active.is_(True))
             )
             count = result.scalar()
             regions_active.set(count)

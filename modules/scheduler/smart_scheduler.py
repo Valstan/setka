@@ -67,7 +67,7 @@ class SmartScheduler:
             # Запрос статистики по часам
             query = text(
                 """
-                SELECT 
+                SELECT
                     EXTRACT(HOUR FROM date_published) as hour,
                     COUNT(*) as post_count,
                     AVG(views) as avg_views,
@@ -114,7 +114,7 @@ class SmartScheduler:
         async with AsyncSessionLocal() as session:
             query = text(
                 """
-                SELECT 
+                SELECT
                     EXTRACT(DOW FROM date_published) as day_of_week,
                     COUNT(*) as post_count,
                     AVG(views + likes * 2 + reposts * 5) as avg_engagement
@@ -316,17 +316,6 @@ class SmartScheduler:
                     )
 
         if engagement_by_day:
-            best_day = max(engagement_by_day, key=engagement_by_day.get)
-            day_names = [
-                "Понедельник",
-                "Вторник",
-                "Среда",
-                "Четверг",
-                "Пятница",
-                "Суббота",
-                "Воскресенье",
-            ]
-
             # Проверить weekend vs weekdays
             weekdays = [d for d in engagement_by_day.keys() if d < 5]
             weekend = [d for d in engagement_by_day.keys() if d >= 5]

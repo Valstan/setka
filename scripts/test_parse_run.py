@@ -57,7 +57,7 @@ async def main():
         logger.info("\n[ШАГ 2] Проверка сообществ для парсинга")
         result = await session.execute(
             select(Community)
-            .where(Community.region_id == region.id, Community.is_active == True)
+            .where(Community.region_id == region.id, Community.is_active.is_(True))
             .order_by(Community.category)
         )
         communities = result.scalars().all()

@@ -167,7 +167,9 @@ class BlacklistWordFilter(DBFilter):
         # Загрузить из БД
         result = await session.execute(
             select(Filter.pattern).where(
-                Filter.type == "blacklist_word", Filter.is_active == True, Filter.action == "delete"
+                Filter.type == "blacklist_word",
+                Filter.is_active.is_(True),
+                Filter.action == "delete",
             )
         )
 

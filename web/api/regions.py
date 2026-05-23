@@ -171,9 +171,6 @@ async def put_region_digest_template(
         raise HTTPException(status_code=404, detail="Region not found")
 
     cfg: Dict[str, Any] = region.config if isinstance(region.config, dict) else {}
-    digest_template: Dict[str, Any] = (
-        cfg.get("digest_template") if isinstance(cfg.get("digest_template"), dict) else {}
-    )
 
     new_dt: Dict[str, Any] = {"defaults": {}, "by_topic": {}}
     if payload.defaults is not None:

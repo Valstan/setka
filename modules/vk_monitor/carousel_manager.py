@@ -64,7 +64,7 @@ class VKCarouselManager:
         try:
             # Получить все активные регионы
             regions_result = await db.execute(
-                select(Region).where(Region.is_active == True).order_by(Region.priority.desc())
+                select(Region).where(Region.is_active.is_(True)).order_by(Region.priority.desc())
             )
             regions = regions_result.scalars().all()
 
@@ -103,7 +103,7 @@ class VKCarouselManager:
             # Получить сообщества региона
             communities_result = await db.execute(
                 select(Community.id).where(
-                    Community.region_id == oldest_region.id, Community.is_active == True
+                    Community.region_id == oldest_region.id, Community.is_active.is_(True)
                 )
             )
             community_ids = [row[0] for row in communities_result.fetchall()]
@@ -279,7 +279,7 @@ class VKCarouselManager:
         try:
             # Получить все регионы
             regions_result = await db.execute(
-                select(Region.code, Region.name).where(Region.is_active == True)
+                select(Region.code, Region.name).where(Region.is_active.is_(True))
             )
             regions = regions_result.fetchall()
 

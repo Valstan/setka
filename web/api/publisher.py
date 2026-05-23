@@ -97,7 +97,7 @@ async def get_posts_for_region(
             .where(
                 and_(
                     Community.region_id == region.id,
-                    Post.ai_analyzed == True,
+                    Post.ai_analyzed.is_(True),
                     Post.status == "new",
                     Post.date_published >= datetime.now() - timedelta(hours=24),
                 )

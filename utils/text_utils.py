@@ -119,9 +119,14 @@ def is_advertisement(text: str, skip_for_reklama: bool = False, theme: str = "")
             return True
 
     # Level 3: Commercial patterns scoring
+    # Объединено в один список с weight=2 (см. DEV_HISTORY 2026-05-23 «Legacy
+    # flake8 cleanup PR 1»): раньше тут было два списка под одинаковым ключом
+    # 2 — Python молча оставлял только второй (Calls to action), а первый
+    # (Prices and discounts) терялся. Объединение восстанавливает изначальный
+    # intent — посты с ценами/скидками снова детектируются как реклама.
     commercial_patterns = {
-        # Prices and discounts (weight 2)
         2: [
+            # Prices and discounts
             r"цена[:\s]\d+",
             r"стоимость[:\s]\d+",
             r"скидка",
@@ -134,9 +139,7 @@ def is_advertisement(text: str, skip_for_reklama: bool = False, theme: str = "")
             r"недорого",
             r"купить",
             r"заказать",
-        ],
-        # Calls to action (weight 1-2)
-        2: [
+            # Calls to action
             r"звоните[:\s]",
             r"пишите[:\s]",
             r"тел[.:]?\s*[\d+\-]",

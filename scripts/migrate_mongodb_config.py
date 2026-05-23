@@ -326,9 +326,6 @@ async def migrate_work_tables(mongo_db, session) -> int:
 
     migrated = 0
 
-    # Reverse mapping: collection code → region code
-    reverse_mapping = {v: k for k, v in REGION_MAPPING.items()}
-
     for collection_code, group_name in REGION_MAPPING.items():
         # Get MongoDB collection for this region
         collection = mongo_db[collection_code]

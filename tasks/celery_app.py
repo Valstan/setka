@@ -229,9 +229,7 @@ def create_daily_digest():
         async def create_digest():
             async with AsyncSessionLocal() as session:
                 # Получаем все активные регионы
-                result = await session.execute(
-                    select(Region).where(Region.is_active == True)  # noqa: E712
-                )
+                result = await session.execute(select(Region).where(Region.is_active.is_(True)))
                 regions = list(result.scalars())
 
                 aggregator = NewsAggregator(session)
@@ -249,7 +247,7 @@ def create_daily_digest():
                             and_(
                                 Post.region_id == region.id,
                                 Post.date_published >= cutoff_time,
-                                Post.ai_analyzed == True,  # noqa: E712
+                                Post.ai_analyzed.is_(True),
                             )
                         )
                         .order_by(Post.ai_score.desc())

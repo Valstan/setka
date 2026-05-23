@@ -24,9 +24,9 @@ async def run_migration():
     async with engine.begin() as conn:
         # Check if columns already exist
         check_query = """
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'posts' 
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'posts'
         AND column_name IN ('fingerprint_lip', 'fingerprint_media', 'fingerprint_text', 'fingerprint_text_core')
         """
 
@@ -47,13 +47,13 @@ async def run_migration():
         if "fingerprint_lip" not in existing_columns:
             migrations.append(
                 """
-                ALTER TABLE posts 
+                ALTER TABLE posts
                 ADD COLUMN fingerprint_lip VARCHAR(50)
             """
             )
             migrations.append(
                 """
-                CREATE INDEX ix_posts_fingerprint_lip 
+                CREATE INDEX ix_posts_fingerprint_lip
                 ON posts(fingerprint_lip)
             """
             )
@@ -61,7 +61,7 @@ async def run_migration():
         if "fingerprint_media" not in existing_columns:
             migrations.append(
                 """
-                ALTER TABLE posts 
+                ALTER TABLE posts
                 ADD COLUMN fingerprint_media JSON
             """
             )
@@ -69,13 +69,13 @@ async def run_migration():
         if "fingerprint_text" not in existing_columns:
             migrations.append(
                 """
-                ALTER TABLE posts 
+                ALTER TABLE posts
                 ADD COLUMN fingerprint_text VARCHAR(100)
             """
             )
             migrations.append(
                 """
-                CREATE INDEX ix_posts_fingerprint_text 
+                CREATE INDEX ix_posts_fingerprint_text
                 ON posts(fingerprint_text)
             """
             )
@@ -83,13 +83,13 @@ async def run_migration():
         if "fingerprint_text_core" not in existing_columns:
             migrations.append(
                 """
-                ALTER TABLE posts 
+                ALTER TABLE posts
                 ADD COLUMN fingerprint_text_core VARCHAR(100)
             """
             )
             migrations.append(
                 """
-                CREATE INDEX ix_posts_fingerprint_text_core 
+                CREATE INDEX ix_posts_fingerprint_text_core
                 ON posts(fingerprint_text_core)
             """
             )
@@ -169,7 +169,7 @@ async def verify_migration():
     async with engine.begin() as conn:
         # Count posts with fingerprints
         query = """
-        SELECT 
+        SELECT
             COUNT(*) as total,
             COUNT(fingerprint_lip) as with_lip,
             COUNT(fingerprint_text) as with_text,
