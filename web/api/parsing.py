@@ -16,7 +16,9 @@ from utils.cache import get_cache
 
 router = APIRouter(prefix="/api/parsing", tags=["Parsing"])
 
-OUTPUT_DIR = "/home/valstan/SETKA/logs/parser"
+# OUTPUT_DIR / REPORTS_DIR живут в tasks/parsing_tasks.py и параметризуются
+# через env SETKA_LOGS_DIR. Здесь OUTPUT_DIR раньше дублировался — удалён
+# как dead code, в файле не использовался ни разу.
 JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_ACTIVE_JOBS = 1
 ACTIVE_JOBS_KEY = "parser:active_jobs"

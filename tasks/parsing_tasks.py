@@ -26,30 +26,50 @@ from modules.vk_monitor.vk_client_async import VKClientAsync, VKTokenRotatorAsyn
 from utils.cache import get_cache
 from utils.celery_asyncio import run_coro
 
-OUTPUT_DIR = "/home/valstan/SETKA/logs/parser"
+# SETKA_LOGS_DIR — корневая папка для логов парсера (parser.log,
+# parser_video_report.log, parser/, parser/reports/). На проде задаётся
+# в /etc/setka/setka.env (или просто используется дефолт). Локально на
+# Windows / в тестах достаточно `SETKA_LOGS_DIR=./logs` (или любой
+# доступный путь), чтобы _init_logger не пытался писать в /home/...
+SETKA_LOGS_DIR = os.getenv("SETKA_LOGS_DIR", "/home/valstan/SETKA/logs")
+OUTPUT_DIR = os.path.join(SETKA_LOGS_DIR, "parser")
+REPORTS_DIR = os.path.join(SETKA_LOGS_DIR, "parser", "reports")
+VIDEO_REPORT_PATH = os.path.join(SETKA_LOGS_DIR, "parser_video_report.log")
+
 JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 REQUEST_DELAY_SECONDS = 0.35
 ACTIVE_JOBS_KEY = "parser:active_jobs"
 MAX_VIDEO_SIZE_BYTES = 200 * 1024 * 1024
 MAX_TOTAL_VIDEO_BYTES = 1000 * 1024 * 1024
-REPORTS_DIR = "/home/valstan/SETKA/logs/parser/reports"
 SKIP_VIDEOS_KEY_PREFIX = "parser:skip:"
 
 
 def _init_logger() -> logging.Logger:
+    """Setup parser file-logger. Safe-fallback на StreamHandler, если
+    SETKA_LOGS_DIR недоступен (например, локально на Windows путь /home/...
+    не создастся под нужным диском, или нет прав)."""
     logger = logging.getLogger("vk_parser")
-    if not logger.handlers:
-        logger.setLevel(logging.INFO)
-        os.makedirs("/home/valstan/SETKA/logs", exist_ok=True)
-        handler = logging.FileHandler("/home/valstan/SETKA/logs/parser.log")
-        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    try:
+        os.makedirs(SETKA_LOGS_DIR, exist_ok=True)
+        handler: logging.Handler = logging.FileHandler(os.path.join(SETKA_LOGS_DIR, "parser.log"))
+    except (OSError, PermissionError) as exc:
+        handler = logging.StreamHandler()
+        # Без logger.warning — он сам ещё не настроен; print, чтобы не глотать.
+        print(
+            f"[parsing_tasks] SETKA_LOGS_DIR '{SETKA_LOGS_DIR}' unavailable "
+            f"({exc}); stderr only",
+            flush=True,
+        )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
     return logger
 
 
 logger = _init_logger()
-VIDEO_REPORT_PATH = "/home/valstan/SETKA/logs/parser_video_report.log"
 
 
 def _job_key(job_id: str) -> str:

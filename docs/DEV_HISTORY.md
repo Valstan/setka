@@ -48,6 +48,38 @@
 
 ---
 
+## 2026-05-23 — Parser-логи через env SETKA_LOGS_DIR
+
+**Тема сессии:** последние оставшиеся хардкоды `/home/valstan/SETKA/logs/parser*` в `web/api/parsing.py` и `tasks/parsing_tasks.py` (`OUTPUT_DIR`, `REPORTS_DIR`, `VIDEO_REPORT_PATH`, `_init_logger` с `os.makedirs("/home/valstan/SETKA/logs")` + `FileHandler("parser.log")`). На Windows / в локальных тестах `os.makedirs("/home/valstan/SETKA/logs")` создавал мусорную ветку `C:\home\valstan\SETKA\logs\` на текущем диске. Закрываем по образцу `main.py:47` `LOG_PATH` — общий env с safe-fallback.
+
+### Изменения
+
+- **`tasks/parsing_tasks.py`** — введён модуль-level `SETKA_LOGS_DIR = os.getenv("SETKA_LOGS_DIR", "/home/valstan/SETKA/logs")`. Все 4 хардкода теперь вычисляются от него: `OUTPUT_DIR = SETKA_LOGS_DIR/parser`, `REPORTS_DIR = SETKA_LOGS_DIR/parser/reports`, `VIDEO_REPORT_PATH = SETKA_LOGS_DIR/parser_video_report.log`, `_init_logger` пишет в `SETKA_LOGS_DIR/parser.log`. `_init_logger` обёрнут в try/except — при недоступном пути fallback на `StreamHandler` (как в `main.py` `LOG_PATH`), не блокирует импорт модуля. Использования внутри файла (`OUTPUT_DIR`, `REPORTS_DIR` в `_cleanup_old_files`, `parse_vk_posts_task`, `_create_zip_archive` и др. — 13 мест) автоматически подхватывают новые значения.
+- **`web/api/parsing.py`** — удалён неиспользуемый `OUTPUT_DIR = "/home/valstan/SETKA/logs/parser"` (dead code; в файле 170 строк, упоминание было только в одной строке).
+- **`tests/test_tasks/__init__.py`** + **`tests/test_tasks/test_parsing_tasks_logs.py`** — новый каталог тестов с 5 кейсами:
+  - default `SETKA_LOGS_DIR` без env = прод-путь
+  - env override меняет все 4 пути (`SETKA_LOGS_DIR`, `OUTPUT_DIR`, `REPORTS_DIR`, `VIDEO_REPORT_PATH`)
+  - `_init_logger` ставит `FileHandler` при writable пути и создаёт папку
+  - `_init_logger` fallback'ит на `StreamHandler` при ненаписуемом пути (тест использует «файл-блокатор» как `parent`, чтобы `os.makedirs` упал кросс-платформенно)
+  - `_init_logger` идемпотентен — повторный вызов не дублирует handler
+
+### Проверка / прогон
+
+- Локально: `pytest tests/ -q` — **365/365 зелёных** (было 360 → +5).
+- `pre-commit run --all-files` — black/isort/flake8 Passed. Black переформатировал одну строку `FileHandler` в `tasks/parsing_tasks.py` (умещается в 100 chars).
+- Совместимость с прод: дефолт `/home/valstan/SETKA/logs` — те же пути, что и были. Прод-конфиг `/etc/setka/setka.env` `SETKA_LOGS_DIR` опционально (но рекомендуется явно прописать `=/home/valstan/SETKA/logs` для документированности).
+
+### Применение
+
+1. **На проде:** `git pull` + `sudo systemctl restart setka setka-celery-worker setka-celery-beat`. Опционально — добавить `SETKA_LOGS_DIR=/home/valstan/SETKA/logs` в `/etc/setka/setka.env` для явности (поведение не меняется).
+2. **Локально:** теперь `pytest --collect-only` для `tasks/parsing_tasks.py` больше не оставляет мусор в `C:\home\valstan\...` — `_init_logger` ловит `OSError` и идёт на `StreamHandler`. Если хочется писать parser.log в worktree, можно поставить `SETKA_LOGS_DIR=./logs` в env.
+
+### Хвосты в `PENDING_FOLLOWUPS.md`
+
+- Закрыт техдолг «Хардкоды `/home/valstan/SETKA/logs/parser*` в parsing.py / parsing_tasks.py».
+
+---
+
 ## 2026-05-23 — Branch protection rules для main + dev-worktree bootstrap
 
 **Тема сессии:** [ADR-0002](../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md) ввёл PR-only flow ещё 2026-05-22, но защита держалась только на дисциплине — технически любой `git push origin main` GitHub принимал. После того как первый PR на новой mailbox-схеме прошёл (#11), пора enforce'ить правило технически (ADR-0002 §D). Параллельно — поднят long-lived dev-worktree для гонки тестов локально вместо хождения на прод.
