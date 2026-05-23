@@ -48,6 +48,43 @@
 
 ---
 
+## 2026-05-24 — Релиз накопленных PR #15-#20 на прод
+
+**Тема сессии:** при открытии сессии `/start` обнаружил, что прод на коммите `4191452` (PR #14), а main — на `564cf27` (PR #20). Отстаёт на 6 PR. Самое важное — **PR #17 (legacy flake8 cleanup PR 1) с 2 runtime-баг-фиксами никогда не накатывался**: F601 в `utils/text_utils.py` (12 потерянных price-patterns в `commercial_patterns`) и F811 в `web/api/system_monitoring.py` (`/api/monitoring/live` отдавал `workflow: {}` из-за shadowing helper'а над endpoint'ом). Накатил весь накопленный main одним заходом.
+
+### Что вошло в релиз
+
+- **PR #15** (`937612f`) — тесты F821-восстановленных веток (+14 тестов в `tests/test_core/`, `tests/test_utils/`).
+- **PR #16** (`2216b0d`) — SSH alias sweep `setka-prod` → `setka` в docs/settings.
+- **PR #17** (`0c951b0`) — flake8 PR 1: E712 (47) + мелочёвка (E722/F601/F811/F841/W291), **2 runtime-баг-фикса** (F601 фильтр рекламы + F811 endpoint workflow_status).
+- **PR #18** (`074210f`) — flake8 PR 2: E501 (96 строк → `# noqa: E501`).
+- **PR #19** (`ea1c8cf`) — flake8 PR 3: E402 (147 импортов → `# noqa: E402`) + финал `extend-ignore`.
+- **PR #20** (`564cf27`) — `/close_session` + `docs/SESSION_HANDOFF.md`.
+
+Миграций нет (`applied_migrations` на проде — 003-011, последняя 011 уже была). `requirements.txt` не менялся.
+
+### Применение
+
+```bash
+ssh setka "cd /home/valstan/SETKA && git fetch origin && git pull --ff-only origin main"
+# Updating 4191452..564cf27 Fast-forward; 118 files changed, 1280 ins / 437 del.
+ssh setka "sudo systemctl restart setka setka-celery-worker setka-celery-beat"
+```
+
+### Проверка / прогон
+
+- `systemctl is-active setka setka-celery-worker setka-celery-beat` → `active / active / active`.
+- `curl /api/health/full` → **200 в 1.07 с**.
+- **F811 fix проверен:** `curl /api/monitoring/live` → `data.workflow` теперь dict с ключами `['status', 'current_operation', 'current_region', 'last_run', 'next_run']` (раньше был `{}`).
+- Celery beat: `beat: Starting...` 00:57:40 → ok. Worker: `celery@... ready.` 00:57:42 → ok. Последний предыдущий task `parse_and_publish_theme` succeeded в 00:37:00 (за 20 мин до restart).
+- Ошибок в `celery-worker.log` / `celery-beat.log` после restart нет.
+
+### Хвосты
+
+- **Активировался 🟡 «мониторинг F601-фикса»** — `commercial_patterns` теперь работает с 12 восстановленными price-patterns. Следить за объёмом отфильтрованных постов с `цена/скидка/купить/\d+\s*руб/...` в первые 24-48 часов через `/posts?status=rejected` и `celery-worker.log`. Если ложно-позитивов слишком много — снизить вес price-patterns с 2 до 1 в `utils/text_utils.py`.
+
+---
+
 ## 2026-05-23 — `/close_session` + `docs/SESSION_HANDOFF.md` (sticky-note между сессиями)
 
 **Тема сессии:** в братских проектах ([Gonba](../../Gonba/.claude/commands/close_session.md), [MatricaRMZ](../../MatricaRMZ/.claude/commands/close_session.md)) есть `/close_session`, который перезаписывает `docs/SESSION_HANDOFF.md` — sticky-note с активной ниткой, следующим шагом, failed approaches. У setka такого не было — есть `DEV_HISTORY.md` (исторический лог) и `PENDING_FOLLOWUPS.md` (хвосты), но не было «куда мы шли». Создаём `/close_session` по образу братьев + адаптация под setka (PR-only flow, brain mailbox, SSH).
