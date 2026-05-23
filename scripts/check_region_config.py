@@ -4,13 +4,13 @@ import sys
 
 sys.path.insert(0, "/home/valstan/SETKA")
 
-import asyncio
+import asyncio  # noqa: E402
 
-from sqlalchemy import select
+from sqlalchemy import select  # noqa: E402
 
-from database.connection import AsyncSessionLocal
-from database.models import Community, Region
-from database.models_extended import RegionConfig
+from database.connection import AsyncSessionLocal  # noqa: E402
+from database.models import Community, Region  # noqa: E402
+from database.models_extended import RegionConfig  # noqa: E402
 
 
 async def main():

@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from modules.deduplication.fingerprints import (
+from modules.deduplication.fingerprints import (  # noqa: E402
     create_lip_fingerprint,
     create_media_fingerprint,
     create_text_core_fingerprint,

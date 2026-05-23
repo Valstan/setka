@@ -16,11 +16,11 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
-from sqlalchemy import select
+from sqlalchemy import select  # noqa: E402
 
-from database.connection import AsyncSessionLocal
-from database.models import VKToken
-from modules.vk_monitor.monitor import VKMonitor
+from database.connection import AsyncSessionLocal  # noqa: E402
+from database.models import VKToken  # noqa: E402
+from modules.vk_monitor.monitor import VKMonitor  # noqa: E402
 
 
 async def get_vk_tokens_from_db():

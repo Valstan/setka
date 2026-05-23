@@ -153,4 +153,4 @@ class HealthChecker:
 
 
 # Import Optional
-from typing import Optional
+from typing import Optional  # noqa: E402

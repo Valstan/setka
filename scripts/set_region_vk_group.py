@@ -14,12 +14,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import vk_api
-from sqlalchemy import select, update
+import vk_api  # noqa: E402
+from sqlalchemy import select, update  # noqa: E402
 
-from config.runtime import VK_TOKENS
-from database.connection import AsyncSessionLocal
-from database.models import Region
+from config.runtime import VK_TOKENS  # noqa: E402
+from database.connection import AsyncSessionLocal  # noqa: E402
+from database.models import Region  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

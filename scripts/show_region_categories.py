@@ -10,7 +10,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.region_config import REGIONS_CONFIG, CommunityCategory, RegionConfigManager
+from modules.region_config import (  # noqa: E402
+    REGIONS_CONFIG,
+    CommunityCategory,
+    RegionConfigManager,
+)
 
 
 def show_all_categories():

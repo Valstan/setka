@@ -16,9 +16,9 @@ import sys
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.connection import async_session_maker, init_db
-from database.models import Community, Filter, Region
-from database.models_extended import RegionConfig, WorkTable
+from database.connection import async_session_maker, init_db  # noqa: E402
+from database.models import Community, Filter, Region  # noqa: E402
+from database.models_extended import RegionConfig, WorkTable  # noqa: E402
 
 # MongoDB connection - read from env or default
 MONGO_URI = os.getenv("MONGO_CLIENT", "mongodb://localhost:27017")

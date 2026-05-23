@@ -25,13 +25,13 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select  # noqa: E402
 
-from config.runtime import VK_MAIN_TOKENS, VK_TEST_GROUP_ID
-from database.connection import get_db_session_context
-from database.models import Community, Post, Region
-from modules.aggregation.aggregator import NewsAggregator
-from modules.publisher.vk_publisher import VKPublisher
+from config.runtime import VK_MAIN_TOKENS, VK_TEST_GROUP_ID  # noqa: E402
+from database.connection import get_db_session_context  # noqa: E402
+from database.models import Community, Post, Region  # noqa: E402
+from modules.aggregation.aggregator import NewsAggregator  # noqa: E402
+from modules.publisher.vk_publisher import VKPublisher  # noqa: E402
 
 
 async def test_vk_publisher_initialization():

@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from modules.publisher.digest_builder import DigestBuilder
+from modules.publisher.digest_builder import DigestBuilder  # noqa: E402
 
 
 def test_empty_header_starts_with_post_marker_not_default_title():

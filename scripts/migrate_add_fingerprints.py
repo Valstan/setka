@@ -10,9 +10,9 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sqlalchemy import text
+from sqlalchemy import text  # noqa: E402
 
-from database.connection import AsyncSessionLocal, engine
+from database.connection import AsyncSessionLocal, engine  # noqa: E402
 
 
 async def run_migration():

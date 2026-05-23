@@ -11,12 +11,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configuration
 # Import from config
-from config.runtime import TELEGRAM_TOKENS
-from modules.monitoring.telegram_notifier import TelegramNotifier
+from config.runtime import TELEGRAM_TOKENS  # noqa: E402
+from modules.monitoring.telegram_notifier import TelegramNotifier  # noqa: E402
 
 BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 # Import from config
-from config.runtime import TELEGRAM_ALERT_CHAT_ID
+from config.runtime import TELEGRAM_ALERT_CHAT_ID  # noqa: E402
 
 CHAT_ID = TELEGRAM_ALERT_CHAT_ID
 

@@ -8,7 +8,7 @@ import pytest
 # Ensure project root is importable when pytest runs outside configured PYTHONPATH.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from modules.publisher.vk_publisher_extended import VKPublisher
+from modules.publisher.vk_publisher_extended import VKPublisher  # noqa: E402
 
 
 class _DummyVkClient:

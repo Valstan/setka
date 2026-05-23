@@ -8,8 +8,8 @@ import sys
 # Add project root to path
 sys.path.insert(0, "/home/valstan/SETKA")
 
-import asyncio
-import logging
+import asyncio  # noqa: E402
+import logging  # noqa: E402
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

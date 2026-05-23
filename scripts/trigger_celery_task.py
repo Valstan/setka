@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, "/home/valstan/SETKA")
 
-from tasks.parsing_scheduler_tasks import parse_and_publish_theme
+from tasks.parsing_scheduler_tasks import parse_and_publish_theme  # noqa: E402
 
 print("Triggering parse_and_publish_theme('test', 'novost', test_mode=False)...")
 result = parse_and_publish_theme.delay("test", "novost", test_mode=False)
