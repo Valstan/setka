@@ -75,7 +75,7 @@
 
 - Локально (dev-worktree): `pytest tests/ -q` — **360/360 зелёных**.
 - На GitHub: `gh api repos/Valstan/setka/branches/main/protection` — все правила применились (`enforce_admins.enabled=true`, `allow_force_pushes.enabled=false`, `allow_deletions.enabled=false`, `required_status_checks.contexts=["test (3.12)"]`, `strict=true`).
-- Smoke test: попытка force-push в main и попытка delete main отбиты GitHub'ом (как и должно быть).
+- Smoke test «попробовать destructive op» намеренно скипнут — auto-mode classifier правильно отбивает force-push/delete против main; реальный smoke = успешный PR+merge через нормальный flow (этот же PR, требует зелёного CI и не позволяет direct push в main).
 
 ### Применение
 
