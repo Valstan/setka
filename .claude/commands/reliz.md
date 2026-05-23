@@ -148,12 +148,12 @@ Merge-стратегия по умолчанию `--squash` (для коротк
 
 ## Шаг 5. Прод-доступ — подтверждение
 
-`AskUserQuestion`: «Открыть SSH-доступ к `setka-prod` на этот деплой?» — нужно один раз для всех последующих ssh-команд в этом флоу.
+`AskUserQuestion`: «Открыть SSH-доступ к `setka` на этот деплой?» — нужно один раз для всех последующих ssh-команд в этом флоу.
 
 ## Шаг 6. Прод: pull кода
 
 ```bash
-ssh setka-prod "cd /home/valstan/SETKA && git fetch --all && git log --oneline HEAD..origin/main 2>&1 | head -10"
+ssh setka "cd /home/valstan/SETKA && git fetch --all && git log --oneline HEAD..origin/main 2>&1 | head -10"
 ```
 
 Показать пользователю diff. Если есть конфликты или нет fast-forward — стоп, разобраться вручную.
@@ -161,7 +161,7 @@ ssh setka-prod "cd /home/valstan/SETKA && git fetch --all && git log --oneline H
 Если всё чисто:
 
 ```bash
-ssh setka-prod "cd /home/valstan/SETKA && git pull --ff-only origin main && git log --oneline -3"
+ssh setka "cd /home/valstan/SETKA && git pull --ff-only origin main && git log --oneline -3"
 ```
 
 ## Шаг 7. Миграции БД (если есть)
@@ -180,14 +180,14 @@ git log --since=<previous-prod-commit> --name-only --diff-filter=A -- 'database/
 2. `AskUserQuestion`: «Применить миграцию <NNN_file.sql> на прод?» с опциями «да / dry-run / отмена».
 3. При «да» — через `/sql migrate <file>` или эквивалентно:
    ```bash
-   ssh setka-prod 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/<file>'
+   ssh setka 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/<file>'
    ```
 4. Запомнить факт применения для `DEV_HISTORY` (если ещё не указали).
 
 Если в pull притянулся `requirements.txt` — тогда:
 
 ```bash
-ssh setka-prod "cd /home/valstan/SETKA && source venv/bin/activate && pip install -r requirements.txt 2>&1 | tail -10"
+ssh setka "cd /home/valstan/SETKA && source venv/bin/activate && pip install -r requirements.txt 2>&1 | tail -10"
 ```
 
 ## Шаг 8. Restart сервисов
@@ -201,7 +201,7 @@ ssh setka-prod "cd /home/valstan/SETKA && source venv/bin/activate && pip instal
 Если «да»:
 
 ```bash
-ssh setka-prod "sudo systemctl restart <services> && sleep 4 && systemctl is-active <services>"
+ssh setka "sudo systemctl restart <services> && sleep 4 && systemctl is-active <services>"
 ```
 
 ## Шаг 9. Проверки
@@ -209,13 +209,13 @@ ssh setka-prod "sudo systemctl restart <services> && sleep 4 && systemctl is-act
 Параллельно:
 
 ```bash
-ssh setka-prod "curl -s -o /dev/null -w '/api/health/full: %{http_code} in %{time_total}s\n' --max-time 15 http://127.0.0.1:8000/api/health/full"
+ssh setka "curl -s -o /dev/null -w '/api/health/full: %{http_code} in %{time_total}s\n' --max-time 15 http://127.0.0.1:8000/api/health/full"
 
-ssh setka-prod "systemctl is-active setka setka-celery-worker setka-celery-beat"
+ssh setka "systemctl is-active setka setka-celery-worker setka-celery-beat"
 
-ssh setka-prod "journalctl -u setka -u setka-celery-worker -u setka-celery-beat --since '2 minutes ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -10"
+ssh setka "journalctl -u setka -u setka-celery-worker -u setka-celery-beat --since '2 minutes ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -10"
 
-ssh setka-prod "tail -20 /home/valstan/SETKA/logs/app.log 2>&1 | grep -iE 'error|critical|exception' | tail -5"
+ssh setka "tail -20 /home/valstan/SETKA/logs/app.log 2>&1 | grep -iE 'error|critical|exception' | tail -5"
 ```
 
 Через внешний домен (опционально):
@@ -237,7 +237,7 @@ curl -s -o /dev/null -w 'public /: %{http_code}\n' --max-time 20 http://3931b3fe
 
 - **Тесты упали** → стоп до коммита, разобраться. **Никогда не** обходить через `--no-verify`.
 - **psql упал на миграции** → откатить если можно (`BEGIN; ... ROLLBACK;` либо обратная миграция). Зафиксировать в `PENDING_FOLLOWUPS.md` как 🔴.
-- **Сервис не запускается после restart** → `journalctl -u <service> -n 100 --no-pager`. Чаще всего — синтакс/импорт ошибка от свежего коммита. Откатить prod-репо: `ssh setka-prod "cd /home/valstan/SETKA && git reset --hard <prev-hash>"` + restart. **Только с явным «да» пользователя через AskUserQuestion.**
+- **Сервис не запускается после restart** → `journalctl -u <service> -n 100 --no-pager`. Чаще всего — синтакс/импорт ошибка от свежего коммита. Откатить prod-репо: `ssh setka "cd /home/valstan/SETKA && git reset --hard <prev-hash>"` + restart. **Только с явным «да» пользователя через AskUserQuestion.**
 - **`/api/health/full` отвечает 500** → тоже самое: журнал, откат.
 
 Никогда не оставляй прод в сломанном виде. Если не можешь починить за 5 минут — спроси «откатываемся?», и при «да» выполни откат.

@@ -63,7 +63,7 @@ mapping = {
 **Из файла:**
 
 ```bash
-ssh -o ConnectTimeout=10 setka-prod "tail -n <N>x4 <path> | <grep_filter_if_any> | tail -n <N>" 2>&1
+ssh -o ConnectTimeout=10 setka "tail -n <N>x4 <path> | <grep_filter_if_any> | tail -n <N>" 2>&1
 ```
 
 (берём с запасом 4x чтобы grep'у было из чего фильтровать).
@@ -71,7 +71,7 @@ ssh -o ConnectTimeout=10 setka-prod "tail -n <N>x4 <path> | <grep_filter_if_any>
 **Из journalctl (если `--journal`):**
 
 ```bash
-ssh -o ConnectTimeout=10 setka-prod "journalctl -u <unit> --since '<since>' --no-pager -n <N> <grep_via_pipe>" 2>&1
+ssh -o ConnectTimeout=10 setka "journalctl -u <unit> --since '<since>' --no-pager -n <N> <grep_via_pipe>" 2>&1
 ```
 
 ## Шаг 4. Отчёт

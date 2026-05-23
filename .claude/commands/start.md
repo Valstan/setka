@@ -144,14 +144,14 @@ gh pr list --state open --limit 20 2>/dev/null | head -20  # опц.
 
 - «Да, проверь прод» — выполнить probe
 - «Нет, пропустить» — двигаться к отчёту
-- «Дай полный доступ ssh setka-prod на эту сессию» — отметить и работать дальше без вопросов
+- «Дай полный доступ ssh setka на эту сессию» — отметить и работать дальше без вопросов
 
 При «да» — параллельный SSH-probe (быстрый, безопасный, read-only):
 
 ```bash
-ssh -o ConnectTimeout=10 setka-prod "systemctl is-active setka setka-celery-worker setka-celery-beat" 2>&1
-ssh -o ConnectTimeout=10 setka-prod "curl -s -o /dev/null -w 'health: %{http_code} in %{time_total}s\n' --max-time 10 http://127.0.0.1:8000/api/health/full" 2>&1
-ssh -o ConnectTimeout=10 setka-prod "cd /home/valstan/SETKA && git log --oneline -3" 2>&1
+ssh -o ConnectTimeout=10 setka "systemctl is-active setka setka-celery-worker setka-celery-beat" 2>&1
+ssh -o ConnectTimeout=10 setka "curl -s -o /dev/null -w 'health: %{http_code} in %{time_total}s\n' --max-time 10 http://127.0.0.1:8000/api/health/full" 2>&1
+ssh -o ConnectTimeout=10 setka "cd /home/valstan/SETKA && git log --oneline -3" 2>&1
 ```
 
 Если что-то не 200 / не active — отметить в отчёте, **но не диагностировать без запроса пользователя**.
