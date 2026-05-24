@@ -20,6 +20,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -28,10 +29,11 @@ from sqlalchemy import select
 
 from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
-from database.models import Community, CommunityCandidate
+from database.models import Community, CommunityCandidate, Region
 from modules.discovery.ai_categorizer import ALLOWED_CATEGORIES
 from modules.vk_monitor.vk_client import VKClient
 from tasks.discovery_tasks import run_discovery_for_region_async
+from utils.vk_url import parse_vk_group_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -145,11 +147,21 @@ async def list_candidates(
 
 
 class CandidatePatch(BaseModel):
-    status: str  # approved / rejected / deferred
-    category: Optional[str] = None  # required when status='approved'
+    # И status, и category — опциональны. Допустимые комбинации:
+    #   {status: approved, category: ...}  — одобрить с конкретной категорией
+    #   {status: rejected}                 — отклонить
+    #   {status: deferred}                 — отложить
+    #   {category: ...}                    — только сменить AI-категорию
+    #                                        (двух-этапный flow: модератор
+    #                                        перетасовывает по тематикам до
+    #                                        финального commit'а региона)
+    status: Optional[str] = None
+    category: Optional[str] = None
 
     @validator("status")
     def _valid_status(cls, v):
+        if v is None:
+            return None
         v = (v or "").strip().lower()
         if v not in {"approved", "rejected", "deferred"}:
             raise ValueError(f"invalid status {v!r}")
@@ -203,15 +215,27 @@ async def _approve_candidate(session, candidate: CommunityCandidate, category: s
 
 @router.patch("/candidates/{candidate_id}")
 async def patch_candidate(candidate_id: int, payload: CandidatePatch):
-    """Approve / reject / defer a candidate.
+    """Approve / reject / defer / re-categorise a candidate.
 
-    Approve без category → ошибка. Approve с category → создаёт `Community`
-    (или обновляет если уже была) и помечает кандидата ``approved``.
+    Допустимые комбинации body — см. ``CandidatePatch``. Если задан только
+    ``category`` без ``status`` — обновляем `ai_category` (для двух-этапного
+    UI flow). Approve без конкретной category → 400.
     """
+    if payload.status is None and payload.category is None:
+        raise HTTPException(status_code=400, detail="body must include status and/or category")
+
     async with AsyncSessionLocal() as session:
         cand = await session.get(CommunityCandidate, candidate_id)
         if cand is None:
             raise HTTPException(status_code=404, detail="candidate not found")
+
+        # Category-only patch — re-categorise (для inline-dropdown в UI).
+        if payload.status is None:
+            cand.ai_category = payload.category
+            cand.updated_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(cand)
+            return {"candidate": cand.to_dict()}
 
         new_status = payload.status
         if new_status == "approved":
@@ -302,3 +326,138 @@ async def bulk_patch(payload: BulkPatch):
             n += 1
         await session.commit()
         return {"matched": len(cands), "updated": n, "status": payload.status}
+
+
+# ─────────────────────────────────────────────────────────────────
+# /resolve-vk-url — превратить ссылку на VK-сообщество в (group_id, name)
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/resolve-vk-url")
+async def resolve_vk_url(url: str = Query(..., min_length=1, max_length=500)):
+    """Превратить URL/screen_name/ID VK-сообщества в `{group_id, name}`.
+
+    Используется wizard'ом для поля «Главная группа региона». Если URL —
+    screen_name, делает один VK API `utils.resolveScreenName` + `groups.getById`
+    для подтверждения и получения title; если уже числовой club/public id —
+    идёт сразу в `groups.getById`.
+    """
+    group_id, screen_name = parse_vk_group_url(url)
+    if group_id is None and screen_name is None:
+        raise HTTPException(status_code=400, detail="не удалось распознать VK-ссылку")
+
+    token = next((t for t in (VK_TOKENS or {}).values() if t), None)
+    if not token:
+        raise HTTPException(status_code=503, detail="no VK parse-token configured")
+    client = VKClient(token=token)
+
+    if group_id is None and screen_name is not None:
+        try:
+            resolved = client.vk.utils.resolveScreenName(screen_name=screen_name)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"VK resolveScreenName failed: {e}")
+        if not resolved or resolved.get("type") != "group":
+            raise HTTPException(
+                status_code=404,
+                detail=f"VK не нашёл группу с адресом '{screen_name}'",
+            )
+        group_id = int(resolved.get("object_id") or 0)
+
+    if not group_id:
+        raise HTTPException(status_code=400, detail="не удалось определить group_id")
+
+    try:
+        infos = client.get_groups_by_ids([group_id], fields="screen_name,members_count,photo_200")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"VK groups.getById failed: {e}")
+    if not infos:
+        raise HTTPException(status_code=404, detail=f"VK group {group_id} не найден")
+    info = infos[0]
+    return {
+        "group_id": group_id,
+        "screen_name": info.get("screen_name") or screen_name,
+        "name": info.get("name") or "",
+        "members_count": info.get("members_count"),
+        "photo_url": info.get("photo_200"),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────
+# /commit/{region_id} — финализировать черновик региона
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.post("/commit/{region_id}")
+async def commit_region(region_id: int):
+    """Финализация двух-этапного flow создания региона.
+
+    Что делает:
+    1. Проверяет `region.vk_group_id NOT NULL` (без главной группы регион
+       не попадёт в beat-расписание — см. `parsing_scheduler_tasks.py`).
+    2. Bulk-approve всех **pending** кандидатов с `ai_category` ∈
+       ALLOWED_CATEGORIES (кроме 'other') — создаёт `Community.is_active=True`
+       для каждого через существующую `_approve_candidate` helper.
+    3. Поднимает `region.is_active=True` (черновик → активный).
+    4. Кандидаты, которых модератор перевёл в `rejected` / `deferred` — не
+       трогаем. Остальные pending без подходящей категории остаются pending
+       (модератор разберётся позже).
+
+    Returns: ``{region_code, communities_created, pending_left, region_id}``.
+    """
+    async with AsyncSessionLocal() as session:
+        region: Optional[Region] = (
+            await session.execute(select(Region).where(Region.id == region_id))
+        ).scalar_one_or_none()
+        if region is None:
+            raise HTTPException(status_code=404, detail="region not found")
+
+        if not region.vk_group_id:
+            raise HTTPException(
+                status_code=400,
+                detail="у региона не задана главная VK-группа (vk_group_id) — без неё "
+                "он не попадёт в расписание парсинга",
+            )
+
+        cands = (
+            (
+                await session.execute(
+                    select(CommunityCandidate).where(
+                        CommunityCandidate.region_id == region_id,
+                        CommunityCandidate.status == "pending",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        approved_n = 0
+        pending_left = 0
+        for cand in cands:
+            cat = cand.ai_category
+            if not cat or cat == "other":
+                pending_left += 1
+                continue
+            await _approve_candidate(session, cand, cat)
+            cand.status = "approved"
+            approved_n += 1
+
+        if approved_n == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="нет ни одного кандидата с категорией для approve — "
+                "распределите кандидатов по тематикам или используйте reject/defer",
+            )
+
+        if not region.is_active:
+            region.is_active = True
+        region.updated_at = datetime.utcnow()
+
+        await session.commit()
+
+        return {
+            "region_id": region.id,
+            "region_code": region.code,
+            "communities_created": approved_n,
+            "pending_left": pending_left,
+        }
