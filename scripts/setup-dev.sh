@@ -47,6 +47,9 @@ echo "[setup-dev] upgrading pip …"
 echo "[setup-dev] installing requirements + test deps + pre-commit …"
 ./venv/bin/python -m pip install -r requirements.txt pytest pytest-asyncio pre-commit --quiet
 
+echo "[setup-dev] editable install (pip install -e .) — for 'from modules.X import Y' …"
+./venv/bin/python -m pip install -e . --quiet
+
 if [[ -f ".pre-commit-config.yaml" ]]; then
     echo "[setup-dev] installing pre-commit git hook …"
     ./venv/bin/pre-commit install >/dev/null 2>&1 || true

@@ -190,6 +190,14 @@ git log --since=<previous-prod-commit> --name-only --diff-filter=A -- 'database/
 ssh setka "cd /home/valstan/SETKA && source venv/bin/activate && pip install -r requirements.txt 2>&1 | tail -10"
 ```
 
+Если в pull притянулся `pyproject.toml` (либо это первый деплой с editable install после 2026-05-24, либо `pyproject.toml` изменён — посмотри `git diff --name-only HEAD~1 HEAD -- pyproject.toml`) — переустановить editable пакет:
+
+```bash
+ssh setka "cd /home/valstan/SETKA && source venv/bin/activate && pip install -e . 2>&1 | tail -5"
+```
+
+Это регистрирует `setka` как editable-пакет в venv, чтобы `from modules.X import Y` работало из любой папки без `sys.path.insert` (см. `DEV_HISTORY.md` 2026-05-24 «pyproject.toml + editable install»). Прод-systemd-сервисы продолжают использовать `PYTHONPATH=/home/valstan/SETKA`, ничего там менять не нужно.
+
 ## Шаг 8. Restart сервисов
 
 `AskUserQuestion`: «Перезапускаем `setka setka-celery-worker setka-celery-beat`?» — варианты:

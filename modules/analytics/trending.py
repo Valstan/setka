@@ -3,20 +3,16 @@ Trending Topics Detection - обнаружение трендовых тем
 Находит темы, которые trending в нескольких регионах одновременно
 """
 
-import sys
+import logging
+import re
+from collections import Counter
+from datetime import datetime, timedelta
+from typing import Dict, List, Set
 
-sys.path.insert(0, "/home/valstan/SETKA")
+from sqlalchemy import and_, select
 
-import logging  # noqa: E402
-import re  # noqa: E402
-from collections import Counter  # noqa: E402
-from datetime import datetime, timedelta  # noqa: E402
-from typing import Dict, List, Set  # noqa: E402
-
-from sqlalchemy import and_, select  # noqa: E402
-
-from database.connection import AsyncSessionLocal  # noqa: E402
-from database.models import Post, Region  # noqa: E402
+from database.connection import AsyncSessionLocal
+from database.models import Post, Region
 
 logger = logging.getLogger(__name__)
 

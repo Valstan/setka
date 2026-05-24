@@ -1,11 +1,6 @@
 """DigestBuilder behaviour (empty header, group_names lookup)."""
 
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from modules.publisher.digest_builder import DigestBuilder  # noqa: E402
+from modules.publisher.digest_builder import DigestBuilder
 
 
 def test_empty_header_starts_with_post_marker_not_default_title():

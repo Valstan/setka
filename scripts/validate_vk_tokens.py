@@ -9,11 +9,8 @@ import sys
 from datetime import datetime
 from typing import Dict, List
 
-# Добавить путь к проекту
-sys.path.append("/home/valstan/SETKA")
-
-from config.runtime import VK_TOKENS  # noqa: E402
-from modules.vk_monitor.vk_client import VKClient  # noqa: E402
+from config.runtime import VK_TOKENS
+from modules.vk_monitor.vk_client import VKClient
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

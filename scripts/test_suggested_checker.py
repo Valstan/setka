@@ -6,18 +6,15 @@
 """
 import asyncio
 import logging
-import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from sqlalchemy import select
 
-from sqlalchemy import select  # noqa: E402
-
-from config.runtime import VK_TOKENS  # noqa: E402
-from database.connection import AsyncSessionLocal  # noqa: E402
-from database.models import Region  # noqa: E402
-from modules.notifications.storage import NotificationsStorage  # noqa: E402
-from modules.notifications.vk_suggested_checker import VKSuggestedChecker  # noqa: E402
+from config.runtime import VK_TOKENS
+from database.connection import AsyncSessionLocal
+from database.models import Region
+from modules.notifications.storage import NotificationsStorage
+from modules.notifications.vk_suggested_checker import VKSuggestedChecker
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

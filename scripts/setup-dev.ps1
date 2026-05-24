@@ -60,6 +60,9 @@ Write-Host "[setup-dev] upgrading pip …" -ForegroundColor Cyan
 Write-Host "[setup-dev] installing requirements + test deps + pre-commit …" -ForegroundColor Cyan
 .\venv\Scripts\python.exe -m pip install -r requirements.txt pytest pytest-asyncio pre-commit --quiet
 
+Write-Host "[setup-dev] editable install (pip install -e .) — for `from modules.X import Y` …" -ForegroundColor Cyan
+.\venv\Scripts\python.exe -m pip install -e . --quiet
+
 if (Test-Path ".pre-commit-config.yaml") {
     Write-Host "[setup-dev] installing pre-commit git hook …" -ForegroundColor Cyan
     .\venv\Scripts\pre-commit.exe install | Out-Null

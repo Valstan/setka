@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "setka"
+version = "0.1.0"
+description = "SETKA — VK news parsing and digest publication for regional Telegram/VK communities"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+# Editable install (pip install -e .) makes `from modules.X import Y` work
+# from any directory without sys.path.insert hacks in scripts/.
+#
+# Top-level python files (main.py, celery_app.py, _version.py) are picked up
+# via py-modules; regular packages are listed explicitly to avoid pulling in
+# tests/ or scripts/ as installable packages.
+[tool.setuptools]
+py-modules = ["main", "celery_app", "_version"]
+
+[tool.setuptools.packages.find]
+include = [
+    "config*",
+    "core*",
+    "database*",
+    "middleware*",
+    "modules*",
+    "monitoring*",
+    "tasks*",
+    "utils*",
+    "web*",
+]
+exclude = ["docs*", "examples*", "mailbox*", "scripts*", "tests*", "venv*"]

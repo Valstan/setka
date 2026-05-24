@@ -5,16 +5,12 @@
 """
 import asyncio
 import json
-import os
 import sys
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from sqlalchemy import func, select
 
-from sqlalchemy import func, select  # noqa: E402
-
-from database.connection import AsyncSessionLocal  # noqa: E402
-from database.models import Community, Filter, Region, VKToken  # noqa: E402
+from database.connection import AsyncSessionLocal
+from database.models import Community, Filter, Region, VKToken
 
 DATA_DIR = "/home/valstan/SETKA/old_project_analysis"
 

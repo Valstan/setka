@@ -4,17 +4,13 @@
 Test monitoring system
 """
 import asyncio
-import os
 import sys
-
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Telegram bot token (from config)
 # Import from config
-from config.runtime import TELEGRAM_TOKENS  # noqa: E402
-from modules.monitoring.health_checker import HealthChecker  # noqa: E402
-from modules.monitoring.telegram_notifier import TelegramNotifier  # noqa: E402
+from config.runtime import TELEGRAM_TOKENS
+from modules.monitoring.health_checker import HealthChecker
+from modules.monitoring.telegram_notifier import TelegramNotifier
 
 BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 # You need to get your chat ID by sending /start to your bot

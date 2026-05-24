@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """Check VK tokens on VPS"""
 import os
-import sys
-
-sys.path.insert(0, "/home/valstan/SETKA")
 
 print("=== VK TOKENS from env ===")
 for k, v in sorted(os.environ.items()):

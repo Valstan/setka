@@ -1,19 +1,15 @@
 """Дедупликация в AdvancedVKParser (lip после unwrap, текст, медиа)."""
 
-import os
-import sys
 import time
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from modules.deduplication.fingerprints import (  # noqa: E402
+from modules.deduplication.fingerprints import (
     create_text_fingerprint,
     create_text_simhash,
     text_to_rafinad,
 )
-from modules.vk_monitor.advanced_parser import AdvancedVKParser  # noqa: E402
+from modules.vk_monitor.advanced_parser import AdvancedVKParser
 
 
 class _DummyVk:

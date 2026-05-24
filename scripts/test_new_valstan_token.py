@@ -12,11 +12,9 @@ Usage:
 import argparse
 import sys
 
-sys.path.insert(0, "/home/valstan/SETKA")
+import vk_api
 
-import vk_api  # noqa: E402
-
-from config.runtime import VK_TEST_GROUP_ID, VK_TOKENS  # noqa: E402
+from config.runtime import VK_TEST_GROUP_ID, VK_TOKENS
 
 
 def main() -> int:

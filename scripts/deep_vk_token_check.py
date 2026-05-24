@@ -3,9 +3,6 @@
 Deep VK token diagnostic.
 Checks each token's app ID, permissions, and what VK thinks about the token.
 """
-import sys
-
-sys.path.insert(0, "/home/valstan/SETKA")
 
 print("=" * 70)
 print("DEEP VK TOKEN DIAGNOSTIC")

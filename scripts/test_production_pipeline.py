@@ -6,8 +6,6 @@ Runs: parse_and_publish_theme(region_code='test', theme='novost', test_mode=Fals
 import os
 import sys
 
-sys.path.insert(0, "/home/valstan/SETKA")
-
 # Load env
 os.environ.setdefault("DATABASE_URL", "")  # Will be loaded from env file
 

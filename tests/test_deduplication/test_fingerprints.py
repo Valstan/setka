@@ -4,12 +4,7 @@ Unit tests for the deduplication fingerprint functions.
 Tests do NOT require database - only test fingerprint creation logic.
 """
 
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from modules.deduplication.fingerprints import (  # noqa: E402
+from modules.deduplication.fingerprints import (
     create_lip_fingerprint,
     create_media_fingerprint,
     create_text_core_fingerprint,

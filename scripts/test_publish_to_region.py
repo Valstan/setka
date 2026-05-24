@@ -7,19 +7,16 @@
 import argparse
 import asyncio
 import logging
-import os
 import sys
 from datetime import datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from sqlalchemy import and_, select
 
-from sqlalchemy import and_, select  # noqa: E402
-
-from config.runtime import VK_TOKENS  # noqa: E402
-from database.connection import AsyncSessionLocal  # noqa: E402
-from database.models import Post, Region  # noqa: E402
-from modules.aggregation.aggregator import NewsAggregator  # noqa: E402
-from modules.publisher.vk_publisher import VKPublisher  # noqa: E402
+from config.runtime import VK_TOKENS
+from database.connection import AsyncSessionLocal
+from database.models import Post, Region
+from modules.aggregation.aggregator import NewsAggregator
+from modules.publisher.vk_publisher import VKPublisher
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

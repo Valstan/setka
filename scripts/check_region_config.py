@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """Check RegionConfig data"""
-import sys
+import asyncio
 
-sys.path.insert(0, "/home/valstan/SETKA")
+from sqlalchemy import select
 
-import asyncio  # noqa: E402
-
-from sqlalchemy import select  # noqa: E402
-
-from database.connection import AsyncSessionLocal  # noqa: E402
-from database.models import Community, Region  # noqa: E402
-from database.models_extended import RegionConfig  # noqa: E402
+from database.connection import AsyncSessionLocal
+from database.models import Community, Region
+from database.models_extended import RegionConfig
 
 
 async def main():

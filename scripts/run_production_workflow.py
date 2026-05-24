@@ -13,13 +13,8 @@ Production Workflow для SETKA
 """
 import asyncio
 import logging
-import os
-import sys
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
-
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Setup logging
 logging.basicConfig(

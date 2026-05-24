@@ -7,6 +7,7 @@ SQL the runner *intends* to send.
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -15,9 +16,14 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import migrate  # noqa: E402  -- script-style import
+# `scripts/migrate.py` is a CLI utility, not part of the installable package
+# (see pyproject.toml `[tool.setuptools.packages.find].exclude`). Load it
+# directly so tests can call its functions without depending on sys.path.
+_spec = importlib.util.spec_from_file_location("migrate", REPO_ROOT / "scripts" / "migrate.py")
+migrate = importlib.util.module_from_spec(_spec)
+sys.modules["migrate"] = migrate
+_spec.loader.exec_module(migrate)
 
 
 @dataclass

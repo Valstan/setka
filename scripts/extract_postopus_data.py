@@ -5,7 +5,6 @@
 Извлекает: регионы, сообщества VK, фильтры, расписания
 """
 import json
-import os
 
 # Подключение к старой БД
 # Import from config
@@ -14,9 +13,7 @@ from datetime import datetime
 
 import pymongo
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from config.runtime import MONGO_CONNECTION  # noqa: E402
+from config.runtime import MONGO_CONNECTION
 
 MONGO_URI = MONGO_CONNECTION["uri"]
 
@@ -336,6 +333,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
-
     sys.exit(main())

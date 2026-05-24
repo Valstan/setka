@@ -4,15 +4,11 @@
 Send test Telegram notification
 """
 import asyncio
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configuration
 # Import from config
-from config.runtime import TELEGRAM_TOKENS  # noqa: E402
-from modules.monitoring.telegram_notifier import TelegramNotifier  # noqa: E402
+from config.runtime import TELEGRAM_TOKENS
+from modules.monitoring.telegram_notifier import TelegramNotifier
 
 BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 # Import from config
