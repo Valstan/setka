@@ -85,6 +85,37 @@ ssh setka "sudo systemctl restart setka setka-celery-worker setka-celery-beat"
 
 - **Активировался 🟡 «мониторинг F601-фикса»** — `commercial_patterns` теперь работает с 12 восстановленными price-patterns. Следить за объёмом отфильтрованных постов с `цена/скидка/купить/\d+\s*руб/...` в первые 24-48 часов через `/posts?status=rejected` и `celery-worker.log`. Если ложно-позитивов слишком много — снизить вес price-patterns с 2 до 1 в `utils/text_utils.py`.
 
+### Break long lines PR #3: tasks/vk_carousel_tasks.py + modules/service_activity_notifier.py (8 noqa → 0)
+
+**Тема:** продолжение 🟡 техдолга «Инкрементально ломать длинные строки». Два связанных модуля по 4 noqa каждый, объединены в один PR.
+
+#### Изменения
+
+- **`tasks/vk_carousel_tasks.py`** (4 noqa → 0):
+  - L52: `carousel_manager.max_concurrent_scans` вынесен в локалку `max_scans` → `f"... ({max_scans}) reached"`.
+  - L65: implicit string concat для длинного логгер-сообщения `Successfully scanned region {task.region_code}: {task.posts_found} posts found`.
+  - L131: длинная конструкция `f"{user_info.get('first_name', '')} {user_info.get('last_name', '')}".strip()` → разнесена через локальные `first_name`/`last_name`.
+  - L180: `result['recommended_interval_minutes']` → локалка `recommended_minutes`.
+- **`modules/service_activity_notifier.py`** (4 noqa → 0):
+  - L97 (`notify_post_collection_progress`): выделена локалка `progress = f"{processed_communities}/{total_communities}"`, основное сообщение разнесено через implicit string concat в `(...)`.
+  - L173 (`notify_post_sorting_progress`): аналогично через `(... f"..." f"...")`.
+  - L345/347 (`notify_vk_notifications_check_complete`): общий длинный префикс `"✅ Опросил все главные сообщества..."` вынесен в локалку `check_prefix`, переиспользован в обоих ветках if/else.
+
+Поведение функций не менялось — тексты сообщений идентичны.
+
+#### Проверка / прогон
+
+- `pre-commit run --files tasks/vk_carousel_tasks.py modules/service_activity_notifier.py` — black/isort/flake8 Passed.
+- `pytest tests/ -q` — **379/379 зелёных**.
+
+#### Применение
+
+- На проде: **деплой не нужен** — поведение неизменное.
+
+#### Хвосты
+
+- 🟡 «Инкрементально ломать длинные строки» — обновлён в `PENDING_FOLLOWUPS.md`: **63 noqa в 40 файлах**. Следующие густые: `scripts/run_production_workflow.py` (4), `modules/test_info_post_collector.py` (3), `modules/vk_monitor/carousel_manager.py` (3), `scripts/test_ai_groq.py` (3), `scripts/test_parse_run.py` (3), `tasks/production_workflow_tasks.py` (3), `config/runtime.py` (3).
+
 ### Break long lines PR #2: tasks/parsing_tasks.py (10 noqa → 0)
 
 **Тема:** продолжение 🟡 техдолга «Инкрементально ломать длинные строки». Второй по плотности файл после `system_status_notifier.py`.
