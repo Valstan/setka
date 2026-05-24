@@ -93,6 +93,9 @@ def _build_search_plan(center_city: str, categories: Sequence[str]) -> List[tupl
     return plan
 
 
+DEFAULT_MAX_CANDIDATES = 150
+
+
 def discover_for_region(
     *,
     client: VKClient,
@@ -101,6 +104,7 @@ def discover_for_region(
     categories: Optional[Sequence[str]] = None,
     per_query_count: int = 100,
     exclude_vk_ids: Optional[Sequence[int]] = None,
+    max_candidates: int = DEFAULT_MAX_CANDIDATES,
 ) -> List[DiscoveredGroup]:
     """Run composite discovery.
 
@@ -185,4 +189,22 @@ def discover_for_region(
     # с AI на одного worker'а превышал uvicorn keep-alive (~120s, hang в UI).
     # См. PR #32: fetch постов параллелизован через `to_thread` + semaphore=8.
 
-    return list(seen.values())
+    # Top-N candidates by members_count. На больших районах 22 search calls
+    # дают до 1000 уникальных групп, что в _ai_categorize_all = ~1000 wall.get
+    # × 0.4s rate-limit = ~7 минут (uvicorn таймаут). Берём топ-N самых
+    # больших по подписчикам (информативный сигнал — мёртвые мелкие паблики
+    # модератору не интересны).
+    groups = list(seen.values())
+    if len(groups) > max_candidates:
+        groups.sort(
+            key=lambda g: (g.members_count or 0, g.discovered_via == "geo_search"),
+            reverse=True,
+        )
+        logger.info(
+            "discovery: %s candidates → truncated to top-%s by members_count",
+            len(groups),
+            max_candidates,
+        )
+        groups = groups[:max_candidates]
+
+    return groups
