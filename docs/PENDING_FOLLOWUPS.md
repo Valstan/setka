@@ -14,7 +14,27 @@
 
 ## 🔴 Блокеры
 
-_Сейчас нет._
+### Groq API key возвращает 403 Forbidden
+
+Обнаружено 2026-05-24 при smoke-тесте PR #31/#32/#33 на проде. Любой вызов `categorize_candidate` возвращает `403 Forbidden` за ~0.65с (быстрый отказ, не таймаут). Последствие — все новые кандидаты в discovery получают `ai_category=NULL` (попадают в секцию «Без AI-категории»), модератор должен вручную выбирать категорию каждому через inline-dropdown. UI остаётся функциональным, но качество жизни сильно падает.
+
+Возможные причины (в порядке убывания вероятности):
+- ключ истёк / отозван в Groq dashboard
+- biling: бесплатный тир закончился, нужна оплата или новый ключ
+- IP проды попал в block-list Groq (редко, но бывает)
+
+Диагностика воспроизводится с прода:
+```bash
+ssh setka 'sudo bash -c "set -a; source /etc/setka/setka.env; cd /home/valstan/SETKA && ./venv/bin/python -c \"
+import asyncio
+from modules.discovery.ai_categorizer import categorize_candidate
+print(asyncio.run(categorize_candidate(name=\\\"тест\\\", description=\\\"тест\\\", region_name=\\\"X\\\")))
+\""'
+```
+
+Должно вернуть `{success: True, ...}`. Сейчас возвращает `{success: False, error: 'Error code: 403 - {error: {message: Forbidden}}'}`.
+
+Фикс — в основном не-кодовый: получить свежий ключ на console.groq.com и заменить `GROQ_API_KEY` в `/etc/setka/setka.env`, потом `sudo systemctl restart setka setka-celery-worker`.
 
 ---
 
