@@ -494,7 +494,10 @@ class SmartScheduler:
         else:
             return (
                 False,
-                f"Лучше подождать до {optimal_hour}:00 (текущее: {current_hour}:00, разница: {hour_diff}h)",  # noqa: E501
+                (
+                    f"Лучше подождать до {optimal_hour}:00 "
+                    f"(текущее: {current_hour}:00, разница: {hour_diff}h)"
+                ),
             )
 
     async def get_engagement_forecast(self, region_code: str, publish_time: datetime) -> Dict:

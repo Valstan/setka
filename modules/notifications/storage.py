@@ -416,7 +416,8 @@ class NotificationsStorage:
         Очистить уведомления
 
         Args:
-            notification_type: Тип для очистки ('suggested_posts', 'unread_messages', 'recent_comments' или None для всех)  # noqa: E501
+            notification_type: Тип для очистки ('suggested_posts',
+                'unread_messages', 'recent_comments' или None для всех)
 
         Returns:
             True если успешно

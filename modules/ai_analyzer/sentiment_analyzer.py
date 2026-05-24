@@ -399,9 +399,8 @@ if __name__ == "__main__":
         result = analyzer.analyze(text)
         print(f"   Sentiment: {result['label']} (score: {result['score']})")
         print(f"   Emotions: {result['emotions']}")
-        print(
-            f"   Words: +{result['word_counts']['positive']} ={result['word_counts']['neutral']} -{result['word_counts']['negative']}"  # noqa: E501
-        )
+        wc = result["word_counts"]
+        print(f"   Words: +{wc['positive']} ={wc['neutral']} -{wc['negative']}")
 
     # Test distribution
     print("\n" + "=" * 60)

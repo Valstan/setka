@@ -12,6 +12,8 @@ from config.runtime import TELEGRAM_TOKENS
 
 BOT_TOKEN = TELEGRAM_TOKENS.get("VALSTANBOT")
 
+_NO_MESSAGES_MSG = "\n⚠️  Сообщения не найдены. Отправьте /start боту и запустите снова."
+
 
 async def get_chat_id():
     """Get chat ID from Telegram bot updates"""
@@ -58,9 +60,7 @@ async def get_chat_id():
                     if seen_chats:
                         print("\n💡 Скопируйте один из chat_id выше и добавьте в конфиг!")
                     else:
-                        print(
-                            "\n⚠️  Сообщения не найдены. Отправьте /start боту и запустите снова."
-                        )  # noqa: E501
+                        print(_NO_MESSAGES_MSG)
                 else:
                     print("\n⚠️  Обновлений не найдено. Отправьте /start боту сначала.")
             else:

@@ -85,6 +85,47 @@ ssh setka "sudo systemctl restart setka setka-celery-worker setka-celery-beat"
 
 - **Активировался 🟡 «мониторинг F601-фикса»** — `commercial_patterns` теперь работает с 12 восстановленными price-patterns. Следить за объёмом отфильтрованных постов с `цена/скидка/купить/\d+\s*руб/...` в первые 24-48 часов через `/posts?status=rejected` и `celery-worker.log`. Если ложно-позитивов слишком много — снизить вес price-patterns с 2 до 1 в `utils/text_utils.py`.
 
+### Break long lines PR #4: оставшиеся ~63 noqa в 40 файлах (63 → 0) — техдолг закрыт
+
+**Тема:** финал 🟡 техдолга «Инкрементально ломать длинные строки». PR #1-3 закрыли 33 noqa в 4 самых густых файлах; PR #4 проходит по оставшимся 40 файлам (7 с 3-4 noqa + 8 с 2 noqa + 25 с 1 noqa) и **обнуляет всё**. После этого PR — **в проекте 0 строк с `# noqa: E501`**.
+
+#### Изменения (структурно по типам)
+
+Стратегия одна, варьируется по контексту:
+
+1. **f-string как arg** (logger.info / print / dict-value): обёртка в `(...)` с implicit string concat внутри уже-существующих скобок arglist'а.
+2. **Assignment / return с длинной f-string'ой**: вынесены повторяющиеся подвыражения в локалки (`work_hours_label`, `progress`, `first/last`, `scanned/dupes`, `wc`, `u`, и т.п.) — это убирает дубли и заодно укладывает строки в 100 символов.
+3. **Длинные строковые литералы в docstring/комментариях** (`utils/celery_asyncio.py`, `modules/notifications/storage.py`, `modules/kirov_oblast_digest.py`, `config/runtime.py`, `modules/vk_monitor/advanced_parser.py`, `modules/publisher/postopus_digest_headers.py`, `modules/notifications/vk_comments_checker.py`, `modules/test_info_post_collector.py`): разбиты на 2 строки, либо переписаны короче (без потери смысла).
+4. **Длинные SQL-литералы** (`scripts/migrate_add_fingerprints.py`, `scripts/add_digest_filters_column.py`): разбиты на multi-line через `(...)` с переносом перед именами колонок.
+5. **Длинные ключи в `name_mapping` dict** (`modules/celery_task_monitor.py`): ключ обёрнут в `(...)` с переносом перед `: "value"` (тот же приём, что в PR #1).
+
+**Точечные случаи:**
+- `scripts/get_telegram_chat_id.py`: длинное сообщение «Сообщения не найдены...» вынесено в module-level константу `_NO_MESSAGES_MSG` — black с глубоким отступом 28 пробелов отказывался ломать adjacent strings, единственная разумная стратегия.
+- `scripts/test_ai_groq.py`: 3 длинные тестовые `text`-фикстуры в `test_posts` обёрнуты в `(...)` с implicit string concat.
+
+#### Затронутые файлы (40)
+
+`scripts/run_production_workflow.py` (4), `modules/test_info_post_collector.py` (3), `modules/vk_monitor/carousel_manager.py` (3), `scripts/test_ai_groq.py` (3), `scripts/test_parse_run.py` (3), `tasks/production_workflow_tasks.py` (3), `config/runtime.py` (3), `scripts/validate_vk_tokens.py` (2), `scripts/test_production_pipeline.py` (2), `scripts/test_filter_pipeline.py` (2), `modules/analytics/trending.py` (2), `modules/publisher/postopus_digest_headers.py` (2), `modules/aggregation/content_mixer.py` (2), `utils/celery_asyncio.py` (2), `tasks/parsing_scheduler_tasks.py` (2) — 15 файлов с 2-4 noqa.
+
++25 файлов с 1 noqa каждый: `scripts/test_vk_monitor.py`, `tests/test_notifications/test_publisher_fallback.py`, `tests/test_publisher/test_digest_builder.py`, `scripts/add_digest_filters_column.py`, `scripts/check_region_config.py`, `scripts/migrate_add_fingerprints.py`, `web/api/communities.py`, `web/api/filtration.py`, `web/api/vk_monitoring.py`, `modules/notifications/vk_comments_checker.py`, `modules/publisher/telegram_publisher.py`, `modules/scheduler/smart_scheduler.py`, `modules/vk_monitor/advanced_parser.py`, `scripts/get_telegram_chat_id.py`, `scripts/test_new_valstan_token.py`, `scripts/test_production_automation.py`, `modules/ai_analyzer/analyzer.py`, `modules/ai_analyzer/sentiment_analyzer.py`, `modules/celery_task_monitor.py`, `modules/copy_setka_network.py`, `modules/filters/age_filter.py`, `modules/filters/regional.py`, `modules/filters/structural.py`, `modules/kirov_oblast_digest.py`, `modules/notifications/storage.py`.
+
+Поведение функций не менялось (чистая косметика). Тексты сообщений / docstring'ов где разбиты на 2 строки — Python склеивает adjacent string literals на этапе компиляции, runtime тот же.
+
+#### Проверка / прогон
+
+- `pre-commit run --all-files` — black/isort/flake8 Passed.
+- `flake8 . --max-line-length=100 --extend-ignore=E203,W503` → **0 нарушений** во всём проекте.
+- `grep -r '# noqa: E501' .` → **0 occurrences в 0 файлах**.
+- `pytest tests/ -q` — **379/379 зелёных**.
+
+#### Применение
+
+- На проде: **деплой не нужен** — поведение неизменное.
+
+#### Хвосты
+
+- ✅ **🟡 «Инкрементально ломать длинные строки» полностью закрыт** — переносится из `PENDING_FOLLOWUPS.md` в `DEV_HISTORY.md`. Все 96 noqa: E501 устранены (PR #2 от 2026-05-23 поставил `# noqa: E501`, PR #1-4 от 2026-05-24 переломали и убрали).
+
 ### Break long lines PR #3: tasks/vk_carousel_tasks.py + modules/service_activity_notifier.py (8 noqa → 0)
 
 **Тема:** продолжение 🟡 техдолга «Инкрементально ломать длинные строки». Два связанных модуля по 4 noqa каждый, объединены в один PR.

@@ -1,8 +1,9 @@
 """
 Runtime configuration (NO secrets in git).
 
-This module replaces legacy direct imports from `config/config_secure.py` (secrets file is not part of the repo).  # noqa: E501
-All values must come from environment (recommended: /etc/setka/setka.env loaded by systemd).
+This module replaces legacy direct imports from `config/config_secure.py`
+(secrets file is not part of the repo). All values must come from environment
+(recommended: /etc/setka/setka.env loaded by systemd).
 """
 
 from __future__ import annotations
@@ -218,7 +219,9 @@ SERVER = {
 
 
 def get_copy_setka_source_owner_id() -> int:
-    """Группа-источник (отрицательный owner_id). По умолчанию — vk.com/copy_by_setka (-167381590)."""  # noqa: E501
+    """Группа-источник (отрицательный owner_id).
+
+    По умолчанию — vk.com/copy_by_setka (-167381590)."""
     raw = _getenv("COPY_SETKA_SOURCE_GROUP_ID", "-167381590")
     if not raw or not str(raw).strip():
         return -167381590
@@ -234,7 +237,9 @@ def copy_setka_disabled() -> bool:
 
 
 def copy_setka_use_repost() -> bool:
-    """Устарело: режим теперь задаётся словом «репост» в тексте поста. Оставлено для совместимости."""  # noqa: E501
+    """Устарело: режим теперь задаётся словом «репост» в тексте поста.
+
+    Оставлено для совместимости."""
     v = (_getenv("COPY_SETKA_USE_REPOST", "1") or "1").strip().lower()
     return v not in ("0", "false", "no", "off")
 

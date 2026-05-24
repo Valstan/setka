@@ -70,9 +70,9 @@ class TokenValidator:
             groups_access = await self._test_groups_access(vk_client)
             result["groups_access"] = groups_access
 
-            logger.info(
-                f"Token {name} is VALID - User: {user_info.get('first_name', 'Unknown')} {user_info.get('last_name', 'Unknown')}"  # noqa: E501
-            )
+            first = user_info.get("first_name", "Unknown")
+            last = user_info.get("last_name", "Unknown")
+            logger.info(f"Token {name} is VALID - User: {first} {last}")
 
         except Exception as e:
             result["error_message"] = str(e)
@@ -205,10 +205,10 @@ class TokenValidator:
             permissions = result.get("permissions", [])
             groups_access = result.get("groups_access", {})
 
+            first = user_info.get("first_name", "Unknown")
+            last = user_info.get("last_name", "Unknown")
             print(f"  • {name}")
-            print(
-                f"    User: {user_info.get('first_name', 'Unknown')} {user_info.get('last_name', 'Unknown')}"  # noqa: E501
-            )
+            print(f"    User: {first} {last}")
             print(f"    ID: {user_info.get('id', 'Unknown')}")
             print(f"    Permissions: {', '.join(permissions) if permissions else 'None'}")
 

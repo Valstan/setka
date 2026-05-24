@@ -61,7 +61,7 @@ def _stub_post(post_id: int, text: str, *, owner_id: int = -100) -> dict:
 
 
 def test_all_posts_empty_text_yields_empty_digest():
-    """All candidate posts have whitespace-only text → empty DigestResult, no header/hashtag leak."""  # noqa: E501
+    """Whitespace-only text → empty DigestResult, no header/hashtag leak."""
     posts = [_stub_post(1, "   "), _stub_post(2, ""), _stub_post(3, "\n\n")]
     b = DigestBuilder(
         header="Физическое развитие:",

@@ -86,7 +86,8 @@ class TrendingTopicsDetector:
             List trending тем
         """
         logger.info(
-            f"Detecting trending topics (last {hours}h, min {min_posts} posts, {min_regions} regions)"  # noqa: E501
+            f"Detecting trending topics (last {hours}h, "
+            f"min {min_posts} posts, {min_regions} regions)"
         )
 
         # Получить недавние посты
@@ -311,7 +312,8 @@ if __name__ == "__main__":
             print(f"\n   Found {len(region_trends)} trending keywords:")
             for i, trend in enumerate(region_trends, 1):
                 print(
-                    f"   {i}. \"{trend['keyword']}\" (count: {trend['count']}, engagement: {trend['engagement']})"  # noqa: E501
+                    f'   {i}. "{trend["keyword"]}" '
+                    f"(count: {trend['count']}, engagement: {trend['engagement']})"
                 )
         else:
             print("   No trends found")

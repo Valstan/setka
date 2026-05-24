@@ -187,7 +187,8 @@ async def execute_copy_setka_network(
         repost_pair = _resolve_repost_target(candidate)
         if repost_pair is None:
             logger.warning(
-                "copy-setka: в тексте есть «репост», но не найден вложенный пост (copy_history/wall)"  # noqa: E501
+                "copy-setka: в тексте есть «репост», "
+                "но не найден вложенный пост (copy_history/wall)"
             )
             return {
                 "success": False,

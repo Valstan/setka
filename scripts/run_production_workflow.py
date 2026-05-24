@@ -298,7 +298,9 @@ class ProductionWorkflow:
                         details={
                             "posts_before": len(posts),
                             "posts_after": len(filtered_posts),
-                            "rejection_rate": f"{100 * (1 - len(filtered_posts) / max(len(posts), 1)):.1f}%",  # noqa: E501
+                            "rejection_rate": (
+                                f"{100 * (1 - len(filtered_posts) / max(len(posts), 1)):.1f}%"
+                            ),
                         },
                     )
 
@@ -317,9 +319,9 @@ class ProductionWorkflow:
                 logger.info("✅ Filtering complete:")
                 logger.info(f"   Before: {len(posts)}")
                 logger.info(f"   After:  {len(filtered_posts)}")
-                logger.info(
-                    f"   Rejected: {len(posts) - len(filtered_posts)} ({100 * (1 - len(filtered_posts) / max(len(posts), 1)):.1f}%)"  # noqa: E501
-                )
+                rejected = len(posts) - len(filtered_posts)
+                rejection_pct = 100 * (1 - len(filtered_posts) / max(len(posts), 1))
+                logger.info(f"   Rejected: {rejected} ({rejection_pct:.1f}%)")
 
                 # 5. Обновить scoring и пометить как обработанные
                 logger.info("\n🔍 Step 5: Updating scores...")
@@ -613,8 +615,12 @@ class ProductionWorkflow:
 
                                         notifier = get_telegram_notifier()
                                         if notifier:
+                                            error_msg = (
+                                                f"Failed to publish digest for region "
+                                                f"{region_code}: {publish_error}"
+                                            )
                                             await notifier.send_error_notification(
-                                                f"Failed to publish digest for region {region_code}: {publish_error}",  # noqa: E501
+                                                error_msg,
                                                 {
                                                     "region_code": region_code,
                                                     "task_name": "publish_digest",
@@ -678,7 +684,10 @@ async def main():
     parser.add_argument(
         "--regions",
         nargs="+",
-        help="Region codes to process (e.g., mi nolinsk). If not specified, all active regions will be processed.",  # noqa: E501
+        help=(
+            "Region codes to process (e.g., mi nolinsk). "
+            "If not specified, all active regions will be processed."
+        ),
     )
     parser.add_argument(
         "--max-posts",

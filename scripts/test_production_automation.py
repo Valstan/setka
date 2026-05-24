@@ -59,8 +59,12 @@ async def test_production_workflow():
         assert "posts_accepted" in result, "Missing posts_accepted"
         assert "posts_published" in result, "Missing posts_published"
 
+        collected = result["posts_collected"]
+        accepted = result["posts_accepted"]
+        published = result["posts_published"]
         logger.info(
-            f"✅ Test 1 passed: {result['posts_collected']} collected, {result['posts_accepted']} accepted, {result['posts_published']} published"  # noqa: E501
+            f"✅ Test 1 passed: {collected} collected, {accepted} accepted, "
+            f"{published} published"
         )
 
         # Тест 2: Telegram уведомления

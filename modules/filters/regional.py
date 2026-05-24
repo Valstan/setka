@@ -99,7 +99,10 @@ class RegionalRelevanceFilter(DBFilter):
         else:
             return FilterResult(
                 passed=False,
-                reason=f"Not regionally relevant (found {len(matches)} matches, need {self.required_matches})",  # noqa: E501
+                reason=(
+                    f"Not regionally relevant "
+                    f"(found {len(matches)} matches, need {self.required_matches})"
+                ),
                 metadata={"matches": matches},
             )
 

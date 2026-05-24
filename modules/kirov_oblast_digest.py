@@ -8,7 +8,8 @@
 Настройки в RegionConfig.digest_filters.defaults:
 - oblast_source_region_codes: ["mi", "nolinsk", ...] — если пусто, берутся все активные
   регионы с vk_group_id, кроме самого kirov_obl.
-- oblast_wall_posts_per_source: сколько последних постов стены читать у каждого района (по умолчанию 15).  # noqa: E501
+- oblast_wall_posts_per_source: сколько последних постов стены читать у каждого
+  района (по умолчанию 15).
 - oblast_max_wall_refs: максимум ссылок на загрузку за один запуск (по умолчанию 200).
 """
 
