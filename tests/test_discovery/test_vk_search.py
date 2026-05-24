@@ -172,68 +172,19 @@ def test_discover_skips_items_with_zero_id():
     client = MagicMock()
     client.search_groups.return_value = [{"id": 0, "name": "Bad"}, {"id": 1, "name": "Good"}]
     client.get_groups_by_ids.return_value = []
-    client.get_wall_posts.return_value = []
     groups = discover_for_region(client=client, center_city="X", categories=[])
     assert [g.vk_id for g in groups] == [1]
 
 
-# ───────── recent_posts (Step 4) ─────────
-
-
-def test_discover_fetches_recent_posts_per_group():
-    """После enrichment'а на каждую группу делаем wall.get и кладём тексты в recent_posts."""
+def test_discover_does_not_fetch_wall_posts_inline():
+    """Sync `discover_for_region` НЕ тянет wall.get — это делает async
+    `_ai_categorize_all` (см. tasks/discovery_tasks.py) через
+    `asyncio.to_thread` + semaphore. Sync-цикл в этой функции упирался в
+    VKClient rate-limit Lock и блокировал uvicorn keep-alive на 100+ группах
+    (см. PR #32 fix)."""
     client = MagicMock()
-    client.search_groups.return_value = [
-        {"id": 10, "name": "A"},
-        {"id": 20, "name": "B"},
-    ]
+    client.search_groups.return_value = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
     client.get_groups_by_ids.return_value = []
 
-    def wall_side_effect(*, owner_id, count, offset=0):
-        if owner_id == -10:
-            return [{"text": "post 1"}, {"text": "post 2"}, {"text": ""}]
-        if owner_id == -20:
-            return [{"text": "B-post"}]
-        return []
-
-    client.get_wall_posts.side_effect = wall_side_effect
-
-    groups = discover_for_region(client=client, center_city="X", categories=[])
-    by_id = {g.vk_id: g for g in groups}
-    assert by_id[10].recent_posts == ["post 1", "post 2"]  # пустой текст отфильтрован
-    assert by_id[20].recent_posts == ["B-post"]
-    # owner_id всегда отрицательный (требование VK API для групп)
-    owner_ids = [c.kwargs["owner_id"] for c in client.get_wall_posts.call_args_list]
-    assert all(oid < 0 for oid in owner_ids)
-
-
-def test_discover_wall_get_failure_does_not_break_group():
-    """Если wall.get на одну группу падает, остальные всё равно получают свои посты."""
-    client = MagicMock()
-    client.search_groups.return_value = [
-        {"id": 1, "name": "A"},
-        {"id": 2, "name": "B"},
-    ]
-    client.get_groups_by_ids.return_value = []
-
-    def wall_side_effect(*, owner_id, count, offset=0):
-        if owner_id == -1:
-            raise RuntimeError("VK down")
-        return [{"text": "ok"}]
-
-    client.get_wall_posts.side_effect = wall_side_effect
-
-    groups = discover_for_region(client=client, center_city="X", categories=[])
-    by_id = {g.vk_id: g for g in groups}
-    assert by_id[1].recent_posts == []
-    assert by_id[2].recent_posts == ["ok"]
-
-
-def test_discover_passes_recent_posts_count_to_wall_get():
-    client = MagicMock()
-    client.search_groups.return_value = [{"id": 1, "name": "A"}]
-    client.get_groups_by_ids.return_value = []
-    client.get_wall_posts.return_value = []
-
-    discover_for_region(client=client, center_city="X", categories=[], recent_posts_count=15)
-    assert client.get_wall_posts.call_args.kwargs["count"] == 15
+    discover_for_region(client=client, center_city="X", categories=[])
+    client.get_wall_posts.assert_not_called()

@@ -20,6 +20,7 @@ import pytest
 
 from database.models import Community, Region
 from modules.discovery.health_check import CommunityHealth
+from modules.discovery.vk_search import DiscoveredGroup
 from tasks import discovery_tasks as dt
 
 # ───────── helpers ─────────
@@ -387,3 +388,81 @@ def test_format_message_shows_failed_regions():
     msg = dt._format_recheck_message(reports)
     assert "ошибка" in msg
     assert "no token" in msg
+
+
+# ───────── _ai_categorize_all (wall.get параллельный fetch) ─────────
+
+
+@pytest.mark.asyncio
+async def test_ai_categorize_fetches_wall_posts_when_client_passed():
+    """С client → _ai_categorize_all сам тянет wall.get и кладёт в recent_posts.
+
+    Это переехало из `discover_for_region` (PR #32-fix), потому что sync
+    sequential цикл там висел на 100+ группах из-за rate-limit Lock.
+    """
+    groups = [
+        DiscoveredGroup(vk_id=10, name="A"),
+        DiscoveredGroup(vk_id=20, name="B"),
+    ]
+
+    def wall_side_effect(*, owner_id, count, offset=0):
+        return [{"text": f"post from {abs(owner_id)}"}, {"text": ""}]
+
+    client = MagicMock()
+    client.get_wall_posts.side_effect = wall_side_effect
+
+    ai_mock = AsyncMock(
+        return_value={"success": True, "category": "novost", "confidence": 80, "reasoning": "ok"}
+    )
+    with patch.object(dt, "categorize_candidate", ai_mock):
+        result = await dt._ai_categorize_all(
+            groups, "Test", client=client, posts_per_group=5, max_concurrent=2
+        )
+
+    assert set(result.keys()) == {10, 20}
+    assert groups[0].recent_posts == ["post from 10"]
+    assert groups[1].recent_posts == ["post from 20"]
+    # owner_id отрицательный для VK групп
+    assert all(c.kwargs["owner_id"] < 0 for c in client.get_wall_posts.call_args_list)
+    assert all(c.kwargs["count"] == 5 for c in client.get_wall_posts.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_ai_categorize_skips_wall_get_when_no_client():
+    """Без client (старый путь / unit-тесты) wall.get не зовётся."""
+    groups = [DiscoveredGroup(vk_id=10, name="A")]
+    ai_mock = AsyncMock(
+        return_value={"success": True, "category": "novost", "confidence": 80, "reasoning": "ok"}
+    )
+    with patch.object(dt, "categorize_candidate", ai_mock):
+        result = await dt._ai_categorize_all(groups, "Test")
+
+    assert 10 in result
+    assert ai_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_ai_categorize_wall_get_failure_does_not_block():
+    """Если wall.get падает на одну группу — другие всё равно отрабатывают."""
+    groups = [
+        DiscoveredGroup(vk_id=1, name="A"),
+        DiscoveredGroup(vk_id=2, name="B"),
+    ]
+
+    def wall_side_effect(*, owner_id, count, offset=0):
+        if owner_id == -1:
+            raise RuntimeError("VK down")
+        return [{"text": "ok"}]
+
+    client = MagicMock()
+    client.get_wall_posts.side_effect = wall_side_effect
+    ai_mock = AsyncMock(
+        return_value={"success": True, "category": "novost", "confidence": 80, "reasoning": "ok"}
+    )
+    with patch.object(dt, "categorize_candidate", ai_mock):
+        result = await dt._ai_categorize_all(groups, "Test", client=client)
+
+    assert groups[0].recent_posts == []
+    assert groups[1].recent_posts == ["ok"]
+    assert result[1]["success"] is True
+    assert result[2]["success"] is True
