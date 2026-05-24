@@ -79,18 +79,42 @@ async def _ai_categorize_all(
     groups: Sequence[DiscoveredGroup],
     region_name: str,
     *,
-    max_concurrent: int = 4,
+    client: Optional[VKClient] = None,
+    posts_per_group: int = 10,
+    max_concurrent: int = 8,
 ) -> Dict[int, Dict[str, Any]]:
     """Run ai_categorizer for every group, bounded concurrency.
 
-    ``max_concurrent=4`` — Groq free tier обычно держит небольшой parallel.
+    Если ``client`` передан — для каждой группы дополнительно тянем
+    ``wall.get(count=posts_per_group)`` в `to_thread` (sync VK API → не
+    блокирует event-loop). VKClient внутри сериализует все vk-вызовы через
+    rate-limit Lock (``GLOBAL_PARSE_INTERVAL_SECONDS``), поэтому реального
+    параллелизма по VK нет, но event-loop остаётся свободным для других
+    AI-вызовов. AI-категоризация (Groq) параллелится честно через semaphore.
+
+    ``max_concurrent=8`` — Groq free tier обычно держит небольшой parallel.
     Возвращает map ``{vk_id: ai_result_dict}``. Failures остаются в map с
     ``success: False`` — caller сам решит сохранять с ai_*=NULL или пропустить.
     """
     semaphore = asyncio.Semaphore(max_concurrent)
 
+    async def _fetch_posts(g: DiscoveredGroup) -> None:
+        if client is None or g.recent_posts:
+            return
+        try:
+            posts = await asyncio.to_thread(
+                client.get_wall_posts, owner_id=-g.vk_id, count=posts_per_group
+            )
+        except Exception as e:
+            logger.debug("discovery: wall.get failed for %s: %s", g.vk_id, e)
+            return
+        g.recent_posts = [
+            (p.get("text") or "").strip() for p in posts if (p.get("text") or "").strip()
+        ]
+
     async def _one(g: DiscoveredGroup) -> tuple[int, Dict[str, Any]]:
         async with semaphore:
+            await _fetch_posts(g)
             res = await categorize_candidate(
                 name=g.name,
                 description=g.description,
@@ -243,7 +267,7 @@ async def run_discovery_for_region_async(
             "skipped_ai_failed": 0,
         }
 
-    ai_results = await _ai_categorize_all(groups, region.name)
+    ai_results = await _ai_categorize_all(groups, region.name, client=client)
     ai_failed = sum(1 for r in ai_results.values() if not r.get("success"))
 
     async with AsyncSessionLocal() as session:
