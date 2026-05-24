@@ -24,7 +24,7 @@
 |----------|----------|
 | [`AI_DEV_GUIDE.md`](AI_DEV_GUIDE.md) | 📘 Полное руководство для AI-разработчиков (архитектура, безопасность, типизация, self-review) |
 | [`TESTING.md`](TESTING.md) | 🧪 Тестирование: unit-тесты, интеграционные тесты, CI/CD, как писать тесты |
-| [`DEV_HISTORY.md`](DEV_HISTORY.md) | 📜 История всех значимых изменений проекта |
+| [`adr/`](adr/) | 📜 Architectural Decision Records — «почему именно так» (см. [ADR-0001](adr/0001-archive-dev-history.md) — минимализм AI-docs; история коммитов и PR заменяет упразднённую `DEV_HISTORY.md`) |
 | [`paths.md`](paths.md) | 🗺 Архитектура, API endpoints, потоки данных |
 
 ### Для эксплуатации

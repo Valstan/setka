@@ -86,7 +86,7 @@ ssh setka 'sudo -u postgres psql -d setka -f /tmp/setka-apply.sql && rm /tmp/set
    ssh setka 'sudo -u postgres psql -d setka -f /tmp/setka-migration.sql' 2>&1
    ssh setka 'rm /tmp/setka-migration.sql'
    ```
-5. Напомнить добавить в `DEV_HISTORY.md` запись «Миграция NNN применена на прод <дата>».
+5. Напомнить зафиксировать факт применения миграции в commit message следующего PR (что/когда/на каком хосте — это заменяет старую запись в DEV_HISTORY.md, см. [ADR-0001](../../docs/adr/0001-archive-dev-history.md)).
 
 ## Безопасные дефолты
 

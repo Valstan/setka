@@ -1,6 +1,6 @@
 # Session Handoff
 
-> Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log -- docs/SESSION_HANDOFF.md` и [`DEV_HISTORY.md`](DEV_HISTORY.md).
+> Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`. `docs/DEV_HISTORY.md` упразднена 2026-05-24 ([ADR-0001](adr/0001-archive-dev-history.md)) — хронология ведётся через `git log` + `gh pr list`.
 
 **Status:** ACTIVE
 **Updated:** 2026-05-24
@@ -54,4 +54,4 @@ _Нет — критерии решения формализованы выше,
 
 ---
 
-> Если читаешь это в начале новой сессии — обнови ниже через `/close_session` в конце. **Не аккумулируй history тут** — она в `git log` + `DEV_HISTORY.md`.
+> Если читаешь это в начале новой сессии — обнови ниже через `/close_session` в конце. **Не аккумулируй history тут** — она в `git log --follow -- docs/SESSION_HANDOFF.md` и в основной `git log`.
