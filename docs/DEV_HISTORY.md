@@ -48,11 +48,13 @@
 
 ---
 
-## 2026-05-24 — Релиз накопленных PR #15-#20 на прод
+## 2026-05-24 — Релиз PR #15-#20 + начало инкрементальной ломки E501-строк
+
+### Релиз накопленных PR #15-#20 на прод (00:57 MSK)
 
 **Тема сессии:** при открытии сессии `/start` обнаружил, что прод на коммите `4191452` (PR #14), а main — на `564cf27` (PR #20). Отстаёт на 6 PR. Самое важное — **PR #17 (legacy flake8 cleanup PR 1) с 2 runtime-баг-фиксами никогда не накатывался**: F601 в `utils/text_utils.py` (12 потерянных price-patterns в `commercial_patterns`) и F811 в `web/api/system_monitoring.py` (`/api/monitoring/live` отдавал `workflow: {}` из-за shadowing helper'а над endpoint'ом). Накатил весь накопленный main одним заходом.
 
-### Что вошло в релиз
+#### Что вошло в релиз
 
 - **PR #15** (`937612f`) — тесты F821-восстановленных веток (+14 тестов в `tests/test_core/`, `tests/test_utils/`).
 - **PR #16** (`2216b0d`) — SSH alias sweep `setka-prod` → `setka` в docs/settings.
@@ -63,7 +65,7 @@
 
 Миграций нет (`applied_migrations` на проде — 003-011, последняя 011 уже была). `requirements.txt` не менялся.
 
-### Применение
+#### Применение
 
 ```bash
 ssh setka "cd /home/valstan/SETKA && git fetch origin && git pull --ff-only origin main"
@@ -71,7 +73,7 @@ ssh setka "cd /home/valstan/SETKA && git fetch origin && git pull --ff-only orig
 ssh setka "sudo systemctl restart setka setka-celery-worker setka-celery-beat"
 ```
 
-### Проверка / прогон
+#### Проверка / прогон
 
 - `systemctl is-active setka setka-celery-worker setka-celery-beat` → `active / active / active`.
 - `curl /api/health/full` → **200 в 1.07 с**.
@@ -79,9 +81,38 @@ ssh setka "sudo systemctl restart setka setka-celery-worker setka-celery-beat"
 - Celery beat: `beat: Starting...` 00:57:40 → ok. Worker: `celery@... ready.` 00:57:42 → ok. Последний предыдущий task `parse_and_publish_theme` succeeded в 00:37:00 (за 20 мин до restart).
 - Ошибок в `celery-worker.log` / `celery-beat.log` после restart нет.
 
-### Хвосты
+#### Хвосты
 
 - **Активировался 🟡 «мониторинг F601-фикса»** — `commercial_patterns` теперь работает с 12 восстановленными price-patterns. Следить за объёмом отфильтрованных постов с `цена/скидка/купить/\d+\s*руб/...` в первые 24-48 часов через `/posts?status=rejected` и `celery-worker.log`. Если ложно-позитивов слишком много — снизить вес price-patterns с 2 до 1 в `utils/text_utils.py`.
+
+### Break long lines PR #1: modules/system_status_notifier.py (15 noqa → 0)
+
+**Тема:** начало работы по 🟡 техдолгу «Инкрементально ломать длинные строки, помеченные `# noqa: E501`». PR 2 (2026-05-23) закрыл 96 E501-строк через массовый `# noqa`, но реальный формат можно улучшать постепенно. Идём по убыванию плотности — самый густой файл первым.
+
+#### Изменения
+
+- **`modules/system_status_notifier.py`** — все 15 `# noqa: E501` сняты. Стратегия по типам:
+  - **Длинные f-string'ы как аргумент `add_status_notification(...)`** (5 случаев на L106/116/284/296/306) — обёрнуты в `(...)` с implicit string concat: `(f"...prefix..." f"{var} ...suffix...")`. Скобки уже стояли вокруг arglist'а, поэтому достаточно ещё одних внутренних.
+  - **Assignment с длинной f-string'ой** (L143/145/374/401/403/406/408) — вынесены повторяющиеся подвыражения в локалки (`time_label = current_time.strftime("%H:%M MSK")`, `work_hours_label = f"{work_hours_start}:00-{work_hours_end}:00 MSK"`, `suffix = "..." if len(...) > N else ""`). Это убирает дубли формирования одной и той же подстроки в if/else и параллельно укладывает строки в 100 символов.
+  - **Длинный ключ в dict literal** (L329 `tasks.production_workflow_tasks.run_production_workflow_all_regions`) — ключ обёрнут в `(...)` с переносом перед `: "..."`.
+  - **Длинный комментарий** (L232) — переписан короче.
+
+Поведение функций не менялось — это чистая косметика, тексты сообщений идентичны (Python склеивает adjacent f-strings на этапе компиляции).
+
+#### Проверка / прогон
+
+- `pre-commit run --files modules/system_status_notifier.py` — **black/isort/flake8 Passed** (второй проход чист; на первом black self-fix).
+- `flake8 modules/system_status_notifier.py --max-line-length=100` → **0 нарушений**.
+- `pytest tests/ -q` — **379/379 зелёных**.
+
+#### Применение
+
+- На проде: **деплой не нужен** — поведение неизменное, чистый refactor.
+- Миграций нет.
+
+#### Хвосты
+
+- 🟡 «Инкрементально ломать длинные строки» — обновлён в `PENDING_FOLLOWUPS.md`: осталось **81 noqa в 43 файлах**. Следующие самые густые: `tasks/parsing_tasks.py` (10), `tasks/vk_carousel_tasks.py` (4), `modules/service_activity_notifier.py` (4).
 
 ---
 

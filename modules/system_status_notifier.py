@@ -103,7 +103,10 @@ class SystemStatusNotifier:
             if current_status == "active":
                 self.add_status_notification(
                     SystemStatusType.WORKFLOW_ACTIVE,
-                    f"🔄 Автоматическая карусель АКТИВНА (рабочие часы: {work_hours_start}:00-{work_hours_end}:00 MSK)",  # noqa: E501
+                    (
+                        f"🔄 Автоматическая карусель АКТИВНА (рабочие часы: "
+                        f"{work_hours_start}:00-{work_hours_end}:00 MSK)"
+                    ),
                     details={
                         "work_hours_start": work_hours_start,
                         "work_hours_end": work_hours_end,
@@ -113,7 +116,11 @@ class SystemStatusNotifier:
             else:
                 self.add_status_notification(
                     SystemStatusType.WORKFLOW_PAUSED,
-                    f"⏸️ Автоматическая карусель ПРИОСТАНОВЛЕНА (вне рабочих часов: {work_hours_start}:00-{work_hours_end}:00 MSK)",  # noqa: E501
+                    (
+                        f"⏸️ Автоматическая карусель ПРИОСТАНОВЛЕНА "
+                        f"(вне рабочих часов: "
+                        f"{work_hours_start}:00-{work_hours_end}:00 MSK)"
+                    ),
                     details={
                         "work_hours_start": work_hours_start,
                         "work_hours_end": work_hours_end,
@@ -139,10 +146,11 @@ class SystemStatusNotifier:
         work_hours_end = PRODUCTION_WORKFLOW_CONFIG.get("work_hours_end", 22)
         is_work_hours = is_work_hours_moscow(work_hours_start, work_hours_end)
 
+        time_label = current_time.strftime("%H:%M MSK")
         if is_work_hours:
-            message = f"👁️ Система мониторинга активна (время: {current_time.strftime('%H:%M MSK')}, рабочие часы)"  # noqa: E501
+            message = f"👁️ Система мониторинга активна (время: {time_label}, рабочие часы)"
         else:
-            message = f"👁️ Система мониторинга работает (время: {current_time.strftime('%H:%M MSK')}, вне рабочих часов)"  # noqa: E501
+            message = f"👁️ Система мониторинга работает (время: {time_label}, вне рабочих часов)"
 
         self.add_status_notification(
             SystemStatusType.MONITORING_ACTIVE,
@@ -177,7 +185,9 @@ class SystemStatusNotifier:
         """Добавить уведомление о здоровье системы"""
         if health_status == "healthy":
             self.add_status_notification(
-                SystemStatusType.SYSTEM_HEALTHY, "💚 Система работает нормально", details=details
+                SystemStatusType.SYSTEM_HEALTHY,
+                "💚 Система работает нормально",
+                details=details,
             )
         elif health_status == "warning":
             self.add_status_notification(
@@ -187,7 +197,9 @@ class SystemStatusNotifier:
             )
         elif health_status == "error":
             self.add_status_notification(
-                SystemStatusType.SYSTEM_ERROR, "❌ Ошибка в работе системы", details=details
+                SystemStatusType.SYSTEM_ERROR,
+                "❌ Ошибка в работе системы",
+                details=details,
             )
 
     def get_current_status_summary(self) -> Dict:
@@ -206,7 +218,7 @@ class SystemStatusNotifier:
                 if not is_work_hours
                 else "Каждый час в рабочее время"
             ),
-            "last_check": self.last_status_check.isoformat() if self.last_status_check else None,
+            "last_check": (self.last_status_check.isoformat() if self.last_status_check else None),
             "status_history_count": len(self.status_history),
         }
 
@@ -229,7 +241,7 @@ class SystemStatusNotifier:
         try:
             current_time = now_moscow()
 
-            # Проверяем, прошло ли достаточно времени с последней проверки активности задач (5 минут)  # noqa: E501
+            # Если с последней проверки активности задач прошло меньше 5 минут — пропускаем
             if (
                 self.last_task_activity_check
                 and (current_time - self.last_task_activity_check).total_seconds() < 300
@@ -245,9 +257,10 @@ class SystemStatusNotifier:
             if active_tasks:
                 task_names = [task.get("task_name", "Unknown") for task in active_tasks]
                 formatted_names = [self._format_task_name_for_user(name) for name in task_names[:3]]
+                suffix = "..." if len(task_names) > 3 else ""
                 self.add_status_notification(
                     SystemStatusType.MONITORING_ACTIVE,
-                    f"🔄 Выполняются задачи: {', '.join(formatted_names)}{'...' if len(task_names) > 3 else ''}",  # noqa: E501
+                    f"🔄 Выполняются задачи: {', '.join(formatted_names)}{suffix}",
                     details={
                         "active_tasks": len(active_tasks),
                         "task_names": task_names,
@@ -281,19 +294,26 @@ class SystemStatusNotifier:
                     if scheduled_tasks:
                         self.add_status_notification(
                             SystemStatusType.MONITORING_ACTIVE,
-                            f"⏳ Система ожидает выполнения задач ({len(scheduled_tasks)} запланировано)",  # noqa: E501
-                            details={"scheduled_tasks": len(scheduled_tasks), "statistics": stats},
+                            (
+                                f"⏳ Система ожидает выполнения задач "
+                                f"({len(scheduled_tasks)} запланировано)"
+                            ),
+                            details={
+                                "scheduled_tasks": len(scheduled_tasks),
+                                "statistics": stats,
+                            },
                         )
                     else:
                         # Проверяем рабочие часы
                         current_hour = get_moscow_hour()
                         work_hours_start = PRODUCTION_WORKFLOW_CONFIG.get("work_hours_start", 7)
                         work_hours_end = PRODUCTION_WORKFLOW_CONFIG.get("work_hours_end", 22)
+                        work_hours_label = f"{work_hours_start}:00-{work_hours_end}:00 MSK"
 
                         if is_work_hours_moscow(work_hours_start, work_hours_end):
                             self.add_status_notification(
                                 SystemStatusType.MONITORING_ACTIVE,
-                                f"💤 Система в режиме ожидания (рабочие часы: {work_hours_start}:00-{work_hours_end}:00 MSK)",  # noqa: E501
+                                f"💤 Система в режиме ожидания (рабочие часы: {work_hours_label})",
                                 details={
                                     "work_hours_active": True,
                                     "current_hour": current_hour,
@@ -303,7 +323,7 @@ class SystemStatusNotifier:
                         else:
                             self.add_status_notification(
                                 SystemStatusType.MONITORING_ACTIVE,
-                                f"😴 Система отдыхает (вне рабочих часов: {work_hours_start}:00-{work_hours_end}:00 MSK)",  # noqa: E501
+                                f"😴 Система отдыхает (вне рабочих часов: {work_hours_label})",
                                 details={
                                     "work_hours_active": False,
                                     "current_hour": current_hour,
@@ -326,7 +346,9 @@ class SystemStatusNotifier:
     def _format_task_name_for_user(self, task_name: str) -> str:
         """Форматировать название задачи для пользователя"""
         name_mapping = {
-            "tasks.production_workflow_tasks.run_production_workflow_all_regions": "Автоматическая карусель",  # noqa: E501
+            (
+                "tasks.production_workflow_tasks.run_production_workflow_all_regions"
+            ): "Автоматическая карусель",
             "tasks.production_workflow_tasks.test_simple_task": "Тестовая задача",
             "tasks.monitoring_tasks.health_check": "Проверка системы",
             "tasks.monitoring_tasks.scan_region": "Сканирование региона",
@@ -371,7 +393,8 @@ class SystemStatusNotifier:
                     else:
                         operation_names.append(f"{region_icon}Операция в {region}")
 
-                message = f"🔄 Выполняются операции: {', '.join(operation_names[:2])}{'...' if len(operation_names) > 2 else ''}"  # noqa: E501
+                suffix = "..." if len(operation_names) > 2 else ""
+                message = f"🔄 Выполняются операции: {', '.join(operation_names[:2])}{suffix}"
 
                 self.add_status_notification(
                     SystemStatusType.MONITORING_ACTIVE,
@@ -396,16 +419,23 @@ class SystemStatusNotifier:
                     for region in ["Тест-Инфо"]  # Список круглосуточных регионов
                 )
 
+                work_hours_label = f"{work_hours_start}:00-{work_hours_end}:00 MSK"
                 if has_24h_regions:
                     if is_work_hours_moscow(work_hours_start, work_hours_end):
-                        message = f"💤 Система в режиме ожидания (рабочие часы: {work_hours_start}:00-{work_hours_end}:00 MSK, 🌙 Тест-Инфо работает круглосуточно)"  # noqa: E501
+                        message = (
+                            f"💤 Система в режиме ожидания (рабочие часы: {work_hours_label}, "
+                            f"🌙 Тест-Инфо работает круглосуточно)"
+                        )
                     else:
-                        message = f"🌙 Система работает только для Тест-Инфо (вне рабочих часов: {work_hours_start}:00-{work_hours_end}:00 MSK)"  # noqa: E501
+                        message = (
+                            f"🌙 Система работает только для Тест-Инфо "
+                            f"(вне рабочих часов: {work_hours_label})"
+                        )
                 else:
                     if is_work_hours_moscow(work_hours_start, work_hours_end):
-                        message = f"💤 Система в режиме ожидания (рабочие часы: {work_hours_start}:00-{work_hours_end}:00 MSK)"  # noqa: E501
+                        message = f"💤 Система в режиме ожидания (рабочие часы: {work_hours_label})"
                     else:
-                        message = f"😴 Система отдыхает (вне рабочих часов: {work_hours_start}:00-{work_hours_end}:00 MSK)"  # noqa: E501
+                        message = f"😴 Система отдыхает (вне рабочих часов: {work_hours_label})"
 
                 self.add_status_notification(
                     SystemStatusType.MONITORING_ACTIVE,
@@ -471,8 +501,14 @@ class SystemStatusNotifier:
             return {
                 **base_status,
                 "task_activity": {
-                    "active_tasks": {"tasks": formatted_active, "count": len(formatted_active)},
-                    "recent_tasks": {"tasks": formatted_recent, "count": len(formatted_recent)},
+                    "active_tasks": {
+                        "tasks": formatted_active,
+                        "count": len(formatted_active),
+                    },
+                    "recent_tasks": {
+                        "tasks": formatted_recent,
+                        "count": len(formatted_recent),
+                    },
                     "scheduled_tasks": {
                         "tasks": formatted_scheduled,
                         "count": len(formatted_scheduled),
@@ -508,7 +544,10 @@ async def start_status_monitoring():
     # Добавляем начальное уведомление
     system_status_notifier.add_system_health(
         "healthy",
-        {"message": "Система запущена и готова к работе", "timestamp": now_moscow().isoformat()},
+        {
+            "message": "Система запущена и готова к работе",
+            "timestamp": now_moscow().isoformat(),
+        },
     )
 
     # Проверяем статус карусели
