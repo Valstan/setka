@@ -56,7 +56,7 @@ def _build_prompt(
         else ""
     )
     posts_block = "\n".join(
-        f"- {p.strip()[:250]}" for p in list(recent_posts)[:5] if (p or "").strip()
+        f"- {p.strip()[:250]}" for p in list(recent_posts)[:10] if (p or "").strip()
     )
     if not posts_block:
         posts_block = "(нет доступных постов для анализа)"

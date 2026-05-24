@@ -10,6 +10,8 @@ Strategy:
 4. **Enrichment** — один ``groups.getById(group_ids=…, fields=…)`` для
    всех уникальных id, чтобы получить ``description``, ``members_count``,
    ``screen_name``, ``photo_200`` без отдельных запросов на каждую группу.
+5. **Recent posts** — ``wall.get(count=N)`` на каждую группу. Без этого
+   AI-категоризатор решает только по name + description и часто ошибается.
 
 Возвращает список ``DiscoveredGroup`` — готовые к AI-категоризации и
 upsert'у в ``community_candidates``.
@@ -53,7 +55,8 @@ class DiscoveredGroup:
     description: Optional[str] = None
     members_count: Optional[int] = None
     discovered_via: str = ""
-    # Список последних 5 постов (текст) — для ai_categorizer'а; не хранится в БД.
+    # Последние посты (текст) — для ai_categorizer'а; не хранится в БД.
+    # Заполняется в `discover_for_region` через `client.get_wall_posts`.
     recent_posts: List[str] = field(default_factory=list)
 
 
@@ -95,6 +98,7 @@ def discover_for_region(
     categories: Optional[Sequence[str]] = None,
     per_query_count: int = 100,
     exclude_vk_ids: Optional[Sequence[int]] = None,
+    recent_posts_count: int = 10,
 ) -> List[DiscoveredGroup]:
     """Run composite discovery.
 
@@ -171,5 +175,20 @@ def discover_for_region(
             g.description = (it["description"] or "").strip() or g.description
         if it.get("members_count") is not None:
             g.members_count = it["members_count"]
+
+    # Step 4: fetch recent posts per group для AI-категоризации.
+    # ai_categorizer без постов решает только по name + description и часто
+    # ошибается. С учётом GLOBAL_PARSE_INTERVAL_SECONDS=0.4 — на 100 групп
+    # ~40 сек дополнительно, sync HTTP-таймаут 60s достижим, но в пределах
+    # ожиданий wizard'а (UI показывает спиннер до минуты).
+    for g in seen.values():
+        try:
+            posts = client.get_wall_posts(owner_id=-g.vk_id, count=recent_posts_count)
+        except Exception as e:
+            logger.debug("discovery: wall.get failed for %s: %s", g.vk_id, e)
+            continue
+        g.recent_posts = [
+            (p.get("text") or "").strip() for p in posts if (p.get("text") or "").strip()
+        ]
 
     return list(seen.values())

@@ -43,6 +43,13 @@ class RegionCreate(BaseModel):
     )
     local_hashtags: Optional[str] = Field(None, description="Локальные хештеги")
     is_active: bool = Field(True, description="Активен ли регион")
+    # Geo (модуль авто-регистрации, миграция 011). До PR #31 эти поля были
+    # в `Region`-модели, но не в `RegionCreate` — wizard их терял, и discovery
+    # потом падал с "center_city is empty".
+    vk_city_id: Optional[int] = Field(None, description="VK API city_id для гео-поиска")
+    center_city: Optional[str] = Field(
+        None, max_length=200, description="Имя центра района: 'Малмыж'"
+    )
 
 
 class RegionUpdate(BaseModel):
@@ -361,6 +368,8 @@ async def create_region(region_data: RegionCreate, db: AsyncSession = Depends(ge
         neighbors=region_data.neighbors,
         local_hashtags=region_data.local_hashtags,
         is_active=region_data.is_active,
+        vk_city_id=region_data.vk_city_id,
+        center_city=region_data.center_city,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
