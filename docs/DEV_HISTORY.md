@@ -85,6 +85,31 @@ ssh setka "sudo systemctl restart setka setka-celery-worker setka-celery-beat"
 
 - **Активировался 🟡 «мониторинг F601-фикса»** — `commercial_patterns` теперь работает с 12 восстановленными price-patterns. Следить за объёмом отфильтрованных постов с `цена/скидка/купить/\d+\s*руб/...` в первые 24-48 часов через `/posts?status=rejected` и `celery-worker.log`. Если ложно-позитивов слишком много — снизить вес price-patterns с 2 до 1 в `utils/text_utils.py`.
 
+### Break long lines PR #2: tasks/parsing_tasks.py (10 noqa → 0)
+
+**Тема:** продолжение 🟡 техдолга «Инкрементально ломать длинные строки». Второй по плотности файл после `system_status_notifier.py`.
+
+#### Изменения
+
+- **`tasks/parsing_tasks.py`** — все 10 `# noqa: E501` сняты:
+  - **8 длинных HTML-f-string'ов в `_render_html`** (L252/274/279/284/288/292/297/301) — вынесены повторяющиеся `escape(att.get(...) or '')` подвыражения в локалки (`video_title`, `artist`, `audio_title`, `link_url`, `link_title`, `doc_title`, `doc_url`, `local_path`). Document'у — `doc_url = local_path or att.get("url")` (HTML-шаблон одинаковый, конструкция склеена в 1 строку без if/else). Video/audio оставлены if/else (там разная HTML-структура: `<a href=...>` vs голый текст). Дополнительно вынесены `post_date`, `post_url` для первой строки.
+  - **2 длинных report-сообщения в `_download_video`** (L544/551) — L544 разломано через implicit string concat в `(...)`. L551 — вынесена `size_mb = total // (1024 * 1024)` в локалку.
+
+Поведение функций не менялось — HTML-выход идентичен (Python склеивает adjacent f-strings).
+
+#### Проверка / прогон
+
+- `pre-commit run --files tasks/parsing_tasks.py` — black/isort/flake8 Passed (black self-fix на первом проходе).
+- `pytest tests/ -q` — **379/379 зелёных**.
+
+#### Применение
+
+- На проде: **деплой не нужен** — поведение неизменное.
+
+#### Хвосты
+
+- 🟡 «Инкрементально ломать длинные строки» — обновлён в `PENDING_FOLLOWUPS.md`: **71 noqa в 42 файлах**. Следующие густые: `tasks/vk_carousel_tasks.py` (4), `modules/service_activity_notifier.py` (4).
+
 ### Break long lines PR #1: modules/system_status_notifier.py (15 noqa → 0)
 
 **Тема:** начало работы по 🟡 техдолгу «Инкрементально ломать длинные строки, помеченные `# noqa: E501`». PR 2 (2026-05-23) закрыл 96 E501-строк через массовый `# noqa`, но реальный формат можно улучшать постепенно. Идём по убыванию плотности — самый густой файл первым.
