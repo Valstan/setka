@@ -16,23 +16,18 @@ Tasks:
     celery -A tasks.celery_app beat --loglevel=info
 """
 
-import os
-import sys
-
 # Добавляем корневую директорию в PYTHONPATH — должно быть ДО любых проектных
 # импортов, иначе flake8 ругается E402 на нижестоящие `from utils...` / `from
 # config...`. Делаем самый минимум на верху, остальные импорты — ниже.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hashlib
+import json
+import logging
+from datetime import datetime, timedelta
 
-import hashlib  # noqa: E402
-import json  # noqa: E402
-import logging  # noqa: E402
-from datetime import datetime, timedelta  # noqa: E402
+from celery import Celery
+from celery.schedules import crontab
 
-from celery import Celery  # noqa: E402
-from celery.schedules import crontab  # noqa: E402
-
-from utils.celery_asyncio import run_coro  # noqa: E402
+from utils.celery_asyncio import run_coro
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")

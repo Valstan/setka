@@ -1,11 +1,6 @@
 """Ссылки vk.com/wall в тексте дайджестов."""
 
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from utils.vk_wall_links import extract_wall_post_refs_from_text  # noqa: E402
+from utils.vk_wall_links import extract_wall_post_refs_from_text
 
 
 def test_extract_https_wall_url():

@@ -5,20 +5,15 @@ Service Activity Notifier - Уведомления о работе сервис�
 """
 
 import logging
-import os
-import sys
 from enum import Enum
 from typing import Any, Dict, Optional
 
-# Добавляем путь к проекту
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from modules.service_notifications import (  # noqa: E402
+from modules.service_notifications import (
     NotificationType,
     ServiceNotification,
     service_notifications,
 )
-from utils.timezone import now_moscow  # noqa: E402
+from utils.timezone import now_moscow
 
 logger = logging.getLogger(__name__)
 

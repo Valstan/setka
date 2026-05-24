@@ -7,6 +7,10 @@ its own publish-token client. Other errors propagate.
 
 from unittest.mock import MagicMock
 
+import pytest
+
+from modules.publisher.vk_publisher_extended import VKPublisher
+
 
 def _client_with_method_only(method_return):
     """Make a client that has `method` but NOT `api_call`.
@@ -18,11 +22,6 @@ def _client_with_method_only(method_return):
     client = MagicMock(spec=["method"])
     client.method.return_value = method_return
     return client
-
-
-import pytest  # noqa: E402
-
-from modules.publisher.vk_publisher_extended import VKPublisher  # noqa: E402
 
 
 def _make_publisher(publish_client):

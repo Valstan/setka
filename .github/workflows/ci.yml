@@ -34,6 +34,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # Editable install — registers `setka` as a package so
+          # `from modules.X import Y` works without sys.path.insert hacks
+          # in scripts/* and tests/*.
+          pip install -e .
           pip install pytest pytest-asyncio pytest-cov flake8 black isort
 
       - name: Lint with flake8

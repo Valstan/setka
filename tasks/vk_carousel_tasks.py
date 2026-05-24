@@ -9,14 +9,12 @@ from datetime import datetime
 
 from celery.schedules import crontab
 
+from celery_app import app
 from config.runtime import VK_TOKENS
 from database.connection import get_db_session
 from modules.vk_monitor.carousel_manager import carousel_manager
 
 logger = logging.getLogger(__name__)
-
-# Получить Celery app из основного файла
-from celery_app import app  # noqa: E402
 
 
 @app.task(bind=True, name="vk_carousel.scan_next_region")

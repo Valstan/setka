@@ -150,7 +150,3 @@ class HealthChecker:
             except Exception as e:
                 logger.error(f"Error in health monitoring: {e}")
                 await asyncio.sleep(60)
-
-
-# Import Optional
-from typing import Optional  # noqa: E402

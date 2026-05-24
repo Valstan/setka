@@ -5,15 +5,11 @@ Script to add VK tokens to database
 """
 import asyncio
 import os
-import sys
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from sqlalchemy import select
 
-from sqlalchemy import select  # noqa: E402
-
-from database.connection import AsyncSessionLocal  # noqa: E402
-from database.models import VKToken  # noqa: E402
+from database.connection import AsyncSessionLocal
+from database.models import VKToken
 
 
 def _collect_prefixed_env(prefix: str) -> dict[str, str]:

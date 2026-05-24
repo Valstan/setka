@@ -4,16 +4,12 @@ Test VK Client Performance: Sync vs Async
 """
 
 import asyncio
-import sys
 import time
 from statistics import mean
 
-# Add project root to path
-sys.path.insert(0, "/home/valstan/SETKA")
-
-from config.runtime import VK_TOKENS  # noqa: E402
-from modules.vk_monitor.vk_client import VKClient  # noqa: E402
-from modules.vk_monitor.vk_client_async import VKClientAsync  # noqa: E402
+from config.runtime import VK_TOKENS
+from modules.vk_monitor.vk_client import VKClient
+from modules.vk_monitor.vk_client_async import VKClientAsync
 
 
 async def test_sync_client(token: str, test_communities: list, iterations: int = 3):

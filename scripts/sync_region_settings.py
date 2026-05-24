@@ -7,16 +7,13 @@
 """
 import asyncio
 import logging
-import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from sqlalchemy import select, update
 
-from sqlalchemy import select, update  # noqa: E402
-
-from database.connection import get_db_session_context  # noqa: E402
-from database.models import Region  # noqa: E402
-from modules.region_config import REGIONS_CONFIG  # noqa: E402
+from database.connection import get_db_session_context
+from database.models import Region
+from modules.region_config import REGIONS_CONFIG
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

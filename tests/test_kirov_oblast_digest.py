@@ -1,17 +1,13 @@
 """Хелперы и настройки областного дайджеста Кировской области."""
 
-import os
-import sys
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from modules.digest_pipeline_settings import POSTOPUS_DIGEST_THEMES  # noqa: E402
-from modules.kirov_oblast_digest import (  # noqa: E402
+from modules.digest_pipeline_settings import POSTOPUS_DIGEST_THEMES
+from modules.kirov_oblast_digest import (
     DEFAULT_REGION_CODE,
     OBLAST_LOOKBACK_HOURS,
     THEME_OBLAST,

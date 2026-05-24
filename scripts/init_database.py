@@ -4,13 +4,9 @@
 Script to initialize database tables
 """
 import asyncio
-import os
 import sys
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from database.connection import engine, init_db  # noqa: E402
+from database.connection import engine, init_db
 
 
 async def main():

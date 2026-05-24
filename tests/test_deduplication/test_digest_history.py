@@ -1,12 +1,8 @@
 """Unit tests for digest history dedup helpers."""
 
-import os
-import sys
 from types import SimpleNamespace
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from modules.deduplication.digest_history import (  # noqa: E402
+from modules.deduplication.digest_history import (
     append_unique_limited,
     build_region_dedup_sets,
     extract_source_lips_from_target_group_posts,

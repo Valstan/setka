@@ -3,13 +3,8 @@ Examples of improved error handling in SETKA
 Demonstrates exception hierarchy, retry logic, and circuit breaker
 """
 
-import sys
-
-# Add project root to path
-sys.path.insert(0, "/home/valstan/SETKA")
-
-import asyncio  # noqa: E402
-import logging  # noqa: E402
+import asyncio
+import logging
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

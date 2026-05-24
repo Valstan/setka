@@ -1,11 +1,8 @@
 """Tests for parsing scheduler region pre-filtering."""
 
-import os
 import sys
 import types
 from unittest.mock import MagicMock, patch
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
 def test_run_all_regions_theme_schedules_only_eligible_regions():

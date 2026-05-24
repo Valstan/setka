@@ -85,6 +85,59 @@ ssh setka "sudo systemctl restart setka setka-celery-worker setka-celery-beat"
 
 - **Активировался 🟡 «мониторинг F601-фикса»** — `commercial_patterns` теперь работает с 12 восстановленными price-patterns. Следить за объёмом отфильтрованных постов с `цена/скидка/купить/\d+\s*руб/...` в первые 24-48 часов через `/posts?status=rejected` и `celery-worker.log`. Если ложно-позитивов слишком много — снизить вес price-patterns с 2 до 1 в `utils/text_utils.py`.
 
+### pyproject.toml + editable install — убраны 53 sys.path.insert и ~90 noqa: E402 (техдолг закрыт)
+
+**Тема:** второй из двух 🟡 техдолгов сегодняшнего дня. До этого PR в проекте было ~53 файла со стандартным паттерном `sys.path.insert(0, os.path.dirname(...))` перед импортами и ~115 строк с `# noqa: E402`, маскирующих E402 ошибку этой схемы. Правильный fix первопричины — завести `pyproject.toml`, поставить пакет через `pip install -e .` и удалить sys.path-манипуляции. После editable install Python видит `setka` как обычный installed package, и `from modules.X import Y` работает из любого working directory.
+
+#### Изменения
+
+- **`pyproject.toml`** (новый файл, 26 строк) — минимальная конфигурация:
+  - `[build-system]`: setuptools≥68 + wheel.
+  - `[project]`: name=setka, version=0.1.0, dynamic dependencies из `requirements.txt` (через `[tool.setuptools.dynamic]`).
+  - `[tool.setuptools]` py-modules: `main`, `celery_app`, `_version` (3 top-level py-файла).
+  - `[tool.setuptools.packages.find]` include: `config*`, `core*`, `database*`, `middleware*`, `modules*`, `monitoring*`, `tasks*`, `utils*`, `web*`. Exclude: `docs*`, `examples*`, `mailbox*`, `scripts*`, `tests*` — scripts остаются CLI-утилитами, не пакетом.
+- **`.github/workflows/ci.yml`** — добавлен шаг `pip install -e .` после `pip install -r requirements.txt`.
+- **`scripts/setup-dev.{sh,ps1}`** — добавлен шаг `pip install -e .` (для свежего worktree сразу настроена editable установка).
+- **`.claude/commands/reliz.md`** Шаг 7 — добавлена инструкция «если в pull притянулся `pyproject.toml` — `pip install -e .` в прод-venv». На проде после первого merge этого PR нужен **разовый** `ssh setka 'cd /home/valstan/SETKA && ./venv/bin/pip install -e .'`.
+- **`scripts/*` (33 файла)** — удалён блок `sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))` + предшествующий комментарий «# Add parent directory to path». Снят `# noqa: E402` с импортов, которые были после удалённой sys.path.insert.
+- **`tests/*` (13 файлов)** — то же самое (тесты импортировали проектные модули через ту же схему).
+- **`tasks/celery_app.py`** — удалён sys.path.insert (worker запускается через `celery -A celery_app` из root + `PYTHONPATH=/home/valstan/SETKA` в systemd).
+- **`modules/analytics/trending.py`**, **`examples/error_handling_example.py`** — удалён прибитый `sys.path.insert(0, "/home/valstan/SETKA")` (специфика прод-пути).
+- **`modules/service_activity_notifier.py`**, **`scripts/validate_vk_tokens.py`** — удалён `sys.path.append(...)` (вариант с append вместо insert).
+- **`modules/notifications/vk_{suggested,messages}_checker.py`** — sys.path.insert внутри `if __name__ == "__main__":` блока удалён, добавлен комментарий «запуск через `python -m modules.notifications.X`».
+- **`tests/test_migrate.py`** — для импорта `scripts/migrate.py` (который НЕ часть пакета) переписан на `importlib.util.spec_from_file_location` — корректный способ загрузить файл-CLI без sys.path.
+- **`modules/monitoring/health_checker.py`** — удалён мёртвый дубль `from typing import Optional` на L156 (Optional уже импортирован на L8).
+- **`tasks/vk_carousel_tasks.py`** — `from celery_app import app` перенесён в общий блок импортов наверху (был отдельной строкой ниже logger setup).
+- **`tests/test_notifications/test_publisher_fallback.py`** — импорты `pytest` и `VKPublisher` перенесены наверх (раньше были после `_client_with_method_only` helper).
+- **Удалены ~50 неиспользуемых `import os` / `import sys` / `from pathlib import Path`** из скриптов и тестов (после удаления sys.path.insert они стали unused).
+
+**Что НЕ изменилось:**
+- `requirements.txt` остаётся как pinned-deps source-of-truth — `pyproject.toml` берёт из него через `dynamic = ["dependencies"]`.
+- `PYTHONPATH=/home/valstan/SETKA` в systemd-сервисах **не трогали** — это работает параллельно с editable install (если editable не установлен, PYTHONPATH спасает).
+- 3 `# noqa: E402` в `tests/conftest.py` — это легитимный кейс (`os.environ.setdefault` ДО импортов чтобы `config/runtime.py` не упал при загрузке).
+- ~27 `# noqa: E402` в 7 `scripts/*.py` — легитимные кейсы (logging.basicConfig / print() / sys.path.append до импортов SETKA-модулей).
+
+#### Проверка / прогон
+
+- `pip install -e .` локально — Successfully installed setka-0.1.0.
+- `python -c "from utils.text_utils import is_advertisement"` из `/tmp` — **OK** (импорты работают из любой папки).
+- `pre-commit run --all-files` — black/isort/flake8 Passed.
+- `grep -r 'sys.path.insert' --include='*.py' .` → **0 occurrences** в проекте (только в `.claude/worktrees/dev/`, чужой worktree).
+- `# noqa: E402` итог: было ~115 → стало ~30 (из них 3 в tests/conftest.py + 27 в 7 scripts/ — все legit).
+- `pytest tests/ -q` — **379/379 зелёных**.
+
+#### Применение
+
+- **На проде нужен разовый шаг** после merge: `ssh setka 'cd /home/valstan/SETKA && ./venv/bin/pip install -e .'`. Без него прод-systemd продолжит работать (там `PYTHONPATH=/home/valstan/SETKA`), но при будущих изменениях в `pyproject.toml` нужно повторно `pip install -e .`.
+- CI автоматически делает `pip install -e .` после merge (см. `.github/workflows/ci.yml`).
+- Свежие worktree через `scripts/setup-dev.{sh,ps1}` сразу получают editable install.
+- Деплой по сути обычный: `git pull && systemctl restart`. Editable install — отдельный шаг (см. обновлённый `/reliz` Шаг 7).
+
+#### Хвосты
+
+- ✅ **🟡 «Рефакторинг `scripts/*` через pyproject.toml + pip install -e .» закрыт** — переносится из `PENDING_FOLLOWUPS.md` в `DEV_HISTORY.md`.
+- 🟡 **На проде после merge** — выполнить разовый `pip install -e .` (см. выше «Применение»). После этого можно проверить через `ssh setka 'cd /tmp && /home/valstan/SETKA/venv/bin/python -c "from utils.text_utils import is_advertisement; print(\"OK\")"'`.
+
 ### Break long lines PR #4: оставшиеся ~63 noqa в 40 файлах (63 → 0) — техдолг закрыт
 
 **Тема:** финал 🟡 техдолга «Инкрементально ломать длинные строки». PR #1-3 закрыли 33 noqa в 4 самых густых файлах; PR #4 проходит по оставшимся 40 файлам (7 с 3-4 noqa + 8 с 2 noqa + 25 с 1 noqa) и **обнуляет всё**. После этого PR — **в проекте 0 строк с `# noqa: E501`**.

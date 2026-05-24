@@ -4,9 +4,7 @@ import asyncio
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from sqlalchemy import text  # noqa: E402
+from sqlalchemy import text
 
 
 async def main() -> None:

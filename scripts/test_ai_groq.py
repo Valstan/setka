@@ -4,15 +4,10 @@
 Test Groq AI API
 """
 import asyncio
-import os
-import sys
-
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import Groq API key from config
-from config.runtime import GROQ_API_KEY  # noqa: E402
-from modules.ai_analyzer.groq_client import GroqClient  # noqa: E402
+from config.runtime import GROQ_API_KEY
+from modules.ai_analyzer.groq_client import GroqClient
 
 
 async def test_groq_analysis():

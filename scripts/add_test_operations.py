@@ -4,13 +4,9 @@
 """
 import asyncio
 import logging
-import os
-import sys
 from datetime import datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from modules.operation_tracking import operation_tracker  # noqa: E402
+from modules.operation_tracking import operation_tracker
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

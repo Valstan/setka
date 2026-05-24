@@ -1,12 +1,8 @@
 """Слияние digest_filters с дефолтами."""
 
-import os
-import sys
 from types import SimpleNamespace
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from modules.digest_pipeline_settings import get_effective_pipeline_settings  # noqa: E402
+from modules.digest_pipeline_settings import get_effective_pipeline_settings
 
 
 def test_effective_uses_defaults():

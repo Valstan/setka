@@ -119,8 +119,9 @@ async def test_recheck_returns_failure_when_no_token():
 @pytest.mark.asyncio
 async def test_recheck_returns_failure_when_region_missing():
     session = _FakeSession([{"kind": "scalar_one", "value": None}])
-    with patch.object(dt, "_pick_parse_token", return_value="tok"), patch.object(
-        dt, "AsyncSessionLocal", return_value=session
+    with (
+        patch.object(dt, "_pick_parse_token", return_value="tok"),
+        patch.object(dt, "AsyncSessionLocal", return_value=session),
     ):
         out = await dt.recheck_communities_for_region_async(42)
     assert out["success"] is False
@@ -136,8 +137,9 @@ async def test_recheck_zero_communities_returns_empty_report():
             {"kind": "scalars_all", "value": []},
         ]
     )
-    with patch.object(dt, "_pick_parse_token", return_value="tok"), patch.object(
-        dt, "AsyncSessionLocal", return_value=session
+    with (
+        patch.object(dt, "_pick_parse_token", return_value="tok"),
+        patch.object(dt, "AsyncSessionLocal", return_value=session),
     ):
         out = await dt.recheck_communities_for_region_async(1)
     assert out == {
@@ -177,10 +179,11 @@ async def test_recheck_writes_health_fields_and_aggregates_counts():
     async def fake_check(*, client, community, **_kwargs):
         return results[community.id]
 
-    with patch.object(dt, "_pick_parse_token", return_value="tok"), patch.object(
-        dt, "AsyncSessionLocal", return_value=session
-    ), patch.object(dt, "VKClient", MagicMock()), patch.object(
-        dt, "check_community_health", side_effect=fake_check
+    with (
+        patch.object(dt, "_pick_parse_token", return_value="tok"),
+        patch.object(dt, "AsyncSessionLocal", return_value=session),
+        patch.object(dt, "VKClient", MagicMock()),
+        patch.object(dt, "check_community_health", side_effect=fake_check),
     ):
         out = await dt.recheck_communities_for_region_async(1)
 
@@ -229,10 +232,11 @@ async def test_recheck_counts_transient_errors():
     async def fake_check(**_kwargs):
         return transient
 
-    with patch.object(dt, "_pick_parse_token", return_value="tok"), patch.object(
-        dt, "AsyncSessionLocal", return_value=session
-    ), patch.object(dt, "VKClient", MagicMock()), patch.object(
-        dt, "check_community_health", side_effect=fake_check
+    with (
+        patch.object(dt, "_pick_parse_token", return_value="tok"),
+        patch.object(dt, "AsyncSessionLocal", return_value=session),
+        patch.object(dt, "VKClient", MagicMock()),
+        patch.object(dt, "check_community_health", side_effect=fake_check),
     ):
         out = await dt.recheck_communities_for_region_async(1)
     assert out["errors"] == 1
@@ -274,9 +278,13 @@ async def test_recheck_all_aggregates_per_region_reports():
     async def fake_recheck_region(region_id, **_kwargs):
         return plan.pop(0)
 
-    with patch.object(dt, "AsyncSessionLocal", return_value=outer_session), patch.object(
-        dt, "recheck_communities_for_region_async", AsyncMock(side_effect=fake_recheck_region)
-    ), patch.object(dt, "_maybe_send_recheck_telegram_alert") as alert_mock:
+    with (
+        patch.object(dt, "AsyncSessionLocal", return_value=outer_session),
+        patch.object(
+            dt, "recheck_communities_for_region_async", AsyncMock(side_effect=fake_recheck_region)
+        ),
+        patch.object(dt, "_maybe_send_recheck_telegram_alert") as alert_mock,
+    ):
         out = await dt.recheck_all_active_regions_async()
 
     assert out["success"] is True
