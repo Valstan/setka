@@ -48,9 +48,8 @@ def scan_next_region_task(self):
 
                 # Проверить, не превышен ли лимит активных сканирований
                 if len(carousel_manager.active_scans) >= carousel_manager.max_concurrent_scans:
-                    logger.warning(
-                        f"Maximum concurrent scans ({carousel_manager.max_concurrent_scans}) reached"  # noqa: E501
-                    )
+                    max_scans = carousel_manager.max_concurrent_scans
+                    logger.warning(f"Maximum concurrent scans ({max_scans}) reached")
                     return {
                         "status": "skipped",
                         "reason": "max_concurrent_scans",
@@ -62,7 +61,8 @@ def scan_next_region_task(self):
 
                 if success:
                     logger.info(
-                        f"Successfully scanned region {task.region_code}: {task.posts_found} posts found"  # noqa: E501
+                        f"Successfully scanned region {task.region_code}: "
+                        f"{task.posts_found} posts found"
                     )
                     return {
                         "status": "completed",
@@ -125,10 +125,12 @@ def validate_tokens_task():
                     user_info = await vk_client.get_user_info()
 
                     if user_info:
+                        first_name = user_info.get("first_name", "")
+                        last_name = user_info.get("last_name", "")
                         results[name] = {
                             "is_valid": True,
                             "user_id": user_info.get("id"),
-                            "user_name": f"{user_info.get('first_name', '')} {user_info.get('last_name', '')}".strip(),  # noqa: E501
+                            "user_name": f"{first_name} {last_name}".strip(),
                         }
                         valid_tokens.append(name)
                     else:
@@ -176,9 +178,8 @@ def optimize_frequency_task():
             async with get_db_session() as db:
                 result = await carousel_manager.optimize_scan_frequency(db)
 
-                logger.info(
-                    f"Frequency optimization completed: {result['recommended_interval_minutes']} minutes"  # noqa: E501
-                )
+                recommended_minutes = result["recommended_interval_minutes"]
+                logger.info(f"Frequency optimization completed: {recommended_minutes} minutes")
 
                 return result
 

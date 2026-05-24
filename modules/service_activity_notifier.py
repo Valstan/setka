@@ -94,7 +94,11 @@ class ServiceActivityNotifier:
             (processed_communities / total_communities * 100) if total_communities > 0 else 0
         )
 
-        message = f"📊 Собираю посты в {region_name} по теме '{topic}': {processed_communities}/{total_communities} сообществ ({progress_percent:.0f}%)"  # noqa: E501
+        progress = f"{processed_communities}/{total_communities}"
+        message = (
+            f"📊 Собираю посты в {region_name} по теме '{topic}': "
+            f"{progress} сообществ ({progress_percent:.0f}%)"
+        )
         if posts_found > 0:
             message += f", найдено {posts_found} постов"
 
@@ -170,7 +174,10 @@ class ServiceActivityNotifier:
         """Уведомление о прогрессе сортировки постов"""
         progress_percent = (processed_posts / total_posts * 100) if total_posts > 0 else 0
 
-        message = f"📊 Сортирую посты в {region_name}: {processed_posts}/{total_posts} ({progress_percent:.0f}%)"  # noqa: E501
+        message = (
+            f"📊 Сортирую посты в {region_name}: "
+            f"{processed_posts}/{total_posts} ({progress_percent:.0f}%)"
+        )
         if approved_posts > 0 or rejected_posts > 0:
             message += f" (одобрено: {approved_posts}, отклонено: {rejected_posts})"
 
@@ -341,10 +348,11 @@ class ServiceActivityNotifier:
         """Уведомление о завершении проверки уведомлений VK"""
         total_notifications = suggested_posts + unread_messages
 
+        check_prefix = "✅ Опросил все главные сообщества на предмет предложек и сообщений."
         if total_notifications == 0:
-            message = "✅ Опросил все главные сообщества на предмет предложек и сообщений. Уведомлений не найдено"  # noqa: E501
+            message = f"{check_prefix} Уведомлений не найдено"
         else:
-            message = f"✅ Опросил все главные сообщества на предмет предложек и сообщений. Найдено {total_notifications} уведомлений"  # noqa: E501
+            message = f"{check_prefix} Найдено {total_notifications} уведомлений"
             if suggested_posts > 0:
                 message += f" ({suggested_posts} предложений"
             if unread_messages > 0:
