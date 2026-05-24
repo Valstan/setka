@@ -28,9 +28,13 @@ cd ../brain_matrica && git pull --ff-only origin main 2>&1 | tail -3
 
 ### 0.2. Сканировать входящие
 
-`Glob` `../brain_matrica/mailboxes/setka/from-brain/*.md` (только корень, **не** `DRAFTS/`, **не** `ARCHIVE/`).
+**⚠️ НЕ использовать `Glob`** — он не видит пути вне корня проекта setka и возвращает «No files found» даже когда письма есть (инцидент 2026-05-24). Использовать `Bash`:
 
-Для каждого письма прочитать frontmatter: `kind`, `urgency`, `compliance`, `topic`.
+```bash
+ls ../brain_matrica/mailboxes/setka/from-brain/*.md 2>/dev/null
+```
+
+Только корень (`*.md` без рекурсии), **не** `DRAFTS/`, **не** `ARCHIVE/`. Для каждого письма прочитать через `Read` (по конкретному пути работает) и извлечь frontmatter: `kind`, `urgency`, `compliance`, `topic`.
 
 ### 0.3. Retroactive-правило
 
@@ -103,11 +107,12 @@ ref:
 1. [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md) — sticky-note с прошлой сессии: `Status`, текущая нитка, следующий шаг, failed approaches. **Если файла нет** или `Status: IDLE` — нет активной нитки, идём по обычному onboarding.
 2. [`CLAUDE.md`](../../CLAUDE.md) — entry point, правила, lessons learned
 3. [`docs/AI_DEV_GUIDE.md`](../../docs/AI_DEV_GUIDE.md) — архитектурная картина
-4. [`docs/DEV_HISTORY.md`](../../docs/DEV_HISTORY.md) — что сделано в последних сессиях (читай первые ~300 строк, остальное по запросу)
+4. `git log --oneline -20` + `gh pr list --state merged --limit 10` — что сделано в последних сессиях (заменяет старый `DEV_HISTORY.md`, см. [ADR-0001](../../docs/adr/0001-archive-dev-history.md)). Для конкретного PR — `gh pr view <N>`.
 5. [`docs/PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) — открытые задачи и техдолги
 6. [`docs/START_HERE.md`](../../docs/START_HERE.md) — быстрые команды на проде
+7. [`docs/adr/`](../../docs/adr/) — посмотри список ADR-ов (заголовков достаточно для оценки контекста; читай файлом при необходимости)
 
-Memory-файлы автоматически подгружены через `MEMORY.md` — учитывай их (особенно `reference-prod-access`, `reference-local-env`, `feedback-prod-only-ssh`, `feedback-commit-devhistory`).
+Memory-файлы автоматически подгружены через `MEMORY.md` — учитывай их (особенно `reference-ssh-alias`, `remote-access-ssh-only`, `workflow-dev-history` — последний теперь говорит «DEV_HISTORY упразднена, пиши описательные commit messages»).
 
 ## Шаг 3. Git sync (параллельно)
 
@@ -164,7 +169,7 @@ ssh -o ConnectTimeout=10 setka "cd /home/valstan/SETKA && git log --oneline -3" 
 0. **📬 Mailbox:** `N писем от brain_matrica` со списком `[urgency COMPLIANCE] slug — topic` (из Шага 0). Любые `MANDATE` / `high` выделить отдельно. Если писем нет — `📬 mailbox чист`.
 1. **Сессия:** `СЕТКА <дата>` — отмечена.
 2. **Нитка из `SESSION_HANDOFF.md`**: если `Status: ACTIVE` — текущая нитка + следующий шаг дословно. Если `Status: IDLE` или файла нет — «Активной нитки нет, открытая стартовая позиция».
-3. **Что нового** (последняя запись из `DEV_HISTORY.md`): 1-2 строки.
+3. **Что нового** (заголовки последних 3-5 merged PR-ов или коммитов на main): 1-2 строки.
 4. **Git:** ветка, ahead/behind, был ли `pull`, uncommitted-файлы (если есть).
 5. **Локально:** venv (есть/нет), `pytest --co` (N tests / ошибки).
 6. **Прод** (если делали probe): systemd (active/inactive), `/api/health/full` (200/ошибка), последний коммит на проде.
@@ -178,4 +183,4 @@ ssh -o ConnectTimeout=10 setka "cd /home/valstan/SETKA && git log --oneline -3" 
 
 В конце ответа сноска:
 
-> При значимых правках — обнови `docs/DEV_HISTORY.md` (новый блок сверху, шаблон в шапке файла) и [`PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) **до коммита**. `/reliz` ведёт через релиз; `/finish` — через закрытие сессии без деплоя; [`/close_session`](close_session.md) — фиксирует [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md) (текущая нитка + следующий шаг) для непрерывности между сессиями.
+> При значимых правках — описательный commit-message (Conventional Commits) + PR description заменяют старую `DEV_HISTORY.md` (см. [ADR-0001](../../docs/adr/0001-archive-dev-history.md)). Открытые/новые техдолги — в [`PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) **до коммита**. `/reliz` ведёт через релиз; `/finish` — через закрытие сессии без деплоя; [`/close_session`](close_session.md) — фиксирует [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md) (текущая нитка + следующий шаг + Failed approaches) для непрерывности между сессиями.

@@ -1,5 +1,5 @@
 ---
-description: Релиз SETKA на прод — DEV_HISTORY+PENDING → commit → push → SSH git pull → миграции (если есть) → restart → проверки.
+description: Релиз SETKA на прод — PENDING (если нужно) → описательный commit + PR → SSH git pull → миграции (если есть) → restart → проверки.
 argument-hint: [короткое описание релиза, опционально]
 allowed-tools: Read, Edit, Write, Bash, Glob, Grep, AskUserQuestion, mcp__ccd_session__mark_chapter
 ---
@@ -40,34 +40,25 @@ pre-commit run --all-files 2>&1 | tail -30
 
 Если что-то падает — стоп, показать вывод, спросить как поступить. **Не использовать** `--no-verify` / `pytest -k` для обхода без явного запроса пользователя.
 
-## Шаг 2. Обновить `DEV_HISTORY.md` и `PENDING_FOLLOWUPS.md`
+## Шаг 2. Подготовить описательный commit message + PENDING_FOLLOWUPS
 
-**Это критично — не пропускать.** Пользователь специально это просил (см. memory `feedback-commit-devhistory`).
+С 2026-05-24 хронология ведётся через git ([ADR-0001](../../docs/adr/0001-archive-dev-history.md), `docs/DEV_HISTORY.md` упразднена). Описательное тело коммита + PR-description заменяют старую запись. **Это критично — не пропускать.**
 
-1. `Read` `docs/DEV_HISTORY.md` (первые 100 строк).
-2. Если за сегодняшнюю дату блока ещё нет — `Edit` добавить новый блок **сверху** (после шаблона/шапки) по формату:
+1. **Commit message** должен включать:
 
-```markdown
-## YYYY-MM-DD — <Короткий заголовок>
+```
+<type>(scope): <subject под 70 символов>
 
-**Тема сессии:** один абзац контекста.
+Что меняли (файлы, поведение).
+Почему (контекст, мотивация).
+Какие тесты прошли (N/N зелёных).
+Как применять на проде (миграция? restart? pip install -e .? ничего?).
+Какие хвосты остаются — ссылка на PENDING_FOLLOWUPS.
 
-### Изменения
-
-- **`path/to/file.py`** — что и зачем.
-- ...
-
-### Проверка / прогон
-
-- Локально: `pytest tests/ -q` — N/N зелёных.
-- На проде: применено через `/reliz`.
-
-### Хвосты, оставленные в `PENDING_FOLLOWUPS.md`
-
-- 🟡 ...
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
 
-3. `Read` `docs/PENDING_FOLLOWUPS.md`. Если что-то из закрываемой задачи висело в ⏳/🟡/🟢 — `Edit` убрать (или перенести в `DEV_HISTORY.md` как «закрыто в этой сессии»). Если в процессе вылезли новые техдолги — `Edit` добавить.
+2. **`docs/PENDING_FOLLOWUPS.md`**: `Read`, и если что-то из закрываемой задачи висело в ⏳/🟡/🟢 — `Edit` убрать (или пометить `~~strikethrough~~` с пометкой «закрыто в PR #N»). Если в процессе вылезли новые техдолги — `Edit` добавить.
 
 Делать это **до** коммита, чтобы попало в тот же коммит.
 
@@ -93,7 +84,7 @@ git checkout -b <type>/<slug>   # feat/, fix/, chore/, docs/, refactor/
 
 ```bash
 # Конкретные пути, НЕ git add -A
-git add docs/DEV_HISTORY.md docs/PENDING_FOLLOWUPS.md <other-paths>
+git add docs/PENDING_FOLLOWUPS.md <other-paths>
 
 git commit -m "$(cat <<'EOF'
 feat(scope): краткое описание
@@ -182,7 +173,7 @@ git log --since=<previous-prod-commit> --name-only --diff-filter=A -- 'database/
    ```bash
    ssh setka 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/<file>'
    ```
-4. Запомнить факт применения для `DEV_HISTORY` (если ещё не указали).
+4. Зафиксировать факт применения в commit message следующего коммита (если ещё не указали).
 
 Если в pull притянулся `requirements.txt` — тогда:
 
@@ -196,7 +187,7 @@ ssh setka "cd /home/valstan/SETKA && source venv/bin/activate && pip install -r 
 ssh setka "cd /home/valstan/SETKA && source venv/bin/activate && pip install -e . 2>&1 | tail -5"
 ```
 
-Это регистрирует `setka` как editable-пакет в venv, чтобы `from modules.X import Y` работало из любой папки без `sys.path.insert` (см. `DEV_HISTORY.md` 2026-05-24 «pyproject.toml + editable install»). Прод-systemd-сервисы продолжают использовать `PYTHONPATH=/home/valstan/SETKA`, ничего там менять не нужно.
+Это регистрирует `setka` как editable-пакет в venv, чтобы `from modules.X import Y` работало из любой папки без `sys.path.insert` (см. PR #28 от 2026-05-24, `gh pr view 28`). Прод-systemd-сервисы продолжают использовать `PYTHONPATH=/home/valstan/SETKA`, ничего там менять не нужно.
 
 ## Шаг 8. Restart сервисов
 

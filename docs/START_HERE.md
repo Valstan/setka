@@ -136,7 +136,7 @@ pre-commit run --all-files
 3. **Написать тесты (обязательно!)**
 4. Проверить self-review чек-лист (см. [`AI_DEV_GUIDE.md`](AI_DEV_GUIDE.md))
 5. Обновить документацию если нужно
-6. **Обновить [`docs/DEV_HISTORY.md`](DEV_HISTORY.md)**
+6. **Описательный commit message** (Conventional Commits — `feat(scope): ...` + тело с контекстом, тестами, применением на проде) — заменяет старую запись в DEV_HISTORY (см. [ADR-0001](adr/0001-archive-dev-history.md)).
 7. Запустить тесты: `pytest tests/ -q`
 8. Запустить pre-commit: `pre-commit run --all-files`
 
@@ -144,7 +144,7 @@ pre-commit run --all-files
 1. Убедиться что тесты проходят
 2. Сохранить обратную совместимость
 3. Актуализировать тесты под изменения
-4. **Обновить [`docs/DEV_HISTORY.md`](DEV_HISTORY.md)**
+4. **Описательный commit message** — что было сломано, как починили, какие тесты прошли (Conventional Commits + body).
 
 ## 8) Быстрые ориентиры
 
@@ -161,7 +161,7 @@ pre-commit run --all-files
 - [ ] `pytest tests/ -q` проходит
 - [ ] `pre-commit run --all-files` проходит
 - [ ] Секреты не захардкожены
-- [ ] **Обновлён `docs/DEV_HISTORY.md`**
+- [ ] **Описательный commit message** (Conventional Commits + body с тестами и применением; см. [ADR-0001](adr/0001-archive-dev-history.md))
 - [ ] Синхронизация с git: `git pull` → `git add` → `git commit` → `git push`
 
 ---

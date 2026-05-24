@@ -12,7 +12,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion
 
 | Команда | Что фиксирует |
 |---|---|
-| [`/finish`](finish.md) | Рабочие правки кода/доков — DEV_HISTORY, PENDING_FOLLOWUPS, опц. commit без push |
+| [`/finish`](finish.md) | Рабочие правки кода/доков — описательный commit message + PENDING_FOLLOWUPS, опц. commit без push |
 | [`/close_session`](close_session.md) | State of mind — SESSION_HANDOFF (текущая нитка, следующий шаг), commit + push отдельным коммитом |
 | [`/reliz`](reliz.md) | PR → merge → SSH `git pull` → systemctl restart → health-check |
 
@@ -53,16 +53,16 @@ git log -1 --format='%H %s' -- docs/SESSION_HANDOFF.md
 3. **Следующий шаг?** Конкретно: первое действие следующей сессии с file paths и командами, чтобы можно было выполнять без додумывания.
 4. **Failed approaches?** Только при `Status: ACTIVE` — были ли в этой сессии подходы, которые пробовали и отвергли (PoC не взлетел, обсудили и отбросили)? Если да — кратко перечислить с причиной отказа.
 
-При `Status: IDLE` — перенеси failed approaches из старого SESSION_HANDOFF в `DEV_HISTORY.md` соответствующего блока (раздел «Failed approaches» или «Уроки»), потом перезаписывай handoff пустыми секциями.
+При `Status: IDLE` — failed approaches из старого SESSION_HANDOFF либо переноси в коммит-message PR'а закрывающей нитки (через amend если уже закоммитили — спросить пользователя), либо в ADR если урок архитектурный. После — перезаписывай handoff пустыми секциями.
 
 ## Шаг 3. Записать `docs/SESSION_HANDOFF.md`
 
-**Перезаписать целиком** через `Write` по шаблону. История уже есть в `git log -- docs/SESSION_HANDOFF.md` и в `docs/DEV_HISTORY.md` — не аккумулируй здесь.
+**Перезаписать целиком** через `Write` по шаблону. История уже есть в `git log -- docs/SESSION_HANDOFF.md` — не аккумулируй здесь.
 
 ```markdown
 # Session Handoff
 
-> Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log -- docs/SESSION_HANDOFF.md` и [`DEV_HISTORY.md`](DEV_HISTORY.md).
+> Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
 **Status:** ACTIVE | IDLE
 **Updated:** YYYY-MM-DD
@@ -107,7 +107,7 @@ git log -1 --format='%H %s' -- docs/SESSION_HANDOFF.md
 
 ---
 
-> Если читаешь это в начале новой сессии — обнови через `/close_session` в конце. **Не аккумулируй history тут** — она в `git log` + `DEV_HISTORY.md`.
+> Если читаешь это в начале новой сессии — обнови через `/close_session` в конце. **Не аккумулируй history тут** — она в `git log --follow -- docs/SESSION_HANDOFF.md` (и в `git log` основной ветки для коммитов вообще; `DEV_HISTORY.md` упразднена с 2026-05-24, см. [ADR-0001](../docs/adr/0001-archive-dev-history.md)).
 ```
 
 **Где что фиксируется (важно, чтобы не путать с другими файлами):**
@@ -115,16 +115,17 @@ git log -1 --format='%H %s' -- docs/SESSION_HANDOFF.md
 | Куда | Что |
 |---|---|
 | [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md) | Текущая нитка + следующий шаг + failed approaches активной нитки. Перезаписывается. |
-| [`docs/DEV_HISTORY.md`](../../docs/DEV_HISTORY.md) | Хронология сессий — что сделано, какие хвосты ушли в PENDING. Растёт сверху. |
+| `git log` + `gh pr view <N>` | Хронология сессий — что сделано (заменяет упразднённый `DEV_HISTORY.md`, см. [ADR-0001](../../docs/adr/0001-archive-dev-history.md)). Описательные commit messages + PR-описания. |
 | [`docs/PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) | Открытые задачи и техдолги с приоритетами 🔴⏳🟡🟢. |
+| [`docs/adr/`](../../docs/adr/) | Архитектурные решения проекта (с отвергнутыми альтернативами). |
 | [`CLAUDE.md`](../../CLAUDE.md) | Вечные уроки уровня проекта — правила, которые не должны меняться от сессии к сессии. |
-| `../brain_matrica/adr/` | Архитектурные решения (с отвергнутыми альтернативами в секции «Alternatives considered»). |
+| `../brain_matrica/adr/` | Cross-project архитектурные решения. |
 | [`mailbox/to-brain/`](../../mailbox/) | Исходящие письма в brain_matrica (feedback / report / question). |
 
 ## Шаг 4. Синхронизировать `PENDING_FOLLOWUPS.md` (если нужно)
 
 Если в сессии:
-- **Закрыли** пункты — вычеркнуть (`~~...~~ закрыто YYYY-MM-DD, см. DEV_HISTORY`) или перенести подробности в `DEV_HISTORY.md`.
+- **Закрыли** пункты — удалить строку, либо вычеркнуть `~~...~~ закрыто в PR #N` (короткая ссылка на коммит/PR где было сделано). Деталей в PENDING не оставлять — они в commit message / PR description.
 - **Появились новые** техдолги / идеи — добавить с приоритетом 🔴⏳🟡🟢.
 - **Изменился приоритет** — переставить (например, 🟡 → 🔴 если стало блокером).
 
@@ -192,7 +193,7 @@ EOF
 - **Не делать `git rebase` / `git reset --hard` / `git push --force`** — handoff коммит обычный.
 - **Не direct push в main** ([ADR-0002](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)) — даже handoff идёт через PR.
 - **Не дублировать содержимое `PENDING_FOLLOWUPS` в handoff** — handoff ссылается на пункты, не повторяет.
-- **Не вести historic log в handoff'е** — он перезаписывается. История уже в `git log -- docs/SESSION_HANDOFF.md` и в `docs/DEV_HISTORY.md`.
+- **Не вести historic log в handoff'е** — он перезаписывается. История уже в `git log --follow -- docs/SESSION_HANDOFF.md` (и в `git log` основной ветки для коммитов).
 - **Не запускать тесты или build** — это инструмент фиксации состояния, не финализации работы.
 
 ---
