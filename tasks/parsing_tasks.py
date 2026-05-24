@@ -248,9 +248,9 @@ def _render_html(posts: List[Dict[str, Any]], include: dict) -> str:
     ]
     for post in posts:
         lines.append("<div style='border:1px solid #ddd;padding:12px;margin:12px 0;'>")
-        lines.append(
-            f"<div><strong>{escape(post['date'])}</strong> | <a href='{post['url']}'>Источник</a></div>"  # noqa: E501
-        )
+        post_date = escape(post["date"])
+        post_url = post["url"]
+        lines.append(f"<div><strong>{post_date}</strong> | <a href='{post_url}'>Источник</a></div>")
         if include.get("text"):
             lines.append(
                 f"<pre style='white-space:pre-wrap'>{escape(post.get('text') or '')}</pre>"
@@ -269,37 +269,36 @@ def _render_html(posts: List[Dict[str, Any]], include: dict) -> str:
                 elif att_type == "video" and include.get("videos"):
                     size_bytes = att.get("size_bytes") or 0
                     size_mb = f" ({size_bytes // (1024 * 1024)}MB)" if size_bytes else ""
-                    if att.get("local_path"):
+                    video_title = escape(att.get("title") or "video")
+                    local_path = att.get("local_path")
+                    if local_path:
                         lines.append(
-                            f"<li>Видео{size_mb}: <a href='{att.get('local_path')}'>{escape(att.get('title') or 'video')}</a></li>"  # noqa: E501
+                            f"<li>Видео{size_mb}: <a href='{local_path}'>{video_title}</a></li>"
                         )
                     else:
-                        video_id = att.get("video_id")
+                        video_url = f"https://vk.com/{att.get('video_id')}"
                         lines.append(
-                            f"<li>Видео{size_mb}: <a href='https://vk.com/{video_id}'>{escape(att.get('title') or 'video')}</a></li>"  # noqa: E501
+                            f"<li>Видео{size_mb}: <a href='{video_url}'>{video_title}</a></li>"
                         )
                 elif att_type == "audio" and include.get("audio"):
-                    if att.get("local_path"):
+                    artist = escape(att.get("artist") or "")
+                    audio_title = escape(att.get("title") or "")
+                    local_path = att.get("local_path")
+                    if local_path:
                         lines.append(
-                            f"<li>Аудио: <a href='{att.get('local_path')}'>{escape(att.get('artist') or '')} - {escape(att.get('title') or '')}</a></li>"  # noqa: E501
+                            f"<li>Аудио: <a href='{local_path}'>{artist} - {audio_title}</a></li>"
                         )
                     else:
-                        lines.append(
-                            f"<li>Аудио: {escape(att.get('artist') or '')} - {escape(att.get('title') or '')}</li>"  # noqa: E501
-                        )
+                        lines.append(f"<li>Аудио: {artist} - {audio_title}</li>")
                 elif att_type == "link" and include.get("links"):
-                    lines.append(
-                        f"<li>Ссылка: <a href='{att.get('url')}'>{escape(att.get('title') or att.get('url') or '')}</a></li>"  # noqa: E501
-                    )
+                    link_url = att.get("url")
+                    link_title = escape(att.get("title") or att.get("url") or "")
+                    lines.append(f"<li>Ссылка: <a href='{link_url}'>{link_title}</a></li>")
                 elif att_type == "document" and include.get("docs"):
-                    if att.get("local_path"):
-                        lines.append(
-                            f"<li>Документ: <a href='{att.get('local_path')}'>{escape(att.get('title') or '')}</a></li>"  # noqa: E501
-                        )
-                    else:
-                        lines.append(
-                            f"<li>Документ: <a href='{att.get('url')}'>{escape(att.get('title') or '')}</a></li>"  # noqa: E501
-                        )
+                    doc_title = escape(att.get("title") or "")
+                    local_path = att.get("local_path")
+                    doc_url = local_path or att.get("url")
+                    lines.append(f"<li>Документ: <a href='{doc_url}'>{doc_title}</a></li>")
                 elif att_type == "poll" and include.get("polls"):
                     lines.append(f"<li>Опрос: {escape(att.get('question') or '')}</li>")
             lines.append("</ul>")
@@ -541,14 +540,18 @@ async def _download_video_with_progress(
                     await _update_video_status(job_id, video_id, title, 0, "no_size")
                     await _add_video_report(
                         job_id,
-                        f"[post {post_id}] {title}: размер неизвестен (нет Content-Length), пропущено",  # noqa: E501
+                        (
+                            f"[post {post_id}] {title}: размер неизвестен "
+                            f"(нет Content-Length), пропущено"
+                        ),
                     )
                     return False, total, "no_size"
                 if total and total > MAX_VIDEO_SIZE_BYTES:
                     await _update_video_status(job_id, video_id, title, 0, "too_large")
+                    size_mb = total // (1024 * 1024)
                     await _add_video_report(
                         job_id,
-                        f"[post {post_id}] {title}: размер {total // (1024 * 1024)}MB > 200MB, пропущено",  # noqa: E501
+                        f"[post {post_id}] {title}: размер {size_mb}MB > 200MB, пропущено",
                     )
                     return False, total, "too_large"
                 if total and total > remaining_bytes:
