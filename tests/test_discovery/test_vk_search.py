@@ -176,6 +176,32 @@ def test_discover_skips_items_with_zero_id():
     assert [g.vk_id for g in groups] == [1]
 
 
+def test_discover_truncates_to_top_n_by_members_count():
+    """При >max_candidates групп берём топ-N по members_count.
+
+    Защита от больших районов: 22 search calls × 100 results могут давать
+    1000+ уникальных групп. Без лимита `_ai_categorize_all` потом стартует
+    1000 wall.get serialized → 6+ минут зависания (PR #33 fix)."""
+    client = MagicMock()
+    items = [{"id": i, "name": f"G{i}"} for i in range(1, 11)]
+    client.search_groups.return_value = items
+    client.get_groups_by_ids.return_value = [
+        {"id": i, "members_count": i * 100} for i in range(1, 11)
+    ]
+    groups = discover_for_region(client=client, center_city="X", categories=[], max_candidates=3)
+    assert len(groups) == 3
+    # Топ-3 по members_count = 1000, 900, 800 (ids 10, 9, 8)
+    assert [g.vk_id for g in groups] == [10, 9, 8]
+
+
+def test_discover_no_truncation_if_under_limit():
+    client = MagicMock()
+    client.search_groups.return_value = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
+    client.get_groups_by_ids.return_value = []
+    groups = discover_for_region(client=client, center_city="X", categories=[], max_candidates=10)
+    assert len(groups) == 2
+
+
 def test_discover_does_not_fetch_wall_posts_inline():
     """Sync `discover_for_region` НЕ тянет wall.get — это делает async
     `_ai_categorize_all` (см. tasks/discovery_tasks.py) через
