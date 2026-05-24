@@ -298,7 +298,9 @@ class CeleryTaskMonitor:
     def _format_task_name(self, task_name: str) -> str:
         """Форматировать название задачи для отображения"""
         name_mapping = {
-            "tasks.production_workflow_tasks.run_production_workflow_all_regions": "Автоматическая карусель обработки",  # noqa: E501
+            (
+                "tasks.production_workflow_tasks.run_production_workflow_all_regions"
+            ): "Автоматическая карусель обработки",
             "tasks.production_workflow_tasks.test_simple_task": "Тестовая задача",
             "tasks.monitoring_tasks.health_check": "Проверка здоровья системы",
             "tasks.monitoring_tasks.scan_region": "Сканирование региона",

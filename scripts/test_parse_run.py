@@ -108,9 +108,9 @@ async def main():
         )
         work_table = result.scalars().first()
         if work_table:
-            logger.info(
-                f"Work table найден: {len(work_table.lip or [])} LIP записей, {len(work_table.hash or [])} hash записей"  # noqa: E501
-            )
+            lip_count = len(work_table.lip or [])
+            hash_count = len(work_table.hash or [])
+            logger.info(f"Work table найден: {lip_count} LIP записей, {hash_count} hash записей")
         else:
             logger.info("Work table не найден, создаём новый")
             work_table = WorkTable(region_code="test", theme="novost", lip=[], hash=[])
@@ -252,12 +252,13 @@ async def main():
         logger.info(f"Постов с парсено: {len(posts)}")
         logger.info(f"  Mourning: {len(mourning_posts)}")
         logger.info(f"  Regular: {len(regular_posts)}")
-        logger.info(
-            f'Обычный digest: {digest_result.post_count} постов (URL: {publish_results.get("regular", {}).get("url", "N/A")})'  # noqa: E501
-        )
+        regular_url = publish_results.get("regular", {}).get("url", "N/A")
+        logger.info(f"Обычный digest: {digest_result.post_count} постов (URL: {regular_url})")
         if mourning_digest_result:
+            mourning_url = publish_results.get("mourning", {}).get("url", "N/A")
             logger.info(
-                f'Mourning digest: {mourning_digest_result.post_count} постов (URL: {publish_results.get("mourning", {}).get("url", "N/A")})'  # noqa: E501
+                f"Mourning digest: {mourning_digest_result.post_count} постов "
+                f"(URL: {mourning_url})"
             )
         logger.info(f"Публикация токеном: {publish_token_name}")
         logger.info("=" * 80)

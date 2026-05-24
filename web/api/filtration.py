@@ -86,7 +86,9 @@ async def filtration_meta():
             "max_post_age_hours": "Макс. возраст поста (часы) для отбора в дайджест",
             "max_posts_per_digest": "Сколько новостей максимум в одном посте-дайджесте",
             "min_rafinad_len_core_dedup": "Мин. длина «rafinad»-текста для дедупа по «ядру»",
-            "posts_per_community_fetch": "Сколько последних постов запрашивать с каждого сообщества",  # noqa: E501
+            "posts_per_community_fetch": (
+                "Сколько последних постов запрашивать с каждого сообщества"
+            ),
         },
     }
 

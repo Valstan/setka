@@ -127,7 +127,8 @@ class VKCarouselManager:
             )
 
             logger.info(
-                f"Created scan task for region {oldest_region.code} with {len(community_ids)} communities"  # noqa: E501
+                f"Created scan task for region {oldest_region.code} "
+                f"with {len(community_ids)} communities"
             )
             return task
 
@@ -354,13 +355,15 @@ class VKCarouselManager:
                 # Высокая нагрузка - увеличить интервал
                 self.scan_interval_minutes = min(self.scan_interval_minutes + 15, 120)
                 logger.info(
-                    f"Increased scan interval to {self.scan_interval_minutes} minutes due to high load"  # noqa: E501
+                    f"Increased scan interval to {self.scan_interval_minutes} minutes "
+                    f"due to high load"
                 )
             elif len(recent_scans) < 5:
                 # Низкая нагрузка - уменьшить интервал
                 self.scan_interval_minutes = max(self.scan_interval_minutes - 15, 30)
                 logger.info(
-                    f"Decreased scan interval to {self.scan_interval_minutes} minutes due to low load"  # noqa: E501
+                    f"Decreased scan interval to {self.scan_interval_minutes} minutes "
+                    f"due to low load"
                 )
 
             return {

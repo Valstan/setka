@@ -73,7 +73,8 @@ async def main():
             print(f"\n=== Communities for test region ({len(comms.scalars().all())}) ===")
             for c in comms.scalars().all():
                 print(
-                    f"  {c.name:40s} | category={c.category:20s} | active={c.is_active} | vk_id={c.vk_id}"  # noqa: E501
+                    f"  {c.name:40s} | category={c.category:20s} | "
+                    f"active={c.is_active} | vk_id={c.vk_id}"
                 )
 
 

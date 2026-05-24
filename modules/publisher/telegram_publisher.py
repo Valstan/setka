@@ -108,7 +108,10 @@ class TelegramPublisher(BasePublisher):
         # Add source if requested
         if add_source and post.community:
             source_link = f"https://vk.com/wall{post.vk_owner_id}_{post.vk_post_id}"
-            source_text = f'\n\n📰 <i>Источник: {post.community.name}</i>\n<a href="{source_link}">🔗 Читать на VK</a>'  # noqa: E501
+            source_text = (
+                f"\n\n📰 <i>Источник: {post.community.name}</i>\n"
+                f'<a href="{source_link}">🔗 Читать на VK</a>'
+            )
             text += source_text
 
         # Escape HTML special characters in text (but not in our added HTML)

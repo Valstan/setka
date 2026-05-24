@@ -87,9 +87,9 @@ async def test_scan_all_regions():
 
     print("\n📋 Details by region:")
     for region_code, region_result in result.get("details", {}).items():
-        print(
-            f"  {region_code}: {region_result.get('new_posts', 0)} posts from {region_result.get('communities', 0)} communities"  # noqa: E501
-        )
+        posts = region_result.get("new_posts", 0)
+        comms = region_result.get("communities", 0)
+        print(f"  {region_code}: {posts} posts from {comms} communities")
 
 
 async def main():

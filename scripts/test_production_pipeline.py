@@ -120,9 +120,9 @@ async def main():
             count_per_community=20,
         )
         stats = parser.get_stats()
-        print(
-            f"✅ Parsed {len(posts)} posts (scanned: {stats['total_posts_scanned']}, filtered dupes: {stats['posts_filtered_duplicate_lip']})"  # noqa: E501
-        )
+        scanned = stats["total_posts_scanned"]
+        dupes = stats["posts_filtered_duplicate_lip"]
+        print(f"✅ Parsed {len(posts)} posts (scanned: {scanned}, filtered dupes: {dupes})")
 
         if not posts:
             print("⚠️ No posts after filtering")
@@ -178,7 +178,8 @@ async def main():
             )
             mourning_digest = mourning_builder.build_digest(mourning_posts, group_names=group_names)
             print(
-                f"\nMourning digest: {mourning_digest.post_count} posts, {mourning_digest.total_length} chars"  # noqa: E501
+                f"\nMourning digest: {mourning_digest.post_count} posts, "
+                f"{mourning_digest.total_length} chars"
             )
 
             vk_pub_m = VKPublisher(test_polygon_mode=test_mode)
