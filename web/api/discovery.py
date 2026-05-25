@@ -26,7 +26,7 @@ from typing import List, Optional, Union
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, validator
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
@@ -428,7 +428,16 @@ class TriggerIn(BaseModel):
 
 @router.post("/trigger")
 async def trigger_discovery(payload: TriggerIn):
-    """Run discovery for one region. Synchronous — UI wizard ждёт результата."""
+    """Run discovery for one region. Synchronous — UI wizard ждёт результата.
+
+    Работает как для wizard'а нового региона, так и для refresh-кнопки
+    «Найти новые сообщества» на ``/regions``. Существующие communities и
+    rejected-кандидаты автоматически исключаются ``_existing_vk_ids`` внутри
+    ``run_discovery_for_region_async`` — дублей в БД не появится.
+
+    При успехе обновляет ``regions.last_discovery_at`` — для отображения
+    «когда последний раз искали» на ``/regions`` и для будущей beat-ротации.
+    """
     try:
         result = await run_discovery_for_region_async(
             region_id=payload.region_id,
@@ -440,6 +449,15 @@ async def trigger_discovery(payload: TriggerIn):
         raise HTTPException(status_code=500, detail=str(e))
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error") or "discovery failed")
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            update(Region)
+            .where(Region.id == payload.region_id)
+            .values(last_discovery_at=datetime.utcnow())
+        )
+        await session.commit()
+
     return result
 
 

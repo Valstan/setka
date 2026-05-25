@@ -96,13 +96,39 @@ async def test_resolve_city_503_when_no_token():
 async def test_trigger_returns_runner_result_on_success():
     payload = discovery_api.TriggerIn(region_id=7, categories=None)
     fake_result = {"success": True, "region": "mi", "found": 5}
-    with patch.object(
-        discovery_api,
-        "run_discovery_for_region_async",
-        AsyncMock(return_value=fake_result),
+    session = _FakeSession()
+    with (
+        patch.object(
+            discovery_api,
+            "run_discovery_for_region_async",
+            AsyncMock(return_value=fake_result),
+        ),
+        patch.object(discovery_api, "AsyncSessionLocal", return_value=session),
     ):
         out = await discovery_api.trigger_discovery(payload)
     assert out == fake_result
+    # После успешного trigger endpoint обновляет regions.last_discovery_at
+    # (для UI на /regions «когда последний раз искали» и beat-ротации).
+    assert session.committed is True
+
+
+async def test_trigger_does_not_update_last_discovery_at_on_failure():
+    """При failed-result endpoint валит HTTPException 400 ДО UPDATE Region —
+    last_discovery_at не должен обновляться, иначе UI покажет ложный
+    «свежий» поиск, который на самом деле не дал результатов."""
+    payload = discovery_api.TriggerIn(region_id=7)
+    session = _FakeSession()
+    with (
+        patch.object(
+            discovery_api,
+            "run_discovery_for_region_async",
+            AsyncMock(return_value={"success": False, "error": "no token"}),
+        ),
+        patch.object(discovery_api, "AsyncSessionLocal", return_value=session),
+    ):
+        with pytest.raises(HTTPException):
+            await discovery_api.trigger_discovery(payload)
+    assert session.committed is False
 
 
 async def test_trigger_translates_failure_to_http_400():
