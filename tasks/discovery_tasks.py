@@ -51,6 +51,20 @@ def _pick_parse_token() -> Optional[str]:
     return None
 
 
+async def _touch_region_last_discovery_at(region_id: int) -> None:
+    """UPDATE ``regions.last_discovery_at = NOW()`` для региона.
+
+    Используется как из Celery wrapper (после async-trigger через
+    ``send_task``), так и из sync FastAPI endpoint'а. Идемпотентна:
+    повторный вызов просто перезапишет значение.
+    """
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            update(Region).where(Region.id == region_id).values(last_discovery_at=datetime.utcnow())
+        )
+        await session.commit()
+
+
 async def _existing_vk_ids(session, region_id: int) -> set[int]:
     """Vk_ids already in this region: established communities + previously
     rejected candidates. Used to skip wasteful re-discovery / re-AI.
@@ -837,8 +851,20 @@ try:
 
     @_celery_app.task(name="tasks.discovery_tasks.run_discovery_for_region")
     def run_discovery_for_region(region_id: int, categories: Optional[List[str]] = None):
-        """Celery task: запускает discovery для одного региона."""
-        return _run_coro(run_discovery_for_region_async(region_id, categories=categories))
+        """Celery task: запускает discovery для одного региона.
+
+        После успеха обновляет ``regions.last_discovery_at = NOW()`` —
+        синхронный endpoint ``/api/discovery/trigger`` делает это сам, но
+        async-путь (через ``trigger-async``) полагается на эту запись, иначе
+        UI ``/regions`` не увидит свежую дату после polling-завершения.
+        """
+        result = _run_coro(run_discovery_for_region_async(region_id, categories=categories))
+        if result.get("success"):
+            try:
+                _run_coro(_touch_region_last_discovery_at(region_id))
+            except Exception as e:  # pragma: no cover — touch не критичен
+                logger.warning("celery: last_discovery_at update failed: %s", e)
+        return result
 
     @_celery_app.task(name="tasks.discovery_tasks.recheck_communities_for_region")
     def recheck_communities_for_region(region_id: int):
