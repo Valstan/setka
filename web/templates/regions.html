@@ -258,11 +258,27 @@ async function loadRegions() {
     }
 }
 
+// Форматирует относительное время «N дней назад» для last_discovery_at.
+function formatRelativeRu(iso) {
+    if (!iso) return 'никогда';
+    const dt = new Date(iso);
+    const diffMs = Date.now() - dt.getTime();
+    const diffDays = Math.floor(diffMs / 86400000);
+    if (diffDays === 0) {
+        const h = Math.floor(diffMs / 3600000);
+        if (h === 0) return 'только что';
+        return `${h} ч назад`;
+    }
+    if (diffDays === 1) return 'вчера';
+    if (diffDays < 7) return `${diffDays} дн. назад`;
+    return dt.toLocaleDateString('ru-RU');
+}
+
 // Render region card
 function renderRegionCard(region) {
     const vkButton = region.vk_group_id ? `
-        <a href="https://vk.com/club${Math.abs(region.vk_group_id)}" 
-           target="_blank" 
+        <a href="https://vk.com/club${Math.abs(region.vk_group_id)}"
+           target="_blank"
            class="btn btn-sm btn-outline-primary w-100 mb-2">
             <i class="bi bi-link-45deg"></i> VK Группа
         </a>
@@ -271,7 +287,42 @@ function renderRegionCard(region) {
             <i class="bi bi-link-45deg"></i> VK не настроена
         </button>
     `;
-    
+
+    // Бейдж кандидатов на проверку — заметный сигнал, что модератору надо
+    // заглянуть в /regions/<code>/discovery.
+    const pendingBadge = region.pending_candidates_count > 0 ? `
+        <a href="/regions/${region.code}/discovery"
+           class="badge bg-warning text-dark text-decoration-none"
+           title="Перейти к проверке кандидатов">
+            🔔 ${region.pending_candidates_count} на проверку
+        </a>
+    ` : '';
+
+    // Кнопка «Найти новые сообщества» — активна для активных регионов с
+    // заполненным config.localities. Иначе подсказка ведёт в prepare-страницу.
+    const canRefresh = region.is_active && region.vk_group_id && region.has_discovery_config;
+    const refreshTitle = !region.is_active
+        ? 'Регион неактивен — сначала включите его'
+        : !region.vk_group_id
+            ? 'У региона нет главной VK-группы'
+            : !region.has_discovery_config
+                ? 'Нет списка населённых пунктов — задайте на странице «Подготовка района»'
+                : 'Запустить поиск новых сообществ для региона (дубли исключаются автоматически)';
+    const refreshBtn = canRefresh ? `
+        <button class="btn btn-sm btn-outline-info w-100 mb-2"
+                onclick="refreshDiscovery(${region.id}, '${region.code}')"
+                id="refresh-btn-${region.id}"
+                title="${refreshTitle}">
+            <i class="bi bi-search"></i> Найти новые сообщества
+        </button>
+    ` : `
+        <a href="/regions/${region.code}/prepare"
+           class="btn btn-sm btn-outline-secondary w-100 mb-2"
+           title="${refreshTitle}">
+            <i class="bi bi-gear"></i> Настроить поиск сообществ
+        </a>
+    `;
+
     return `
         <div class="col-md-4">
             <div class="card h-100 hover-shadow">
@@ -282,7 +333,7 @@ function renderRegionCard(region) {
                             ${region.name}
                         </h5>
                         <div class="dropdown">
-                            <button class="btn btn-sm btn-link text-secondary p-0" 
+                            <button class="btn btn-sm btn-link text-secondary p-0"
                                     data-bs-toggle="dropdown">
                                 <i class="bi bi-three-dots-vertical"></i>
                             </button>
@@ -294,7 +345,7 @@ function renderRegionCard(region) {
                                     <i class="bi bi-layout-text-window-reverse"></i> Внешний вид дайджестов
                                 </a></li>
                                 <li><hr class="dropdown-divider"></li>
-                                <li><a class="dropdown-item text-danger" href="#" 
+                                <li><a class="dropdown-item text-danger" href="#"
                                        onclick="deleteRegion(${region.id}, '${region.name}')">
                                     <i class="bi bi-trash"></i> Удалить
                                 </a></li>
@@ -303,20 +354,23 @@ function renderRegionCard(region) {
                     </div>
                     <p class="card-text">
                         <span class="badge bg-secondary">${region.code}</span>
-                        ${region.is_active ? 
-                            '<span class="badge bg-success">Активен</span>' : 
+                        ${region.is_active ?
+                            '<span class="badge bg-success">Активен</span>' :
                             '<span class="badge bg-warning">Неактивен</span>'}
+                        ${pendingBadge}
                     </p>
                     ${vkButton}
-                    
+
                     <!-- Status Toggle Button -->
-                    <button class="btn btn-sm w-100 mb-2 ${region.is_active ? 'btn-success' : 'btn-secondary'}" 
+                    <button class="btn btn-sm w-100 mb-2 ${region.is_active ? 'btn-success' : 'btn-secondary'}"
                             onclick="toggleRegionStatus(${region.id}, ${region.is_active})"
                             id="status-btn-${region.id}">
                         <i class="bi bi-${region.is_active ? 'play-circle' : 'pause-circle'}"></i>
                         ${region.is_active ? 'Работает' : 'На паузе'}
                     </button>
-                    
+
+                    ${refreshBtn}
+
                     <hr>
                     <div class="row text-center">
                         <div class="col-6">
@@ -330,14 +384,52 @@ function renderRegionCard(region) {
                     </div>
                 </div>
                 <div class="card-footer bg-white">
-                    <small class="text-muted">
+                    <small class="text-muted d-block">
                         <i class="bi bi-clock"></i>
                         Создан: ${new Date(region.created_at).toLocaleDateString('ru-RU')}
+                    </small>
+                    <small class="text-muted d-block">
+                        <i class="bi bi-search"></i>
+                        Поиск сообществ: ${formatRelativeRu(region.last_discovery_at)}
                     </small>
                 </div>
             </div>
         </div>
     `;
+}
+
+// Запуск discovery для существующего региона. Endpoint автоматически исключает
+// уже-добавленные communities и rejected-кандидатов — дублей в БД не появится.
+// Может занять 1-5 минут, кнопка переходит в loading.
+async function refreshDiscovery(regionId, regionCode) {
+    const btn = document.getElementById(`refresh-btn-${regionId}`);
+    if (!btn) return;
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Ищу сообщества… (до 5 мин)';
+    try {
+        const resp = await fetch('/api/discovery/trigger', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({region_id: regionId})
+        });
+        if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(`HTTP ${resp.status}: ${txt.slice(0, 200)}`);
+        }
+        const data = await resp.json();
+        const inserted = data.inserted || 0;
+        const refreshed = data.refreshed || 0;
+        showToast(`Поиск завершён: новых ${inserted}, обновлено ${refreshed}. Открываю проверку…`, 'success');
+        setTimeout(() => {
+            window.location.href = `/regions/${regionCode}/discovery`;
+        }, 1200);
+    } catch (err) {
+        console.error('refreshDiscovery failed', err);
+        showToast('Ошибка поиска сообществ: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    }
 }
 
 function _setDigestTemplateError(msg) {

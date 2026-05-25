@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
-from database.models import Community, Post, Region
+from database.models import Community, CommunityCandidate, Post, Region
 from modules.digest_template import (
     STANDARD_TOPICS,
     compute_effective_digest_settings,
@@ -76,6 +76,15 @@ class RegionResponse(BaseModel):
     created_at: str
     communities_count: int = 0
     posts_count: int = 0
+    # Discovery (миграция 013) — для UI на /regions.
+    # ``last_discovery_at`` — ISO-timestamp последнего запуска или None.
+    # ``pending_candidates_count`` — сколько кандидатов в статусе ``pending``
+    # ждут проверки модератором (показываем бейдж «🔔 N» на карточке).
+    # ``has_discovery_config`` — заполнен ли config.localities (без него
+    # discovery невозможен — кнопка «Найти новые» должна быть disabled).
+    last_discovery_at: str | None = None
+    pending_candidates_count: int = 0
+    has_discovery_config: bool = False
 
     class Config:
         from_attributes = True
@@ -295,9 +304,22 @@ async def get_regions(skip: int = 0, limit: int = 100, db: AsyncSession = Depend
     )
     posts_counts = {row[0]: row[1] for row in posts_counts_result.all()}
 
+    # Pending candidates per region — для бейджа «🔔 N кандидатов на проверку».
+    pending_counts_result = await db.execute(
+        select(CommunityCandidate.region_id, func.count(CommunityCandidate.id))
+        .where(
+            CommunityCandidate.region_id.in_(region_ids),
+            CommunityCandidate.status == "pending",
+        )
+        .group_by(CommunityCandidate.region_id)
+    )
+    pending_counts = {row[0]: row[1] for row in pending_counts_result.all()}
+
     # Build response
     regions_with_counts = []
     for region in regions:
+        cfg = region.config if isinstance(region.config, dict) else {}
+        loc_list = cfg.get("localities") or []
         region_dict = {
             "id": region.id,
             "code": region.code,
@@ -313,6 +335,11 @@ async def get_regions(skip: int = 0, limit: int = 100, db: AsyncSession = Depend
             ),
             "communities_count": comm_counts.get(region.id, 0),
             "posts_count": posts_counts.get(region.id, 0),
+            "last_discovery_at": (
+                region.last_discovery_at.isoformat() if region.last_discovery_at else None
+            ),
+            "pending_candidates_count": pending_counts.get(region.id, 0),
+            "has_discovery_config": bool(loc_list and region.center_city),
         }
         regions_with_counts.append(region_dict)
 
@@ -334,6 +361,15 @@ async def get_region(region_code: str, db: AsyncSession = Depends(get_db_session
         select(func.count(Community.id)).where(Community.region_id == region.id)
     )
     posts_count = await db.execute(select(func.count(Post.id)).where(Post.region_id == region.id))
+    pending_count = await db.execute(
+        select(func.count(CommunityCandidate.id)).where(
+            CommunityCandidate.region_id == region.id,
+            CommunityCandidate.status == "pending",
+        )
+    )
+
+    cfg = region.config if isinstance(region.config, dict) else {}
+    loc_list = cfg.get("localities") or []
 
     return {
         "id": region.id,
@@ -346,6 +382,11 @@ async def get_region(region_code: str, db: AsyncSession = Depends(get_db_session
         "created_at": region.created_at.isoformat() if region.created_at else "",
         "communities_count": comm_count.scalar() or 0,
         "posts_count": posts_count.scalar() or 0,
+        "last_discovery_at": (
+            region.last_discovery_at.isoformat() if region.last_discovery_at else None
+        ),
+        "pending_candidates_count": pending_count.scalar() or 0,
+        "has_discovery_config": bool(loc_list and region.center_city),
     }
 
 

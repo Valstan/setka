@@ -47,6 +47,11 @@ class Region(Base):
     # Configuration
     config = Column(JSON, nullable=True)  # Дополнительные настройки
 
+    # Discovery (миграция 013) — когда последний раз искали новые сообщества.
+    # NULL = discovery никогда не запускался для региона. Обновляется при
+    # успехе ``POST /api/discovery/trigger``.
+    last_discovery_at = Column(DateTime, nullable=True)
+
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
