@@ -1,16 +1,21 @@
-// region_prepare.js — настройка discovery перед запуском:
-// localities (жёсткий фильтр релевантности) + keywords (поисковые слова).
+// region_prepare.js — настройка поиска сообществ перед запуском:
+// центр района + VK city_id, localities (жёсткий фильтр релевантности)
+// + keywords (поисковые слова).
 //
 // Flow:
-//   1. На загрузке: GET /api/discovery/regions/{code}/config — заполнить
-//      textarea'и и prompt-блоки текущими значениями.
+//   0. На загрузке: GET /api/discovery/regions/{code}/config — заполнить
+//      базу (центр + vk_city_id), textarea'и и prompt-блоки.
+//   1. PATCH /config/center_city + /config/vk_city_id при «Сохранить базу».
+//      Auto-resolve VK city через /api/discovery/cities?q=...
 //   2. Clipboard copy для двух prompt-блоков (localities + keywords).
 //   3. PATCH /api/discovery/regions/{code}/config/{field} при «Сохранить».
-//   4. POST /api/discovery/trigger при «Запустить discovery» → redirect.
+//   4. POST /api/discovery/trigger-async + polling при «Запустить поиск».
 //
 // 2026-05-25: OSM Overpass auto-suggest удалён — не находил мелкие
 // районы (Тужа, Тужинский), нейросеть по clipboard-prompt'у даёт
 // результат лучше и стабильнее.
+// 2026-05-26: добавлена секция «0. Базовые настройки» для существующих
+// регионов с пустым center_city (которые создавались до wizard'а).
 
 (function () {
     'use strict';
@@ -39,8 +44,18 @@
     const runBtn = document.getElementById('run-discovery-btn');
     const discoveryStatus = document.getElementById('discovery-status');
 
+    // Секция «0. Базовые настройки» — DOM.
+    const baseCard = document.getElementById('base-settings-card');
+    const baseRequiredBadge = document.getElementById('base-settings-required-badge');
+    const centerCityInput = document.getElementById('center-city-input');
+    const centerCitySuggestions = document.getElementById('center-city-suggestions');
+    const vkCityIdInput = document.getElementById('vk-city-id-input');
+    const vkCityIdHint = document.getElementById('vk-city-id-hint');
+    const baseSaveBtn = document.getElementById('base-save-btn');
+    const baseSaveStatus = document.getElementById('base-save-status');
+
     // State (заполняется из /config на старте).
-    let regionMeta = {name: '', center_city: ''};
+    let regionMeta = {name: '', center_city: '', vk_city_id: null};
 
     // ─── Helpers ──────────────────────────────────────────────────
     function escapeHtml(s) {
@@ -161,9 +176,23 @@
                 throw new Error(`HTTP ${resp.status}`);
             }
             const data = await resp.json();
-            regionMeta = {name: data.name || '', center_city: data.center_city || ''};
+            regionMeta = {
+                name: data.name || '',
+                center_city: data.center_city || '',
+                vk_city_id: data.vk_city_id || null,
+            };
             regionInfo.innerHTML = `<strong>${escapeHtml(data.name)}</strong>` +
                 (data.center_city ? ` · центр: ${escapeHtml(data.center_city)}` : '');
+            // Заполняем секцию 0
+            centerCityInput.value = data.center_city || '';
+            vkCityIdInput.value = data.vk_city_id || '';
+            updateVkCityHint();
+            // Подсвечиваем секцию красным если центр не задан — discovery
+            // без него не запустится.
+            if (!data.center_city) {
+                baseCard.classList.add('border-danger');
+                baseRequiredBadge.classList.remove('d-none');
+            }
             locInput.value = (data.localities || []).join('\n');
             kwInput.value = (data.discovery_keywords || []).join('\n');
             refreshPrompts();
@@ -171,6 +200,120 @@
             regionInfo.innerHTML = `<span class="text-danger">Ошибка загрузки региона: ${escapeHtml(e.message)}</span>`;
         }
     }
+
+    function updateVkCityHint() {
+        const id = vkCityIdInput.value;
+        vkCityIdHint.textContent = id
+            ? `VK city_id: ${id} (используется для гео-поиска groups.search)`
+            : 'VK city_id не задан — гео-поиск отключён, останется только поиск по нп и keywords (это нормально для мелких районов).';
+    }
+
+    // ─── Center city auto-resolver (упрощённая копия из region_new.js) ──
+    let cityLookupTimer = null;
+    centerCityInput.addEventListener('input', () => {
+        const q = centerCityInput.value.trim();
+        // При ручной правке сбрасываем vk_city_id — он становится неактуален.
+        if (q !== (regionMeta.center_city || '')) {
+            vkCityIdInput.value = '';
+            updateVkCityHint();
+        }
+        if (cityLookupTimer) clearTimeout(cityLookupTimer);
+        if (q.length < 2) {
+            centerCitySuggestions.style.display = 'none';
+            return;
+        }
+        cityLookupTimer = setTimeout(() => lookupCity(q), 300);
+    });
+
+    async function lookupCity(q) {
+        try {
+            const resp = await fetch(`/api/discovery/cities?q=${encodeURIComponent(q)}`);
+            const data = await resp.json();
+            renderCitySuggestions(data.items || []);
+        } catch (e) {
+            centerCitySuggestions.innerHTML = `<div class="list-group-item text-danger">Ошибка поиска: ${escapeHtml(e.message)}</div>`;
+            centerCitySuggestions.style.display = 'block';
+        }
+    }
+
+    function renderCitySuggestions(items) {
+        if (!items.length) {
+            centerCitySuggestions.innerHTML = '<div class="list-group-item text-muted">Город не найден в VK — можно сохранить без vk_city_id (гео-поиск будет отключён).</div>';
+            centerCitySuggestions.style.display = 'block';
+            return;
+        }
+        centerCitySuggestions.innerHTML = items.slice(0, 20).map(it => {
+            const sub = [it.area, it.region].filter(Boolean).join(' · ');
+            return `<button type="button" class="list-group-item list-group-item-action"
+                            data-id="${it.id}"
+                            data-title="${escapeHtml(it.title)}">
+                <strong>${escapeHtml(it.title)}</strong>
+                ${sub ? `<small class="text-muted d-block">${escapeHtml(sub)}</small>` : ''}
+            </button>`;
+        }).join('');
+        centerCitySuggestions.style.display = 'block';
+        centerCitySuggestions.querySelectorAll('button[data-id]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                centerCityInput.value = btn.dataset.title;
+                vkCityIdInput.value = btn.dataset.id;
+                centerCitySuggestions.style.display = 'none';
+                updateVkCityHint();
+            });
+        });
+    }
+
+    document.addEventListener('click', e => {
+        if (!centerCitySuggestions.contains(e.target) && e.target !== centerCityInput) {
+            centerCitySuggestions.style.display = 'none';
+        }
+    });
+
+    // ─── Save base settings (center_city + vk_city_id) ─────────────
+    baseSaveBtn.addEventListener('click', async () => {
+        const center = centerCityInput.value.trim();
+        if (!center) {
+            flashStatus(baseSaveStatus, 'danger', '❌ Введи центр района', true);
+            return;
+        }
+        baseSaveBtn.disabled = true;
+        baseSaveStatus.innerHTML = '<span class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Сохраняю…</span>';
+        const base = `/api/discovery/regions/${encodeURIComponent(code)}/config`;
+        try {
+            // 1. center_city — обязательное.
+            const r1 = await fetch(`${base}/center_city`, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({value: center}),
+            });
+            if (!r1.ok) {
+                const err = await r1.json().catch(() => ({detail: `HTTP ${r1.status}`}));
+                throw new Error(err.detail || `HTTP ${r1.status}`);
+            }
+            // 2. vk_city_id — опциональное (может быть пусто).
+            const cityId = vkCityIdInput.value.trim();
+            const r2 = await fetch(`${base}/vk_city_id`, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({value: cityId ? parseInt(cityId, 10) : null}),
+            });
+            if (!r2.ok) {
+                const err = await r2.json().catch(() => ({detail: `HTTP ${r2.status}`}));
+                throw new Error(err.detail || `HTTP ${r2.status}`);
+            }
+            regionMeta.center_city = center;
+            regionMeta.vk_city_id = cityId ? parseInt(cityId, 10) : null;
+            flashStatus(baseSaveStatus, 'success', '✓ Базовые настройки сохранены');
+            baseCard.classList.remove('border-danger');
+            baseRequiredBadge.classList.add('d-none');
+            regionInfo.innerHTML = `<strong>${escapeHtml(regionMeta.name)}</strong> · центр: ${escapeHtml(center)}`;
+            refreshPrompts();
+        } catch (e) {
+            console.error('[saveBase] failed:', e);
+            flashStatus(baseSaveStatus, 'danger', `❌ ${escapeHtml(e.message)}`, true);
+        } finally {
+            baseSaveBtn.disabled = false;
+        }
+    });
 
     // Live-обновление keywords prompt'а: при правке списка нп меняется
     // подмешанный в prompt блок локалитетов.
@@ -315,7 +458,7 @@
         } catch (e) {
             discoveryStatus.innerHTML = `<div class="alert alert-danger">❌ ${escapeHtml(e.message)}</div>`;
             runBtn.disabled = false;
-            runBtn.innerHTML = '<i class="bi bi-search"></i> Запустить discovery';
+            runBtn.innerHTML = '<i class="bi bi-search"></i> Запустить поиск сообществ';
         }
     });
 

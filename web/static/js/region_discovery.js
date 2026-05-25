@@ -198,14 +198,14 @@
             ? `<button class="btn btn-outline-success" data-act="approve" data-id="${c.id}" title="Approve с текущей категорией">
                    <i class="bi bi-check2"></i>
                </button>
-               <button class="btn btn-outline-warning" data-act="reject" data-id="${c.id}" title="Reject (запомнить — не вернётся при rerun)">
+               <button class="btn btn-outline-warning" data-act="reject" data-id="${c.id}" title="Отклонить (запомнить — не вернётся при следующем поиске)">
                    <i class="bi bi-x"></i>
                </button>
-               <button class="btn btn-outline-secondary" data-act="defer" data-id="${c.id}" title="Defer (отложить)">
+               <button class="btn btn-outline-secondary" data-act="defer" data-id="${c.id}" title="Отложить (вернёмся к нему позже)">
                    <i class="bi bi-pause"></i>
                </button>`
             : '';
-        const deleteBtn = `<button class="btn btn-outline-danger" data-act="delete" data-id="${c.id}" title="Удалить навсегда (физически из БД; при rerun discovery может вернуться)">
+        const deleteBtn = `<button class="btn btn-outline-danger" data-act="delete" data-id="${c.id}" title="Удалить навсегда (физически из БД; при повторном поиске может вернуться)">
                 <i class="bi bi-trash"></i>
             </button>`;
         const statusLabel = c.status !== 'pending'
@@ -300,7 +300,7 @@
         if (act === 'defer') return patchCandidate(id, {status: 'deferred'});
         if (act === 'delete') {
             const label = cand.name || `#${cand.id}`;
-            if (!confirm(`Удалить кандидата «${label}» из этого региона?\n\nЗапись будет физически стёрта из БД. При перезапуске discovery эта группа может появиться снова, если VK её снова отдаст. Для гарантии «больше никогда» используйте Reject.`)) return;
+            if (!confirm(`Удалить кандидата «${label}» из этого региона?\n\nЗапись будет физически стёрта из БД. При перезапуске поиска эта группа может появиться снова, если VK её снова отдаст. Для гарантии «больше никогда» используйте «Отклонить».`)) return;
             return deleteCandidate(id);
         }
     }
@@ -340,31 +340,62 @@
     }
 
     async function rerunDiscovery() {
-        if (!confirm('Перезапустить discovery? Может занять до минуты.')) return;
+        if (!confirm('Перезапустить поиск сообществ?\n\nЗадача уйдёт в фон (Celery), UI не повиснет. Для крупных районов поиск может занять 5-10 минут.')) return;
         rerunBtn.disabled = true;
-        rerunBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Идёт…';
+        const startedAt = Date.now();
+        const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
+        const setBtn = (text) => {
+            rerunBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${text}`;
+        };
+        setBtn('Ставлю задачу…');
         try {
-            const resp = await fetch('/api/discovery/trigger', {
+            const triggerResp = await fetch('/api/discovery/trigger-async', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({region_id: region.id}),
             });
-            const r = await resp.json();
-            if (!resp.ok) throw new Error(r.detail || `HTTP ${resp.status}`);
-            setStatus('success', `Найдено ${r.found}, новых ${r.inserted}, обновлено ${r.refreshed}.`);
-            await load();
+            if (!triggerResp.ok) {
+                const txt = await triggerResp.text();
+                throw new Error(`HTTP ${triggerResp.status}: ${txt.slice(0, 200)}`);
+            }
+            const {task_id} = await triggerResp.json();
+            if (!task_id) throw new Error('сервер не вернул task_id');
+
+            const POLL_MS = 5000;
+            const MAX_WAIT_SEC = 1800;
+            while (true) {
+                await new Promise(r => setTimeout(r, POLL_MS));
+                const sec = elapsedSec();
+                if (sec > MAX_WAIT_SEC) {
+                    throw new Error(`таймаут ${MAX_WAIT_SEC}с (задача всё ещё работает в Celery — обнови страницу позже)`);
+                }
+                setBtn(`Ищу сообщества… ${sec}с`);
+                const statusResp = await fetch(`/api/discovery/task/${task_id}`);
+                if (!statusResp.ok) continue;
+                const status = await statusResp.json();
+                if (!status.ready) continue;
+                if (status.state === 'SUCCESS') {
+                    const r = status.result || {};
+                    setStatus('success', `Найдено ${r.found || 0}, новых ${r.inserted || 0}, обновлено ${r.refreshed || 0}.`);
+                    await load();
+                    return;
+                }
+                if (status.state === 'FAILURE') {
+                    throw new Error(status.error || 'задача завершилась с ошибкой');
+                }
+            }
         } catch (e) {
             setStatus('danger', `Ошибка: ${e.message}`);
         } finally {
             rerunBtn.disabled = false;
-            rerunBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Перезапустить discovery';
+            rerunBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Перезапустить поиск';
         }
     }
 
     async function bulkReject() {
         const conf = parseInt(filterConfidence.value, 10) || 0;
-        if (!confirm(`Reject всех pending${conf ? ` с confidence ≥ ${conf}` : ''}?`)) return;
-        setStatus('info', '⏳ Массовый reject…');
+        if (!confirm(`Отклонить всех ожидающих решения${conf ? ` с уверенностью AI ≥ ${conf}` : ''}?`)) return;
+        setStatus('info', '⏳ Массовое отклонение…');
         try {
             const resp = await fetch('/api/discovery/candidates/bulk', {
                 method: 'POST',
@@ -385,11 +416,11 @@
     }
 
     async function commitRegion() {
-        if (!confirm('Финализировать регион в Сетке?\n\n' +
-                     'Все pending-кандидаты с конкретной категорией будут одобрены и подключены к расписанию. ' +
+        if (!confirm('Создать регион в Сетке?\n\n' +
+                     'Все ожидающие решения кандидаты с конкретной категорией будут одобрены и подключены к расписанию. ' +
                      'Регион станет активным.')) return;
         commitBtn.disabled = true;
-        commitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Финализирую...';
+        commitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Создаю…';
         try {
             const resp = await fetch(`/api/discovery/commit/${region.id}`, {
                 method: 'POST',
@@ -399,7 +430,7 @@
             if (!resp.ok) throw new Error(r.detail || `HTTP ${resp.status}`);
             setStatus('success',
                 `✅ Регион «${escapeHtml(r.region_code)}» активирован. ` +
-                `Создано ${r.communities_created} сообществ, ${r.pending_left} осталось в pending.`);
+                `Создано ${r.communities_created} сообществ, ${r.pending_left} осталось в ожидании.`);
             setTimeout(() => {
                 window.location.href = `/regions`;
             }, 2500);

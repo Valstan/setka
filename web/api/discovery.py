@@ -81,22 +81,35 @@ async def resolve_city(q: str = Query(..., min_length=1, max_length=120)):
 
 
 class _DiscoveryConfigPatch(BaseModel):
-    """Body для PATCH ``regions.config['localities']`` или ``['discovery_keywords']``.
+    """Body для PATCH discovery-конфига региона.
 
-    Принимает либо list[str] (UI отдаёт массив), либо строку (raw textarea).
-    Парс делегируется ``parse_list_field`` — то же поведение, что и при
-    чтении config'а в discovery.
+    Поля:
+    - ``localities`` / ``discovery_keywords``: list[str] или строка (raw textarea).
+    - ``center_city``: строка (имя центра района, обязательное для запуска
+      discovery).
+    - ``vk_city_id``: integer (VK API city_id для гео-поиска, опционально).
+
+    Парс list-полей делегируется ``parse_list_field``.
     """
 
-    value: Union[List[str], str, None] = None
+    value: Union[List[str], str, int, None] = None
+
+
+_DISCOVERY_LIST_FIELDS = {"localities", "discovery_keywords"}
+_DISCOVERY_REGION_FIELDS = {"center_city", "vk_city_id"}
 
 
 @router.patch("/regions/{code}/config/{field}")
 async def patch_region_discovery_config(code: str, field: str, body: _DiscoveryConfigPatch):
-    """Update ``regions.config['localities']`` or ``['discovery_keywords']``.
+    """Update discovery-конфиг региона.
 
-    Field — ``localities`` или ``discovery_keywords``. Остальные пути 400.
-    Возвращает ``{ok, count, items}``.
+    Поддерживает:
+    - ``localities``, ``discovery_keywords`` → запись в ``regions.config[field]``.
+    - ``center_city`` → запись в ``regions.center_city`` (Region column).
+    - ``vk_city_id`` → запись в ``regions.vk_city_id`` (Region column).
+
+    Возвращает ``{ok, count, items}`` для list-полей либо
+    ``{ok, value}`` для scalar-полей (center_city / vk_city_id).
 
     Эксплицитный INFO-лог входа добавлен 2026-05-25 после smoke-feedback'а
     «Failed to fetch» на tuzha: запрос в uvicorn-логе не появлялся, что мешало
@@ -111,9 +124,8 @@ async def patch_region_discovery_config(code: str, field: str, body: _DiscoveryC
         type(raw).__name__,
         raw_len,
     )
-    if field not in ("localities", "discovery_keywords"):
+    if field not in _DISCOVERY_LIST_FIELDS and field not in _DISCOVERY_REGION_FIELDS:
         raise HTTPException(status_code=400, detail=f"unknown config field {field!r}")
-    items = parse_list_field(raw)
 
     async with AsyncSessionLocal() as session:
         region = (
@@ -121,13 +133,41 @@ async def patch_region_discovery_config(code: str, field: str, body: _DiscoveryC
         ).scalar_one_or_none()
         if region is None:
             raise HTTPException(status_code=404, detail=f"region {code!r} not found")
-        cfg = dict(region.config or {})
-        cfg[field] = items
-        region.config = cfg
-        await session.commit()
 
-    logger.info("discovery.config PATCH region=%s field=%s saved %d items", code, field, len(items))
-    return {"ok": True, "count": len(items), "items": items, "field": field}
+        if field in _DISCOVERY_LIST_FIELDS:
+            items = parse_list_field(raw)
+            cfg = dict(region.config or {})
+            cfg[field] = items
+            region.config = cfg
+            await session.commit()
+            logger.info(
+                "discovery.config PATCH region=%s field=%s saved %d items",
+                code,
+                field,
+                len(items),
+            )
+            return {"ok": True, "count": len(items), "items": items, "field": field}
+
+        # Scalar fields на Region.
+        if field == "center_city":
+            value = (raw or "").strip() if isinstance(raw, str) else None
+            if not value:
+                raise HTTPException(status_code=400, detail="center_city не может быть пустым")
+            region.center_city = value
+        elif field == "vk_city_id":
+            if raw in (None, "", 0):
+                region.vk_city_id = None
+                value = None
+            else:
+                try:
+                    value = int(raw)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail="vk_city_id должен быть integer")
+                region.vk_city_id = value
+        region.updated_at = datetime.utcnow()
+        await session.commit()
+        logger.info("discovery.config PATCH region=%s field=%s saved value=%r", code, field, value)
+        return {"ok": True, "value": value, "field": field}
 
 
 @router.get("/regions/{code}/config")
@@ -148,6 +188,8 @@ async def get_region_discovery_config(code: str):
             "code": region.code,
             "name": region.name,
             "center_city": region.center_city,
+            "vk_city_id": region.vk_city_id,
+            "vk_group_id": region.vk_group_id,
             "localities": parse_list_field(cfg.get("localities")),
             "discovery_keywords": parse_list_field(cfg.get("discovery_keywords")),
         }

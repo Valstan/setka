@@ -12,15 +12,15 @@
         <div class="d-flex gap-2">
             <a class="btn btn-sm btn-outline-secondary" href="/regions">К регионам</a>
             <a class="btn btn-sm btn-outline-primary" href="/regions/{{ region_code }}/prepare"
-               title="Настроить localities/keywords и перезапустить discovery">
-                <i class="bi bi-gear"></i> Настройки discovery
+               title="Настроить нп / ключевики и перезапустить поиск сообществ">
+                <i class="bi bi-gear"></i> Настройки поиска
             </a>
             <a class="btn btn-sm btn-outline-primary" href="/regions/{{ region_code }}/discovery/ai-batch"
                title="Категоризировать кандидатов через нейросеть в браузере">
-                <i class="bi bi-robot"></i> AI batch
+                <i class="bi bi-robot"></i> AI-категоризация
             </a>
             <button id="rerun-btn" class="btn btn-sm btn-outline-primary">
-                <i class="bi bi-arrow-clockwise"></i> Перезапустить discovery
+                <i class="bi bi-arrow-clockwise"></i> Перезапустить поиск
             </button>
             <button id="commit-btn" class="btn btn-success btn-lg" disabled>
                 <i class="bi bi-check2-circle"></i> Создать регион в Сетке
@@ -37,10 +37,10 @@
                 <div class="col-md-3">
                     <label class="form-label small mb-0">Статус</label>
                     <select id="filter-status" class="form-select form-select-sm">
-                        <option value="pending" selected>pending (требует решения)</option>
-                        <option value="approved">approved</option>
-                        <option value="rejected">rejected</option>
-                        <option value="deferred">deferred</option>
+                        <option value="pending" selected>ожидает решения</option>
+                        <option value="approved">одобрены</option>
+                        <option value="rejected">отклонены</option>
+                        <option value="deferred">отложены</option>
                         <option value="">все</option>
                     </select>
                 </div>
@@ -65,8 +65,8 @@
                 </div>
                 <div class="col-md-4 text-end">
                     <button id="bulk-reject" class="btn btn-sm btn-outline-danger" disabled
-                            title="Reject всех видимых pending">
-                        <i class="bi bi-x-octagon"></i> Bulk reject
+                            title="Отклонить всех видимых ожидающих решения">
+                        <i class="bi bi-x-octagon"></i> Отклонить всех
                     </button>
                 </div>
             </div>
@@ -86,5 +86,5 @@
 <script>
     window.REGION_CODE = {{ region_code|tojson }};
 </script>
-<script src="/static/js/region_discovery.js?v=20260525"></script>
+<script src="/static/js/region_discovery.js?v=20260526a"></script>
 {% endblock %}
