@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Подготовка discovery — {{ region_code }} — SETKA{% endblock %}
+{% block title %}Подготовка поиска сообществ — {{ region_code }} — SETKA{% endblock %}
 {% block nav_section_content %}active{% endblock %}
 
 {% block content %}
@@ -8,23 +8,59 @@
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="/regions">Регионы</a></li>
             <li class="breadcrumb-item"><code>{{ region_code }}</code></li>
-            <li class="breadcrumb-item active" aria-current="page">Подготовка discovery</li>
+            <li class="breadcrumb-item active" aria-current="page">Подготовка поиска сообществ</li>
         </ol>
     </nav>
 
     <h2 class="mb-2">
         <i class="bi bi-gear-wide-connected"></i>
-        Подготовка discovery — <code>{{ region_code }}</code>
+        Подготовка поиска сообществ — <code>{{ region_code }}</code>
     </h2>
     <p class="text-muted" id="region-info">Загружаю настройки региона…</p>
 
     <div class="alert alert-info small">
         <strong>Зачем этот шаг?</strong>
         VK-поиск выдаёт мусор, если просто искать по названию района — выскакивают
-        крупные областные паблики. Скажи программе, какие <strong>населённые
-        пункты</strong> входят в район и какие <strong>тематические слова</strong>
-        стоит искать — тогда discovery отфильтрует нерелевантных кандидатов
-        автоматически, без AI.
+        крупные областные паблики. Скажи программе центр района,
+        какие <strong>населённые пункты</strong> входят в район и какие
+        <strong>тематические слова</strong> стоит искать — тогда поиск отфильтрует
+        нерелевантных кандидатов автоматически.
+    </div>
+
+    <!-- ────────────────────────────────────────────────────────────── -->
+    <!-- Секция 0: Базовые настройки (центр района + VK city_id) -->
+    <!-- ────────────────────────────────────────────────────────────── -->
+    <div class="card mb-4" id="base-settings-card">
+        <div class="card-header">
+            <strong>0. Базовые настройки района</strong>
+            <span class="badge bg-danger ms-2 d-none" id="base-settings-required-badge">обязательно</span>
+        </div>
+        <div class="card-body">
+            <p class="small mb-3">
+                Центральный город района (например, «Тужа», «Малмыж», «Верхошижемье»)
+                — используется как корневой стем для фильтра релевантности и
+                префикс для VK-поиска. Без него поиск сообществ <strong>не
+                запустится</strong>. У старых регионов это поле могло остаться
+                пустым — заполни сейчас.
+            </p>
+            <div class="row g-2">
+                <div class="col-md-7">
+                    <label class="form-label small mb-1">Центр района</label>
+                    <input type="text" id="center-city-input" class="form-control"
+                           placeholder="Например: Тужа" autocomplete="off">
+                    <div id="center-city-suggestions" class="list-group mt-1"
+                         style="display:none; max-height:240px; overflow-y:auto;"></div>
+                    <input type="hidden" id="vk-city-id-input">
+                    <small class="form-text text-muted" id="vk-city-id-hint"></small>
+                </div>
+                <div class="col-md-5 d-flex align-items-end">
+                    <button id="base-save-btn" type="button" class="btn btn-primary w-100">
+                        <i class="bi bi-save"></i> Сохранить базу
+                    </button>
+                </div>
+            </div>
+            <div class="mt-2"><span id="base-save-status" class="small"></span></div>
+        </div>
     </div>
 
     <!-- ────────────────────────────────────────────────────────────── -->
@@ -115,19 +151,20 @@
     </div>
 
     <!-- ────────────────────────────────────────────────────────────── -->
-    <!-- Финальный блок: запуск discovery -->
+    <!-- Финальный блок: запуск поиска сообществ -->
     <!-- ────────────────────────────────────────────────────────────── -->
     <div class="card mb-4 border-success">
         <div class="card-body">
-            <h5 class="mb-2"><i class="bi bi-rocket-takeoff"></i> Запустить discovery</h5>
+            <h5 class="mb-2"><i class="bi bi-rocket-takeoff"></i> Запустить поиск сообществ</h5>
             <p class="small mb-3">
                 Программа выполнит VK-поиск по нп и ключевикам, отфильтрует
                 нерелевантных кандидатов по корню топонима, отсортирует по
                 числу совпадений + подписчики, и откроет страницу проверки.
-                Может занять от 30 секунд до 2 минут.
+                Запрос уходит в фон через Celery — UI не зависает. Для крупных
+                районов (50+ нп) полный поиск занимает 5-10 минут.
             </p>
             <button id="run-discovery-btn" type="button" class="btn btn-success btn-lg">
-                <i class="bi bi-search"></i> Запустить discovery
+                <i class="bi bi-search"></i> Запустить поиск сообществ
             </button>
             <a class="btn btn-link" href="/regions/{{ region_code }}/discovery">
                 Перейти к кандидатам без запуска
@@ -142,5 +179,5 @@
 <script>
     window.REGION_CODE = {{ region_code|tojson }};
 </script>
-<script src="/static/js/region_prepare.js?v=20260525b"></script>
+<script src="/static/js/region_prepare.js?v=20260526a"></script>
 {% endblock %}
