@@ -19,7 +19,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 
 from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
@@ -627,6 +627,207 @@ def _maybe_send_recheck_telegram_alert(reports: List[Dict[str, Any]]) -> None:
         logger.warning("recheck: telegram send error: %s", e)
 
 
+# ─── Rolling discovery: 1 регион в день, по очереди ─────────────────
+#
+# Beat-таска ежедневно выбирает регион с самым давним ``last_discovery_at``
+# (NULL — highest priority, «никогда не запускали»), прогоняет для него
+# полный discovery и шлёт Telegram-alert если появились новые кандидаты.
+#
+# Discovery исключает уже-добавленные communities автоматически
+# (см. ``_existing_vk_ids``), новых дублей не создаст. Сравнение «было/стало»
+# на основе count(pending candidates) — модератор увидит ровно delta'у.
+
+
+async def _select_oldest_discovery_region(session) -> Optional[Region]:
+    """Выбрать активный регион с самым старым ``last_discovery_at``.
+
+    Только регионы с заполненным config (localities + center_city) и
+    vk_group_id — без них discovery физически не запустится.
+
+    Сортировка: NULL (никогда не запускали) первым, далее — по возрастанию
+    last_discovery_at, при равных — по code (детерминизм для тестов).
+    """
+    rows = (
+        (
+            await session.execute(
+                select(Region).where(
+                    Region.is_active.is_(True),
+                    Region.vk_group_id.isnot(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    eligible: List[Region] = []
+    for r in rows:
+        cfg = r.config if isinstance(r.config, dict) else {}
+        if not cfg.get("localities") or not r.center_city:
+            continue
+        eligible.append(r)
+
+    if not eligible:
+        return None
+
+    eligible.sort(
+        key=lambda r: (
+            r.last_discovery_at is not None,
+            r.last_discovery_at or datetime.min,
+            r.code,
+        )
+    )
+    return eligible[0]
+
+
+async def discover_rolling_one_region_async(*, send_telegram: bool = True) -> Dict[str, Any]:
+    """Daily rolling: 1 регион — самый давний discovery первым.
+
+    Discovery исключает уже-добавленные communities через
+    ``_existing_vk_ids`` — дублей в БД не появится.
+
+    При успехе обновляет ``regions.last_discovery_at = NOW()`` (даже если
+    не нашли новых — само событие важно для ротации). Telegram-alert
+    отправляем только если ``new_pending > 0``.
+    """
+    async with AsyncSessionLocal() as session:
+        region = await _select_oldest_discovery_region(session)
+        if region is None:
+            logger.info("rolling discovery: no eligible regions")
+            return {"success": True, "skipped": "no eligible regions"}
+
+        before_pending = (
+            await session.execute(
+                select(func.count(CommunityCandidate.id)).where(
+                    CommunityCandidate.region_id == region.id,
+                    CommunityCandidate.status == "pending",
+                )
+            )
+        ).scalar() or 0
+
+        region_id = region.id
+        region_code = region.code
+        region_name = region.name
+
+    logger.info(
+        "rolling discovery: starting region=%s (id=%s, before_pending=%s)",
+        region_code,
+        region_id,
+        before_pending,
+    )
+
+    result = await run_discovery_for_region_async(region_id)
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            update(Region).where(Region.id == region_id).values(last_discovery_at=datetime.utcnow())
+        )
+        await session.commit()
+
+        after_pending = (
+            await session.execute(
+                select(func.count(CommunityCandidate.id)).where(
+                    CommunityCandidate.region_id == region_id,
+                    CommunityCandidate.status == "pending",
+                )
+            )
+        ).scalar() or 0
+
+    new_pending = max(0, after_pending - before_pending)
+    report: Dict[str, Any] = {
+        "success": bool(result.get("success", False)),
+        "region": region_code,
+        "region_name": region_name,
+        "region_id": region_id,
+        "new_pending": new_pending,
+        "total_pending": after_pending,
+    }
+    for k in ("found", "inserted", "refreshed", "error"):
+        if k in result:
+            report[k] = result[k]
+
+    logger.info(
+        "rolling discovery: finished region=%s new_pending=%s total_pending=%s",
+        region_code,
+        new_pending,
+        after_pending,
+    )
+
+    if send_telegram and new_pending > 0:
+        try:
+            _maybe_send_rolling_telegram_alert(report)
+        except Exception as e:  # pragma: no cover — alerting не должен валить таску
+            logger.warning("rolling discovery: telegram alert failed: %s", e)
+
+    return report
+
+
+def _format_rolling_message(report: Dict[str, Any]) -> str:
+    """HTML-сообщение в Telegram про rolling discovery."""
+    code = report.get("region", "?")
+    name = report.get("region_name") or code
+    new_n = report.get("new_pending", 0)
+    total = report.get("total_pending", 0)
+    return (
+        f"<b>🔍 Найдены новые кандидаты для региона: <code>{code}</code></b>\n"
+        f"({name})\n\n"
+        f"Новых: <b>{new_n}</b>\n"
+        f"Всего на проверку: <b>{total}</b>\n\n"
+        f"Открыть: /regions/{code}/discovery"
+    )
+
+
+def _maybe_send_rolling_telegram_alert(report: Dict[str, Any]) -> None:
+    """Telegram-alert для rolling discovery. Идентичен по паттерну с
+    ``_maybe_send_recheck_telegram_alert``: pick первого работающего
+    бот-токена + TELEGRAM_ALERT_CHAT_ID."""
+    try:
+        import requests
+
+        from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+    except ImportError as e:  # pragma: no cover
+        logger.warning("rolling: telegram deps missing: %s", e)
+        return
+
+    bot_token = None
+    for key in ("VALSTANBOT", "ALERT", "AFONYA"):
+        bot_token = (TELEGRAM_TOKENS or {}).get(key)
+        if bot_token:
+            break
+    if not bot_token:
+        bot_token = next(iter((TELEGRAM_TOKENS or {}).values()), None)
+    if not bot_token or not TELEGRAM_ALERT_CHAT_ID:
+        logger.info("rolling: telegram not configured, skipping alert")
+        return
+
+    text = _format_rolling_message(report)
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={
+                "chat_id": TELEGRAM_ALERT_CHAT_ID,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.warning(
+                "rolling: telegram sendMessage failed: %s %s",
+                resp.status_code,
+                resp.text[:300],
+            )
+        else:
+            logger.info(
+                "rolling: telegram alert sent (region=%s, new=%s)",
+                report.get("region"),
+                report.get("new_pending"),
+            )
+    except Exception as e:  # pragma: no cover
+        logger.warning("rolling: telegram send error: %s", e)
+
+
 # ─── Celery wrapper (для будущего шедулирования) ───
 # Импортируем app только тут, чтобы тесты на async-core не тащили Celery.
 
@@ -648,6 +849,11 @@ try:
     def recheck_all_active_regions():
         """Celery beat task: weekly recheck по всем активным регионам."""
         return _run_coro(recheck_all_active_regions_async())
+
+    @_celery_app.task(name="tasks.discovery_tasks.discover_rolling_one_region")
+    def discover_rolling_one_region():
+        """Celery beat task: daily rolling discovery (1 регион — самый давний)."""
+        return _run_coro(discover_rolling_one_region_async())
 
 except Exception as _import_err:  # pragma: no cover
     # При локальном импорте без Celery (например, в тестах web-API)
