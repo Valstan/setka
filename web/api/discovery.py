@@ -19,7 +19,6 @@ Endpoints:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime
@@ -33,7 +32,6 @@ from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Community, CommunityCandidate, Region
 from modules.discovery.ai_categorizer import ALLOWED_CATEGORIES
-from modules.discovery.osm_overpass import fetch_localities
 from modules.vk_monitor.vk_client import VKClient
 from tasks.discovery_tasks import parse_list_field, run_discovery_for_region_async
 from utils.vk_url import parse_vk_group_url
@@ -73,29 +71,13 @@ async def resolve_city(q: str = Query(..., min_length=1, max_length=120)):
 
 
 # ─────────────────────────────────────────────────────────────────
-# /osm-localities — auto-suggest нп района через OpenStreetMap Overpass
-# ─────────────────────────────────────────────────────────────────
-
-
-@router.get("/osm-localities")
-async def osm_localities(district: str = Query(..., min_length=2, max_length=200)):
-    """Авто-резолв населённых пунктов района из OSM.
-
-    UI prepare-страницы дёргает этот endpoint после создания региона,
-    предзаполняет textarea localities. Юзер правит/добавляет руками.
-
-    На любые ошибки OSM (timeout, 5xx, network) возвращается
-    ``{items: [], ok: false}``, чтобы UI показал кнопку «попробовать
-    ещё раз» / fallback на ручной ввод. 200 OK всегда (не падаем —
-    OSM это nice-to-have, не блокер прохода wizard'а).
-    """
-    items = await asyncio.to_thread(fetch_localities, district)
-    return {"items": items, "ok": bool(items), "district": district}
-
-
-# ─────────────────────────────────────────────────────────────────
 # /regions/{code}/config — save localities / discovery_keywords
 # ─────────────────────────────────────────────────────────────────
+#
+# OSM Overpass auto-suggest удалён 2026-05-25 (smoke-feedback по tuzha):
+# не находил мелкие районы (Тужа/Тужинский), нейросеть через clipboard-prompt
+# работает значительно лучше. См. удалённый `modules/discovery/osm_overpass.py`
+# и endpoint `/osm-localities` в `git log`.
 
 
 class _DiscoveryConfigPatch(BaseModel):
@@ -115,10 +97,23 @@ async def patch_region_discovery_config(code: str, field: str, body: _DiscoveryC
 
     Field — ``localities`` или ``discovery_keywords``. Остальные пути 400.
     Возвращает ``{ok, count, items}``.
+
+    Эксплицитный INFO-лог входа добавлен 2026-05-25 после smoke-feedback'а
+    «Failed to fetch» на tuzha: запрос в uvicorn-логе не появлялся, что мешало
+    диагностике. Теперь увидим факт прихода body + размер до парсинга.
     """
+    raw = body.value
+    raw_len = len(raw) if isinstance(raw, str) else (len(raw) if isinstance(raw, list) else 0)
+    logger.info(
+        "discovery.config PATCH region=%s field=%s raw_type=%s raw_len=%s",
+        code,
+        field,
+        type(raw).__name__,
+        raw_len,
+    )
     if field not in ("localities", "discovery_keywords"):
         raise HTTPException(status_code=400, detail=f"unknown config field {field!r}")
-    items = parse_list_field(body.value)
+    items = parse_list_field(raw)
 
     async with AsyncSessionLocal() as session:
         region = (
@@ -131,6 +126,7 @@ async def patch_region_discovery_config(code: str, field: str, body: _DiscoveryC
         region.config = cfg
         await session.commit()
 
+    logger.info("discovery.config PATCH region=%s field=%s saved %d items", code, field, len(items))
     return {"ok": True, "count": len(items), "items": items, "field": field}
 
 

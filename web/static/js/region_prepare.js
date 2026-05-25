@@ -4,10 +4,13 @@
 // Flow:
 //   1. На загрузке: GET /api/discovery/regions/{code}/config — заполнить
 //      textarea'и и prompt-блоки текущими значениями.
-//   2. OSM auto-suggest для localities: GET /api/discovery/osm-localities.
-//   3. Clipboard copy для prompt-блоков.
-//   4. PATCH /api/discovery/regions/{code}/config/{field} при «Сохранить».
-//   5. POST /api/discovery/trigger при «Запустить discovery» → redirect.
+//   2. Clipboard copy для двух prompt-блоков (localities + keywords).
+//   3. PATCH /api/discovery/regions/{code}/config/{field} при «Сохранить».
+//   4. POST /api/discovery/trigger при «Запустить discovery» → redirect.
+//
+// 2026-05-25: OSM Overpass auto-suggest удалён — не находил мелкие
+// районы (Тужа, Тужинский), нейросеть по clipboard-prompt'у даёт
+// результат лучше и стабильнее.
 
 (function () {
     'use strict';
@@ -20,10 +23,6 @@
 
     // ─── DOM ──────────────────────────────────────────────────────
     const regionInfo = document.getElementById('region-info');
-
-    const osmDistrictInput = document.getElementById('osm-district');
-    const osmFetchBtn = document.getElementById('osm-fetch-btn');
-    const osmStatus = document.getElementById('osm-status');
 
     const locPrompt = document.getElementById('loc-prompt');
     const locPromptCopy = document.getElementById('loc-prompt-copy');
@@ -74,29 +73,57 @@
         }
     }
 
-    function suggestOsmDistrict(centerCity) {
-        // Эвристика — не пытаемся быть умными. «Тужа» → «Тужа район»,
-        // юзер всё равно правит вручную перед запросом (правильное имя
-        // в OSM может быть «Тужинский район», «Малмыжский район» и т.д.).
-        return centerCity ? `${centerCity} район` : '';
+    function getCurrentLocalities() {
+        return locInput.value.split('\n').map(s => s.trim()).filter(Boolean);
     }
 
     function buildLocalitiesPrompt() {
-        const district = osmDistrictInput.value.trim() || regionMeta.center_city || regionMeta.name;
+        // 2026-05-25: источник заменён с Википедии на ОКТМО (классификатор
+        // территорий муниципальных образований Росстата) — там полнее и
+        // официальный список нп каждого района.
+        const district = regionMeta.name || regionMeta.center_city || '<название района>';
         return (
-            `Перечисли все населённые пункты ${district || '<название района>'}: ` +
-            `города, ПГТ, сёла, деревни, посёлки. По одному названию на строку, ` +
-            `без нумерации, без пояснений. Только русские названия. Источник — Википедия.`
+            `Перечисли ВСЕ населённые пункты муниципального района «${district}»: ` +
+            `города, ПГТ, сёла, деревни, посёлки, починки, хутора. Без нумерации, ` +
+            `по одному названию на строку, только русские названия. Источник — ` +
+            `ОКТМО (Общероссийский классификатор территорий муниципальных образований Росстата), ` +
+            `сверь со справочником на classinform.ru/oktmo. Не добавляй пояснения и заголовки.`
         );
     }
 
     function buildKeywordsPrompt() {
+        // 2026-05-25: prompt значительно расширен по smoke-feedback — был
+        // слишком узкий (5 категорий), нейросетям нечем «думать». Теперь
+        // явно перечисляем направления + подмешиваем текущий список нп,
+        // чтобы предложения были привязаны к конкретным локалитетам района.
         const district = regionMeta.name || regionMeta.center_city || '<район>';
+        const localities = getCurrentLocalities();
+        const localitiesBlock = localities.length
+            ? `\n\nНаселённые пункты района (используй их в ключевиках где уместно, ` +
+              `например «новости Шешурга», «ДТП Тужа»):\n${localities.slice(0, 40).join(', ')}.`
+            : '';
         return (
-            `Сгенерируй 15-20 русскоязычных ключевых слов для поиска VK-сообществ ` +
-            `${district}: тематика (новости, ДТП, объявления, культура, спорт), ` +
-            `специфические термины для региона (например «вятский», «уральский»), ` +
-            `популярные нп района. По одному слову/фразе на строку.`
+            `Сгенерируй 30-50 русскоязычных ключевых слов и коротких фраз для поиска ` +
+            `VK-сообществ муниципального района «${district}». Цель — найти все ` +
+            `тематические паблики района через VK groups.search.\n\n` +
+            `Покрой максимум направлений (по 3-5 ключевиков на каждое):\n` +
+            `• новости и СМИ (новости, газета, ТВ, радио, события);\n` +
+            `• объявления и торговля (объявления, барахолка, куплю/продам, отдам даром, авто, недвижимость);\n` +
+            `• происшествия (ДТП, ЧП, происшествия, аварии, потеряшки, розыск, помощь);\n` +
+            `• ЖКХ и инфраструктура (ЖКХ, дороги, отключения, газ, вода, электричество, благоустройство);\n` +
+            `• власть и сервисы (администрация, депутаты, госуслуги, МФЦ);\n` +
+            `• образование (школа, лицей, гимназия, колледж, детсад, родители);\n` +
+            `• спорт (спорт, секция, тренер, ФОК, стадион, рыбалка, охота);\n` +
+            `• культура и досуг (культура, библиотека, музей, ДК, афиша, концерт, кино);\n` +
+            `• здоровье (поликлиника, больница, аптека, врач);\n` +
+            `• соседские/локальные чаты (соседи, чат, подслушано, типичный, инсайд);\n` +
+            `• работа (работа, вакансии, трудоустройство);\n` +
+            `• сельское хозяйство и природа (огород, рассада, грибы, лес, рыбалка) — если район сельский.\n\n` +
+            `Также добавь специфические для региона слова (диалектные топонимы, ` +
+            `сокращения, прозвища — типа «вятский», «уральский», «казанский»).` +
+            localitiesBlock + `\n\n` +
+            `Формат ответа — СТРОГО одно слово/короткая фраза на строку, без нумерации, ` +
+            `без категорий-заголовков, без пояснений. Только сами ключевики.`
         );
     }
 
@@ -118,49 +145,17 @@
                 (data.center_city ? ` · центр: ${escapeHtml(data.center_city)}` : '');
             locInput.value = (data.localities || []).join('\n');
             kwInput.value = (data.discovery_keywords || []).join('\n');
-            osmDistrictInput.value = suggestOsmDistrict(data.center_city || '');
             refreshPrompts();
         } catch (e) {
             regionInfo.innerHTML = `<span class="text-danger">Ошибка загрузки региона: ${escapeHtml(e.message)}</span>`;
         }
     }
 
-    // ─── OSM auto-suggest ─────────────────────────────────────────
-    osmFetchBtn.addEventListener('click', async () => {
-        const district = osmDistrictInput.value.trim();
-        if (!district) {
-            osmStatus.innerHTML = '<span class="text-warning">Укажи название района</span>';
-            return;
-        }
-        osmFetchBtn.disabled = true;
-        osmStatus.innerHTML = '<span class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Запрашиваю OpenStreetMap…</span>';
-        try {
-            const resp = await fetch(`/api/discovery/osm-localities?district=${encodeURIComponent(district)}`);
-            const data = await resp.json();
-            if (!data.ok || !data.items.length) {
-                osmStatus.innerHTML = '<span class="text-warning">OSM не нашёл нп — попробуй другое имя района (например «Тужинский район») или заполни вручную.</span>';
-                return;
-            }
-            // Merge: добавляем те нп, которых ещё нет в textarea (case-insensitive).
-            const existing = new Set(
-                locInput.value.split('\n').map(s => s.trim().toLowerCase()).filter(Boolean)
-            );
-            const toAdd = data.items.filter(n => !existing.has(n.toLowerCase()));
-            const merged = [
-                ...locInput.value.split('\n').map(s => s.trim()).filter(Boolean),
-                ...toAdd,
-            ];
-            locInput.value = merged.join('\n');
-            osmStatus.innerHTML = `<span class="text-success">OSM нашёл ${data.items.length}, добавлено новых: ${toAdd.length}.</span>`;
-        } catch (e) {
-            osmStatus.innerHTML = `<span class="text-danger">Ошибка: ${escapeHtml(e.message)}</span>`;
-        } finally {
-            osmFetchBtn.disabled = false;
-        }
+    // Live-обновление keywords prompt'а: при правке списка нп меняется
+    // подмешанный в prompt блок локалитетов.
+    locInput.addEventListener('input', () => {
+        kwPrompt.value = buildKeywordsPrompt();
     });
-
-    // Prompts зависят от osm-district input — обновляем live.
-    osmDistrictInput.addEventListener('input', refreshPrompts);
 
     // ─── Clipboard ────────────────────────────────────────────────
     locPromptCopy.addEventListener('click', () => copyToClipboard(locPrompt.value, locPromptCopy));
@@ -171,24 +166,46 @@
         const value = textareaEl.value;
         btnEl.disabled = true;
         statusEl.innerHTML = '<span class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Сохраняю…</span>';
+        const url = `/api/discovery/regions/${encodeURIComponent(code)}/config/${field}`;
         try {
-            const resp = await fetch(
-                `/api/discovery/regions/${encodeURIComponent(code)}/config/${field}`,
-                {
-                    method: 'PATCH',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({value}),
-                }
-            );
-            const data = await resp.json();
+            const resp = await fetch(url, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({value}),
+            });
+            // Расширенная диагностика 2026-05-25 (smoke-feedback «Failed to fetch»):
+            // печатаем response в console, чтобы при повторе бага была видна
+            // полная картина (status, content-type, тело).
+            console.log(`[saveField/${field}] HTTP ${resp.status} ${resp.statusText}`,
+                        {url, contentType: resp.headers.get('content-type')});
             if (!resp.ok) {
-                throw new Error(data.detail || `HTTP ${resp.status}`);
+                let detail;
+                try {
+                    const data = await resp.json();
+                    detail = data.detail || JSON.stringify(data);
+                } catch {
+                    detail = (await resp.text()).slice(0, 200) || `HTTP ${resp.status}`;
+                }
+                throw new Error(`HTTP ${resp.status}: ${detail}`);
             }
+            const data = await resp.json();
             // Replace textarea with parsed canonical form (dedup + trim).
             textareaEl.value = (data.items || []).join('\n');
+            // Обновим keywords-prompt, если только что сохранили localities —
+            // в нём встроен текущий список нп.
+            if (field === 'localities') {
+                kwPrompt.value = buildKeywordsPrompt();
+            }
             flashStatus(statusEl, 'success', `✓ Сохранено: ${data.count} элемент(ов)`);
         } catch (e) {
-            flashStatus(statusEl, 'danger', `❌ ${escapeHtml(e.message)}`, true);
+            // TypeError "Failed to fetch" = network-level. Подскажем
+            // юзеру, что смотреть, а в консоль печатаем полный объект.
+            console.error(`[saveField/${field}] failed:`, e, {url});
+            const isNetwork = e.name === 'TypeError';
+            const hint = isNetwork
+                ? `❌ Сетевая ошибка (${escapeHtml(e.message)}). Открой DevTools → Console, увидишь подробности. Попробуй ещё раз через 5 сек.`
+                : `❌ ${escapeHtml(e.message)}`;
+            flashStatus(statusEl, 'danger', hint, true);
         } finally {
             btnEl.disabled = false;
         }
