@@ -11,10 +11,12 @@ Strategy (2026-05-25 rework: localities-driven, см. PR feat/discovery-localiti
 4. **Dedup** — по ``id``. ``discovered_via`` фиксирует первый источник.
 5. **Enrichment** — один ``groups.getById(group_ids=…, fields=…)`` для всех
    уникальных id.
-6. **Hard relevance filter** — если ``localities`` непуст, отбрасываем
-   кандидатов, у которых ни один локалитет (по corner-стему) не встречается
-   в ``name + description``. Это режет 90% мусора без AI: общегородские/
-   областные паблики не пройдут.
+6. **Hard relevance filter** — многокомпонентный (см. ``_passes_relevance``):
+   центральный стем (``Тужа``→``туж``) пропускает безусловно; одного матча
+   по дочернему локалитету недостаточно (омонимные стемы «Коробки»/«Соболи»/
+   «Лоскуты»/«Чугуны»/«Фомино» дают много false-positive — инцидент tuzha
+   2026-05-25); крупные группы (>50k members) требуют строго центральный
+   стем. Это режет 90%+ мусора без AI.
 7. **Sort** — ``(matched_localities_count desc, members_count desc)`` — паблик
    с тремя топонимами района обгонит «Море Парк Киров» с 90k подписчиками.
 
@@ -59,6 +61,15 @@ _STEM_MIN_LEN = 3
 # стема. Покрывает большинство склонений: «Тужа» → «туж», «Шешурга» →
 # «шешург», «Михайловское» → «михайловск», «Тужи»/«Тужу»/«Туже» → «туж».
 _RU_VOWELS = "аеёиоуыэюя"
+
+# Порог «большой группы» — если у кандидата members_count > этого значения,
+# требуем обязательного матча центрального стема (Тужа/Тужинск/…), даже если
+# у группы 2+ распылённых матча по дочерним локалитетам. Большие паблики чаще
+# случайно цепляются за омонимные стемы (Коробки → «коробка», Лоскуты →
+# «лоскутное шитьё», Соболи → «Соболиная гора»), у них больше шанса набрать
+# несколько false-positive в длинном описании. См. инцидент 2026-05-25 на
+# tuzha: 1787/3784 ложно-релевантных, из них 95% — большие тематические.
+_LARGE_GROUP_MEMBERS_THRESHOLD = 50_000
 
 
 @dataclass
@@ -132,6 +143,53 @@ def _count_localities_in_text(stems: List[str], text: str) -> int:
         if re.search(pattern, haystack):
             count += 1
     return count
+
+
+def _has_stem(text: str, stem: Optional[str]) -> bool:
+    """True если ``stem`` встречается в ``text`` с левой word-boundary."""
+    if not stem or not text:
+        return False
+    return bool(re.search(r"\b" + re.escape(stem), text.lower()))
+
+
+def _passes_relevance(
+    *,
+    text: str,
+    locality_stems: List[str],
+    center_stem: Optional[str],
+    members_count: Optional[int],
+) -> tuple[bool, int]:
+    """Решает, проходит ли кандидат relevance-фильтр.
+
+    Правила (выработаны после инцидента tuzha 2026-05-25):
+
+    * Центральный стем (``Тужа``→``туж``) — сильный, специфичный сигнал.
+      Если он есть в name+description — пропускаем независимо от размера.
+    * Дочерние локалитеты часто омонимны общим словам (Коробки/Соболи/
+      Лоскуты/Чугуны/Фомино). Один такой матч сам по себе не достаточен.
+    * Маленькие/средние группы пропускаем при ≥2 разных дочерних стемах —
+      случайное совпадение пары омонимов в одной группе очень маловероятно.
+    * Большие группы (>``_LARGE_GROUP_MEMBERS_THRESHOLD``) требуют **строго**
+      центральный стем. Длинные описания крупных тематических пабликов часто
+      случайно собирают несколько омонимов — этот класс ловит ~95% мусора.
+
+    Возвращает ``(passes, score)``, где ``score`` идёт в ``matched_localities``
+    для последующей сортировки (центр считается +1).
+    """
+    matched_locs = _count_localities_in_text(locality_stems, text)
+    has_center = _has_stem(text, center_stem)
+    score = matched_locs + (1 if has_center else 0)
+
+    if has_center:
+        return True, score
+
+    is_large = bool(members_count and members_count > _LARGE_GROUP_MEMBERS_THRESHOLD)
+    if is_large:
+        # Без центрального стема большая группа считается мусором.
+        return False, score
+
+    # Маленькая/средняя: ≥2 разных дочерних — достаточно.
+    return matched_locs >= 2, score
 
 
 def _build_search_plan(
@@ -277,25 +335,38 @@ def discover_for_region(
     groups = list(seen.values())
 
     # Step 5: hard relevance filter + matched-count для сортировки.
-    # Если localities заданы — отбрасываем кандидатов без ни одного локалитета
-    # в name+description. Если localities пусты — фильтр пропускаем (старое
-    # поведение для backwards-compat с регионами, у которых config не заполнен).
+    # Если localities заданы — применяем многокомпонентный фильтр
+    # (см. _passes_relevance). Если localities пусты — фильтр пропускаем
+    # (старое поведение для backwards-compat).
     if loc_list:
-        stems = [_make_stem(loc) for loc in loc_list]
+        # Центральный стем — самый специфичный сигнал. Дочерние локалитеты
+        # без центра пропускаем только при ≥2 разных совпадениях, что
+        # маловероятно для случайных омонимов.
+        center_stem = _make_stem(center_city) if center_city else None
+        # Из дочерних стемов исключаем сам центр, чтобы не «двоить» вес.
+        loc_stems = [st for st in (_make_stem(loc) for loc in loc_list) if st and st != center_stem]
         before = len(groups)
         kept: List[DiscoveredGroup] = []
         for g in groups:
             text = " ".join(filter(None, [g.name, g.description])).strip()
-            matched = _count_localities_in_text(stems, text)
-            g.matched_localities = matched
-            if matched > 0:
+            passes, score = _passes_relevance(
+                text=text,
+                locality_stems=loc_stems,
+                center_stem=center_stem,
+                members_count=g.members_count,
+            )
+            g.matched_localities = score
+            if passes:
                 kept.append(g)
         groups = kept
         logger.info(
-            "discovery: relevance filter — %s/%s candidates kept (had localities=%d)",
+            "discovery: relevance filter — %s/%s candidates kept "
+            "(center=%r, localities=%d, large_threshold=%d)",
             len(groups),
             before,
-            len(loc_list),
+            center_stem,
+            len(loc_stems),
+            _LARGE_GROUP_MEMBERS_THRESHOLD,
         )
 
     if not groups:

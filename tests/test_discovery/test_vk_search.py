@@ -5,10 +5,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from modules.discovery.vk_search import (
+    _LARGE_GROUP_MEMBERS_THRESHOLD,
     CATEGORY_KEYWORDS,
     _build_search_plan,
     _count_localities_in_text,
     _make_stem,
+    _passes_relevance,
     discover_for_region,
 )
 
@@ -209,9 +211,9 @@ def test_discover_sorts_by_matched_localities_first():
     """Паблик с тремя топонимами района обгонит крупный с одним."""
     client = MagicMock()
     client.search_groups.return_value = [
-        {"id": 1, "name": "Тужа"},  # 1 match
-        {"id": 2, "name": "Тужа и Шешурга и Михайловское"},  # 3 matches
-        {"id": 3, "name": "Тужа Шешурга"},  # 2 matches
+        {"id": 1, "name": "Тужа"},  # центр (score 1)
+        {"id": 2, "name": "Тужа и Шешурга и Михайловское"},  # центр + 2 = score 3
+        {"id": 3, "name": "Тужа Шешурга"},  # центр + 1 = score 2
     ]
     client.get_groups_by_ids.return_value = [
         {"id": 1, "members_count": 10000},
@@ -221,7 +223,7 @@ def test_discover_sorts_by_matched_localities_first():
 
     groups = discover_for_region(
         client=client,
-        center_city="X",
+        center_city="Тужа",
         localities=["Тужа", "Шешурга", "Михайловское"],
         keywords=[],
     )
@@ -240,7 +242,7 @@ def test_discover_sort_falls_back_to_members_count_at_equal_localities():
     ]
     groups = discover_for_region(
         client=client,
-        center_city="X",
+        center_city="Тужа",
         localities=["Тужа"],
         keywords=[],
     )
@@ -281,7 +283,7 @@ def test_discover_filters_out_excluded_vk_ids():
 
     groups = discover_for_region(
         client=client,
-        center_city="X",
+        center_city="Тужа",
         localities=["Тужа"],
         keywords=[],
         exclude_vk_ids=[10],
@@ -296,7 +298,7 @@ def test_discover_handles_negative_vk_id_in_exclude_via_abs():
 
     groups = discover_for_region(
         client=client,
-        center_city="X",
+        center_city="Тужа",
         localities=["Тужа"],
         keywords=[],
         exclude_vk_ids=[-10],
@@ -318,7 +320,7 @@ def test_discover_enriches_from_groups_get_by_id_once():
 
     groups = discover_for_region(
         client=client,
-        center_city="X",
+        center_city="Тужа",
         localities=["Тужа"],
         keywords=["новости"],  # 1 keyword search
     )
@@ -339,7 +341,9 @@ def test_discover_skips_items_with_zero_id():
         {"id": 1, "name": "Good Тужа"},
     ]
     client.get_groups_by_ids.return_value = []
-    groups = discover_for_region(client=client, center_city="X", localities=["Тужа"], keywords=[])
+    groups = discover_for_region(
+        client=client, center_city="Тужа", localities=["Тужа"], keywords=[]
+    )
     assert [g.vk_id for g in groups] == [1]
 
 
@@ -353,7 +357,7 @@ def test_discover_truncates_to_top_n_after_sort():
     ]
     groups = discover_for_region(
         client=client,
-        center_city="X",
+        center_city="Тужа",
         localities=["Тужа"],
         keywords=[],
         max_candidates=3,
@@ -373,5 +377,131 @@ def test_discover_does_not_fetch_wall_posts_inline():
     ]
     client.get_groups_by_ids.return_value = []
 
-    discover_for_region(client=client, center_city="X", localities=["Тужа"], keywords=[])
+    discover_for_region(client=client, center_city="Тужа", localities=["Тужа"], keywords=[])
     client.get_wall_posts.assert_not_called()
+
+
+# ───────── _passes_relevance: новый фильтр ─────────
+
+
+def test_passes_relevance_center_stem_passes_unconditionally():
+    """Центральный стем в name+description — сильный сигнал, пропускаем."""
+    passes, score = _passes_relevance(
+        text="Подслушано в Туже",
+        locality_stems=["шешург", "коробк"],
+        center_stem="туж",
+        members_count=12345,
+    )
+    assert passes is True
+    assert score == 1  # 0 child + 1 center
+
+
+def test_passes_relevance_single_child_locality_without_center_fails():
+    """Один матч по дочернему омонимному стему (например «лоскут»)
+    без центра — мусор, отбрасываем."""
+    passes, score = _passes_relevance(
+        text="Мир Лоскутов — ткани для лоскутного шитья",
+        locality_stems=["лоскут", "шешург", "коробк"],
+        center_stem="туж",
+        members_count=100,
+    )
+    assert passes is False
+    assert score == 1  # 1 child match, no center
+
+
+def test_passes_relevance_two_distinct_child_localities_pass_small():
+    """≥2 разных дочерних стема в маленькой группе — пропускаем.
+    Случайное совпадение пары омонимов в одной группе очень маловероятно."""
+    passes, score = _passes_relevance(
+        text="Сёла Шешурга и Михайловское",
+        locality_stems=["шешург", "михайловск", "коробк"],
+        center_stem="туж",
+        members_count=200,
+    )
+    assert passes is True
+    assert score == 2
+
+
+def test_passes_relevance_large_group_without_center_fails_even_with_two_stems():
+    """Крупный паблик (>50K members) ловит шум легче — даже 2 омонимных матча
+    не считаем достаточными без явного центрального стема."""
+    passes, _score = _passes_relevance(
+        text="Лоскутки и Соболи в одном магазине",
+        locality_stems=["лоскут", "собол"],
+        center_stem="туж",
+        members_count=_LARGE_GROUP_MEMBERS_THRESHOLD + 1,
+    )
+    assert passes is False
+
+
+def test_passes_relevance_large_group_with_center_passes():
+    """Крупный паблик с центральным стемом — pass."""
+    passes, score = _passes_relevance(
+        text="Все Свои Тужинский край — новости района",
+        locality_stems=["шешург"],
+        center_stem="туж",
+        members_count=_LARGE_GROUP_MEMBERS_THRESHOLD + 1,
+    )
+    assert passes is True
+    assert score == 1
+
+
+def test_passes_relevance_no_center_stem_falls_back_to_two_stems():
+    """Если у региона не задан center_city (центр-стем пуст) — нужно ≥2
+    разных совпадений по дочерним локалитетам."""
+    passes_one, _ = _passes_relevance(
+        text="Только Шешурга",
+        locality_stems=["шешург", "михайловск"],
+        center_stem=None,
+        members_count=100,
+    )
+    assert passes_one is False
+
+    passes_two, _ = _passes_relevance(
+        text="Шешурга и Михайловское",
+        locality_stems=["шешург", "михайловск"],
+        center_stem=None,
+        members_count=100,
+    )
+    assert passes_two is True
+
+
+def test_discover_drops_large_omonym_traps_without_center():
+    """Регрессионный тест на инцидент tuzha 2026-05-25:
+    «Чугун на разлив» (40K+) с локалитетом «Чугуны» без «туж» — мусор."""
+    client = MagicMock()
+    client.search_groups.return_value = [
+        {"id": 1, "name": "Чугун на разлив 0,5л"},
+        {"id": 2, "name": "Васькино.Тужинский район"},
+    ]
+    client.get_groups_by_ids.return_value = [
+        {"id": 1, "members_count": 40961},
+        {"id": 2, "members_count": 491},
+    ]
+
+    groups = discover_for_region(
+        client=client,
+        center_city="Тужа",
+        localities=["Чугуны", "Васькино"],
+        keywords=[],
+    )
+    assert [g.vk_id for g in groups] == [2]
+
+
+def test_discover_keeps_small_village_with_two_distinct_locality_matches():
+    """Маленький паблик «Шешурга и Михайловское» проходит без центра."""
+    client = MagicMock()
+    client.search_groups.return_value = [
+        {"id": 1, "name": "Сёла Шешурга и Михайловское"},
+    ]
+    client.get_groups_by_ids.return_value = [
+        {"id": 1, "members_count": 150},
+    ]
+
+    groups = discover_for_region(
+        client=client,
+        center_city="Тужа",
+        localities=["Шешурга", "Михайловское"],
+        keywords=[],
+    )
+    assert [g.vk_id for g in groups] == [1]
