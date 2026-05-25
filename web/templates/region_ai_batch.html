@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}AI batch — {{ region_code }} — SETKA{% endblock %}
+{% block nav_section_content %}active{% endblock %}
+
+{% block content %}
+<div class="container my-4" style="max-width: 1000px;">
+    <nav aria-label="breadcrumb" class="small">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/regions">Регионы</a></li>
+            <li class="breadcrumb-item">
+                <a href="/regions/{{ region_code }}/discovery"><code>{{ region_code }}</code></a>
+            </li>
+            <li class="breadcrumb-item active" aria-current="page">AI batch</li>
+        </ol>
+    </nav>
+
+    <h2 class="mb-2">
+        <i class="bi bi-robot"></i>
+        AI-batch категоризация — <code>{{ region_code }}</code>
+    </h2>
+
+    <div class="alert alert-info small">
+        <strong>Зачем это?</strong>
+        Groq API на проде не работает (нет бюджета), но AI-категоризация всё
+        равно нужна — иначе модератор каждому из сотен кандидатов вручную
+        тыкает категорию. Этот процесс делегирует работу нейросети, к которой
+        у тебя уже есть доступ: ChatGPT / Claude.ai в браузере.
+        <hr class="my-2">
+        <strong>Flow:</strong> программа собирает чанк из 30 кандидатов и
+        готовый prompt → ты копируешь его в чат с нейросетью → нейросеть
+        возвращает JSON-массив с category / is_relevant / confidence → ты
+        копируешь ответ обратно → программа парсит и обновляет БД.
+    </div>
+
+    <!-- Progress -->
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <strong id="status-summary">Загружаю…</strong>
+                    <span class="text-muted small" id="status-detail"></span>
+                </div>
+                <a class="btn btn-sm btn-outline-secondary"
+                   href="/regions/{{ region_code }}/discovery">
+                    К кандидатам
+                </a>
+            </div>
+            <div class="progress mt-2" style="height: 6px;">
+                <div id="progress-bar" class="progress-bar bg-success" role="progressbar"
+                     style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chunk navigation -->
+    <div class="d-flex align-items-center gap-2 mb-3">
+        <button id="chunk-prev" class="btn btn-sm btn-outline-secondary" disabled>
+            <i class="bi bi-chevron-left"></i> Назад
+        </button>
+        <span class="small text-muted" id="chunk-pos">Чанк —</span>
+        <button id="chunk-next" class="btn btn-sm btn-outline-secondary">
+            Вперёд <i class="bi bi-chevron-right"></i>
+        </button>
+        <button id="chunk-reload" class="btn btn-sm btn-outline-secondary ms-auto"
+                title="Перезагрузить чанк (если БД изменилась)">
+            <i class="bi bi-arrow-clockwise"></i>
+        </button>
+    </div>
+
+    <!-- Step 1: Prompt -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <strong>Шаг 1.</strong> Скопируй prompt и вставь в чат с нейросетью
+        </div>
+        <div class="card-body">
+            <textarea id="prompt-text" class="form-control font-monospace small" rows="14"
+                      readonly></textarea>
+            <div class="d-flex gap-2 mt-2">
+                <button id="prompt-copy" class="btn btn-outline-primary" type="button">
+                    <i class="bi bi-clipboard"></i> Скопировать prompt
+                </button>
+                <span id="prompt-info" class="small text-muted align-self-center"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 2: Response -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <strong>Шаг 2.</strong> Вставь ответ нейросети (JSON-массив)
+        </div>
+        <div class="card-body">
+            <textarea id="response-text" class="form-control font-monospace small" rows="12"
+                      placeholder='[{"id": 1, "category": "novost", "is_relevant": true, "confidence": 85, "reasoning": "..."}]'></textarea>
+            <div id="response-error" class="small text-danger mt-1"></div>
+            <div class="d-flex gap-2 mt-2">
+                <button id="response-apply" class="btn btn-success" type="button">
+                    <i class="bi bi-check2-circle"></i> Применить ответ
+                </button>
+                <span id="apply-status" class="small align-self-center"></span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    window.REGION_CODE = {{ region_code|tojson }};
+</script>
+<script src="/static/js/region_ai_batch.js?v=20260525"></script>
+{% endblock %}

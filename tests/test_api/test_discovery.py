@@ -603,3 +603,224 @@ async def test_get_config_404_when_missing():
         with pytest.raises(HTTPException) as exc:
             await discovery_api.get_region_discovery_config(code="nope")
     assert exc.value.status_code == 404
+
+
+# ─── /ai-batch — human-in-the-loop chunked LLM categorisation ────
+
+
+class _AiBatchSession:
+    """Session, которая на разных вызовах execute возвращает разные данные.
+
+    Первый execute — Region (scalar_one_or_none).
+    Второй execute — candidates list (scalars().all()).
+    """
+
+    def __init__(self, *, region, candidates):
+        self._region = region
+        self._candidates = candidates
+        self._call_count = 0
+        self.committed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def execute(self, _stmt):
+        self._call_count += 1
+        result = MagicMock()
+        if self._call_count == 1:
+            result.scalar_one_or_none.return_value = self._region
+            scalars = MagicMock()
+            scalars.all.return_value = []
+            result.scalars.return_value = scalars
+        else:
+            scalars = MagicMock()
+            scalars.all.return_value = self._candidates
+            result.scalars.return_value = scalars
+            result.scalar_one_or_none.return_value = None
+        return result
+
+    async def commit(self):
+        self.committed = True
+
+
+def _make_candidate(id_, *, status="pending", ai_category=None, ai_is_relevant=None):
+    c = CommunityCandidate(
+        id=id_,
+        region_id=1,
+        vk_id=1000 + id_,
+        name=f"Group {id_}",
+        description=f"desc {id_}",
+        status=status,
+        ai_category=ai_category,
+        ai_is_relevant=ai_is_relevant,
+    )
+    c.id = id_
+    return c
+
+
+async def test_ai_batch_returns_chunk_with_prompt():
+    region = _make_region_stub(
+        code="tuzha", name="Тужа", config={"localities": ["Тужа", "Шешурга"]}
+    )
+    region.id = 1
+    cands = [_make_candidate(i + 1) for i in range(5)]
+    session = _AiBatchSession(region=region, candidates=cands)
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.get_ai_batch(code="tuzha", chunk=0, size=3)
+    assert out["region_code"] == "tuzha"
+    assert out["chunk_index"] == 0
+    assert out["chunks_total"] == 2  # 5 candidates / size=3 → 2 chunks
+    assert out["total_pending_uncategorized"] == 5
+    assert len(out["items"]) == 3
+    assert out["items"][0]["id"] == 1
+    # Prompt должен содержать локалитеты и кандидатов.
+    assert "Тужа" in out["prompt"]
+    assert "Шешурга" in out["prompt"]
+    assert "Group 1" in out["prompt"]
+
+
+async def test_ai_batch_empty_when_no_pending_uncategorized():
+    region = _make_region_stub(code="x", name="X", config={})
+    region.id = 1
+    session = _AiBatchSession(region=region, candidates=[])
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.get_ai_batch(code="x", chunk=0, size=30)
+    assert out["total_pending_uncategorized"] == 0
+    assert out["chunks_total"] == 0
+    assert out["items"] == []
+    assert out["prompt"] == ""
+
+
+async def test_ai_batch_out_of_range_chunk():
+    region = _make_region_stub(code="x", name="X", config={})
+    region.id = 1
+    cands = [_make_candidate(i + 1) for i in range(3)]
+    session = _AiBatchSession(region=region, candidates=cands)
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.get_ai_batch(code="x", chunk=99, size=30)
+    assert out["items"] == []
+    assert out["chunks_total"] == 1
+
+
+async def test_ai_batch_404_when_region_missing():
+    session = _AiBatchSession(region=None, candidates=[])
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        with pytest.raises(HTTPException) as exc:
+            await discovery_api.get_ai_batch(code="nope", chunk=0, size=30)
+    assert exc.value.status_code == 404
+
+
+async def test_ai_batch_apply_updates_pending_candidates():
+    region = _make_region_stub(code="tuzha", name="Тужа", config={})
+    region.id = 1
+    cands = [
+        _make_candidate(1, status="pending"),
+        _make_candidate(2, status="pending"),
+    ]
+    session = _AiBatchSession(region=region, candidates=cands)
+    body = discovery_api._AiBatchApply(
+        items=[
+            {
+                "id": 1,
+                "category": "novost",
+                "is_relevant": True,
+                "confidence": 88,
+                "reasoning": "ok",
+            },
+            {
+                "id": 2,
+                "category": "other",
+                "is_relevant": False,
+                "confidence": 20,
+                "reasoning": "no",
+            },
+        ]
+    )
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.apply_ai_batch(code="tuzha", body=body)
+    assert out["updated"] == 2
+    assert out["summary"]["relevant"] == 1
+    assert out["summary"]["irrelevant"] == 1
+    assert cands[0].ai_category == "novost"
+    assert cands[0].ai_is_relevant is True
+    assert cands[0].ai_confidence == 88
+    assert cands[1].ai_is_relevant is False
+    assert session.committed is True
+
+
+async def test_ai_batch_apply_skips_non_pending_candidates():
+    """approved/rejected — модератор уже решил, перетирать не должны."""
+    region = _make_region_stub(code="x", name="X", config={})
+    region.id = 1
+    cands = [
+        _make_candidate(1, status="approved"),
+        _make_candidate(2, status="pending"),
+    ]
+    session = _AiBatchSession(region=region, candidates=cands)
+    body = discovery_api._AiBatchApply(
+        items=[
+            {"id": 1, "category": "novost", "is_relevant": True, "confidence": 90},
+            {"id": 2, "category": "sport", "is_relevant": True, "confidence": 70},
+        ]
+    )
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.apply_ai_batch(code="x", body=body)
+    assert out["updated"] == 1
+    assert out["skipped"] == 1
+    # Approved кандидат не тронут.
+    assert cands[0].ai_category is None
+
+
+async def test_ai_batch_apply_reports_missing_ids():
+    region = _make_region_stub(code="x", name="X", config={})
+    region.id = 1
+    session = _AiBatchSession(region=region, candidates=[])
+    body = discovery_api._AiBatchApply(
+        items=[{"id": 999, "category": "novost", "is_relevant": True}]
+    )
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.apply_ai_batch(code="x", body=body)
+    assert out["updated"] == 0
+    assert 999 in out["missing_ids"]
+
+
+async def test_ai_batch_apply_drops_unknown_category_silently():
+    """Если LLM выдала непонятную категорию — игнорируем поле, БД остаётся."""
+    body_item = discovery_api._AiBatchItem(id=1, category="bogus_category")
+    assert body_item.category is None  # _norm_category нормализовал
+
+
+async def test_ai_batch_apply_empty_items_returns_zero():
+    body = discovery_api._AiBatchApply(items=[])
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=None):
+        out = await discovery_api.apply_ai_batch(code="x", body=body)
+    assert out["updated"] == 0
+    assert out["skipped"] == 0
+
+
+async def test_ai_batch_status_calculates_progress():
+    region = _make_region_stub(code="x", name="X", config={})
+    region.id = 1
+    cands = [
+        _make_candidate(1, status="pending", ai_category="novost"),
+        _make_candidate(2, status="pending", ai_is_relevant=False),
+        _make_candidate(3, status="pending"),
+        _make_candidate(4, status="pending"),
+    ]
+    session = _AiBatchSession(region=region, candidates=cands)
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.ai_batch_status(code="x")
+    assert out["total"] == 4
+    assert out["processed"] == 2  # id=1 (category), id=2 (relevant=false)
+    assert out["remaining"] == 2
+
+
+async def test_ai_batch_status_404_when_region_missing():
+    session = _AiBatchSession(region=None, candidates=[])
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        with pytest.raises(HTTPException) as exc:
+            await discovery_api.ai_batch_status(code="nope")
+    assert exc.value.status_code == 404

@@ -15,6 +15,10 @@
                title="Настроить localities/keywords и перезапустить discovery">
                 <i class="bi bi-gear"></i> Настройки discovery
             </a>
+            <a class="btn btn-sm btn-outline-primary" href="/regions/{{ region_code }}/discovery/ai-batch"
+               title="Категоризировать кандидатов через нейросеть в браузере">
+                <i class="bi bi-robot"></i> AI batch
+            </a>
             <button id="rerun-btn" class="btn btn-sm btn-outline-primary">
                 <i class="bi bi-arrow-clockwise"></i> Перезапустить discovery
             </button>
@@ -49,6 +53,14 @@
                     <input id="filter-info-only" type="checkbox" class="form-check-input">
                     <label class="form-check-label small" for="filter-info-only">
                         только «ИНФО-страницы»
+                    </label>
+                </div>
+                <div class="col-md-3 form-check ms-3 mt-1">
+                    <input id="filter-hide-irrelevant" type="checkbox" class="form-check-input"
+                           checked>
+                    <label class="form-check-label small" for="filter-hide-irrelevant">
+                        скрыть нерелевантных
+                        <span class="text-muted">(AI: is_relevant=false)</span>
                     </label>
                 </div>
                 <div class="col-md-4 text-end">
