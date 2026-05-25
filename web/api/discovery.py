@@ -263,6 +263,32 @@ async def patch_candidate(candidate_id: int, payload: CandidatePatch):
 
 
 # ─────────────────────────────────────────────────────────────────
+# DELETE /candidates/{id} — hard-delete (физически убрать из БД)
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.delete("/candidates/{candidate_id}")
+async def delete_candidate(candidate_id: int):
+    """Физически удалить кандидата из community_candidates.
+
+    Семантика vs reject:
+    - ``reject`` (PATCH со status=rejected) — soft. Запись остаётся, при следующем
+      запуске discovery её vk_id попадает в exclude_ids и группа не вернётся.
+    - ``delete`` (этот endpoint) — hard. Запись физически удалена, при rerun
+      discovery эту группу может найти снова, если VK всё ещё её отдаёт. Удобно
+      для откровенно нерелевантного шума, который не страшно увидеть снова
+      (или который VK больше не вернёт, потому что она уехала из результатов).
+    """
+    async with AsyncSessionLocal() as session:
+        cand = await session.get(CommunityCandidate, candidate_id)
+        if cand is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        await session.delete(cand)
+        await session.commit()
+        return {"deleted": candidate_id}
+
+
+# ─────────────────────────────────────────────────────────────────
 # POST /candidates/bulk — массовые операции
 # ─────────────────────────────────────────────────────────────────
 
