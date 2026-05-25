@@ -158,8 +158,9 @@ All crontab entries from old_postopus are now Celery Beat schedules:
 ### Logs
 
 ```bash
-# App logs
-tail -f /home/valstan/SETKA/logs/app.log
+# App logs (uvicorn stdout/stderr + Python logging — systemd редиректит
+# stdout/stderr в этот файл, см. setka.service)
+tail -f /home/valstan/SETKA/logs/uvicorn_production.log
 
 # Celery worker logs
 journalctl -u setka-celery-worker -f --no-pager

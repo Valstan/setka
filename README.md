@@ -230,9 +230,9 @@ sudo -u postgres psql -d setka -c "SELECT code, name FROM regions;"
 # Просмотреть посты
 sudo -u postgres psql -d setka -c "SELECT COUNT(*) FROM posts;"
 
-# Логи приложения
-tail -f logs/app.log
-tail -f logs/uvicorn.log
+# Логи приложения (uvicorn stdout/stderr + Python logging — systemd
+# редиректит туда же)
+tail -f logs/uvicorn_production.log
 
 # Бэкап
 scripts/backup_database.sh

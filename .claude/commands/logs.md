@@ -12,7 +12,7 @@ allowed-tools: Bash, AskUserQuestion
 
 | `<service>` | Где |
 |---|---|
-| `app` / `setka` | `/home/valstan/SETKA/logs/app.log` или `journalctl -u setka` |
+| `app` / `setka` | `/home/valstan/SETKA/logs/uvicorn_production.log` или `journalctl -u setka` |
 | `worker` | `/home/valstan/SETKA/logs/celery-worker.log` или `journalctl -u setka-celery-worker` |
 | `beat` | `/home/valstan/SETKA/logs/celery-beat.log` или `journalctl -u setka-celery-beat` |
 | `nginx` | `/home/valstan/SETKA/logs/nginx_access.log` + `nginx_error.log` |
@@ -49,8 +49,8 @@ use_journal = '--journal' in args
 
 ```python
 mapping = {
-    'app': ('/home/valstan/SETKA/logs/app.log', 'setka'),
-    'setka': ('/home/valstan/SETKA/logs/app.log', 'setka'),
+    'app': ('/home/valstan/SETKA/logs/uvicorn_production.log', 'setka'),
+    'setka': ('/home/valstan/SETKA/logs/uvicorn_production.log', 'setka'),
     'worker': ('/home/valstan/SETKA/logs/celery-worker.log', 'setka-celery-worker'),
     'beat': ('/home/valstan/SETKA/logs/celery-beat.log', 'setka-celery-beat'),
     'nginx': ('/home/valstan/SETKA/logs/nginx_access.log', None),
@@ -92,6 +92,6 @@ ssh -o ConnectTimeout=10 setka "journalctl -u <unit> --since '<since>' --no-page
 
 ## Что НЕ делать
 
-- Не качать всё на локальную машину (`scp` весь app.log) — он большой и не нужен.
+- Не качать всё на локальную машину (`scp` весь `uvicorn_production.log`) — он большой и не нужен.
 - Не предлагать `> /dev/null` или `truncate` на прод-лог без явного запроса.
 - Логи приложения могут содержать VK-токены в URL — **не показывать** строки с `access_token=` пользователю в чате; маскировать как `access_token=***`.

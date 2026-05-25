@@ -40,29 +40,20 @@ from web.api import templates as templates_api
 from web.api import test_workflow, token_management, vk_monitoring
 
 # Setup logging
-# LOG_PATH задаётся в /etc/setka/setka.env на проде, по умолчанию — прод-путь
-# для обратной совместимости с уже-запущенными инсталляциями. Локально на
-# Windows/в worktree этот путь нужно перебить (LOG_PATH=./logs/app.log или
-# вообще пустая строка — тогда только StreamHandler).
-_log_path = os.getenv("LOG_PATH", "/home/valstan/SETKA/logs/app.log")
-_handlers: list[logging.Handler] = [logging.StreamHandler()]
-if _log_path:
-    try:
-        # Создаём директорию если её ещё нет (для свежих worktree'ев).
-        _log_dir = os.path.dirname(_log_path)
-        if _log_dir:
-            os.makedirs(_log_dir, exist_ok=True)
-        _handlers.insert(0, logging.FileHandler(_log_path))
-    except (OSError, PermissionError) as _e:
-        # Например, на Windows путь "/home/..." очевидно не создастся —
-        # logging молча падает обратно на stderr, чтобы не блокировать
-        # импорт main.py для локальных тестов / pytest --collect-only.
-        print(f"[main.py] LOG_PATH '{_log_path}' unavailable ({_e}); stderr only", flush=True)
-
+#
+# Все логи идут через StreamHandler в stderr. На проде systemd (см.
+# setka.service: StandardOutput=append:/home/valstan/SETKA/logs/uvicorn_production.log)
+# перенаправляет stdout/stderr в файл — никакого отдельного FileHandler не
+# нужно. До 2026-05-25 был дубль через logs/app.log с LOG_LEVEL=WARNING,
+# но он:
+#   - 100% дублировал содержимое stderr → uvicorn_production.log;
+#   - копил почти ничего (порог WARNING, файл не рос неделями);
+#   - усложнял main.py обработкой LOG_PATH env с try/except для Windows.
+# Дефолт LOG_LEVEL=INFO даёт полезный объём для grep'а; на проде можно
+# поднять до WARNING через env если станет шумно.
 logging.basicConfig(
-    level=getattr(logging, os.getenv("LOG_LEVEL", "WARNING").upper(), logging.WARNING),
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=_handlers,
 )
 
 logger = logging.getLogger(__name__)
