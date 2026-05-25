@@ -214,7 +214,7 @@ ssh setka "systemctl is-active setka setka-celery-worker setka-celery-beat"
 
 ssh setka "journalctl -u setka -u setka-celery-worker -u setka-celery-beat --since '2 minutes ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -10"
 
-ssh setka "tail -20 /home/valstan/SETKA/logs/app.log 2>&1 | grep -iE 'error|critical|exception' | tail -5"
+ssh setka "tail -50 /home/valstan/SETKA/logs/uvicorn_production.log 2>&1 | grep -iE 'error|critical|exception|traceback' | tail -5"
 ```
 
 Через внешний домен (опционально):

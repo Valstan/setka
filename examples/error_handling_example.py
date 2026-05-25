@@ -210,7 +210,7 @@ async def example_error_logging():
         details={"community_id": 123, "error_code": 15, "attempt": 3},
     )
 
-    print("\n✅ Error logged (check logs/app.log and metrics)")
+    print("\n✅ Error logged (check logs/uvicorn_production.log and metrics)")
 
 
 # =============================================================================

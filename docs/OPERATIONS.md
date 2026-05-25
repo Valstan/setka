@@ -108,7 +108,7 @@ bash scripts/diagnose_connection.sh
 
 ```bash
 ps aux | grep uvicorn
-tail -n 200 logs/app.log
+tail -n 200 logs/uvicorn_production.log
 curl http://127.0.0.1:8000/api/health/
 ```
 
