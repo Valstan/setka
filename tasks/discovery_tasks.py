@@ -212,38 +212,48 @@ async def _upsert_candidates(
     return {"inserted": inserted, "refreshed": refreshed, "skipped_existing": skipped}
 
 
+def parse_list_field(val: Any) -> List[str]:
+    """Coerce input to a clean list[str]: strip, dedup case-insensitive, preserve order.
+
+    Поддерживает форматы:
+    - ``list[str]``: ``["Тужа", "Шешурга", ...]``.
+    - ``str``: один или несколько элементов через перевод строки / запятую /
+      точку с запятой (regex ``[\\n,;]+``).
+    - ``None`` или прочее → ``[]``.
+
+    Используется и discover_for_region (read region.config), и web/api endpoint
+    при сохранении localities/keywords из textarea.
+    """
+    if val is None:
+        return []
+    if isinstance(val, str):
+        raw = re.split(r"[\n,;]+", val)
+    elif isinstance(val, (list, tuple)):
+        raw = [str(x) for x in val]
+    else:
+        return []
+    seen: set[str] = set()
+    out: List[str] = []
+    for item in raw:
+        s = (item or "").strip()
+        if not s or s.lower() in seen:
+            continue
+        seen.add(s.lower())
+        out.append(s)
+    return out
+
+
 def _read_region_discovery_config(region: Region) -> tuple[List[str], List[str]]:
     """Из ``region.config`` достаём ``localities`` и ``discovery_keywords``.
 
-    Оба — необязательные. Поддерживаем оба формата:
-    - list[str]: ``["Тужа", "Шешурга", ...]``.
-    - str: один или несколько элементов через перевод строки / запятую.
-
     Возвращает ``(localities, keywords)`` — оба list[str], strip+dedup
-    с сохранением порядка.
+    с сохранением порядка. Парс делегируется ``parse_list_field``.
     """
-
-    def _coerce(val) -> List[str]:
-        if val is None:
-            return []
-        if isinstance(val, str):
-            raw = re.split(r"[\n,;]+", val)
-        elif isinstance(val, (list, tuple)):
-            raw = [str(x) for x in val]
-        else:
-            return []
-        seen: set[str] = set()
-        out: List[str] = []
-        for item in raw:
-            s = (item or "").strip()
-            if not s or s.lower() in seen:
-                continue
-            seen.add(s.lower())
-            out.append(s)
-        return out
-
     cfg = region.config or {}
-    return _coerce(cfg.get("localities")), _coerce(cfg.get("discovery_keywords"))
+    return (
+        parse_list_field(cfg.get("localities")),
+        parse_list_field(cfg.get("discovery_keywords")),
+    )
 
 
 async def run_discovery_for_region_async(

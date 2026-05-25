@@ -190,6 +190,15 @@ async def region_discovery_page(request: Request, region_code: str):
     )
 
 
+@app.get("/regions/{region_code}/prepare")
+async def region_prepare_page(request: Request, region_code: str):
+    """Подготовка discovery: localities + keywords для региона."""
+    return templates.TemplateResponse(
+        "region_prepare.html",
+        {"request": request, "region_code": region_code},
+    )
+
+
 @app.get("/tokens")
 async def tokens_page(request: Request):
     """Token management page"""
