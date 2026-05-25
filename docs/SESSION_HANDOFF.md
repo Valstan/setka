@@ -3,63 +3,59 @@
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
 **Status:** ACTIVE
-**Updated:** 2026-05-25
+**Updated:** 2026-05-25 evening
 **Branch:** main
-**Last release in prod:** `7ba2560` (PR #41 — AI-batch clipboard, итерация 3 закрыта). Миграция 012 применена, все 3 сервиса active.
+**Last release in prod:** `a7bec89` (PR #44 — relevance-filter fix: center-stem + members-threshold). Применено + nginx timeout 180→600s для `/api/discovery/trigger`. Все 3 сервиса active.
 
 ---
 
 ## Текущая нитка
 
-Практический smoke новой discovery-pipeline на `tuzha` в браузере. Итерация 3 (PR #39/#40/#41) выкачена на прод 2026-05-25 — нужно проверить, что localities-filter и AI-batch действительно режут 147 нерелевантных кандидатов до релевантного ядра.
+Закрытие инцидента discovery tuzha 2026-05-25. Старый relevance-фильтр пропускал ~95% мусора (1787/3784 кандидатов в логе, 278/294 омонимных в БД). Это случилось потому что ChatGPT-prompt насовал в localities реальные нп Тужинского района с омонимами обычных слов («Коробки»→коробк, «Лоскуты»→лоскут, «Соболи»→собол, «Чугуны»→чугун, «Фомино»→фомин, «Самсоны»→самсон) — старый naïve substring-фильтр пропускал «Мир Лоскутов», «Чугун на разлив», «Митя Фомин» и сотни им подобных.
 
-Это пользовательская часть (нажимать кнопки), не код. Следующая сессия должна забрать у пользователя обратную связь: фильтр сработал? OSM Overpass нашёл нп Тужинского района? AI batch удалось скормить ChatGPT/Claude и получить валидный JSON?
+В этой сессии:
+- Вручную через psql: approve 13 tuzha-релевантных кандидатов с категориями (detsad/admin/novost/sosed/kultura/other), defer 3 спорных, **DELETE 278** мусора. 294 → 16 в БД.
+- PR #44 (`a7bec89`) — `_passes_relevance` с center-stem requirement + 50K members threshold; 8 новых тестов; 470/470 зелёных.
+- Прод: pull + restart выполнен, health 200 в 1.09s.
+- Nginx: `/api/discovery/trigger` proxy_read_timeout/send_timeout 180s → 600s (правка в `/etc/nginx/conf.d/setka.conf`, backup в `.bak.20260525-…`, `nginx -t` + reload). Это полу-фикс — настоящий путь Celery + polls (см. PENDING).
 
 ## Следующий шаг
 
-**Спросить у пользователя:** прогнал ли он smoke flow на tuzha, что получилось.
+**Повторный smoke на tuzha** — пользователь должен ещё раз нажать «Запустить discovery» на `/regions/tuzha/prepare` или `/regions/tuzha/discovery`. Ожидаем:
 
-Если **получилось** (фильтр режет хорошо, AI batch работает) — закрыть нитку как ✅, удалить «Итерация 3 ⏳» из [`PENDING_FOLLOWUPS.md`](PENDING_FOLLOWUPS.md), Status→IDLE.
+- Размер итоговой выдачи: ~16-30 кандидатов (vs 294 ранее), все с «туж»/«тужин» в name+description.
+- Время: вероятно всё ещё ~80-200с (sync rate-lock на VK calls + Groq 403 быстро отлупает) — но nginx теперь не отвалится при <600с.
+- Если в выдаче снова мусор без «туж» — значит правило «≥2 distinct stems» в маленькой группе сработало на омонимной паре (нужен blacklist стемов).
 
-Если **что-то не так** — диагностика по конкретному месту. Кандидатные точки отказа:
-
-1. **OSM Overpass пуст / медленный** — fallback на ручной ввод через ChatGPT prompt (кнопка «📋 Скопировать prompt»). Если повторяется на нескольких районах — добавить retry в `modules/discovery/osm_overpass.py` или сменить host (`overpass.kumi.systems`, `overpass.openstreetmap.fr`).
-2. **Hard filter режет слишком много** — стем «туж» (отбрасывает конечные гласные) пропускает группы без явного топонима. Если пользователь жалуется на потерянные хорошие группы — добавить в `region.config['discovery_keywords']` синонимы / связанные слова.
-3. **AI batch — JSON parser спотыкается** — ChatGPT/Claude может вернуть markdown-обёртку, лишний текст до/после, экранированные кавычки. Парсер в `web/static/js/region_ai_batch.js::parseLLMResponse` уже умеет strip ```json``` фенсов + regex `[\s\S]*?\[...\]` fallback. Если падает — снять скрин конкретного ответа, добавить case в парсер.
-
-Доступы и команды:
-- Прод HEAD на `7ba2560`. Health 200 в 1.09s. Сервисы все `active`.
-- UI tuzha: `/regions/tuzha/prepare`, `/regions/tuzha/discovery`, `/regions/tuzha/discovery/ai-batch`.
-- API status: `curl http://127.0.0.1:8000/api/discovery/regions/tuzha/ai-batch/status` (через ssh setka-prod).
+После smoke — либо закрыть нитку (✅ всё работает), либо ещё итерация по фильтру / nginx-Celery / Groq.
 
 ## Контекст
 
-- **План:** нет активного — нитка перешла из «писать код» в «получить feedback от пользователя».
+- **Прод HEAD:** `a7bec89` (`fix(discovery): center-stem requirement + members-threshold`).
 - **Связанные коммиты сессии:**
-  - `00e6ffc` (PR #39) — `feat(discovery)` backend: localities-driven search + relevance filter. +34 теста.
-  - `f077967` (PR #40) — `feat(discovery)` UI «Подготовка района»: prepare-страница + OSM Overpass + 2 prompt-блока clipboard. +24 теста.
-  - `7ba2560` (PR #41) — `feat(discovery)` AI-batch через clipboard: ai-batch страница + 3 endpoint + JSON parser + relevance badge/filter. +11 тестов.
-- **Прод-изменения вне репо:** только применение миграции 012 (`scripts/migrate.py up`) + restart всех 3 сервисов. Никаких ручных правок в `/etc/setka/setka.env` или nginx.
-- **Прод:** HEAD `7ba2560`, миграция 012 применена, health `/api/health/full` → 200 в 1.09s, все 3 systemd active. AI batch status для tuzha: 147 pending, 0 processed (ждут smoke).
+  - `a7bec89` (PR #44) — relevance-фильтр через `_passes_relevance` + 8 тестов.
+  - SQL (на проде, вручную): UPDATE 13 approved with category + UPDATE 3 deferred + DELETE 278 мусора.
+  - Nginx: `setka.conf` location `/api/discovery/trigger` timeout 180→600s (live edit, в репо НЕ записано).
+- **Прод:** HEAD `a7bec89`, health 200 в 1.09s, 3 сервиса active. tuzha candidates: **16** (13 approved + 3 deferred).
 - **Открытых PR:** нет.
-- **Тесты:** 479/479 зелёных (+69 новых за сессию: 34 + 24 + 11).
+- **Тесты:** 470/470 зелёных.
 
 ## Failed approaches (этой нитки)
 
-_Не было — все три PR прошли с первого захода._ Один тестовый кейс по stem поправили (порог 4+2 не отрезал «Тужа» → переделали на «отбрасывать конечные гласные»), но это в рамках работы над PR 1, не отдельный отвергнутый подход.
+- **Старый relevance-фильтр («matched > 0 → pass»)** — не различает специфичный центральный стем от омонимного дочернего. Заменён на многокомпонентный `_passes_relevance`.
+- **Hard blacklist общих стемов (коробк/лоскут/собол/…)** — рассматривался, но мутный: нужен domain-знаний список, который придётся вести вручную; разный для разных регионов. Заменено более универсальным правилом «требовать центр-стем для больших групп + ≥2 distinct stems для маленьких».
+- **Поднимать `_STEM_MIN_LEN` с 3 до 5** — отрезало бы «туж» (3 символа), сломав основной кейс. Не подходит.
 
 ## Открытые вопросы для пользователя
 
-- Прогнал ли smoke на tuzha — что получилось?
-- OSM Overpass отдал нп Тужинского района или пришлось через ChatGPT prompt?
-- AI-batch — какой LLM использовали (ChatGPT-4 / Claude / другой)? JSON-ответ валидный с первого раза?
-- Сколько кандидатов осталось после localities-фильтра (было 147)? Категоризация хорошая?
+- Прогнал ли повторный smoke на tuzha — сколько кандидатов на выходе? Все ли с «туж» в name?
+- Обновим ли `GROQ_API_KEY` в `/etc/setka/setka.env`? Без него AI-категоризация в discovery не работает (PENDING 🔴).
 
 ## Не забыть (low-priority)
 
-- 🟡 [PENDING_FOLLOWUPS](PENDING_FOLLOWUPS.md): SSH alias несоответствие — в `~/.ssh/config` `setka-prod`, в CLAUDE.md/командах `setka` (после PR #16). Решить: либо вернуть `setka-prod` в доки, либо обновить локальный config. Подсветил в `/start`, пользователь пока не выбрал.
-- 🟢 Авто-discovery от ИНФО-страницы (`wall.get` главной группы + `copy_history.owner_id`) — сильный сигнал «эта группа уже партнёр района». Записан в PENDING как 🟢 идея.
-- 🟡 `docs/inbox-from-brain/` (untracked локально, 6 .md от 22 мая) — legacy после asymmetric mailbox-migration. Не моя зона. Можно удалить руками или оставить — на коммит в setka не влияет.
+- 🟡 nginx `/api/discovery/trigger` timeout 600s — это «костыль». Правильный путь: переписать endpoint на Celery (запуск таски + endpoint возвращает task_id + UI polls /status). Записано в PENDING.
+- 🟢 ChatGPT-prompt для localities тоже усовершенствовать — попросить ChatGPT помечать «потенциально омонимные» нп (Коробки/Лоскуты/…), чтобы UI мог их подсветить модератору как «может дать шум».
+- 🟢 Авто-discovery от ИНФО-страницы (`wall.get` главной группы + `copy_history.owner_id`) — сильный сигнал.
 - 📬 Ack-письмо в `mailbox/to-brain/` про реализованную [SESSION_HANDOFF директиву](../../brain_matrica/mailboxes/setka/from-brain/2026-05-23-adopt-session-handoff.md) — `compliance: recommend`/SHOULD, директива выполнена в PR #20, brain'у формального ack'а не отправляли. Низкий приоритет.
 
 ---
