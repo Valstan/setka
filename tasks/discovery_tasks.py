@@ -310,12 +310,14 @@ async def run_discovery_for_region_async(
 
     client = VKClient(token=token)
 
-    # search_groups + get_groups_by_ids — sync; не блокируем event loop.
+    # search_groups + get_groups_by_ids + wall.get(info_page) — sync; не
+    # блокируем event loop.
     groups: List[DiscoveredGroup] = await asyncio.to_thread(
         discover_for_region,
         client=client,
         center_city=region.center_city,
         vk_city_id=region.vk_city_id,
+        vk_group_id=region.vk_group_id,
         localities=localities,
         keywords=keywords,
         per_query_count=per_query_count,
