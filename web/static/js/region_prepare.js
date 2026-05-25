@@ -235,36 +235,83 @@
     locSaveBtn.addEventListener('click', () => saveField('localities', locInput, locSaveStatus, locSaveBtn));
     kwSaveBtn.addEventListener('click', () => saveField('discovery_keywords', kwInput, kwSaveStatus, kwSaveBtn));
 
-    // ─── Run discovery ────────────────────────────────────────────
+    // ─── Run discovery (async через Celery + polling) ─────────────
+    // Discovery для больших районов (50+ нп) занимает 5+ минут — sync-запрос
+    // упирается в nginx и оставляет UI зависшим. Через Celery задача уходит
+    // в фон, JS опрашивает /task/{id} и показывает прошедшее время.
     runBtn.addEventListener('click', async () => {
         // Сначала автосохраним оба поля (если юзер забыл).
         await saveField('localities', locInput, locSaveStatus, locSaveBtn);
         await saveField('discovery_keywords', kwInput, kwSaveStatus, kwSaveBtn);
 
         runBtn.disabled = true;
-        runBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Запускаю…';
-        discoveryStatus.innerHTML = '<div class="alert alert-info">🔍 Discovery идёт (30-120 сек)…</div>';
+        const startedAt = Date.now();
+        const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
+        const setRunning = (text) => {
+            runBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${text}`;
+        };
+        setRunning('Ставлю задачу…');
+        discoveryStatus.innerHTML =
+            '<div class="alert alert-info">🔍 Готовлю discovery (запрос уйдёт в фон, UI не повиснет)…</div>';
+
         try {
-            // /trigger ожидает region_id, не code — придётся сначала узнать id.
+            // /trigger-async ожидает region_id — сначала узнаём id по code.
             const regResp = await fetch('/api/regions/');
             const regData = await regResp.json();
             const list = Array.isArray(regData) ? regData : (regData.regions || []);
             const region = list.find(r => r.code === code);
             if (!region) throw new Error(`Регион "${code}" не найден`);
 
-            const discResp = await fetch('/api/discovery/trigger', {
+            const triggerResp = await fetch('/api/discovery/trigger-async', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({region_id: region.id}),
             });
-            const discData = await discResp.json();
-            if (!discResp.ok) {
-                throw new Error(discData.detail || `HTTP ${discResp.status}`);
+            if (!triggerResp.ok) {
+                const txt = await triggerResp.text();
+                throw new Error(`HTTP ${triggerResp.status}: ${txt.slice(0, 200)}`);
             }
-            discoveryStatus.innerHTML = `<div class="alert alert-success">✅ Найдено <strong>${discData.found}</strong> кандидатов после фильтра релевантности. Открываю список…</div>`;
-            setTimeout(() => {
-                window.location.href = `/regions/${encodeURIComponent(code)}/discovery`;
-            }, 1500);
+            const {task_id} = await triggerResp.json();
+            if (!task_id) throw new Error('сервер не вернул task_id');
+
+            // Polling каждые 5 сек.
+            const POLL_MS = 5000;
+            const MAX_WAIT_SEC = 1800;  // 30 мин — upper-bound и для nginx
+
+            while (true) {
+                await new Promise(r => setTimeout(r, POLL_MS));
+                const sec = elapsedSec();
+                if (sec > MAX_WAIT_SEC) {
+                    throw new Error(`таймаут ${MAX_WAIT_SEC}с (задача всё ещё работает в Celery — проверь позже)`);
+                }
+                setRunning(`Ищу сообщества… ${sec}с`);
+                discoveryStatus.innerHTML =
+                    `<div class="alert alert-info">🔍 Discovery работает в фоне. Прошло ${sec}с (обычно 1-5 мин, до 30 мин для крупных районов).</div>`;
+
+                const statusResp = await fetch(`/api/discovery/task/${task_id}`);
+                if (!statusResp.ok) {
+                    console.warn(`status poll HTTP ${statusResp.status}, retry`);
+                    continue;
+                }
+                const status = await statusResp.json();
+                if (!status.ready) continue;
+
+                if (status.state === 'SUCCESS') {
+                    const result = status.result || {};
+                    const found = result.found || 0;
+                    const inserted = result.inserted || 0;
+                    discoveryStatus.innerHTML =
+                        `<div class="alert alert-success">✅ Найдено <strong>${found}</strong> кандидатов после фильтра релевантности (${inserted} новых записано). Открываю список…</div>`;
+                    setTimeout(() => {
+                        window.location.href = `/regions/${encodeURIComponent(code)}/discovery`;
+                    }, 1500);
+                    return;
+                }
+                if (status.state === 'FAILURE') {
+                    throw new Error(status.error || 'задача завершилась с ошибкой');
+                }
+                // REVOKED / RETRY — продолжаем polling
+            }
         } catch (e) {
             discoveryStatus.innerHTML = `<div class="alert alert-danger">❌ ${escapeHtml(e.message)}</div>`;
             runBtn.disabled = false;

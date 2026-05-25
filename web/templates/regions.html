@@ -398,32 +398,75 @@ function renderRegionCard(region) {
     `;
 }
 
-// Запуск discovery для существующего региона. Endpoint автоматически исключает
-// уже-добавленные communities и rejected-кандидатов — дублей в БД не появится.
-// Может занять 1-5 минут, кнопка переходит в loading.
+// Запуск discovery для существующего региона через Celery + polling.
+// Endpoint автоматически исключает уже-добавленные communities и rejected
+// кандидатов — дублей в БД не появится. Запрос занимает 1-5 минут, но UI
+// не блокируется: задача уходит в Celery, JS опрашивает /task/{id} каждые
+// 5 секунд и показывает прошедшее время.
 async function refreshDiscovery(regionId, regionCode) {
     const btn = document.getElementById(`refresh-btn-${regionId}`);
     if (!btn) return;
     const originalHtml = btn.innerHTML;
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Ищу сообщества… (до 5 мин)';
+
+    const startedAt = Date.now();
+    const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
+    const setBtnLabel = (text) => {
+        btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${text}`;
+    };
+    setBtnLabel('Ставлю задачу…');
+
     try {
-        const resp = await fetch('/api/discovery/trigger', {
+        // 1. Поставить задачу в Celery
+        const triggerResp = await fetch('/api/discovery/trigger-async', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({region_id: regionId})
         });
-        if (!resp.ok) {
-            const txt = await resp.text();
-            throw new Error(`HTTP ${resp.status}: ${txt.slice(0, 200)}`);
+        if (!triggerResp.ok) {
+            const txt = await triggerResp.text();
+            throw new Error(`HTTP ${triggerResp.status}: ${txt.slice(0, 200)}`);
         }
-        const data = await resp.json();
-        const inserted = data.inserted || 0;
-        const refreshed = data.refreshed || 0;
-        showToast(`Поиск завершён: новых ${inserted}, обновлено ${refreshed}. Открываю проверку…`, 'success');
-        setTimeout(() => {
-            window.location.href = `/regions/${regionCode}/discovery`;
-        }, 1200);
+        const {task_id} = await triggerResp.json();
+        if (!task_id) throw new Error('сервер не вернул task_id');
+
+        // 2. Polling статуса каждые 5 секунд
+        setBtnLabel(`Ищу сообщества… 0с`);
+        const POLL_MS = 5000;
+        const MAX_WAIT_SEC = 1800;  // 30 мин — соответствует nginx upper-bound
+
+        while (true) {
+            await new Promise(r => setTimeout(r, POLL_MS));
+            const sec = elapsedSec();
+            if (sec > MAX_WAIT_SEC) {
+                throw new Error(`таймаут ${MAX_WAIT_SEC}с (задача всё ещё работает в Celery — проверь позже)`);
+            }
+            setBtnLabel(`Ищу сообщества… ${sec}с`);
+
+            const statusResp = await fetch(`/api/discovery/task/${task_id}`);
+            if (!statusResp.ok) {
+                // Транзиентные сетевые ошибки — продолжаем polling
+                console.warn(`status poll HTTP ${statusResp.status}, retry`);
+                continue;
+            }
+            const status = await statusResp.json();
+            if (!status.ready) continue;  // PENDING / STARTED / RETRY
+
+            if (status.state === 'SUCCESS') {
+                const result = status.result || {};
+                const inserted = result.inserted || 0;
+                const refreshed = result.refreshed || 0;
+                showToast(`Поиск завершён за ${sec}с: новых ${inserted}, обновлено ${refreshed}. Открываю проверку…`, 'success');
+                setTimeout(() => {
+                    window.location.href = `/regions/${regionCode}/discovery`;
+                }, 1200);
+                return;
+            }
+            if (status.state === 'FAILURE') {
+                throw new Error(status.error || 'задача завершилась с ошибкой');
+            }
+            // REVOKED, RETRY и пр. — продолжаем polling
+        }
     } catch (err) {
         console.error('refreshDiscovery failed', err);
         showToast('Ошибка поиска сообществ: ' + err.message, 'error');

@@ -131,6 +131,83 @@ async def test_trigger_does_not_update_last_discovery_at_on_failure():
     assert session.committed is False
 
 
+async def test_trigger_async_returns_task_id():
+    """trigger-async ставит задачу в Celery и возвращает task_id для polling."""
+    payload = discovery_api.TriggerIn(region_id=7)
+    fake_task = MagicMock()
+    fake_task.id = "task-abc-123"
+    fake_task.state = "PENDING"
+    fake_celery = MagicMock()
+    fake_celery.send_task.return_value = fake_task
+    with patch.dict("sys.modules", {"tasks.celery_app": MagicMock(app=fake_celery)}):
+        out = await discovery_api.trigger_discovery_async(payload)
+    assert out["task_id"] == "task-abc-123"
+    assert out["state"] == "PENDING"
+    assert out["region_id"] == 7
+    fake_celery.send_task.assert_called_once()
+    args, _ = fake_celery.send_task.call_args
+    assert args[0] == "tasks.discovery_tasks.run_discovery_for_region"
+
+
+async def test_task_status_success_returns_result():
+    """Когда таска SUCCESS — endpoint возвращает result runner'а."""
+    fake_ar = MagicMock()
+    fake_ar.state = "SUCCESS"
+    fake_ar.ready.return_value = True
+    fake_ar.result = {"success": True, "region": "mi", "found": 5}
+    with patch.dict(
+        "sys.modules",
+        {
+            "tasks.celery_app": MagicMock(app=MagicMock()),
+            "celery.result": MagicMock(AsyncResult=lambda tid, app: fake_ar),
+        },
+    ):
+        out = await discovery_api.get_discovery_task_status("task-xyz")
+    assert out["state"] == "SUCCESS"
+    assert out["ready"] is True
+    assert out["result"] == {"success": True, "region": "mi", "found": 5}
+    assert out["error"] is None
+
+
+async def test_task_status_failure_returns_error():
+    """Когда таска FAILURE — endpoint возвращает текст ошибки в error."""
+    fake_ar = MagicMock()
+    fake_ar.state = "FAILURE"
+    fake_ar.ready.return_value = True
+    fake_ar.result = RuntimeError("boom")
+    with patch.dict(
+        "sys.modules",
+        {
+            "tasks.celery_app": MagicMock(app=MagicMock()),
+            "celery.result": MagicMock(AsyncResult=lambda tid, app: fake_ar),
+        },
+    ):
+        out = await discovery_api.get_discovery_task_status("task-fail")
+    assert out["state"] == "FAILURE"
+    assert out["ready"] is True
+    assert out["result"] is None
+    assert "boom" in out["error"]
+
+
+async def test_task_status_pending_returns_no_result_no_error():
+    """Pending/Started — ready=False, result и error None."""
+    fake_ar = MagicMock()
+    fake_ar.state = "STARTED"
+    fake_ar.ready.return_value = False
+    with patch.dict(
+        "sys.modules",
+        {
+            "tasks.celery_app": MagicMock(app=MagicMock()),
+            "celery.result": MagicMock(AsyncResult=lambda tid, app: fake_ar),
+        },
+    ):
+        out = await discovery_api.get_discovery_task_status("task-pending")
+    assert out["state"] == "STARTED"
+    assert out["ready"] is False
+    assert out["result"] is None
+    assert out["error"] is None
+
+
 async def test_trigger_translates_failure_to_http_400():
     payload = discovery_api.TriggerIn(region_id=7)
     with patch.object(

@@ -426,6 +426,75 @@ class TriggerIn(BaseModel):
         return v
 
 
+@router.post("/trigger-async")
+async def trigger_discovery_async(payload: TriggerIn):
+    """Async-вариант ``/trigger``: ставит задачу в Celery, возвращает task_id.
+
+    Клиент опрашивает ``/task/{task_id}`` для прогресса. Используется UI на
+    ``/regions`` (refresh-кнопка из PR #46) и на ``/regions/<code>/prepare``
+    (кнопка «Запустить discovery») — там запросы длинные (до 5+ минут для
+    крупных районов с 60+ нп), синхронный путь упирается в nginx-timeout
+    и оставляет UI в зависшем состоянии.
+
+    Возвращает ``{task_id, state}`` где ``state`` обычно ``PENDING`` (Celery
+    ещё не подхватил) или ``STARTED``. Дубли с существующими communities
+    исключаются автоматически — см. ``_existing_vk_ids``.
+    """
+    try:
+        from tasks.celery_app import app as celery_app
+    except ImportError as e:  # pragma: no cover
+        raise HTTPException(status_code=503, detail=f"Celery не доступен: {e}")
+
+    try:
+        task = celery_app.send_task(
+            "tasks.discovery_tasks.run_discovery_for_region",
+            args=[payload.region_id, payload.categories],
+        )
+    except Exception as e:
+        logger.exception("trigger-async send_task failed")
+        raise HTTPException(status_code=500, detail=f"Не удалось поставить задачу: {e}")
+
+    return {"task_id": task.id, "state": task.state, "region_id": payload.region_id}
+
+
+@router.get("/task/{task_id}")
+async def get_discovery_task_status(task_id: str):
+    """Статус Celery-задачи discovery (для polling из UI).
+
+    Возвращает ``{state, ready, result, error}``:
+    - ``state`` ∈ {PENDING, STARTED, SUCCESS, FAILURE, RETRY, REVOKED}
+    - ``ready`` — True если задача завершена (success или failure)
+    - ``result`` — отчёт runner'а если ``state=SUCCESS`` (``found``,
+      ``inserted``, ``refreshed`` и т.д.), иначе ``None``
+    - ``error`` — текст ошибки если ``state=FAILURE``, иначе ``None``
+    """
+    try:
+        from celery.result import AsyncResult
+
+        from tasks.celery_app import app as celery_app
+    except ImportError as e:  # pragma: no cover
+        raise HTTPException(status_code=503, detail=f"Celery не доступен: {e}")
+
+    ar = AsyncResult(task_id, app=celery_app)
+    state = ar.state
+    ready = ar.ready()
+
+    payload = {"task_id": task_id, "state": state, "ready": ready, "result": None, "error": None}
+
+    if state == "SUCCESS":
+        try:
+            payload["result"] = ar.result
+        except Exception as e:  # pragma: no cover
+            payload["error"] = f"не удалось получить result: {e}"
+    elif state == "FAILURE":
+        try:
+            payload["error"] = str(ar.result)
+        except Exception:  # pragma: no cover
+            payload["error"] = "задача завершилась с ошибкой"
+
+    return payload
+
+
 @router.post("/trigger")
 async def trigger_discovery(payload: TriggerIn):
     """Run discovery for one region. Synchronous — UI wizard ждёт результата.
