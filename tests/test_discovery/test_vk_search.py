@@ -9,6 +9,7 @@ from modules.discovery.vk_search import (
     CATEGORY_KEYWORDS,
     _build_search_plan,
     _count_localities_in_text,
+    _harvest_repost_owner_ids,
     _make_stem,
     _passes_relevance,
     discover_for_region,
@@ -505,3 +506,131 @@ def test_discover_keeps_small_village_with_two_distinct_locality_matches():
         keywords=[],
     )
     assert [g.vk_id for g in groups] == [1]
+
+
+# ───────── ИНФО-страница репосты ─────────
+
+
+def test_harvest_repost_owner_ids_returns_unique_positives_excluding_self():
+    """copy_history.owner_id собирается как уникальные положительные id;
+    сам main_group_id исключается; знак нормализуется через abs()."""
+    client = MagicMock()
+    client.get_wall_posts.return_value = [
+        {"copy_history": [{"owner_id": -111}, {"owner_id": -222}]},  # 111, 222
+        {"copy_history": [{"owner_id": -222}]},  # dup
+        {"text": "no copy_history"},
+        {"copy_history": [{"owner_id": -42}]},  # сам main_group → исключить
+        {"copy_history": [{"owner_id": 333}]},  # уже положительный (теоретически)
+        {"copy_history": [{"owner_id": None}, {"owner_id": "broken"}]},  # шум
+    ]
+    out = _harvest_repost_owner_ids(client, main_group_id=42)
+    assert out == [111, 222, 333]
+    # wall.get вызывается с отрицательным owner_id (group convention в VK API).
+    client.get_wall_posts.assert_called_once()
+    kwargs = client.get_wall_posts.call_args.kwargs
+    assert kwargs["owner_id"] == -42
+
+
+def test_harvest_repost_owner_ids_returns_empty_on_vk_error():
+    """Закрытая стена / VK error → пустой результат, без raise.
+
+    Discovery не должен падать целиком из-за info-репостов."""
+    client = MagicMock()
+    client.get_wall_posts.side_effect = RuntimeError("VK error 15: access denied")
+    assert _harvest_repost_owner_ids(client, main_group_id=42) == []
+
+
+def test_harvest_repost_owner_ids_returns_empty_without_main_group():
+    """Регион без vk_group_id — нет источника, без VK-вызова."""
+    client = MagicMock()
+    assert _harvest_repost_owner_ids(client, main_group_id=0) == []
+    client.get_wall_posts.assert_not_called()
+
+
+def test_discover_picks_info_repost_candidates_first():
+    """Если у региона есть vk_group_id — кандидаты из репостов попадают
+    в seen первыми, ``discovered_via='info_repost'`` побеждает в дедупе
+    над geo_search / loc / kw."""
+    client = MagicMock()
+    client.get_wall_posts.return_value = [
+        {"copy_history": [{"owner_id": -555}]},
+    ]
+    client.search_groups.return_value = [
+        # Та же группа id=555 находится и через VK search — но должна
+        # сохранить discovered_via='info_repost' (info-page имеет priority).
+        {"id": 555, "name": "Паблик Тужи"},
+    ]
+    client.get_groups_by_ids.return_value = [
+        {"id": 555, "name": "Паблик Тужи", "members_count": 500},
+    ]
+    groups = discover_for_region(
+        client=client,
+        center_city="Тужа",
+        vk_group_id=42,
+        localities=["Тужа"],
+        keywords=[],
+    )
+    assert [g.vk_id for g in groups] == [555]
+    assert groups[0].discovered_via == "info_repost"
+
+
+def test_discover_info_repost_results_go_through_relevance_filter():
+    """Репосты главной страницы — сильный сигнал, но если группа явно
+    нерелевантна (например главная репостит областной паблик «Вести
+    Кировской области» с 200K подписчиков и без 'туж' в имени) — она
+    отвалится в relevance-фильтре (большая группа без центрального стема)."""
+    client = MagicMock()
+    client.get_wall_posts.return_value = [
+        {"copy_history": [{"owner_id": -111}, {"owner_id": -222}]},
+    ]
+    client.search_groups.return_value = []
+    client.get_groups_by_ids.return_value = [
+        {"id": 111, "name": "Васькино.Тужинский район", "members_count": 491},
+        {"id": 222, "name": "Вести. Кировская область", "members_count": 200000},
+    ]
+    groups = discover_for_region(
+        client=client,
+        center_city="Тужа",
+        vk_group_id=42,
+        localities=["Тужа"],
+        keywords=[],
+    )
+    # 111 проходит (has center stem «туж»), 222 нет (большая без центра)
+    assert [g.vk_id for g in groups] == [111]
+
+
+def test_discover_skips_info_repost_when_no_vk_group_id():
+    """Регион без vk_group_id — wall.get не вызывается."""
+    client = MagicMock()
+    client.search_groups.return_value = []
+    client.get_groups_by_ids.return_value = []
+    discover_for_region(
+        client=client,
+        center_city="Тужа",
+        vk_group_id=None,
+        localities=["Тужа"],
+        keywords=[],
+    )
+    client.get_wall_posts.assert_not_called()
+
+
+def test_discover_skips_info_repost_for_excluded_vk_ids():
+    """Если id из репостов уже в exclude_vk_ids (уже добавлен в communities)
+    — не дублируем, просто пропускаем."""
+    client = MagicMock()
+    client.get_wall_posts.return_value = [
+        {"copy_history": [{"owner_id": -111}, {"owner_id": -222}]},
+    ]
+    client.search_groups.return_value = []
+    client.get_groups_by_ids.return_value = [
+        {"id": 222, "name": "Тужа район", "members_count": 100},
+    ]
+    groups = discover_for_region(
+        client=client,
+        center_city="Тужа",
+        vk_group_id=42,
+        localities=["Тужа"],
+        keywords=[],
+        exclude_vk_ids=[111],  # 111 уже добавлен
+    )
+    assert [g.vk_id for g in groups] == [222]

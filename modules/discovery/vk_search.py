@@ -2,13 +2,19 @@
 
 Strategy (2026-05-25 rework: localities-driven, см. PR feat/discovery-localities-relevance):
 
+0. **Info-page reposts** (2026-05-26) — если у региона задан ``vk_group_id``,
+   читаем ``wall.get(count=100)`` главной ИНФО-группы района и собираем
+   уникальные ``copy_history.owner_id``. Это самый качественный источник —
+   оператор главной страницы сам выбрал кого репостить (минимум
+   false-positive). ``discovered_via='info_repost'``.
 1. **Geo search** — ``groups.search(q="<center_city>", city_id=<vk_city_id>)``.
 2. **Localities search** — для каждого нп из ``region.config['localities']``
    шлём ``groups.search(q="<нп>")`` без city_id. Это даёт мелкие районные
    паблики, которые VK не привязывает к городу-центру.
 3. **Keyword search** — для каждого ключевика из ``region.config['discovery_keywords']``
    (или fallback ``CATEGORY_KEYWORDS``) шлём ``groups.search(q="<center_city> <keyword>")``.
-4. **Dedup** — по ``id``. ``discovered_via`` фиксирует первый источник.
+4. **Dedup** — по ``id``. ``discovered_via`` фиксирует первый источник
+   (info_repost имеет приоритет — он шаг 0).
 5. **Enrichment** — один ``groups.getById(group_ids=…, fields=…)`` для всех
    уникальных id.
 6. **Hard relevance filter** — многокомпонентный (см. ``_passes_relevance``):
@@ -237,17 +243,74 @@ def _build_search_plan(
 
 DEFAULT_MAX_CANDIDATES = 150
 
+# Сколько последних постов главной ИНФО-страницы района читаем для сбора
+# `copy_history.owner_id` (репостов). 100 покрывает 3-6 месяцев активной
+# страницы, дальше уже маловероятно найти новых партнёров. Один запрос —
+# дёшево по VK quota и rate-limit.
+DEFAULT_INFO_REPOST_POSTS = 100
+
+
+def _harvest_repost_owner_ids(
+    client: VKClient,
+    *,
+    main_group_id: int,
+    posts_count: int = DEFAULT_INFO_REPOST_POSTS,
+) -> List[int]:
+    """Собирает уникальные ``copy_history.owner_id`` со стены главной
+    ИНФО-группы района.
+
+    Это сильный сигнал «эта группа уже партнёр района» — оператор главной
+    страницы сам выбрал её репостить. Сюда же могут попасть областные
+    паблики (если главная страница их репостит) — отсев пойдёт через
+    общий relevance-фильтр в ``discover_for_region``.
+
+    Args:
+        client: VKClient.
+        main_group_id: positive id главной группы района (Region.vk_group_id
+            хранится как положительный; знак минус для wall.get добавляем тут).
+        posts_count: сколько последних постов читать (default 100).
+
+    Returns:
+        Список уникальных положительных vk_id. Сам ``main_group_id`` исключён.
+        Пустой список при любой ошибке (закрытая стена / VK API error).
+    """
+    if not main_group_id:
+        return []
+    try:
+        posts = client.get_wall_posts(owner_id=-abs(int(main_group_id)), count=posts_count)
+    except Exception as e:
+        logger.warning("discovery: info_repost wall.get failed for %s: %s", main_group_id, e)
+        return []
+
+    own_id = abs(int(main_group_id))
+    seen_ids: set[int] = set()
+    for post in posts or []:
+        for ch in post.get("copy_history") or []:
+            owner = ch.get("owner_id")
+            if owner is None:
+                continue
+            try:
+                gid = abs(int(owner))
+            except (TypeError, ValueError):
+                continue
+            if gid == own_id:
+                continue
+            seen_ids.add(gid)
+    return sorted(seen_ids)
+
 
 def discover_for_region(
     *,
     client: VKClient,
     center_city: str,
     vk_city_id: Optional[int] = None,
+    vk_group_id: Optional[int] = None,
     localities: Optional[Sequence[str]] = None,
     keywords: Optional[Sequence[str]] = None,
     per_query_count: int = 100,
     exclude_vk_ids: Optional[Sequence[int]] = None,
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
+    info_repost_posts: int = DEFAULT_INFO_REPOST_POSTS,
 ) -> List[DiscoveredGroup]:
     """Run composite discovery.
 
@@ -258,6 +321,10 @@ def discover_for_region(
         vk_city_id: optional numeric VK city_id. If given, geo-search uses it.
             Локалитеты и keyword-search всегда без city_id (мелкие районные
             паблики часто помечены городом-центром района, не каждым нп).
+        vk_group_id: optional positive id главной ИНФО-группы района. Если
+            задан — читаем её последние посты и собираем ``copy_history.owner_id``
+            как дополнительный источник кандидатов (``discovered_via='info_repost'``).
+            Сильный сигнал «партнёр района» с минимумом false-positive.
         localities: список нп района (Тужа, Шешурга, Михайловское, ...).
             Используются и как поисковые запросы, и как **жёсткий фильтр**
             релевантности — кандидат без ни одного нп в name/description
@@ -267,12 +334,14 @@ def discover_for_region(
         per_query_count: how many results to ask VK per call.
         exclude_vk_ids: positive ids (уже добавленные communities + rejected).
         max_candidates: top-N после relevance-фильтра и сортировки.
+        info_repost_posts: сколько последних постов главной группы читать
+            для harvest'а repost-кандидатов. Default 100.
 
     Returns:
         Список ``DiscoveredGroup``, отсортированный по
         ``(matched_localities desc, members_count desc)``.
     """
-    if not (center_city or "").strip() and not (localities or []):
+    if not (center_city or "").strip() and not (localities or []) and not vk_group_id:
         return []
 
     loc_list = [loc for loc in (localities or []) if (loc or "").strip()]
@@ -284,8 +353,26 @@ def discover_for_region(
     )
     exclude_set = {abs(int(v)) for v in (exclude_vk_ids or [])}
 
-    # Step 1+2+3: search.
     seen: Dict[int, DiscoveredGroup] = {}
+
+    # Step 0: ИНФО-страница репосты. Самый качественный источник — оператор
+    # главной группы района сам выбрал кого репостить. Делаем его первым,
+    # чтобы при дедупе ``discovered_via`` оставался ``info_repost``
+    # (информативнее чем geo_search / kw:новости).
+    if vk_group_id:
+        repost_ids = _harvest_repost_owner_ids(
+            client, main_group_id=int(vk_group_id), posts_count=info_repost_posts
+        )
+        if repost_ids:
+            logger.info("discovery: info_repost — собрано %d уникальных vk_id", len(repost_ids))
+        for gid in repost_ids:
+            if gid in seen or gid in exclude_set:
+                continue
+            # Полные metadata (name, description, members_count) заберём
+            # в Step 4 общим вызовом get_groups_by_ids.
+            seen[gid] = DiscoveredGroup(vk_id=gid, name="", discovered_via="info_repost")
+
+    # Step 1+2+3: search.
     for query, source, use_city_id in plan:
         try:
             city_id_for_call = vk_city_id if use_city_id else None
