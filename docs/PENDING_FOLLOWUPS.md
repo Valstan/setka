@@ -50,6 +50,20 @@ print(asyncio.run(categorize_candidate(name=\\\"тест\\\", description=\\\"т
 - ✅ **Recheck (итерация 2)**: `modules/discovery/health_check.py` + `tasks.discovery_tasks.recheck_communities_for_region` / `recheck_all_active_regions`. Beat entry `discovery-recheck-weekly` (Mon 04:00 MSK). Telegram-alert по итогам. VK errors 15/18/100/203 → `dead`; пост старше `dormant_days` (default 60, override `region.config['dormant_days']`) → `dormant`; AI drift при confidence ≥ 70 → `changed_category` + `suggested_category`.
 - ✅ +90 тестов всего по big idea (60 MVP + 30 recheck), 360/360 зелёных.
 
+### Итерация 3 — localities-driven discovery + human-in-the-loop AI
+
+Начато 2026-05-25 после жалобы на качество подбора кандидатов: discovery для `tuzha` возвращал крупные общегородские паблики Кирова/Татарстана без географической привязки к Тужинскому району. Корень — VK `groups.search` не строгий + сортировка по `members_count` усиливала перекос. Параллельно — `GROQ_API_KEY` 403 на проде (нет бюджета, см. 🔴 блокеры) → AI-категоризация перестала фильтровать релевантность.
+
+Решение в 3 PR:
+
+- ⏳ **PR 1 — backend (этот)**: миграция 012 (`community_candidates.ai_is_relevant`), `vk_search.py` принимает `localities`/`keywords` из `region.config`, hard relevance-filter (substring по корню топонима с word-boundary слева), сортировка `(matched_localities desc, members_count desc)`. Backwards-compat: пустой config → fallback на старое поведение с `CATEGORY_KEYWORDS`. +34 теста (включая русские склонения и false-positive).
+- 🟡 **PR 2 — UI «Подготовка района»** в wizard `/regions/new` (и `/regions/<code>/edit` для существующих). Два блока clipboard-prompt'ов: «Дай список нп района» и «Дай ключевики для VK-поиска». OSM Overpass auto-suggest для нп с fallback на ручной ввод. API endpoints для save в `regions.config`.
+- 🟡 **PR 3 — AI-batch категоризация через clipboard.** Новая страница `/regions/<code>/discovery/ai-batch`. Чанками по 30 кандидатов: программа собирает JSON + готовый prompt, юзер копирует в ChatGPT/Claude в браузере, копирует ответ обратно. Парсер JSON → `UPDATE community_candidates SET ai_*, ai_is_relevant`. Фильтр «только релевантные» в таблице кандидатов.
+
+После merge всех трёх — операционный шаг: применить к `tuzha` (заполнить localities, re-trigger discovery, прогнать AI-batch, удалить старых нерелевантных pending).
+
+Зачем не ждать Groq: пользователь явно сказал — бюджета на API нет. Human-in-the-loop через clipboard бесплатно (юзер тратит свой ChatGPT/Claude.ai тариф), прозрачно, юзер видит точный prompt. Не масштабируется на еженедельный recheck — но и не нужно, recheck без AI работает (он смотрит health, не категоризацию), `changed_category` детекция временно отключена.
+
 ### Рефакторинг модуля уведомлений VK (этапы 1-5)
 
 Все этапы закрыты:

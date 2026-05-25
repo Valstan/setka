@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -211,10 +212,44 @@ async def _upsert_candidates(
     return {"inserted": inserted, "refreshed": refreshed, "skipped_existing": skipped}
 
 
+def _read_region_discovery_config(region: Region) -> tuple[List[str], List[str]]:
+    """Из ``region.config`` достаём ``localities`` и ``discovery_keywords``.
+
+    Оба — необязательные. Поддерживаем оба формата:
+    - list[str]: ``["Тужа", "Шешурга", ...]``.
+    - str: один или несколько элементов через перевод строки / запятую.
+
+    Возвращает ``(localities, keywords)`` — оба list[str], strip+dedup
+    с сохранением порядка.
+    """
+
+    def _coerce(val) -> List[str]:
+        if val is None:
+            return []
+        if isinstance(val, str):
+            raw = re.split(r"[\n,;]+", val)
+        elif isinstance(val, (list, tuple)):
+            raw = [str(x) for x in val]
+        else:
+            return []
+        seen: set[str] = set()
+        out: List[str] = []
+        for item in raw:
+            s = (item or "").strip()
+            if not s or s.lower() in seen:
+                continue
+            seen.add(s.lower())
+            out.append(s)
+        return out
+
+    cfg = region.config or {}
+    return _coerce(cfg.get("localities")), _coerce(cfg.get("discovery_keywords"))
+
+
 async def run_discovery_for_region_async(
     region_id: int,
     *,
-    categories: Optional[Sequence[str]] = None,
+    categories: Optional[Sequence[str]] = None,  # kept for API compat; unused
     per_query_count: int = 100,
 ) -> Dict[str, Any]:
     """Async core. Pure on top of session — no Celery dependency.
@@ -222,8 +257,13 @@ async def run_discovery_for_region_async(
     Used both by the Celery task (via ``asyncio.run``) and directly by the
     FastAPI handler.
 
-    Returns a structured report ``{success, region, found, inserted, refreshed,
-    skipped_existing, skipped_ai_failed, ai_model}``.
+    Возвращает структурированный отчёт ``{success, region, found, filtered_out,
+    inserted, refreshed, skipped_existing, skipped_ai_failed}``.
+
+    ``categories`` оставлен в сигнатуре для backwards-compat (в Celery wrapper
+    его кто-то мог пробрасывать) — теперь поиск идёт по
+    ``region.config['localities']`` + ``['discovery_keywords']``, либо fallback
+    на flat ``CATEGORY_KEYWORDS`` если config пуст.
     """
     async with AsyncSessionLocal() as session:
         region: Optional[Region] = (
@@ -238,6 +278,7 @@ async def run_discovery_for_region_async(
                 "region": region.code,
             }
         exclude_ids = await _existing_vk_ids(session, region_id)
+        localities, keywords = _read_region_discovery_config(region)
 
     token = _pick_parse_token()
     if not token:
@@ -251,7 +292,8 @@ async def run_discovery_for_region_async(
         client=client,
         center_city=region.center_city,
         vk_city_id=region.vk_city_id,
-        categories=categories,
+        localities=localities,
+        keywords=keywords,
         per_query_count=per_query_count,
         exclude_vk_ids=exclude_ids,
     )
@@ -265,6 +307,8 @@ async def run_discovery_for_region_async(
             "refreshed": 0,
             "skipped_existing": 0,
             "skipped_ai_failed": 0,
+            "localities_count": len(localities),
+            "keywords_count": len(keywords),
         }
 
     ai_results = await _ai_categorize_all(groups, region.name, client=client)
@@ -281,6 +325,8 @@ async def run_discovery_for_region_async(
         "refreshed": counts["refreshed"],
         "skipped_existing": counts["skipped_existing"],
         "skipped_ai_failed": ai_failed,
+        "localities_count": len(localities),
+        "keywords_count": len(keywords),
     }
 
 

@@ -139,6 +139,9 @@ class CommunityCandidate(Base):
     ai_confidence = Column(Integer, nullable=True)  # 0-100
     ai_reasoning = Column(Text, nullable=True)
     ai_is_info_page = Column(Boolean, default=False)
+    # Геопринадлежность району (миграция 012). NULL — ещё не оценено,
+    # TRUE/FALSE — явный ответ нейросети или модератора. UI фильтрует.
+    ai_is_relevant = Column(Boolean, nullable=True, default=None)
 
     # Moderation
     status = Column(String(20), nullable=False, default="pending", index=True)
@@ -175,6 +178,7 @@ class CommunityCandidate(Base):
             "ai_confidence": self.ai_confidence,
             "ai_reasoning": self.ai_reasoning,
             "ai_is_info_page": self.ai_is_info_page,
+            "ai_is_relevant": self.ai_is_relevant,
             "status": self.status,
             "discovered_via": self.discovered_via,
             "created_at": self.created_at.isoformat() if self.created_at else None,
