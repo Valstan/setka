@@ -38,35 +38,19 @@
             <p class="small mb-3">
                 Список городов, ПГТ, сёл и деревень района. Используется как
                 <strong>жёсткий фильтр</strong>: кандидат без хотя бы одного
-                локалитета в названии или описании отбрасывается. Можно
-                подгрузить автоматически из OpenStreetMap, либо скопировать
-                из ChatGPT по готовому prompt'у ниже, либо вписать руками.
+                локалитета в названии или описании отбрасывается. Скопируй
+                <strong>готовый prompt ниже</strong> в ChatGPT/Claude и
+                вставь ответ в поле «Список нп», либо вписывай руками.
             </p>
 
-            <!-- OSM auto-suggest -->
-            <div class="mb-3 p-3 bg-light rounded">
-                <label class="form-label small mb-1">
-                    <i class="bi bi-geo-alt"></i> Авто-подгрузка из OpenStreetMap
-                </label>
-                <div class="input-group input-group-sm">
-                    <span class="input-group-text">Название района в OSM</span>
-                    <input id="osm-district" class="form-control" placeholder="Тужинский район"
-                           maxlength="200">
-                    <button id="osm-fetch-btn" type="button" class="btn btn-outline-primary">
-                        <i class="bi bi-cloud-download"></i> Подгрузить
-                    </button>
-                </div>
-                <div id="osm-status" class="form-text"></div>
-            </div>
-
             <!-- Clipboard prompt -->
-            <details class="mb-3">
+            <details class="mb-3" open>
                 <summary class="small text-muted" style="cursor:pointer;">
-                    <i class="bi bi-clipboard"></i> Альтернатива: скопировать готовый prompt для ChatGPT/Claude
+                    <i class="bi bi-clipboard"></i> Готовый prompt для ChatGPT/Claude
                 </summary>
                 <div class="mt-2">
                     <textarea id="loc-prompt" class="form-control form-control-sm font-monospace small"
-                              rows="4" readonly></textarea>
+                              rows="5" readonly></textarea>
                     <button id="loc-prompt-copy" type="button" class="btn btn-sm btn-outline-secondary mt-1">
                         <i class="bi bi-clipboard"></i> Скопировать prompt
                     </button>
@@ -158,5 +142,5 @@
 <script>
     window.REGION_CODE = {{ region_code|tojson }};
 </script>
-<script src="/static/js/region_prepare.js?v=20260525"></script>
+<script src="/static/js/region_prepare.js?v=20260525b"></script>
 {% endblock %}

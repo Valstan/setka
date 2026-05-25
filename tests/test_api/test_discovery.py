@@ -493,29 +493,6 @@ async def test_commit_region_happy_path():
     assert all(isinstance(c, Community) for c in session.added)
 
 
-# ─── /osm-localities — OSM Overpass proxy ────────────────────────
-
-
-async def test_osm_localities_returns_items_on_success():
-    with patch.object(
-        discovery_api,
-        "fetch_localities",
-        return_value=["Тужа", "Шешурга"],
-    ):
-        res = await discovery_api.osm_localities(district="Тужинский район")
-    assert res["ok"] is True
-    assert res["items"] == ["Тужа", "Шешурга"]
-    assert res["district"] == "Тужинский район"
-
-
-async def test_osm_localities_returns_ok_false_on_empty():
-    """OSM down / district not found → ok=false, items=[]. UI fallback на ручной."""
-    with patch.object(discovery_api, "fetch_localities", return_value=[]):
-        res = await discovery_api.osm_localities(district="Несуществующий")
-    assert res["ok"] is False
-    assert res["items"] == []
-
-
 # ─── /regions/{code}/config — save & get ─────────────────────────
 
 
