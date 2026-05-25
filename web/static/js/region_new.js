@@ -195,11 +195,11 @@
                     const existing = await findRegionByCode(payload.code);
                     if (existing && !existing.is_active) {
                         const ok = confirm(
-                            `Регион «${payload.code}» уже создан как черновик (предыдущая попытка не довела discovery до конца).\n\n` +
-                            `Перейти к проверке кандидатов и (пере)запустить discovery там?`
+                            `Регион «${payload.code}» уже создан как черновик (предыдущая попытка не довела до конца).\n\n` +
+                            `Перейти к подготовке discovery (localities/keywords) для этого черновика?`
                         );
                         if (ok) {
-                            window.location.href = `/regions/${payload.code}/discovery`;
+                            window.location.href = `/regions/${payload.code}/prepare`;
                             return;
                         }
                         throw new Error('Создание отменено — черновик уже существует.');
@@ -216,24 +216,15 @@
             }
             region = await regResp.json();
 
-            // 2. Trigger discovery.
-            setStatus('info', `✓ Черновик создан (код=${payload.code}). 🔍 Ищу сообщества района в VK (до минуты)...`);
-            const discResp = await fetch('/api/discovery/trigger', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({region_id: region.id}),
-            });
-            const discResult = await discResp.json();
-            if (!discResp.ok) {
-                throw new Error(discResult.detail || `Discovery failed HTTP ${discResp.status}`);
-            }
-
+            // 2. Redirect на подготовку — там юзер заполнит localities/keywords
+            //    и САМ нажмёт «Запустить discovery». Это даёт фильтру релевантности
+            //    шанс сработать, иначе при пустом config выскакивают крупные
+            //    общегородские паблики (см. PR 1 серии итерации 3).
             setStatus('success',
-                `✅ Найдено <strong>${discResult.found}</strong> сообществ, AI разложил по тематикам. ` +
-                `Открываю список для проверки...`);
+                `✓ Черновик создан (код=${payload.code}). Открываю подготовку discovery…`);
             setTimeout(() => {
-                window.location.href = `/regions/${payload.code}/discovery`;
-            }, 1500);
+                window.location.href = `/regions/${payload.code}/prepare`;
+            }, 800);
         } catch (e) {
             setStatus('danger', `❌ ${e.message}`);
             createBtn.disabled = false;

@@ -11,6 +11,10 @@
         </h2>
         <div class="d-flex gap-2">
             <a class="btn btn-sm btn-outline-secondary" href="/regions">К регионам</a>
+            <a class="btn btn-sm btn-outline-primary" href="/regions/{{ region_code }}/prepare"
+               title="Настроить localities/keywords и перезапустить discovery">
+                <i class="bi bi-gear"></i> Настройки discovery
+            </a>
             <button id="rerun-btn" class="btn btn-sm btn-outline-primary">
                 <i class="bi bi-arrow-clockwise"></i> Перезапустить discovery
             </button>

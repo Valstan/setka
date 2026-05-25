@@ -491,3 +491,115 @@ async def test_commit_region_happy_path():
     # Должно быть создано 2 Community
     assert len(session.added) == 2
     assert all(isinstance(c, Community) for c in session.added)
+
+
+# ─── /osm-localities — OSM Overpass proxy ────────────────────────
+
+
+async def test_osm_localities_returns_items_on_success():
+    with patch.object(
+        discovery_api,
+        "fetch_localities",
+        return_value=["Тужа", "Шешурга"],
+    ):
+        res = await discovery_api.osm_localities(district="Тужинский район")
+    assert res["ok"] is True
+    assert res["items"] == ["Тужа", "Шешурга"]
+    assert res["district"] == "Тужинский район"
+
+
+async def test_osm_localities_returns_ok_false_on_empty():
+    """OSM down / district not found → ok=false, items=[]. UI fallback на ручной."""
+    with patch.object(discovery_api, "fetch_localities", return_value=[]):
+        res = await discovery_api.osm_localities(district="Несуществующий")
+    assert res["ok"] is False
+    assert res["items"] == []
+
+
+# ─── /regions/{code}/config — save & get ─────────────────────────
+
+
+def _make_region_stub(*, code="test", config=None, name="Test", center_city="X"):
+    """Региональный stub для конфиг-тестов. SQLAlchemy-like, мутабельный."""
+    r = MagicMock()
+    r.code = code
+    r.name = name
+    r.center_city = center_city
+    r.config = config
+    return r
+
+
+async def test_patch_config_localities_normalises_input():
+    region = _make_region_stub(config={})
+    session = _FakeSession(execute_scalar=region)
+    payload = discovery_api._DiscoveryConfigPatch(value="Тужа\nШешурга\nтужа")
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.patch_region_discovery_config(
+            code="tuzha", field="localities", body=payload
+        )
+    assert out["ok"] is True
+    assert out["items"] == ["Тужа", "Шешурга"]  # dedup case-insensitive
+    assert out["count"] == 2
+    assert region.config["localities"] == ["Тужа", "Шешурга"]
+    assert session.committed is True
+
+
+async def test_patch_config_accepts_list():
+    region = _make_region_stub(config={"localities": ["old"]})
+    session = _FakeSession(execute_scalar=region)
+    payload = discovery_api._DiscoveryConfigPatch(value=["новости", "ДТП"])
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.patch_region_discovery_config(
+            code="x", field="discovery_keywords", body=payload
+        )
+    assert out["items"] == ["новости", "ДТП"]
+    assert region.config["discovery_keywords"] == ["новости", "ДТП"]
+    # Existing fields not in body must survive.
+    assert region.config["localities"] == ["old"]
+
+
+async def test_patch_config_404_when_region_missing():
+    session = _FakeSession(execute_scalar=None)
+    payload = discovery_api._DiscoveryConfigPatch(value=["X"])
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        with pytest.raises(HTTPException) as exc:
+            await discovery_api.patch_region_discovery_config(
+                code="nope", field="localities", body=payload
+            )
+    assert exc.value.status_code == 404
+
+
+async def test_patch_config_400_on_unknown_field():
+    payload = discovery_api._DiscoveryConfigPatch(value=["X"])
+    with pytest.raises(HTTPException) as exc:
+        await discovery_api.patch_region_discovery_config(code="x", field="evil", body=payload)
+    assert exc.value.status_code == 400
+
+
+async def test_get_config_returns_parsed_lists():
+    region = _make_region_stub(
+        config={"localities": ["Тужа", "Шешурга"], "discovery_keywords": "новости,ДТП"}
+    )
+    session = _FakeSession(execute_scalar=region)
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.get_region_discovery_config(code="tuzha")
+    assert out["code"] == "test"
+    assert out["localities"] == ["Тужа", "Шешурга"]
+    assert out["discovery_keywords"] == ["новости", "ДТП"]
+
+
+async def test_get_config_empty_when_not_configured():
+    region = _make_region_stub(config=None)
+    session = _FakeSession(execute_scalar=region)
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.get_region_discovery_config(code="tuzha")
+    assert out["localities"] == []
+    assert out["discovery_keywords"] == []
+
+
+async def test_get_config_404_when_missing():
+    session = _FakeSession(execute_scalar=None)
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        with pytest.raises(HTTPException) as exc:
+            await discovery_api.get_region_discovery_config(code="nope")
+    assert exc.value.status_code == 404

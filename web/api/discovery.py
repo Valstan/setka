@@ -19,9 +19,10 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, validator
@@ -31,8 +32,9 @@ from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Community, CommunityCandidate, Region
 from modules.discovery.ai_categorizer import ALLOWED_CATEGORIES
+from modules.discovery.osm_overpass import fetch_localities
 from modules.vk_monitor.vk_client import VKClient
-from tasks.discovery_tasks import run_discovery_for_region_async
+from tasks.discovery_tasks import parse_list_field, run_discovery_for_region_async
 from utils.vk_url import parse_vk_group_url
 
 logger = logging.getLogger(__name__)
@@ -67,6 +69,91 @@ async def resolve_city(q: str = Query(..., min_length=1, max_length=120)):
             if it.get("id")
         ]
     }
+
+
+# ─────────────────────────────────────────────────────────────────
+# /osm-localities — auto-suggest нп района через OpenStreetMap Overpass
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/osm-localities")
+async def osm_localities(district: str = Query(..., min_length=2, max_length=200)):
+    """Авто-резолв населённых пунктов района из OSM.
+
+    UI prepare-страницы дёргает этот endpoint после создания региона,
+    предзаполняет textarea localities. Юзер правит/добавляет руками.
+
+    На любые ошибки OSM (timeout, 5xx, network) возвращается
+    ``{items: [], ok: false}``, чтобы UI показал кнопку «попробовать
+    ещё раз» / fallback на ручной ввод. 200 OK всегда (не падаем —
+    OSM это nice-to-have, не блокер прохода wizard'а).
+    """
+    items = await asyncio.to_thread(fetch_localities, district)
+    return {"items": items, "ok": bool(items), "district": district}
+
+
+# ─────────────────────────────────────────────────────────────────
+# /regions/{code}/config — save localities / discovery_keywords
+# ─────────────────────────────────────────────────────────────────
+
+
+class _DiscoveryConfigPatch(BaseModel):
+    """Body для PATCH ``regions.config['localities']`` или ``['discovery_keywords']``.
+
+    Принимает либо list[str] (UI отдаёт массив), либо строку (raw textarea).
+    Парс делегируется ``parse_list_field`` — то же поведение, что и при
+    чтении config'а в discovery.
+    """
+
+    value: Union[List[str], str, None] = None
+
+
+@router.patch("/regions/{code}/config/{field}")
+async def patch_region_discovery_config(code: str, field: str, body: _DiscoveryConfigPatch):
+    """Update ``regions.config['localities']`` or ``['discovery_keywords']``.
+
+    Field — ``localities`` или ``discovery_keywords``. Остальные пути 400.
+    Возвращает ``{ok, count, items}``.
+    """
+    if field not in ("localities", "discovery_keywords"):
+        raise HTTPException(status_code=400, detail=f"unknown config field {field!r}")
+    items = parse_list_field(body.value)
+
+    async with AsyncSessionLocal() as session:
+        region = (
+            await session.execute(select(Region).where(Region.code == code))
+        ).scalar_one_or_none()
+        if region is None:
+            raise HTTPException(status_code=404, detail=f"region {code!r} not found")
+        cfg = dict(region.config or {})
+        cfg[field] = items
+        region.config = cfg
+        await session.commit()
+
+    return {"ok": True, "count": len(items), "items": items, "field": field}
+
+
+@router.get("/regions/{code}/config")
+async def get_region_discovery_config(code: str):
+    """Return current discovery-related config for a region.
+
+    Используется prepare-страницей для предзагрузки уже сохранённых
+    localities/keywords (если юзер возвращается к существующему региону).
+    """
+    async with AsyncSessionLocal() as session:
+        region = (
+            await session.execute(select(Region).where(Region.code == code))
+        ).scalar_one_or_none()
+        if region is None:
+            raise HTTPException(status_code=404, detail=f"region {code!r} not found")
+        cfg = region.config or {}
+        return {
+            "code": region.code,
+            "name": region.name,
+            "center_city": region.center_city,
+            "localities": parse_list_field(cfg.get("localities")),
+            "discovery_keywords": parse_list_field(cfg.get("discovery_keywords")),
+        }
 
 
 # ─────────────────────────────────────────────────────────────────
