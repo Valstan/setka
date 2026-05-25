@@ -270,6 +270,48 @@ async def test_patch_candidate_category_only_updates_ai_category():
     assert out["candidate"]["ai_category"] == "novost"
 
 
+async def test_delete_candidate_404_when_missing():
+    session = _FakeSession(get_result=None)
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        with pytest.raises(HTTPException) as exc:
+            await discovery_api.delete_candidate(123)
+    assert exc.value.status_code == 404
+    assert session.committed is False
+
+
+class _DeleteSession(_FakeSession):
+    """Stand-in для DELETE — фиксирует, что cand был передан в session.delete()."""
+
+    def __init__(self, *, get_result):
+        super().__init__(get_result=get_result)
+        self.deleted = []
+
+    async def delete(self, obj):
+        self.deleted.append(obj)
+
+
+async def test_delete_candidate_success_removes_from_session():
+    cand = CommunityCandidate(id=42, region_id=2, vk_id=10, name="X", status="rejected")
+    session = _DeleteSession(get_result=cand)
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.delete_candidate(42)
+    assert out == {"deleted": 42}
+    assert session.deleted == [cand]
+    assert session.committed is True
+
+
+async def test_delete_candidate_works_for_any_status():
+    """DELETE — это hard-delete без оглядки на status (pending / approved /
+    rejected / deferred — всё одинаково удаляется)."""
+    for status in ("pending", "approved", "rejected", "deferred"):
+        cand = CommunityCandidate(id=1, region_id=2, vk_id=10, name="X", status=status)
+        session = _DeleteSession(get_result=cand)
+        with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+            out = await discovery_api.delete_candidate(1)
+        assert out == {"deleted": 1}
+        assert session.deleted == [cand]
+
+
 async def test_patch_candidate_empty_body_returns_400():
     cand = CommunityCandidate(
         id=1, region_id=2, vk_id=10, name="X", status="pending", ai_category="sport"

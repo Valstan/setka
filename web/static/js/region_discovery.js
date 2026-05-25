@@ -169,19 +169,24 @@
             return `<option value="${value}" ${sel}>${escapeHtml(CATEGORY_LABELS[cat] || cat)}</option>`;
         }).join('');
 
-        const actions = c.status === 'pending'
-            ? `<div class="btn-group btn-group-sm" role="group">
-                   <button class="btn btn-outline-success" data-act="approve" data-id="${c.id}" title="Approve с текущей категорией">
-                       <i class="bi bi-check2"></i>
-                   </button>
-                   <button class="btn btn-outline-danger" data-act="reject" data-id="${c.id}" title="Reject">
-                       <i class="bi bi-x"></i>
-                   </button>
-                   <button class="btn btn-outline-secondary" data-act="defer" data-id="${c.id}" title="Defer">
-                       <i class="bi bi-pause"></i>
-                   </button>
-               </div>`
-            : `<small class="text-muted">${escapeHtml(c.status)}</small>`;
+        // pending: approve / reject / defer / delete; non-pending: только delete
+        const baseButtons = c.status === 'pending'
+            ? `<button class="btn btn-outline-success" data-act="approve" data-id="${c.id}" title="Approve с текущей категорией">
+                   <i class="bi bi-check2"></i>
+               </button>
+               <button class="btn btn-outline-warning" data-act="reject" data-id="${c.id}" title="Reject (запомнить — не вернётся при rerun)">
+                   <i class="bi bi-x"></i>
+               </button>
+               <button class="btn btn-outline-secondary" data-act="defer" data-id="${c.id}" title="Defer (отложить)">
+                   <i class="bi bi-pause"></i>
+               </button>`
+            : '';
+        const deleteBtn = `<button class="btn btn-outline-danger" data-act="delete" data-id="${c.id}" title="Удалить навсегда (физически из БД; при rerun discovery может вернуться)">
+                <i class="bi bi-trash"></i>
+            </button>`;
+        const statusLabel = c.status !== 'pending'
+            ? `<small class="text-muted me-2">${escapeHtml(c.status)}</small>` : '';
+        const actions = `${statusLabel}<div class="btn-group btn-group-sm" role="group">${baseButtons}${deleteBtn}</div>`;
 
         return `
             <div class="col-md-6" data-candidate-id="${c.id}">
@@ -269,6 +274,11 @@
         }
         if (act === 'reject') return patchCandidate(id, {status: 'rejected'});
         if (act === 'defer') return patchCandidate(id, {status: 'deferred'});
+        if (act === 'delete') {
+            const label = cand.name || `#${cand.id}`;
+            if (!confirm(`Удалить кандидата «${label}» из этого региона?\n\nЗапись будет физически стёрта из БД. При перезапуске discovery эта группа может появиться снова, если VK её снова отдаст. Для гарантии «больше никогда» используйте Reject.`)) return;
+            return deleteCandidate(id);
+        }
     }
 
     async function patchCandidate(id, body) {
@@ -284,6 +294,21 @@
                 throw new Error(err.detail || `HTTP ${resp.status}`);
             }
             setStatus('success', `✓ ${body.status || body.category}`);
+            await load();
+        } catch (e) {
+            setStatus('danger', `Ошибка: ${e.message}`);
+        }
+    }
+
+    async function deleteCandidate(id) {
+        setStatus('info', '⏳ Удаляю…');
+        try {
+            const resp = await fetch(`/api/discovery/candidates/${id}`, {method: 'DELETE'});
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || `HTTP ${resp.status}`);
+            }
+            setStatus('success', '✓ Удалён');
             await load();
         } catch (e) {
             setStatus('danger', `Ошибка: ${e.message}`);

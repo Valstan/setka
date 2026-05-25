@@ -178,18 +178,43 @@
             if (!payload.code) throw new Error('Не удалось сгенерировать код региона из названия');
             if (!Number.isFinite(payload.vk_group_id)) throw new Error('Главная VK-группа не распознана');
 
-            // 1. Create region (draft).
+            // 1. Create region (draft). Если черновик уже создан (предыдущая
+            // попытка свалилась после INSERT regions, но до завершения discovery)
+            // — спросить пользователя и продолжить с существующим.
             setStatus('info', '⏳ Создаём черновик региона...');
             const regResp = await fetch('/api/regions/', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(payload),
             });
+            let region;
+            if (regResp.status === 400) {
+                const err = await regResp.json().catch(() => ({}));
+                const msg = (err.detail || '').toLowerCase();
+                if (msg.includes('already exists') || msg.includes('уже существует')) {
+                    const existing = await findRegionByCode(payload.code);
+                    if (existing && !existing.is_active) {
+                        const ok = confirm(
+                            `Регион «${payload.code}» уже создан как черновик (предыдущая попытка не довела discovery до конца).\n\n` +
+                            `Перейти к проверке кандидатов и (пере)запустить discovery там?`
+                        );
+                        if (ok) {
+                            window.location.href = `/regions/${payload.code}/discovery`;
+                            return;
+                        }
+                        throw new Error('Создание отменено — черновик уже существует.');
+                    }
+                    if (existing && existing.is_active) {
+                        throw new Error(`Регион «${payload.code}» уже активен в Сетке.`);
+                    }
+                }
+                throw new Error(err.detail || `HTTP 400`);
+            }
             if (!regResp.ok) {
                 const err = await regResp.json().catch(() => ({}));
                 throw new Error(err.detail || `HTTP ${regResp.status}`);
             }
-            const region = await regResp.json();
+            region = await regResp.json();
 
             // 2. Trigger discovery.
             setStatus('info', `✓ Черновик создан (код=${payload.code}). 🔍 Ищу сообщества района в VK (до минуты)...`);
@@ -224,5 +249,17 @@
         return String(s ?? '').replace(/[&<>"']/g, c => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
         }[c]));
+    }
+
+    async function findRegionByCode(code) {
+        try {
+            const resp = await fetch('/api/regions/');
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            const list = Array.isArray(data) ? data : (data.regions || []);
+            return list.find(r => r.code === code) || null;
+        } catch (_e) {
+            return null;
+        }
     }
 })();
