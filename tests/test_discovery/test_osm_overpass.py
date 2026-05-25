@@ -6,12 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from modules.discovery.osm_overpass import (
-    _build_query,
-    _extract_names,
-    fetch_localities,
-)
-
+from modules.discovery.osm_overpass import _build_query, _extract_names, fetch_localities
 
 # ───────── _build_query ─────────
 
@@ -30,7 +25,7 @@ def test_build_query_escapes_double_quotes():
 
 def test_build_query_uses_name_ru_and_name():
     q = _build_query("X")
-    assert 'name:ru' in q
+    assert "name:ru" in q
     assert 'name"=' in q
 
 

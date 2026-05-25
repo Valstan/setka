@@ -199,6 +199,15 @@ async def region_prepare_page(request: Request, region_code: str):
     )
 
 
+@app.get("/regions/{region_code}/discovery/ai-batch")
+async def region_ai_batch_page(request: Request, region_code: str):
+    """Human-in-the-loop AI categorisation через clipboard."""
+    return templates.TemplateResponse(
+        "region_ai_batch.html",
+        {"request": request, "region_code": region_code},
+    )
+
+
 @app.get("/tokens")
 async def tokens_page(request: Request):
     """Token management page"""

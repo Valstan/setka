@@ -36,6 +36,7 @@
     const filterStatus = document.getElementById('filter-status');
     const filterConfidence = document.getElementById('filter-confidence');
     const filterInfoOnly = document.getElementById('filter-info-only');
+    const filterHideIrrelevant = document.getElementById('filter-hide-irrelevant');
     const bulkRejectBtn = document.getElementById('bulk-reject');
 
     let region = null;
@@ -63,6 +64,7 @@
         filterStatus.addEventListener('change', load);
         filterConfidence.addEventListener('change', load);
         filterInfoOnly.addEventListener('change', load);
+        filterHideIrrelevant.addEventListener('change', () => renderSections());
         rerunBtn.addEventListener('click', rerunDiscovery);
         bulkRejectBtn.addEventListener('click', bulkReject);
         commitBtn.addEventListener('click', commitRegion);
@@ -122,9 +124,25 @@
     function renderSections() {
         if (!candidates.length) {
             sectionsContainer.innerHTML = '<div class="text-muted text-center py-3">Кандидатов нет.</div>';
+            countInfo.textContent = '';
             return;
         }
-        const groups = groupBySectionKey(candidates);
+        // Client-side фильтр «скрыть нерелевантных»: убираем тех, где
+        // AI явно сказал is_relevant=false. NULL (не оценено) — оставляем.
+        const visible = filterHideIrrelevant && filterHideIrrelevant.checked
+            ? candidates.filter(c => c.ai_is_relevant !== false)
+            : candidates;
+        if (!visible.length) {
+            sectionsContainer.innerHTML =
+                '<div class="text-muted text-center py-3">Все кандидаты помечены AI как нерелевантные. ' +
+                'Сними галочку «скрыть нерелевантных», чтобы увидеть их.</div>';
+            countInfo.textContent = `Скрыто нерелевантных: ${candidates.length}`;
+            return;
+        }
+        const hidden = candidates.length - visible.length;
+        countInfo.textContent = `Показано: ${visible.length}` +
+            (hidden ? ` · скрыто нерелевантных: ${hidden}` : '');
+        const groups = groupBySectionKey(visible);
         const html = SECTION_ORDER.map(key => renderSection(key, groups[key])).join('');
         sectionsContainer.innerHTML = html;
         bindCardEventListeners();
@@ -154,6 +172,12 @@
         const infoBadge = c.ai_is_info_page
             ? '<span class="badge bg-warning text-dark ms-1" title="AI считает это ИНФО-страницей">ИНФО</span>'
             : '';
+        let relevanceBadge = '';
+        if (c.ai_is_relevant === true) {
+            relevanceBadge = '<span class="badge bg-success ms-1" title="AI: принадлежит району">✓ районный</span>';
+        } else if (c.ai_is_relevant === false) {
+            relevanceBadge = '<span class="badge bg-secondary ms-1" title="AI: нерелевантен району">✗ не районный</span>';
+        }
         const confidence = c.ai_confidence != null
             ? `<small class="text-muted">AI: ${c.ai_confidence}%</small>`
             : '<small class="text-muted">AI: —</small>';
@@ -199,7 +223,7 @@
                                     <a href="${escapeAttr(vkLink)}" target="_blank" rel="noopener" class="fw-bold text-decoration-none">
                                         ${escapeHtml(c.name)} <i class="bi bi-box-arrow-up-right small"></i>
                                     </a>
-                                    <div class="text-nowrap">${infoBadge}${statusBadge}</div>
+                                    <div class="text-nowrap">${relevanceBadge}${infoBadge}${statusBadge}</div>
                                 </div>
                                 <div class="small text-muted">${escapeHtml(members)} · ${confidence}</div>
                                 <div class="mt-1 small">${escapeHtml(c.ai_reasoning || 'AI не дал обоснования')}</div>

@@ -20,6 +20,7 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import List, Optional, Union
@@ -154,6 +155,262 @@ async def get_region_discovery_config(code: str):
             "localities": parse_list_field(cfg.get("localities")),
             "discovery_keywords": parse_list_field(cfg.get("discovery_keywords")),
         }
+
+
+# ─────────────────────────────────────────────────────────────────
+# /ai-batch — human-in-the-loop AI categorisation through clipboard
+# ─────────────────────────────────────────────────────────────────
+#
+# Groq API не работает на проде (403, нет бюджета). Чтобы всё-таки
+# получить AI-категоризацию кандидатов — программа подготавливает чанк
+# (JSON + готовый prompt), юзер копирует в ChatGPT/Claude в браузере,
+# копирует JSON-ответ обратно, программа парсит и обновляет БД.
+
+AI_BATCH_CHUNK_SIZE_DEFAULT = 30
+AI_BATCH_CHUNK_SIZE_MAX = 100  # длинные prompt'ы режутся LLM-ом, держим разумно
+
+
+def _build_ai_batch_prompt(region_name: str, localities: List[str], chunk: List[dict]) -> str:
+    """Build the LLM prompt for one batch chunk.
+
+    Промпт описывает задачу + перечисляет локалитеты района (чтобы LLM
+    оценил geo-релевантность каждого кандидата) + даёт строгий формат
+    JSON-ответа. Категории дублируют ``ALLOWED_CATEGORIES`` (см.
+    modules/discovery/ai_categorizer.py) — список одной правды.
+    """
+    cats_list = ", ".join(ALLOWED_CATEGORIES)
+    localities_str = ", ".join(localities[:30]) if localities else "<не указаны>"
+    chunk_json = json.dumps(chunk, ensure_ascii=False, indent=2)
+    return (
+        f"Ты — модератор сети региональных VK-пабликов. Регион: «{region_name}».\n"
+        f"Населённые пункты района: {localities_str}.\n\n"
+        f"Ниже JSON-массив VK-сообществ. Для КАЖДОГО оцени:\n"
+        f"  1. category — одна из: {cats_list}.\n"
+        f"     admin=органы власти, novost=новостной, reklama=объявления/барахолка,\n"
+        f"     sosed=соседи/ДТП, kultura=культура/афиша, sport=спорт,\n"
+        f"     detsad=школы/детсад/родители, other=ничего из перечисленного.\n"
+        f"  2. is_relevant — true/false: принадлежит ли сообщество географически\n"
+        f"     этому району (упоминает локалитеты района или явно про него).\n"
+        f"     ОБЯЗАТЕЛЬНО false для общегородских/областных пабликов.\n"
+        f"  3. confidence — целое 0..100, насколько уверен в category.\n"
+        f"  4. reasoning — одна короткая фраза, почему.\n\n"
+        f"Верни СТРОГО JSON-массив, БЕЗ markdown-обёртки, БЕЗ префикса 'json':\n"
+        f'[{{"id": 1, "category": "novost", "is_relevant": true, "confidence": 90,'
+        f' "reasoning": "..." }}, ...]\n\n'
+        f"Входные кандидаты:\n{chunk_json}"
+    )
+
+
+def _candidate_to_batch_item(c: CommunityCandidate) -> dict:
+    """Сжатый snapshot кандидата для prompt'а — без полей, которые нейронке не нужны."""
+    return {
+        "id": int(c.id),
+        "name": (c.name or "").strip(),
+        "desc": (c.description or "").strip()[:600],
+    }
+
+
+async def _pending_uncategorized_ids(session, region_id: int) -> List[int]:
+    """Все pending-кандидаты региона без ai_category, отсортированные стабильно.
+
+    Стабильность важна — между чанками может пройти время, при перезагрузке
+    страницы юзер должен попасть на тот же чанк. Сортировка по
+    ``-members_count, id`` даёт детерминированный порядок.
+    """
+    stmt = (
+        select(CommunityCandidate)
+        .where(
+            CommunityCandidate.region_id == region_id,
+            CommunityCandidate.status == "pending",
+            CommunityCandidate.ai_category.is_(None),
+        )
+        .order_by(
+            CommunityCandidate.members_count.desc().nullslast(),
+            CommunityCandidate.id,
+        )
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return list(rows)
+
+
+@router.get("/regions/{code}/ai-batch")
+async def get_ai_batch(
+    code: str,
+    chunk: int = Query(0, ge=0),
+    size: int = Query(AI_BATCH_CHUNK_SIZE_DEFAULT, ge=1, le=AI_BATCH_CHUNK_SIZE_MAX),
+):
+    """Return one chunk of pending-uncategorized candidates + ready prompt.
+
+    Чанки нарезаются стабильно — повторный запрос с тем же chunk вернёт
+    тех же кандидатов (если БД не менялась). Если chunk вышел за пределы —
+    возвращается ``{items: [], prompt: "", chunk_index, chunks_total}``.
+    """
+    async with AsyncSessionLocal() as session:
+        region = (
+            await session.execute(select(Region).where(Region.code == code))
+        ).scalar_one_or_none()
+        if region is None:
+            raise HTTPException(status_code=404, detail=f"region {code!r} not found")
+        all_pending = await _pending_uncategorized_ids(session, region.id)
+
+    total = len(all_pending)
+    chunks_total = max(1, (total + size - 1) // size) if total else 0
+
+    start = chunk * size
+    end = start + size
+    page = all_pending[start:end]
+    items = [_candidate_to_batch_item(c) for c in page]
+
+    cfg = region.config or {}
+    localities = parse_list_field(cfg.get("localities"))
+    prompt = _build_ai_batch_prompt(region.name or region.code, localities, items) if items else ""
+
+    return {
+        "region_code": region.code,
+        "chunk_index": chunk,
+        "chunks_total": chunks_total,
+        "chunk_size": size,
+        "total_pending_uncategorized": total,
+        "items": items,
+        "prompt": prompt,
+    }
+
+
+class _AiBatchItem(BaseModel):
+    """Один элемент ответа нейросети."""
+
+    id: int
+    category: Optional[str] = None
+    is_relevant: Optional[bool] = None
+    confidence: Optional[int] = Field(default=None, ge=0, le=100)
+    reasoning: Optional[str] = None
+
+    @validator("category")
+    def _norm_category(cls, v):
+        if v is None or v == "":
+            return None
+        v = str(v).strip().lower()
+        if v not in ALLOWED_CATEGORIES:
+            return None  # silently drop unknown — БД сохранит NULL
+        return v
+
+
+class _AiBatchApply(BaseModel):
+    items: List[_AiBatchItem]
+
+
+@router.post("/regions/{code}/ai-batch/apply")
+async def apply_ai_batch(code: str, body: _AiBatchApply):
+    """Apply LLM-supplied categorisation to pending candidates.
+
+    Перетираем поля только у status=pending — approved/rejected не трогаем
+    (модератор уже решил). По каждому элементу: category, ai_is_relevant,
+    confidence, reasoning. Не указанные поля (None) — не меняем.
+
+    Возвращает ``{updated, skipped, missing_ids, summary}``.
+    """
+    if not body.items:
+        return {"updated": 0, "skipped": 0, "missing_ids": [], "summary": {}}
+
+    ids = [int(it.id) for it in body.items]
+    async with AsyncSessionLocal() as session:
+        region = (
+            await session.execute(select(Region).where(Region.code == code))
+        ).scalar_one_or_none()
+        if region is None:
+            raise HTTPException(status_code=404, detail=f"region {code!r} not found")
+
+        existing = {
+            c.id: c
+            for c in (
+                await session.execute(
+                    select(CommunityCandidate).where(
+                        CommunityCandidate.region_id == region.id,
+                        CommunityCandidate.id.in_(ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        }
+
+        updated = 0
+        skipped = 0
+        missing: List[int] = []
+        relevant_count = 0
+        irrelevant_count = 0
+        for it in body.items:
+            row = existing.get(int(it.id))
+            if row is None:
+                missing.append(int(it.id))
+                continue
+            if row.status != "pending":
+                skipped += 1
+                continue
+            if it.category is not None:
+                row.ai_category = it.category
+            if it.is_relevant is not None:
+                row.ai_is_relevant = bool(it.is_relevant)
+                if it.is_relevant:
+                    relevant_count += 1
+                else:
+                    irrelevant_count += 1
+            if it.confidence is not None:
+                row.ai_confidence = int(it.confidence)
+            if it.reasoning is not None:
+                row.ai_reasoning = (it.reasoning or "").strip()[:400] or None
+            row.updated_at = datetime.utcnow()
+            updated += 1
+
+        await session.commit()
+
+    return {
+        "updated": updated,
+        "skipped": skipped,
+        "missing_ids": missing,
+        "summary": {
+            "relevant": relevant_count,
+            "irrelevant": irrelevant_count,
+        },
+    }
+
+
+@router.get("/regions/{code}/ai-batch/status")
+async def ai_batch_status(code: str):
+    """Compact progress endpoint for the UI heartbeat.
+
+    Considers a candidate «done» if ai_category IS NOT NULL OR
+    ai_is_relevant IS NOT NULL — оба поля заполняются apply'ем.
+    """
+    async with AsyncSessionLocal() as session:
+        region = (
+            await session.execute(select(Region).where(Region.code == code))
+        ).scalar_one_or_none()
+        if region is None:
+            raise HTTPException(status_code=404, detail=f"region {code!r} not found")
+
+        pending_total = (
+            (
+                await session.execute(
+                    select(CommunityCandidate).where(
+                        CommunityCandidate.region_id == region.id,
+                        CommunityCandidate.status == "pending",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        total = len(pending_total)
+        processed = sum(
+            1 for c in pending_total if c.ai_category is not None or c.ai_is_relevant is not None
+        )
+    return {
+        "region_code": code,
+        "total": total,
+        "processed": processed,
+        "remaining": total - processed,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────
