@@ -14,10 +14,9 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import and_, select
 
-from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Post, Region
-from modules.publisher.vk_publisher import VKPublisher
+from modules.publisher.vk_publisher_extended import VKPublisher
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
@@ -30,14 +29,8 @@ async def test_simple_publish():
     logger.info("TEST 1: Simple text publish")
     logger.info("=" * 80)
 
-    # Используем токен VALSTAN
-    vk_token = VK_TOKENS.get("VALSTAN")
-    if not vk_token:
-        logger.error("❌ VK token VALSTAN not found in config")
-        return False
-
     try:
-        VKPublisher(vk_token)
+        VKPublisher()
 
         # Получаем информацию о группах пользователя
         logger.info("Getting user's groups...")
@@ -166,12 +159,7 @@ async def test_full_workflow():
     logger.info("=" * 80)
 
     try:
-        vk_token = VK_TOKENS.get("VALSTAN")
-        if not vk_token:
-            logger.error("❌ VK token not found")
-            return False
-
-        VKPublisher(vk_token)
+        VKPublisher()
 
         async with AsyncSessionLocal() as session:
             # Получаем регион

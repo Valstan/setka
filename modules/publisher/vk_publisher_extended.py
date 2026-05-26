@@ -8,9 +8,12 @@ Handles VK API wall.post with proper error handling and token rotation.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, ClassVar, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Tuple
 
 # Imported lazily inside __init__ to avoid hard deps for test fixtures.
+
+if TYPE_CHECKING:
+    from modules.aggregation.aggregator import AggregatedPost
 
 logger = logging.getLogger(__name__)
 
@@ -430,6 +433,76 @@ class VKPublisher:
         """
         # Simplified - would need actual tracking in production
         return self.POSTS_PER_DAY_LIMIT
+
+    async def get_group_info(self, group_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch VK group info via groups.getById.
+
+        Returns dict with id/name/screen_name/type/url, or None on failure.
+        Sign of group_id is irrelevant — VK groups.getById expects positive id.
+        """
+        positive_id = abs(int(group_id))
+        try:
+            response = await self._invoke(
+                self.vk_client, "groups.getById", {"group_id": positive_id}
+            )
+        except Exception as e:
+            logger.error("groups.getById(%s) failed: %s", positive_id, e)
+            return None
+
+        items = response
+        if isinstance(response, dict) and "groups" in response:
+            items = response["groups"]
+        if not items:
+            return None
+
+        group = items[0]
+        return {
+            "id": group["id"],
+            "name": group["name"],
+            "screen_name": group["screen_name"],
+            "type": group["type"],
+            "url": f"https://vk.com/{group['screen_name']}",
+        }
+
+    @staticmethod
+    def get_target_group_id(region_code: str, mode: str = "test") -> Optional[int]:
+        """Resolve target group id for a region.
+
+        Args:
+            region_code: region code like ``mi``, ``nolinsk``.
+            mode: ``test`` → test polygon group, anything else → region's main group.
+
+        Returns None if the region is unknown.
+        """
+        from modules.region_config import RegionConfigManager
+
+        if mode == "test":
+            return RegionConfigManager.get_main_group_id("test")
+        return RegionConfigManager.get_main_group_id(region_code)
+
+    async def publish_aggregated_post(
+        self, digest: "AggregatedPost", group_id: int
+    ) -> Dict[str, Any]:
+        """Publish an ``AggregatedPost`` produced by NewsAggregator.
+
+        Thin wrapper over ``publish_digest`` that pulls ``digest.aggregated_text``
+        and emits a couple of useful log lines. Attachments are not extracted —
+        ``publish_digest`` accepts them explicitly if a caller needs media.
+        """
+        try:
+            text = digest.aggregated_text
+        except AttributeError as e:
+            return {"success": False, "error": f"digest missing aggregated_text: {e}"}
+
+        logger.info(
+            "Publishing aggregated post to %s (sources=%s, views=%s, likes=%s)",
+            group_id,
+            getattr(digest, "sources_count", "?"),
+            getattr(digest, "total_views", "?"),
+            getattr(digest, "total_likes", "?"),
+        )
+
+        return await self.publish_digest(group_id=group_id, text=text)
 
     @staticmethod
     def _normalize_group_owner_id(group_id: int) -> int:
