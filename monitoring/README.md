@@ -48,6 +48,23 @@ setka_digest_last_published_timestamp{region,topic}  # Gauge (unix-ts)
 
 `result` = `success` | `empty` | `failed`. Только `success` обновляет timestamp Gauge.
 
+## Multiprocess (web + Celery worker)
+
+`track_digest_published()` вызывается **из Celery worker'а** (`tasks/parsing_scheduler_tasks.py`, `modules/kirov_oblast_digest.py`), а `/metrics` живёт **в FastAPI web**. В обычном `prometheus_client` counter'ы хранятся в памяти процесса — без shared backend worker'овские инкременты до scrape'а не доходят, и дашборд остаётся пустым.
+
+Поэтому:
+
+- `setup-monitoring.sh` создаёт `/var/lib/setka/prom_multiproc` (mode 0750) и кладёт drop-in `prometheus-multiproc.conf` в `/etc/systemd/system/{setka,setka-celery-worker}.service.d/`:
+  - `Environment=PROMETHEUS_MULTIPROC_DIR=/var/lib/setka/prom_multiproc`
+  - `ExecStartPre=` чистит каталог при рестарте (mmap-файлы от dead PID'ов искажают агрегации `digest_last_published_timestamp`).
+- `monitoring/metrics.py` при выставленной env-var собирает выдачу через `MultiProcessCollector` поверх временной `CollectorRegistry`. Без env-var — обычный singleton-registry.
+- Gauge'ы определены с `multiprocess_mode`:
+  - `digest_last_published_timestamp` → `max` (timestamp монотонно растёт; самое свежее значение «выигрывает» при агрегации).
+  - Остальные (`api_requests_in_progress`, `db_connections_active`, `communities_monitored`, `regions_active`, `notifications_zero_streak`, `cache_size_bytes`) → `livesum`.
+- Celery worker при shutdown вызывает `multiprocess.mark_process_dead(pid)` — исключает свой PID из выдачи `MultiProcessCollector` (см. `tasks/celery_app.py`).
+
+**Beat-сервис env-var не получает** — он метрики не пишет, дополнительный mmap-файл не нужен.
+
 ## Что НЕ настроено (by design)
 
 - **alertmanager** — экономим RAM на 1.5GB VPS. Алёрты — глазами через дашборд или ручным `promtool query`.

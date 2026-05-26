@@ -1,15 +1,35 @@
 """
 Prometheus Metrics for SETKA
 Comprehensive monitoring and observability
+
+При выставленной env ``PROMETHEUS_MULTIPROC_DIR`` метрики хранятся в
+shared mmap-файлах и агрегируются через ``MultiProcessCollector`` —
+без этого Counter'ы из Celery worker'а не доходят до web-эндпоинта
+``/metrics``. См. ``monitoring/README.md`` §Multiprocess.
 """
 
 import logging
+import os
 import time
 from functools import wraps
 
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, Info, generate_latest
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    Info,
+    generate_latest,
+    multiprocess,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _is_multiproc() -> bool:
+    return bool(os.environ.get("PROMETHEUS_MULTIPROC_DIR"))
+
 
 # =============================================================================
 # API METRICS
@@ -21,7 +41,9 @@ api_requests_total = Counter(
 )
 
 api_requests_in_progress = Gauge(
-    "setka_api_requests_in_progress", "API requests currently in progress"
+    "setka_api_requests_in_progress",
+    "API requests currently in progress",
+    multiprocess_mode="livesum",
 )
 
 # Latency histogram
@@ -40,7 +62,9 @@ cache_hits_total = Counter("setka_cache_hits_total", "Total cache hits", ["cache
 
 cache_misses_total = Counter("setka_cache_misses_total", "Total cache misses", ["cache_type"])
 
-cache_size_bytes = Gauge("setka_cache_size_bytes", "Current cache size in bytes")
+cache_size_bytes = Gauge(
+    "setka_cache_size_bytes", "Current cache size in bytes", multiprocess_mode="livesum"
+)
 
 # =============================================================================
 # VK API METRICS
@@ -94,6 +118,7 @@ notifications_zero_streak = Gauge(
     "setka_notifications_zero_streak",
     "Consecutive auto-runs that returned 0 items for the given check_type",
     ["check_type"],
+    multiprocess_mode="livesum",
 )
 
 # =============================================================================
@@ -109,7 +134,9 @@ db_query_duration_seconds = Histogram(
     buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.5, 1.0),
 )
 
-db_connections_active = Gauge("setka_db_connections_active", "Active database connections")
+db_connections_active = Gauge(
+    "setka_db_connections_active", "Active database connections", multiprocess_mode="livesum"
+)
 
 # =============================================================================
 # BUSINESS METRICS
@@ -130,19 +157,38 @@ digest_last_published_timestamp = Gauge(
     "setka_digest_last_published_timestamp",
     "Unix timestamp последней успешной публикации дайджеста per region per topic",
     ["region", "topic"],
+    # ``max`` корректен для timestamp: значение монотонно растёт, поэтому свежее
+    # время публикации всегда «выигрывает» при агрегации из нескольких процессов
+    # (web + celery worker) даже если mmap-файл умершего PID не подчистили.
+    multiprocess_mode="max",
 )
 
 communities_monitored = Gauge(
-    "setka_communities_monitored", "Number of communities being monitored"
+    "setka_communities_monitored",
+    "Number of communities being monitored",
+    multiprocess_mode="livesum",
 )
 
-regions_active = Gauge("setka_regions_active", "Number of active regions")
+regions_active = Gauge(
+    "setka_regions_active", "Number of active regions", multiprocess_mode="livesum"
+)
 
 # =============================================================================
 # SYSTEM METRICS
 # =============================================================================
 
-system_info = Info("setka_system", "SETKA system information")
+# Info-метрики prometheus_client multiproc-mode не поддерживает — определяем
+# только в single-process режиме. Сейчас никем не используется (см. далее
+# update_system_info — dead code), но оставляем для совместимости импорта.
+if not _is_multiproc():
+    system_info = Info("setka_system", "SETKA system information")
+else:
+
+    class _InfoStub:
+        def info(self, *args, **kwargs) -> None:
+            pass
+
+    system_info = _InfoStub()
 
 errors_total = Counter("setka_errors_total", "Total errors", ["component", "error_type"])
 
@@ -401,13 +447,22 @@ async def update_business_metrics():
 
 async def get_metrics():
     """
-    Get Prometheus metrics in text format
+    Get Prometheus metrics in text format.
+
+    В multiproc-режиме (``PROMETHEUS_MULTIPROC_DIR`` выставлен) собираем
+    данные через ``MultiProcessCollector`` поверх временной ``CollectorRegistry``,
+    чтобы видеть счётчики из всех процессов (web + celery worker).
 
     Returns:
         Tuple of (content, content_type)
     """
     # Update cache metrics before export
     await get_cache_metrics()
+
+    if _is_multiproc():
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        return generate_latest(registry), CONTENT_TYPE_LATEST
 
     return generate_latest(), CONTENT_TYPE_LATEST
 

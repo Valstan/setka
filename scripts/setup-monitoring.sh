@@ -28,6 +28,13 @@ GRAFANA_PROV_DASH="$REPO_DIR/monitoring/grafana/provisioning/dashboards/setka.ym
 # Prometheus storage retention. На тонком VPS — 5 дней.
 PROM_RETENTION="${PROM_RETENTION:-5d}"
 
+# Multiprocess metrics: общая папка для setka.service (uvicorn) и
+# setka-celery-worker.service (Celery). Без неё counter'ы из worker'а
+# не доходят до /metrics эндпоинта в web.
+PROM_MULTIPROC_DIR="${PROM_MULTIPROC_DIR:-/var/lib/setka/prom_multiproc}"
+SETKA_RUN_USER="${SETKA_RUN_USER:-valstan}"
+SETKA_RUN_GROUP="${SETKA_RUN_GROUP:-valstan}"
+
 step() { echo; echo "==> $*"; }
 
 # ---------------------------------------------------------------------------
@@ -133,7 +140,38 @@ systemctl enable grafana-server
 systemctl restart grafana-server
 
 # ---------------------------------------------------------------------------
-# 5. Проверка
+# 5. Multiprocess Prometheus directory + systemd drop-in для setka/worker
+# ---------------------------------------------------------------------------
+step "Prometheus multiprocess: $PROM_MULTIPROC_DIR"
+
+install -d -m 0750 -o "$SETKA_RUN_USER" -g "$SETKA_RUN_GROUP" "$PROM_MULTIPROC_DIR"
+
+# Drop-in патчит и web (setka.service), и Celery worker. Beat ничего в метрики
+# не пишет — env-var ему не нужен. `ExecStartPre=` чистит mmap-файлы от
+# предыдущего PID; без чистки старый dead-процесс продолжал бы влиять на
+# агрегации (особенно `digest_last_published_timestamp` с mode=max).
+write_dropin() {
+  local unit="$1"
+  local dir="/etc/systemd/system/${unit}.d"
+  install -d -m 0755 "$dir"
+  cat > "$dir/prometheus-multiproc.conf" <<EOF
+[Service]
+Environment=PROMETHEUS_MULTIPROC_DIR=$PROM_MULTIPROC_DIR
+ExecStartPre=/bin/rm -rf $PROM_MULTIPROC_DIR
+ExecStartPre=/bin/mkdir -p $PROM_MULTIPROC_DIR
+ExecStartPre=/bin/chown $SETKA_RUN_USER:$SETKA_RUN_GROUP $PROM_MULTIPROC_DIR
+ExecStartPre=/bin/chmod 0750 $PROM_MULTIPROC_DIR
+EOF
+}
+
+write_dropin "setka.service"
+write_dropin "setka-celery-worker.service"
+
+systemctl daemon-reload
+systemctl restart setka setka-celery-worker
+
+# ---------------------------------------------------------------------------
+# 6. Проверка
 # ---------------------------------------------------------------------------
 step "Sanity check"
 
