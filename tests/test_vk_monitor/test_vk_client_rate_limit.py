@@ -1,8 +1,19 @@
-"""Tests for VKClient global per-token rate-limit (2026-05-22).
+"""Tests for VKClient global per-token rate-limit.
 
-The point is to ensure that multiple VKClient *instances* sharing the same
-token honour the same interval — so a parallel-Celery scenario doesn't
-burst-call VK and earn captcha cooldown.
+Базовые сценарии (per-process поведение через ThreadingRateLimiter):
+
+- Первый вызов не спит.
+- Два back-to-back на одном токене разнесены интервалом.
+- Два VKClient инстанса с одним токеном делят лимит.
+- Разные токены не блокируют друг друга.
+- Concurrent threads сериализуются.
+- ``api_call()`` дёргает rate-limit.
+
+Дополнительно (refactor 2026-05-26):
+
+- ``build_rate_limiter()`` возвращает threading-backend по дефолту.
+- RedisRateLimiter формирует ожидаемый Redis-ключ + дёргает Lua-script.
+- При недоступном Redis — graceful fallback на ThreadingRateLimiter.
 """
 
 import threading
@@ -11,27 +22,32 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from modules.vk_monitor.rate_limiter import (
+    REDIS_KEY_PREFIX,
+    RedisRateLimiter,
+    ThreadingRateLimiter,
+    build_rate_limiter,
+)
 from modules.vk_monitor.vk_client import VKClient
 
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limit_state():
-    """Clear class-level rate-limit registry before/after every test so tests
-    don't bleed into each other (especially when run in parallel)."""
-    VKClient._last_call_per_token.clear()
-    VKClient._per_token_locks.clear()
+    """Drop the shared limiter so each test rebuilds it with whatever
+    GLOBAL_PARSE_INTERVAL_SECONDS it set."""
+    VKClient._rate_limiter = None
     yield
-    VKClient._last_call_per_token.clear()
-    VKClient._per_token_locks.clear()
+    VKClient._rate_limiter = None
 
 
 def _make_client(token="token-A", interval=0.05):
-    """Build a VKClient with the vk_api session mocked out."""
+    """Build a VKClient with the vk_api session mocked out and class-level
+    interval lowered so the test stays fast."""
+    VKClient.GLOBAL_PARSE_INTERVAL_SECONDS = interval
+    VKClient._rate_limiter = None  # force rebuild with new interval
     with patch("modules.vk_monitor.vk_client.vk_api.VkApi") as m:
         m.return_value.get_api.return_value = MagicMock()
         c = VKClient(token)
-    # Shorten interval to keep CI fast.
-    c.GLOBAL_PARSE_INTERVAL_SECONDS = interval
     return c
 
 
@@ -61,7 +77,7 @@ def test_two_back_to_back_calls_are_spaced():
 
 def test_two_instances_share_per_token_limit():
     """Two different VKClient instances on the SAME token still share the
-    rate-limit. This is the whole point of the class-level registry."""
+    rate-limit. This is the whole point of the shared limiter."""
     interval = 0.1
     c1 = _make_client(token="shared", interval=interval)
     c2 = _make_client(token="shared", interval=interval)
@@ -125,13 +141,14 @@ def test_thread_safety_no_double_spend():
 def test_api_call_invokes_rate_limit():
     """Synchronous api_call() must enforce the limit before hitting vk_api."""
     interval = 0.1
+    VKClient.GLOBAL_PARSE_INTERVAL_SECONDS = interval
+    VKClient._rate_limiter = None
     with patch("modules.vk_monitor.vk_client.vk_api.VkApi") as m:
         session = MagicMock()
         session.method.return_value = {"ok": 1}
         m.return_value = session
         m.return_value.get_api.return_value = MagicMock()
         client = VKClient("token-call")
-    client.GLOBAL_PARSE_INTERVAL_SECONDS = interval
 
     t0 = time.monotonic()
     client.api_call("users.get", {})
@@ -140,3 +157,120 @@ def test_api_call_invokes_rate_limit():
 
     assert elapsed >= interval * 0.9, f"api_call didn't enforce rate-limit (took {elapsed:.3f}s)"
     assert session.method.call_count == 2
+
+
+# =====================================================================
+# build_rate_limiter() — backend selection
+# =====================================================================
+
+
+def test_build_rate_limiter_threading_default(monkeypatch):
+    """No env var → ThreadingRateLimiter."""
+    monkeypatch.delenv("VK_RATE_LIMIT_BACKEND", raising=False)
+    limiter = build_rate_limiter(interval=0.1)
+    assert isinstance(limiter, ThreadingRateLimiter)
+    assert limiter.interval == pytest.approx(0.1)
+
+
+def test_build_rate_limiter_explicit_threading(monkeypatch):
+    monkeypatch.setenv("VK_RATE_LIMIT_BACKEND", "threading")
+    limiter = build_rate_limiter(interval=0.1)
+    assert isinstance(limiter, ThreadingRateLimiter)
+
+
+def test_build_rate_limiter_redis_unavailable_falls_back(monkeypatch):
+    """``VK_RATE_LIMIT_BACKEND=redis`` без рабочего Redis → ThreadingRateLimiter,
+    система не падает."""
+    monkeypatch.setenv("VK_RATE_LIMIT_BACKEND", "redis")
+    # Подменим _build_redis_client чтобы он вернул None (нет коннекта).
+    with patch("modules.vk_monitor.rate_limiter._build_redis_client", return_value=None):
+        limiter = build_rate_limiter(interval=0.1)
+    assert isinstance(limiter, ThreadingRateLimiter)
+
+
+def test_build_rate_limiter_redis_when_available(monkeypatch):
+    """``VK_RATE_LIMIT_BACKEND=redis`` + рабочий Redis → RedisRateLimiter."""
+    monkeypatch.setenv("VK_RATE_LIMIT_BACKEND", "redis")
+    fake_client = MagicMock()
+    fake_client.register_script.return_value = MagicMock(return_value=0)
+    with patch(
+        "modules.vk_monitor.rate_limiter._build_redis_client", return_value=fake_client
+    ):
+        limiter = build_rate_limiter(interval=0.25)
+    assert isinstance(limiter, RedisRateLimiter)
+    assert limiter.interval == pytest.approx(0.25)
+    assert limiter.interval_ms == 250
+
+
+# =====================================================================
+# RedisRateLimiter — Lua-script invocation
+# =====================================================================
+
+
+def test_redis_rate_limiter_key_format():
+    """Ключ Redis = ``setka:vk_ratelimit:<sha256[:16]>`` — токен не хранится сырым."""
+    fake_client = MagicMock()
+    fake_client.register_script.return_value = MagicMock(return_value=0)
+    limiter = RedisRateLimiter(fake_client, interval=0.1)
+
+    key = limiter._key("my-secret-token")
+    assert key.startswith(f"{REDIS_KEY_PREFIX}:")
+    assert "my-secret-token" not in key
+    # Determinism: same token → same key.
+    assert key == limiter._key("my-secret-token")
+
+
+def test_redis_rate_limiter_wait_no_sleep():
+    """Lua-script returns 0 → wait() не спит."""
+    fake_client = MagicMock()
+    script = MagicMock(return_value=0)
+    fake_client.register_script.return_value = script
+    limiter = RedisRateLimiter(fake_client, interval=0.1)
+
+    t0 = time.monotonic()
+    limiter.wait("token-X")
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 0.02, f"should not sleep on wait_ms=0 (got {elapsed:.3f}s)"
+    script.assert_called_once()
+    call_kwargs = script.call_args.kwargs
+    assert call_kwargs["keys"][0].startswith(REDIS_KEY_PREFIX)
+    # args: [now_ms, interval_ms]
+    assert call_kwargs["args"][1] == 100  # interval_ms = 0.1 * 1000
+
+
+def test_redis_rate_limiter_wait_sleeps_returned_amount():
+    """Lua-script returns wait_ms → wait() спит примерно столько же.
+
+    Используем большой interval (200ms), чтобы на Windows с 15ms timer
+    resolution всё ещё надёжно отличить «спал» от «не спал»."""
+    wait_ms = 200
+    fake_client = MagicMock()
+    script = MagicMock(return_value=wait_ms)
+    fake_client.register_script.return_value = script
+    limiter = RedisRateLimiter(fake_client, interval=0.5)
+
+    t0 = time.monotonic()
+    limiter.wait("token-X")
+    elapsed = time.monotonic() - t0
+
+    # 30% slack на Windows timer jitter и CI shared runners.
+    assert elapsed >= wait_ms / 1000.0 * 0.7, (
+        f"expected >= {wait_ms * 0.7:.0f}ms, got {elapsed * 1000:.1f}ms"
+    )
+    assert elapsed < 0.5, f"unexpectedly slow: {elapsed * 1000:.1f}ms"
+
+
+def test_redis_rate_limiter_lua_failure_does_not_crash():
+    """Если Lua-call упал (Redis down mid-call), wait() логирует и возвращается
+    без блокировки — приоритет «не повесить прод»."""
+    fake_client = MagicMock()
+    script = MagicMock(side_effect=ConnectionError("redis down"))
+    fake_client.register_script.return_value = script
+    limiter = RedisRateLimiter(fake_client, interval=0.1)
+
+    # Should NOT raise.
+    t0 = time.monotonic()
+    limiter.wait("token-X")
+    elapsed = time.monotonic() - t0
+    assert elapsed < 0.02
