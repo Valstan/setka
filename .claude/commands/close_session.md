@@ -1,6 +1,6 @@
 ---
-description: Закрыть сессию разработки SETKA — обновить SESSION_HANDOFF.md (sticky-note куда мы шли), синхронизировать PENDING_FOLLOWUPS, отдельным коммитом зафиксировать handoff.
-argument-hint: (без аргументов или: короткое описание нитки)
+description: Закрыть сессию разработки SETKA — обновить SESSION_HANDOFF.md (sticky-note куда мы шли), синхронизировать PENDING_FOLLOWUPS, отдельным коммитом + PR зафиксировать handoff, авто-merge если CI зелёный и PR doc-only.
+argument-hint: (без аргументов | короткое описание нитки | --no-automerge)
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion
 ---
 
@@ -13,7 +13,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion
 | Команда | Что фиксирует |
 |---|---|
 | [`/finish`](finish.md) | Рабочие правки кода/доков — описательный commit message + PENDING_FOLLOWUPS, опц. commit без push |
-| [`/close_session`](close_session.md) | State of mind — SESSION_HANDOFF (текущая нитка, следующий шаг), commit + push отдельным коммитом |
+| [`/close_session`](close_session.md) | State of mind — SESSION_HANDOFF (текущая нитка, следующий шаг), commit + PR + авто-merge при зелёном CI |
 | [`/reliz`](reliz.md) | PR → merge → SSH `git pull` → systemctl restart → health-check |
 
 Обычный flow конца дня: сначала `/finish` (зафиксировать рабочие правки), потом `/close_session` (зафиксировать handoff).
@@ -175,15 +175,83 @@ EOF
 )"
 ```
 
-## Шаг 6. Финальный отчёт
+## Шаг 6. Авто-merge handoff-PR (только для handoff-only PR)
+
+Если PR — **только** про handoff (изменены **только** `docs/SESSION_HANDOFF.md` и/или `docs/PENDING_FOLLOWUPS.md`, ничего другого), его можно автоматически смёрджить после прохождения CI. Это избавляет от ситуации «закрыл сессию → утром PR висит непрелитый».
+
+**Не делать авто-merge, если:**
+- В PR есть **любые** файлы кроме `docs/SESSION_HANDOFF.md` / `docs/PENDING_FOLLOWUPS.md` (например, handoff попал в одну ветку с feature-коммитами — это работа `/finish` или `/reliz`, не `/close_session`).
+- В PR-ветке несколько коммитов (handoff + другая работа) — даже если файлы все в whitelist, могут быть feature-коммиты, которые требуют ревью.
+- `--no-automerge` передано в `$ARGUMENTS`.
+
+### Алгоритм
+
+```bash
+# 6.1. Проверка whitelist'а файлов и количества коммитов.
+PR_NUM=<номер открытого PR>
+ALLOWED='docs/SESSION_HANDOFF.md docs/PENDING_FOLLOWUPS.md'
+
+files=$(gh pr view "$PR_NUM" --json files --jq '.files[].path')
+commits=$(gh pr view "$PR_NUM" --json commits --jq '.commits | length')
+
+# Каждый файл должен быть в whitelist'е.
+extra=$(echo "$files" | grep -v -F -x -f <(echo "$ALLOWED" | tr ' ' '\n') || true)
+```
+
+Если `extra` непустой — пропустить авто-merge, доложить пользователю в финальном отчёте: «PR содержит файлы вне whitelist — merge руками: `gh pr merge $PR_NUM --squash --delete-branch`».
+
+Если `commits > 1` — пропустить авто-merge с тем же сообщением (handoff-PR должен быть одним атомарным коммитом; больше — значит в ветку добавлены посторонние изменения).
+
+### 6.2. Дождаться CI
+
+```bash
+gh pr checks "$PR_NUM" --watch --interval 15
+```
+
+`--watch` блокирует терминал, пока все checks не завершатся. Exit code: 0 — все зелёные, >0 — что-то упало.
+
+**Если CI вообще не запустился за 3 минуты** (GitHub Actions залип, как было 2026-05-26) — не падать в loop. Поставить пользователю чёткое уведомление: «CI не запустился, ручной merge: `gh pr merge $PR_NUM --squash --delete-branch`» и завершить шаг без merge.
+
+```bash
+# Простая проверка «CI вообще есть?» с таймаутом 180s.
+deadline=$(( $(date +%s) + 180 ))
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  count=$(gh pr view "$PR_NUM" --json statusCheckRollup --jq '.statusCheckRollup | length')
+  if [ "$count" -gt 0 ]; then
+    break
+  fi
+  sleep 15
+done
+if [ "$count" -eq 0 ]; then
+  echo "CI did not start in 180s — skipping auto-merge"
+  # Перейти к финальному отчёту без merge.
+fi
+```
+
+### 6.3. Если CI зелёный — merge
+
+```bash
+gh pr merge "$PR_NUM" --squash --delete-branch
+```
+
+После успешного merge — `git checkout main && git pull --ff-only origin main`, чтобы локальная main догнала remote (handoff-ветка уже удалена).
+
+### Что НЕ делает
+
+- **Не использует `--admin`** — никогда не обходить branch protection.
+- **Не amend / force-push** — если CI упал, чинить commit как обычно.
+- **Не запускает CI вручную** — если GitHub Actions залип, это инцидент платформы, не сессии.
+
+## Шаг 7. Финальный отчёт
 
 Структура (5-8 строк, на русском):
 
 1. **Сделано в сессии:** 1-3 строки из git log.
 2. **Handoff обновлён:** показать ключевые поля (Status, Текущая нитка, Следующий шаг).
 3. **Что в `PENDING_FOLLOWUPS` изменилось** (если изменилось): закрытые / новые / переприоритизированные.
-4. **Коммит:** хеш + сообщение. PR URL (если открыт).
-5. **Готово к закрытию терминала.**
+4. **Коммит:** хеш + сообщение. PR URL.
+5. **Merge:** «смёрджен автоматически» / «ждёт ручного merge — команда: `gh pr merge <N> --squash --delete-branch`» / «merge пропущен (PR содержит non-whitelist файлы)».
+6. **Готово к закрытию терминала.**
 
 Финальная строка — «До следующей сессии. `/start` сам подсветит нитку из handoff'а.»
 
@@ -192,6 +260,7 @@ EOF
 - **Не push'ить на прод** (`ssh setka`), не перезапускать сервисы, не применять миграции — это зона `/reliz`.
 - **Не делать `git rebase` / `git reset --hard` / `git push --force`** — handoff коммит обычный.
 - **Не direct push в main** ([ADR-0002](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)) — даже handoff идёт через PR.
+- **Не использовать `gh pr merge --admin`** — даже если CI залип. Доложить пользователю, мерж — руками.
 - **Не дублировать содержимое `PENDING_FOLLOWUPS` в handoff** — handoff ссылается на пункты, не повторяет.
 - **Не вести historic log в handoff'е** — он перезаписывается. История уже в `git log --follow -- docs/SESSION_HANDOFF.md` (и в `git log` основной ветки для коммитов).
 - **Не запускать тесты или build** — это инструмент фиксации состояния, не финализации работы.
