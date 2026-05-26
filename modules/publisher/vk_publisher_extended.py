@@ -439,11 +439,19 @@ class VKPublisher:
 
         Returns dict with id/name/screen_name/type/url, or None on failure.
         Sign of group_id is irrelevant — VK groups.getById expects positive id.
+
+        VK API contract: param is ``group_ids`` (plural — comma-separated list
+        of ids or a single id as string). Old singular ``group_id`` is rejected
+        with error 100 since the v5.x deprecation. Zero / negative-after-abs
+        ``group_id=0`` is short-circuited to None to avoid a guaranteed VK
+        validation failure when ``VK_TEST_GROUP_ID`` env-var is unset.
         """
         positive_id = abs(int(group_id))
+        if not positive_id:
+            return None
         try:
             response = await self._invoke(
-                self.vk_client, "groups.getById", {"group_id": positive_id}
+                self.vk_client, "groups.getById", {"group_ids": str(positive_id)}
             )
         except Exception as e:
             logger.error("groups.getById(%s) failed: %s", positive_id, e)

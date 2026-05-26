@@ -94,7 +94,8 @@ async def test_get_group_info_success_list_response():
     }
     method, params = vk.calls[0]
     assert method == "groups.getById"
-    assert params == {"group_id": 123}
+    # VK API: plural `group_ids` as string (singular `group_id` deprecated → [100]).
+    assert params == {"group_ids": "123"}
 
 
 @pytest.mark.asyncio
@@ -121,7 +122,25 @@ async def test_get_group_info_normalizes_negative_id():
     await publisher.get_group_info(-456)
 
     _, params = vk.calls[0]
-    assert params == {"group_id": 456}
+    assert params == {"group_ids": "456"}
+
+
+@pytest.mark.asyncio
+async def test_get_group_info_zero_short_circuits_without_vk_call():
+    """``group_id=0`` (env-var unset) → None без VK-вызова.
+
+    Иначе VK отвечает [100] group_ids is undefined — ошибка ожидаемая
+    и нечего на неё тратить round-trip. Сюда попадает кейс прода 2026-05-26,
+    когда `VK_TEST_GROUP_ID` env не было задано → status endpoint выглядел
+    как «inactive» на ровном месте.
+    """
+    vk = _DummyVkClient(group_info_response=[_GROUP_PAYLOAD])
+    publisher = VKPublisher(vk_client=vk)
+
+    info = await publisher.get_group_info(0)
+
+    assert info is None
+    assert vk.calls == []  # никакого VK-вызова
 
 
 @pytest.mark.asyncio
