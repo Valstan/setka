@@ -80,11 +80,48 @@
 
     <p class="text-muted small text-end" id="count-info"></p>
 </div>
+
+<!-- Sticky bulk-action bar (показывается, когда есть выбор) -->
+<div id="bulk-bar" class="position-fixed bottom-0 start-0 end-0 bg-white border-top shadow-lg py-2 px-3 d-none" style="z-index: 1030;">
+    <div class="container d-flex flex-wrap align-items-center gap-2" style="max-width: 1200px;">
+        <span class="me-2"><strong>Выбрано:</strong> <span id="bulk-count">0</span></span>
+        <button id="bulk-clear" class="btn btn-sm btn-outline-secondary" title="Снять выделение">
+            <i class="bi bi-x-circle"></i> Сбросить
+        </button>
+        <div class="vr mx-1"></div>
+        <button id="bulk-approve-selected" class="btn btn-sm btn-success"
+                title="Одобрить выбранных (у кого есть конкретная категория)">
+            <i class="bi bi-check2-all"></i> Approve
+        </button>
+        <div class="input-group input-group-sm" style="width: auto;">
+            <select id="bulk-set-category" class="form-select form-select-sm" style="max-width: 240px;">
+                <option value="" disabled selected>— сменить категорию у выбранных —</option>
+            </select>
+            <button id="bulk-apply-category" class="btn btn-sm btn-outline-primary" disabled
+                    title="Применить выбранную категорию ко всем отмеченным">
+                Применить
+            </button>
+        </div>
+        <div class="vr mx-1"></div>
+        <button id="bulk-defer-selected" class="btn btn-sm btn-outline-secondary"
+                title="Отложить выбранных">
+            <i class="bi bi-pause-circle"></i> Отложить
+        </button>
+        <button id="bulk-reject-selected" class="btn btn-sm btn-outline-warning"
+                title="Отклонить выбранных (soft — не вернутся при rerun)">
+            <i class="bi bi-x-octagon"></i> Отклонить
+        </button>
+        <button id="bulk-delete-selected" class="btn btn-sm btn-outline-danger ms-auto"
+                title="Физически удалить выбранных из БД (могут вернуться при rerun)">
+            <i class="bi bi-trash"></i> Удалить
+        </button>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
     window.REGION_CODE = {{ region_code|tojson }};
 </script>
-<script src="/static/js/region_discovery.js?v=20260526a"></script>
+<script src="/static/js/region_discovery.js?v=20260526b"></script>
 {% endblock %}

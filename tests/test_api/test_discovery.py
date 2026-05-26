@@ -904,3 +904,221 @@ async def test_ai_batch_status_404_when_region_missing():
         with pytest.raises(HTTPException) as exc:
             await discovery_api.ai_batch_status(code="nope")
     assert exc.value.status_code == 404
+
+
+# ─── /candidates/bulk-action — bulk operations on selected ids ───
+
+
+def test_bulk_action_payload_requires_nonempty_ids():
+    with pytest.raises(Exception):
+        discovery_api.BulkActionPayload(ids=[], action="reject")
+
+
+def test_bulk_action_payload_rejects_unknown_action():
+    with pytest.raises(Exception):
+        discovery_api.BulkActionPayload(ids=[1], action="bogus")
+
+
+def test_bulk_action_payload_normalises_action_case():
+    p = discovery_api.BulkActionPayload(ids=[1], action="REJECT")
+    assert p.action == "reject"
+
+
+def test_bulk_action_payload_rejects_unknown_category():
+    with pytest.raises(Exception):
+        discovery_api.BulkActionPayload(ids=[1], action="set_category", category="bogus_cat")
+
+
+def test_bulk_action_payload_empty_category_becomes_none():
+    p = discovery_api.BulkActionPayload(ids=[1], action="approve", category="")
+    assert p.category is None
+
+
+class _BulkSession(_FakeSession):
+    """Stand-in для bulk-action endpoint.
+
+    1-й execute() — выборка кандидатов по ids. Дальше (только для approve) —
+    Community lookups внутри ``_approve_candidate`` (возвращают None, чтобы
+    создавалась новая запись).
+    """
+
+    def __init__(self, candidates):
+        super().__init__()
+        self._candidates = candidates
+        self._exec_n = 0
+        self.deleted = []
+
+    async def execute(self, _stmt):
+        self._exec_n += 1
+        result = MagicMock()
+        if self._exec_n == 1:
+            scalars = MagicMock()
+            scalars.all.return_value = self._candidates
+            result.scalars.return_value = scalars
+        else:
+            # _approve_candidate lookup → None ⇒ создаётся новый Community
+            result.scalar_one_or_none.return_value = None
+            scalars = MagicMock()
+            scalars.all.return_value = []
+            result.scalars.return_value = scalars
+        return result
+
+    async def delete(self, obj):
+        self.deleted.append(obj)
+
+
+def _make_cand(cid, *, status="pending", ai_category=None):
+    return CommunityCandidate(
+        id=cid,
+        region_id=1,
+        vk_id=10 * cid,
+        name=f"C{cid}",
+        status=status,
+        ai_category=ai_category,
+    )
+
+
+async def test_bulk_action_reject_marks_all_found_as_rejected():
+    cands = [_make_cand(1), _make_cand(2, status="approved")]
+    session = _BulkSession(cands)
+    payload = discovery_api.BulkActionPayload(ids=[1, 2, 999], action="reject")
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.bulk_action(payload)
+    assert out["action"] == "reject"
+    assert out["matched"] == 2
+    assert out["updated"] == 2
+    assert out["missing_ids"] == [999]
+    assert cands[0].status == "rejected"
+    assert cands[1].status == "rejected"
+    assert session.committed is True
+
+
+async def test_bulk_action_defer_marks_all_found_as_deferred():
+    cands = [_make_cand(1), _make_cand(2)]
+    session = _BulkSession(cands)
+    payload = discovery_api.BulkActionPayload(ids=[1, 2], action="defer")
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.bulk_action(payload)
+    assert out["action"] == "defer"
+    assert out["updated"] == 2
+    assert cands[0].status == "deferred"
+    assert cands[1].status == "deferred"
+
+
+async def test_bulk_action_delete_physically_removes_candidates():
+    cands = [_make_cand(1, status="rejected"), _make_cand(2, status="pending")]
+    session = _BulkSession(cands)
+    payload = discovery_api.BulkActionPayload(ids=[1, 2], action="delete")
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.bulk_action(payload)
+    assert out["action"] == "delete"
+    assert out["updated"] == 2
+    assert session.deleted == cands
+    assert session.committed is True
+
+
+async def test_bulk_action_set_category_requires_category():
+    session = _BulkSession([])
+    payload = discovery_api.BulkActionPayload(ids=[1], action="set_category", category=None)
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        with pytest.raises(HTTPException) as exc:
+            await discovery_api.bulk_action(payload)
+    assert exc.value.status_code == 400
+    assert "category" in exc.value.detail.lower()
+
+
+async def test_bulk_action_set_category_updates_ai_category():
+    cands = [_make_cand(1, ai_category="sport"), _make_cand(2, ai_category=None)]
+    session = _BulkSession(cands)
+    payload = discovery_api.BulkActionPayload(ids=[1, 2], action="set_category", category="novost")
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.bulk_action(payload)
+    assert out["action"] == "set_category"
+    assert out["updated"] == 2
+    assert out["category"] == "novost"
+    assert cands[0].ai_category == "novost"
+    assert cands[1].ai_category == "novost"
+    # status не трогаем
+    assert cands[0].status == "pending"
+    assert cands[1].status == "pending"
+
+
+async def test_bulk_action_approve_creates_communities_for_pending_with_category():
+    cands = [
+        _make_cand(1, ai_category="novost"),
+        _make_cand(2, ai_category="sport"),
+    ]
+    session = _BulkSession(cands)
+    payload = discovery_api.BulkActionPayload(ids=[1, 2], action="approve")
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.bulk_action(payload)
+    assert out["action"] == "approve"
+    assert out["matched"] == 2
+    assert out["updated"] == 2
+    assert out["skipped_no_category"] == []
+    assert cands[0].status == "approved"
+    assert cands[1].status == "approved"
+    # Должны быть созданы два Community
+    assert len(session.added) == 2
+    assert all(isinstance(c, Community) for c in session.added)
+
+
+async def test_bulk_action_approve_skips_candidates_without_category():
+    cands = [
+        _make_cand(1, ai_category="novost"),
+        _make_cand(2, ai_category="other"),
+        _make_cand(3, ai_category=None),
+    ]
+    session = _BulkSession(cands)
+    payload = discovery_api.BulkActionPayload(ids=[1, 2, 3], action="approve")
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.bulk_action(payload)
+    assert out["updated"] == 1
+    assert sorted(out["skipped_no_category"]) == [2, 3]
+    assert cands[0].status == "approved"
+    assert cands[1].status == "pending"
+    assert cands[2].status == "pending"
+
+
+async def test_bulk_action_approve_uses_category_override():
+    """payload.category перетирает ai_category каждого выбранного — удобно
+    когда модератор хочет одним кликом approve целую секцию под одну тему."""
+    cands = [
+        _make_cand(1, ai_category="sport"),
+        _make_cand(2, ai_category=None),
+    ]
+    session = _BulkSession(cands)
+    payload = discovery_api.BulkActionPayload(ids=[1, 2], action="approve", category="novost")
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.bulk_action(payload)
+    assert out["updated"] == 2
+    # Community должен быть создан под override-category, не под собственный ai_category
+    assert all(c.category == "novost" for c in session.added)
+
+
+async def test_bulk_action_approve_ignores_non_pending():
+    """Уже approved/rejected/deferred — не пытаемся approve-ить повторно,
+    но и в skipped_no_category не пишем (это для другого случая)."""
+    cands = [
+        _make_cand(1, ai_category="novost", status="pending"),
+        _make_cand(2, ai_category="novost", status="rejected"),
+    ]
+    session = _BulkSession(cands)
+    payload = discovery_api.BulkActionPayload(ids=[1, 2], action="approve")
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.bulk_action(payload)
+    assert out["updated"] == 1
+    assert out["skipped_no_category"] == []
+    assert cands[0].status == "approved"
+    assert cands[1].status == "rejected"  # не тронули
+
+
+async def test_bulk_action_deduplicates_ids():
+    """Если фронт случайно прислал дубли — обрабатываем уникальный набор."""
+    cands = [_make_cand(1)]
+    session = _BulkSession(cands)
+    payload = discovery_api.BulkActionPayload(ids=[1, 1, 1], action="reject")
+    with patch.object(discovery_api, "AsyncSessionLocal", return_value=session):
+        out = await discovery_api.bulk_action(payload)
+    assert out["matched"] == 1
+    assert out["missing_ids"] == []
