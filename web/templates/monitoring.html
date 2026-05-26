@@ -140,6 +140,37 @@
         </div>
     </div>
 
+    <!-- Digests Status (источник: parsing_stats) -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-info">
+                <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <h5 class="mb-0">📊 Состояние дайджестов</h5>
+                    <div class="d-flex gap-2 align-items-center flex-wrap" id="digests-summary-badges">
+                        <span class="badge bg-secondary">Загрузка…</span>
+                    </div>
+                    <a href="/parsing-stats" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-bar-chart"></i> Полная статистика
+                    </a>
+                </div>
+                <div class="card-body p-0">
+                    <div id="digests-status-loading" class="text-center py-3 text-muted">
+                        <div class="spinner-border spinner-border-sm"></div>
+                        Загрузка состояния дайджестов…
+                    </div>
+                    <div id="digests-status-content" style="display:none;"></div>
+                    <div id="digests-status-error" class="alert alert-warning m-3" style="display:none;"></div>
+                </div>
+                <div class="card-footer bg-white small text-muted">
+                    <i class="bi bi-info-circle"></i>
+                    Источник — таблица <code>parsing_stats</code>. Сортировка: проблемные пары
+                    (broken → dead → stale → fresh) сверху. Цвет считается из времени последнего
+                    успеха и подряд-неуспешных запусков (см. tooltips).
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Regions Status -->
     <div class="row mb-4">
         <div class="col-12">
@@ -177,6 +208,16 @@
 </div>
 
 <style>
+.digests-table { font-size: 0.86rem; margin-bottom: 0; }
+.digests-table th { font-weight: 500; color: #6c757d; font-size: 0.78rem; text-transform: uppercase; }
+.digests-table td { vertical-align: middle; }
+.digests-table .badge { font-size: 0.72rem; font-weight: 500; }
+.digests-status-fresh  { background: #d1e7dd; color: #0a3622; }
+.digests-status-stale  { background: #fff3cd; color: #664d03; }
+.digests-status-broken { background: #f8d7da; color: #58151c; }
+.digests-status-dead   { background: #e2e3e5; color: #41464b; }
+.digests-row-broken td { background: rgba(220, 53, 69, 0.06); }
+.digests-row-dead   td { background: rgba(108, 117, 125, 0.06); }
 </style>
 
 <script>
@@ -230,10 +271,121 @@ async function testApiConnection() {
     }
 }
 
+function _esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+function _humanAgo(iso) {
+    if (!iso) return '<span class="text-muted">никогда</span>';
+    const then = new Date(iso);
+    const now = new Date();
+    let diff = Math.floor((now - then) / 1000);
+    if (diff < 0) diff = 0;
+    if (diff < 60)     return diff + ' с назад';
+    if (diff < 3600)   return Math.floor(diff / 60) + ' мин назад';
+    if (diff < 86400)  return Math.floor(diff / 3600) + ' ч назад';
+    return Math.floor(diff / 86400) + ' дн назад';
+}
+
+const _DIGEST_STATUS_TEXT = {
+    fresh:  { label: 'свежо',  cls: 'digests-status-fresh',  icon: 'bi-check-circle-fill' },
+    stale:  { label: 'устаревает', cls: 'digests-status-stale',  icon: 'bi-clock-history' },
+    broken: { label: 'сломано', cls: 'digests-status-broken', icon: 'bi-exclamation-triangle-fill' },
+    dead:   { label: 'мёртво', cls: 'digests-status-dead',   icon: 'bi-x-circle' },
+};
+
+async function loadDigestsStatus() {
+    const loading = document.getElementById('digests-status-loading');
+    const content = document.getElementById('digests-status-content');
+    const errorEl = document.getElementById('digests-status-error');
+    const badges  = document.getElementById('digests-summary-badges');
+    try {
+        const resp = await fetch('/api/monitoring/digests-status');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const json = await resp.json();
+        if (!json.success || !json.data) throw new Error('API ответил без данных');
+        const { rows, summary, thresholds } = json.data;
+
+        // Summary badges
+        const order = ['broken', 'dead', 'stale', 'fresh'];
+        badges.innerHTML = order.map(k => {
+            const st = _DIGEST_STATUS_TEXT[k] || {};
+            return `<span class="badge ${st.cls || 'bg-light text-dark'}">
+                <i class="bi ${st.icon}"></i> ${st.label}: ${summary[k] || 0}
+            </span>`;
+        }).join(' ');
+
+        if (!rows.length) {
+            content.innerHTML = '<div class="alert alert-light m-3 mb-0">Пока нет данных в parsing_stats за последние 30 дней.</div>';
+            content.style.display = 'block';
+            loading.style.display = 'none';
+            return;
+        }
+
+        const tbody = rows.map(r => {
+            const st = _DIGEST_STATUS_TEXT[r.status] || _DIGEST_STATUS_TEXT.dead;
+            const rowCls = (r.status === 'broken' || r.status === 'dead') ? `digests-row-${r.status}` : '';
+            const successRate30d = r.runs_30d > 0
+                ? Math.round((r.success_30d / r.runs_30d) * 100) + '%'
+                : '—';
+            const tooltip = `consecutive_failed=${r.consecutive_failed}, success_30d=${r.success_30d}/${r.runs_30d}`;
+            return `
+                <tr class="${rowCls}">
+                    <td>
+                        <span class="badge ${st.cls}" title="${_esc(tooltip)}">
+                            <i class="bi ${st.icon}"></i> ${st.label}
+                        </span>
+                    </td>
+                    <td><strong>${_esc(r.region_name)}</strong>
+                        <small class="text-muted d-block">${_esc(r.region_code)}${r.region_is_active ? '' : ' (paused)'}</small>
+                    </td>
+                    <td><code>${_esc(r.theme)}</code></td>
+                    <td>${_humanAgo(r.last_success_date)}</td>
+                    <td>${_humanAgo(r.last_run_date)}</td>
+                    <td class="text-end">${r.runs_24h}</td>
+                    <td class="text-end">${r.posts_24h}</td>
+                    <td class="text-end small text-muted">${successRate30d}</td>
+                </tr>
+            `;
+        }).join('');
+
+        content.innerHTML = `
+            <div class="table-responsive">
+                <table class="table table-sm digests-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Статус</th>
+                            <th>Регион</th>
+                            <th>Тема</th>
+                            <th>Последний успех</th>
+                            <th>Последний запуск</th>
+                            <th class="text-end">Запуски 24ч</th>
+                            <th class="text-end">Постов 24ч</th>
+                            <th class="text-end" title="successful runs / total runs за 30 дней">Success 30д</th>
+                        </tr>
+                    </thead>
+                    <tbody>${tbody}</tbody>
+                </table>
+            </div>
+        `;
+        content.style.display = 'block';
+        loading.style.display = 'none';
+    } catch (e) {
+        loading.style.display = 'none';
+        errorEl.style.display = 'block';
+        errorEl.textContent = 'Не удалось загрузить состояние дайджестов: ' + e.message;
+    }
+}
+
 async function loadAllMonitoringData() {
     try {
         console.log('Loading all monitoring data...');
-        
+
+        // Виджет дайджестов не должен блокировать остальные данные — fire-and-forget
+        loadDigestsStatus().catch(e => console.warn('digests status failed:', e));
+
         // Load all monitoring data
         const [statsResponse, operationsResponse, regionsResponse] = await Promise.all([
             fetch('/api/monitoring/stats'),

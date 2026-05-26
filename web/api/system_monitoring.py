@@ -3,18 +3,19 @@ System Monitoring API - Real-time monitoring of SETKA system operations
 """
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Dict, Optional
 
 import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import and_, case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.runtime import PRODUCTION_WORKFLOW_CONFIG
 from database.connection import get_db_session
 from database.models import Community, Post, Region, VKToken
+from database.models_extended import ParsingStats
 from modules.operation_tracking import operation_tracker
 from modules.system_status_notifier import system_status_notifier
 from utils.cache import cache
@@ -339,6 +340,204 @@ async def get_regions_status(db: AsyncSession = Depends(get_db_session)):
     except Exception as e:
         logger.error(f"Error getting regions status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Пороги «свежести» дайджеста (в часах). Для каждой пары (region_code, theme)
+# берём last_run_date из parsing_stats и красим:
+#   fresh   — last_run < FRESH_HOURS назад
+#   stale   — last_run между FRESH_HOURS и STALE_HOURS
+#   dead    — last_run > STALE_HOURS назад (или вообще нет за 30 дней)
+#   broken  — формально run был свежим, но последние N подряд failed
+#             (success=false), что значит beat жив, а pipeline валится
+_DIGEST_STATUS_FRESH_HOURS = 12
+_DIGEST_STATUS_STALE_HOURS = 24
+_DIGEST_STATUS_BROKEN_MIN_FAILED_RUNS = 3
+
+
+def _classify_digest_row(
+    last_run_at: Optional[datetime],
+    last_success_at: Optional[datetime],
+    consecutive_failed: int,
+    now_utc: datetime,
+) -> str:
+    if last_run_at is None:
+        return "dead"
+    age_hours = (now_utc - last_run_at).total_seconds() / 3600.0
+    if (
+        consecutive_failed >= _DIGEST_STATUS_BROKEN_MIN_FAILED_RUNS
+        and age_hours <= _DIGEST_STATUS_STALE_HOURS
+    ):
+        # Beat запускает таску регулярно, но она падает — это «broken», не «dead».
+        return "broken"
+    if last_success_at is None:
+        return "dead"
+    success_age_hours = (now_utc - last_success_at).total_seconds() / 3600.0
+    if success_age_hours <= _DIGEST_STATUS_FRESH_HOURS:
+        return "fresh"
+    if success_age_hours <= _DIGEST_STATUS_STALE_HOURS:
+        return "stale"
+    return "dead"
+
+
+@router.get("/digests-status", response_model=Dict)
+@cache(ttl=60, key_prefix="monitoring")
+async def get_digests_status(db: AsyncSession = Depends(get_db_session)):
+    """Свод состояния дайджестов по (region_code, theme) из ``parsing_stats``.
+
+    Источник — ``parsing_stats`` (та же таблица, что и для `/parsing-stats`).
+    Возвращаем для каждой пары region×theme: время последней beat-таски,
+    время последнего успеха, количество запусков и опубликованных постов
+    за 24 часа, и категорию ``status`` (fresh/stale/broken/dead) для
+    цветовой маркировки в UI.
+
+    Используется виджетами на `/monitoring` и главной странице. Полная
+    история и фильтры — на `/parsing-stats`.
+    """
+    now_utc = datetime.utcnow()
+    since_24h = now_utc - timedelta(hours=24)
+    since_30d = now_utc - timedelta(days=30)
+
+    # ── 1. Базовый агрегат: для каждой (region_code, theme) за 30 дней ────
+    success_int = case((ParsingStats.success.is_(True), 1), else_=0)
+    last_success_run = case(
+        (ParsingStats.success.is_(True), ParsingStats.run_date),
+        else_=None,
+    )
+    runs_24h_flag = case((ParsingStats.run_date >= since_24h, 1), else_=0)
+    posts_24h_expr = case(
+        (ParsingStats.run_date >= since_24h, ParsingStats.posts_final_count),
+        else_=0,
+    )
+
+    agg_stmt = (
+        select(
+            ParsingStats.region_code,
+            ParsingStats.theme,
+            func.max(ParsingStats.run_date).label("last_run_date"),
+            func.max(last_success_run).label("last_success_date"),
+            func.sum(runs_24h_flag).label("runs_24h"),
+            func.sum(posts_24h_expr).label("posts_24h"),
+            func.count(ParsingStats.id).label("runs_30d"),
+            func.sum(success_int).label("success_30d"),
+        )
+        .where(ParsingStats.run_date >= since_30d)
+        .group_by(ParsingStats.region_code, ParsingStats.theme)
+    )
+    agg_rows = (await db.execute(agg_stmt)).all()
+
+    # ── 2. Подсчёт consecutive_failed по каждой паре (последние N задач) ──
+    # Берём последние 10 задач per (region_code, theme), считаем сколько подряд
+    # success=false с конца. Если >=3 — это «broken».
+    rn_col = (
+        func.row_number()
+        .over(
+            partition_by=(ParsingStats.region_code, ParsingStats.theme),
+            order_by=ParsingStats.run_date.desc(),
+        )
+        .label("rn")
+    )
+    recent_stmt = select(
+        ParsingStats.region_code,
+        ParsingStats.theme,
+        ParsingStats.run_date,
+        ParsingStats.success,
+        rn_col,
+    ).where(ParsingStats.run_date >= since_30d)
+    recent_subq = recent_stmt.subquery()
+    recent_rows = (
+        await db.execute(
+            select(
+                recent_subq.c.region_code,
+                recent_subq.c.theme,
+                recent_subq.c.success,
+                recent_subq.c.run_date,
+            )
+            .where(recent_subq.c.rn <= 10)
+            .order_by(
+                recent_subq.c.region_code,
+                recent_subq.c.theme,
+                recent_subq.c.run_date.desc(),
+            )
+        )
+    ).all()
+    consecutive_failed: Dict[tuple, int] = {}
+    for r in recent_rows:
+        key = (r.region_code, r.theme)
+        if key in consecutive_failed:
+            continue  # already finalized (нашли первый success или предел)
+        cnt = consecutive_failed.get(key, 0)
+        if r.success:
+            consecutive_failed[key] = cnt  # finalize
+            continue
+        consecutive_failed[key] = cnt + 1
+    # finalize все пары, у которых row нашёлся, но успехов не было — счётчик
+    # уже корректно зафиксирован в loop'е через _key.
+
+    # ── 3. Region.name lookup ─────────────────────────────────────────────
+    regions_result = await db.execute(select(Region.code, Region.name, Region.is_active))
+    region_meta = {r.code: {"name": r.name, "is_active": r.is_active} for r in regions_result}
+
+    # ── 4. Склейка ────────────────────────────────────────────────────────
+    rows = []
+    counters = {"fresh": 0, "stale": 0, "broken": 0, "dead": 0}
+    for r in agg_rows:
+        key = (r.region_code, r.theme)
+        cf = consecutive_failed.get(key, 0)
+        status = _classify_digest_row(
+            last_run_at=r.last_run_date,
+            last_success_at=r.last_success_date,
+            consecutive_failed=cf,
+            now_utc=now_utc,
+        )
+        counters[status] = counters.get(status, 0) + 1
+        meta = region_meta.get(r.region_code, {})
+        rows.append(
+            {
+                "region_code": r.region_code,
+                "region_name": meta.get("name") or r.region_code,
+                "region_is_active": bool(meta.get("is_active", True)),
+                "theme": r.theme,
+                "last_run_date": r.last_run_date.isoformat() if r.last_run_date else None,
+                "last_success_date": (
+                    r.last_success_date.isoformat() if r.last_success_date else None
+                ),
+                "runs_24h": int(r.runs_24h or 0),
+                "posts_24h": int(r.posts_24h or 0),
+                "runs_30d": int(r.runs_30d or 0),
+                "success_30d": int(r.success_30d or 0),
+                "consecutive_failed": cf,
+                "status": status,
+            }
+        )
+
+    # Sort: broken first (внимание!), затем dead, stale, fresh; внутри — по
+    # давности last_run_date (старые впереди).
+    status_order = {"broken": 0, "dead": 1, "stale": 2, "fresh": 3}
+    rows.sort(
+        key=lambda r: (
+            status_order.get(r["status"], 9),
+            -(datetime.fromisoformat(r["last_run_date"]).timestamp() if r["last_run_date"] else 0),
+            r["region_code"],
+            r["theme"],
+        )
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "rows": rows,
+            "summary": {
+                **counters,
+                "total_pairs": len(rows),
+            },
+            "thresholds": {
+                "fresh_hours": _DIGEST_STATUS_FRESH_HOURS,
+                "stale_hours": _DIGEST_STATUS_STALE_HOURS,
+                "broken_min_failed_runs": _DIGEST_STATUS_BROKEN_MIN_FAILED_RUNS,
+            },
+            "as_of": now_utc.isoformat() + "Z",
+        },
+    }
 
 
 @router.get("/workflow-status", response_model=Dict)
