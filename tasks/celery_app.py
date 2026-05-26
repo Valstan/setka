@@ -24,7 +24,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-from celery import Celery
+from celery import Celery, signals
 from celery.schedules import crontab
 
 from utils.celery_asyncio import run_coro
@@ -169,6 +169,25 @@ app = Celery(
     ],
 )
 app.config_from_object("config.celery_config")
+
+
+# При выставленной ``PROMETHEUS_MULTIPROC_DIR`` worker пишет метрики в shared
+# mmap-файл с именем по своему PID. Если процесс умер и mmap не подчистить,
+# его counter'ы продолжат участвовать в агрегациях через MultiProcessCollector.
+# ``mark_process_dead`` исключает PID из выдачи. Защита идемпотентна — если
+# env-var не выставлена, prometheus_client поднимет ValueError, мы его глотаем.
+@signals.worker_shutdown.connect  # type: ignore[has-type]
+def _setka_mark_prom_process_dead(**_kwargs) -> None:
+    import os
+
+    if not os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        return
+    try:
+        from prometheus_client import multiprocess
+
+        multiprocess.mark_process_dead(os.getpid())
+    except Exception:
+        logger.debug("prometheus mark_process_dead failed", exc_info=True)
 
 
 @app.task(name="tasks.celery_app.run_vk_monitoring")
