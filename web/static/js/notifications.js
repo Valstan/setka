@@ -177,53 +177,38 @@ function loadSuggestedPosts(suggestedPosts) {
     const loading = document.getElementById('suggested-loading');
     const empty = document.getElementById('suggested-empty');
     const list = document.getElementById('suggested-list');
-    
+
     loading.style.display = 'none';
-    
+
     if (suggestedPosts.length === 0) {
         empty.style.display = 'block';
         list.style.display = 'none';
-    } else {
-        empty.style.display = 'none';
-        
-        let html = '<div class="list-group list-group-flush">';
-        
-        suggestedPosts.forEach(notif => {
-            html += `
-                <a href="${notif.url}" target="_blank" 
-                   class="list-group-item list-group-item-action list-group-item-warning">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div class="flex-grow-1">
-                            <div class="d-flex align-items-center mb-2">
-                                <i class="bi bi-geo-alt-fill text-warning me-2"></i>
-                                <h6 class="mb-0">${notif.region_name}</h6>
-                            </div>
-                            <div class="d-flex align-items-center">
-                                <i class="bi bi-envelope me-2 text-muted"></i>
-                                <span class="badge bg-warning">
-                                    ${notif.suggested_count} предложенн${notif.suggested_count === 1 ? 'ый' : notif.suggested_count < 5 ? 'ых' : 'ых'} пост${notif.suggested_count === 1 ? '' : notif.suggested_count < 5 ? 'а' : 'ов'}
-                                </span>
-                            </div>
-                            ${notif.checked_at ? `
-                                <small class="text-muted d-block mt-1">
-                                    <i class="bi bi-clock"></i>
-                                    Проверено: ${new Date(notif.checked_at).toLocaleTimeString('ru-RU')}
-                                </small>
-                            ` : ''}
-                        </div>
-                        <div class="text-end">
-                            <i class="bi bi-box-arrow-up-right text-warning fs-4"></i>
-                            <small class="d-block text-muted mt-1">Открыть в VK</small>
-                        </div>
-                    </div>
-                </a>
-            `;
-        });
-        
-        html += '</div>';
-        list.innerHTML = html;
-        list.style.display = 'block';
+        return;
     }
+    empty.style.display = 'none';
+
+    const cards = suggestedPosts.map(notif => {
+        const regionName = escapeHtml(notif.region_name || '');
+        const cnt = notif.suggested_count;
+        const word = `${cnt} предложенн${cnt === 1 ? 'ый' : cnt < 5 ? 'ых' : 'ых'} пост${cnt === 1 ? '' : cnt < 5 ? 'а' : 'ов'}`;
+        const checked = notif.checked_at
+            ? `<div class="notif-meta"><i class="bi bi-clock"></i> ${new Date(notif.checked_at).toLocaleTimeString('ru-RU')}</div>`
+            : '';
+        return `
+            <a href="${notif.url}" target="_blank" class="notif-card bg-warning-tint text-decoration-none text-body">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div class="flex-grow-1">
+                        <h6 class="mb-1"><i class="bi bi-geo-alt-fill text-warning"></i> ${regionName}</h6>
+                        <span class="badge bg-warning text-dark">${word}</span>
+                        ${checked}
+                    </div>
+                    <i class="bi bi-box-arrow-up-right text-warning fs-5"></i>
+                </div>
+            </a>
+        `;
+    }).join('');
+    list.innerHTML = `<div class="notif-grid">${cards}</div>`;
+    list.style.display = 'block';
 }
 
 function loadUnreadMessages(unreadMessages, deniedGroups) {
@@ -260,79 +245,59 @@ function loadUnreadMessages(unreadMessages, deniedGroups) {
 
     empty.style.display = 'none';
 
-    let html = '<div class="list-group list-group-flush">';
-
-    unreadMessages.forEach(notif => {
+    const cards = unreadMessages.map(notif => {
         const groupId = notif.vk_group_id;
-        const positiveGid = Math.abs(groupId);
         const regionName = escapeHtml(notif.region_name || '');
         const conversations = notif.conversations || [];
+        const cnt = notif.unread_count;
+        const word = `${cnt} непрочитанн${cnt === 1 ? 'ое' : cnt < 5 ? 'ых' : 'ых'} сообщени${cnt === 1 ? 'е' : cnt < 5 ? 'я' : 'й'}`;
 
-        // Per-conversation reply rows: extract peer_id + last message preview
         let convRowsHtml = '';
         if (conversations.length > 0) {
-            convRowsHtml = '<div class="list-group list-group-flush mt-2">';
-            conversations.forEach(c => {
+            const rows = conversations.map(c => {
                 const peer = c?.conversation?.peer || {};
                 const peerId = peer.id;
-                if (!peerId) return;
+                if (!peerId) return '';
                 const lastMsg = c?.last_message || {};
-                const lastText = escapeHtml((lastMsg.text || '').slice(0, 180));
+                const lastText = escapeHtml((lastMsg.text || '').slice(0, 140));
                 const peerLabel = `peer ${peerId}`;
-                convRowsHtml += `
-                    <div class="list-group-item py-2">
-                        <div class="d-flex justify-content-between align-items-start gap-2">
-                            <div class="flex-grow-1">
-                                <small class="text-muted">${peerLabel}</small>
-                                <div class="small" style="white-space: pre-wrap;">${lastText || '<em>(без текста)</em>'}</div>
-                            </div>
-                            <button class="btn btn-sm btn-outline-primary"
-                                    title="Ответить шаблоном или вручную"
-                                    onclick='openReplyModal({kind:"message", groupId:${groupId}, peerId:${peerId}, peerName:${JSON.stringify(peerLabel)}, text:${JSON.stringify(lastMsg.text || "")}, regionName:${JSON.stringify(notif.region_name || "")}})'>
-                                <i class="bi bi-reply"></i> Ответить
-                            </button>
+                return `
+                    <div class="conv-row d-flex justify-content-between align-items-start gap-2">
+                        <div class="flex-grow-1">
+                            <div class="notif-meta">${peerLabel}</div>
+                            <div class="notif-body-text">${lastText || '<em>(без текста)</em>'}</div>
                         </div>
+                        <button class="btn btn-sm btn-outline-primary" title="Ответить"
+                                onclick='openReplyModal({kind:"message", groupId:${groupId}, peerId:${peerId}, peerName:${JSON.stringify(peerLabel)}, text:${JSON.stringify(lastMsg.text || "")}, regionName:${JSON.stringify(notif.region_name || "")}})'>
+                            <i class="bi bi-reply"></i>
+                        </button>
                     </div>
                 `;
-            });
-            convRowsHtml += '</div>';
+            }).filter(Boolean).join('');
+            convRowsHtml = `<div class="mt-2">${rows}</div>`;
         }
 
-        html += `
-            <div class="list-group-item list-group-item-info">
-                <div class="d-flex justify-content-between align-items-start">
+        const checked = notif.checked_at
+            ? `<div class="notif-meta"><i class="bi bi-clock"></i> ${new Date(notif.checked_at).toLocaleTimeString('ru-RU')}</div>`
+            : '';
+
+        return `
+            <div class="notif-card bg-info-tint">
+                <div class="d-flex justify-content-between align-items-start gap-2">
                     <div class="flex-grow-1">
-                        <div class="d-flex align-items-center mb-2">
-                            <i class="bi bi-geo-alt-fill text-info me-2"></i>
-                            <h6 class="mb-0">${regionName}</h6>
-                        </div>
-                        <div class="d-flex align-items-center">
-                            <i class="bi bi-chat-dots me-2 text-muted"></i>
-                            <span class="badge bg-info">
-                                ${notif.unread_count} непрочитанн${notif.unread_count === 1 ? 'ое' : notif.unread_count < 5 ? 'ых' : 'ых'} сообщени${notif.unread_count === 1 ? 'е' : notif.unread_count < 5 ? 'я' : 'й'}
-                            </span>
-                        </div>
-                        ${notif.checked_at ? `
-                            <small class="text-muted d-block mt-1">
-                                <i class="bi bi-clock"></i>
-                                Проверено: ${new Date(notif.checked_at).toLocaleTimeString('ru-RU')}
-                            </small>
-                        ` : ''}
-                        ${convRowsHtml}
+                        <h6 class="mb-1"><i class="bi bi-geo-alt-fill text-info"></i> ${regionName}</h6>
+                        <span class="badge bg-info text-white">${word}</span>
+                        ${checked}
                     </div>
-                    <div class="text-end ms-2">
-                        <a href="${notif.url}" target="_blank" class="btn btn-sm btn-outline-info"
-                           title="Открыть в VK">
-                            <i class="bi bi-box-arrow-up-right"></i>
-                        </a>
-                    </div>
+                    <a href="${notif.url}" target="_blank" class="btn btn-sm btn-outline-info" title="Открыть в VK">
+                        <i class="bi bi-box-arrow-up-right"></i>
+                    </a>
                 </div>
+                ${convRowsHtml}
             </div>
         `;
-    });
-
-    html += '</div>';
-    list.innerHTML = html;
+    }).join('');
+    list.innerHTML = `<div class="notif-grid">${cards}</div>`;
     list.style.display = 'block';
 }
 
@@ -374,68 +339,89 @@ async function loadRecentComments(recentComments) {
     if (visible.length === 0) {
         empty.style.display = 'block';
         list.style.display = 'none';
-    } else {
-        empty.style.display = 'none';
-
-        let html = '<div class="list-group list-group-flush">';
-
-        visible.forEach(notif => {
-            const text = escapeHtml(notif.text || '');
-            const postUrl = notif.post_url || '#';
-            const communityName = escapeHtml(notif.community_name || notif.region_name || 'Сообщество');
-            const cid = notif.comment_id;
-            const ownerId = notif.vk_owner_id;
-            const postId = notif.vk_post_id;
-            const replyBadge = notif.is_reply
-                ? '<span class="badge bg-info-subtle text-info-emphasis ms-2">ответ</span>' : '';
-            const likesBadge = (notif.likes_count || 0) > 0
-                ? `<span class="badge bg-light text-dark ms-1"><i class="bi bi-heart-fill text-danger"></i> ${notif.likes_count}</span>` : '';
-
-            html += `
-                <div class="list-group-item list-group-item-light" data-comment-id="${cid}">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div class="flex-grow-1">
-                            <div class="d-flex align-items-center mb-2">
-                                <i class="bi bi-chat-left-text me-2 text-secondary"></i>
-                                <h6 class="mb-0">${communityName}</h6>
-                                ${replyBadge}${likesBadge}
-                            </div>
-                            <div class="text-body">
-                                <div class="small" style="white-space: pre-wrap;">${text}</div>
-                            </div>
-                            ${(notif.commented_at || notif.checked_at) ? `
-                                <small class="text-muted d-block mt-2">
-                                    <i class="bi bi-clock"></i>
-                                    ${notif.commented_at ? `Комментарий: ${new Date(notif.commented_at).toLocaleString('ru-RU')}` : `Проверено: ${new Date(notif.checked_at).toLocaleString('ru-RU')}`}
-                                </small>
-                            ` : ''}
-                        </div>
-                        <div class="text-end ms-2 d-flex flex-column gap-1">
-                            <a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-secondary" title="Открыть в VK">
-                                <i class="bi bi-box-arrow-up-right"></i>
-                            </a>
-                            <button class="btn btn-sm btn-outline-primary" title="Ответить от имени сообщества"
-                                    onclick='openReplyModal({kind:"comment", ownerId:${ownerId}, postId:${postId}, commentId:${cid}, text:${JSON.stringify(notif.text || "")}, regionName:${JSON.stringify(notif.community_name || notif.region_name || "")}})'>
-                                <i class="bi bi-reply"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" title="Лайкнуть от имени сообщества"
-                                    onclick="likeComment(${ownerId}, ${postId}, ${cid}, this)">
-                                <i class="bi bi-heart"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-success" title="Отметить обработанным"
-                                    onclick="markHandled('recent_comment', '${cid}', this)">
-                                <i class="bi bi-check2"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        });
-
-        html += '</div>';
-        list.innerHTML = html;
-        list.style.display = 'block';
+        return;
     }
+    empty.style.display = 'none';
+
+    const cards = visible.map(notif => {
+        const text = escapeHtml(notif.text || '');
+        const postUrl = notif.post_url || '#';
+        const communityName = escapeHtml(notif.community_name || notif.region_name || 'Сообщество');
+        const cid = notif.comment_id;
+        const ownerId = notif.vk_owner_id;
+        const postId = notif.vk_post_id;
+        const replyBadge = notif.is_reply
+            ? '<span class="badge bg-info-subtle text-info-emphasis">ответ</span>' : '';
+        const likesBadge = (notif.likes_count || 0) > 0
+            ? `<span class="badge bg-light text-dark"><i class="bi bi-heart-fill text-danger"></i> ${notif.likes_count}</span>` : '';
+        const dateHtml = (notif.commented_at || notif.checked_at) ? `
+            <div class="notif-meta"><i class="bi bi-clock"></i>
+                ${notif.commented_at ? new Date(notif.commented_at).toLocaleString('ru-RU') : new Date(notif.checked_at).toLocaleString('ru-RU')}
+            </div>` : '';
+        return `
+            <div class="notif-card bg-secondary-tint" data-comment-id="${cid}">
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <i class="bi bi-chat-left-text text-secondary"></i>
+                    <h6 class="mb-0 flex-grow-1">${communityName}</h6>
+                    ${replyBadge}${likesBadge}
+                </div>
+                <div class="notif-body-text">${text}</div>
+                ${dateHtml}
+                <div class="notif-actions">
+                    <a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-secondary" title="Открыть в VK">
+                        <i class="bi bi-box-arrow-up-right"></i>
+                    </a>
+                    <button class="btn btn-sm btn-outline-primary" title="Ответить от имени сообщества"
+                            onclick='openReplyModal({kind:"comment", ownerId:${ownerId}, postId:${postId}, commentId:${cid}, text:${JSON.stringify(notif.text || "")}, regionName:${JSON.stringify(notif.community_name || notif.region_name || "")}})'>
+                        <i class="bi bi-reply"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" title="Лайкнуть от имени сообщества"
+                            onclick="likeComment(${ownerId}, ${postId}, ${cid}, this)">
+                        <i class="bi bi-heart"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-success ms-auto" title="Отметить обработанным"
+                            onclick="markHandled('recent_comment', '${cid}', this)">
+                        <i class="bi bi-check2"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+    list.innerHTML = `<div class="notif-grid">${cards}</div>`;
+    list.style.display = 'block';
+}
+
+// Toast helper — non-blocking notification вместо alert().
+// Один-два таких подряд автоматически складываются в стек.
+function showToast(message, level = 'danger', durationMs = 6000) {
+    const node = document.createElement('div');
+    node.className = `notif-toast alert alert-${level} alert-dismissible fade show shadow-sm`;
+    node.setAttribute('role', 'alert');
+    node.innerHTML = `${message}<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Закрыть"></button>`;
+    document.body.appendChild(node);
+    setTimeout(() => {
+        node.classList.remove('show');
+        setTimeout(() => node.remove(), 300);
+    }, durationMs);
+}
+
+// VK error 3 ("Unknown method passed") для likes.add реально означает «у токена нет
+// scope для wall/likes». VK возвращает обманчивое имя ошибки, но причина именно scope.
+// Подсказываем админу человеческую интерпретацию вместо технического кода.
+function explainLikeError(data) {
+    const code = data?.error_code;
+    const raw = data?.error || 'неизвестная ошибка';
+    if (code === 3) {
+        return 'У VK-токена нет scope «wall» / «likes» — выпусти новый токен ' +
+            'VALSTAN со scope <code>wall,groups,messages,offline</code> ' +
+            'и обнови <code>VK_TOKEN_VALSTAN</code> на проде.';
+    }
+    if (code === 15 || code === 27) {
+        return 'Сообщество-токен не имеет прав на эту операцию, а fallback на ' +
+            'user-token тоже не сработал. Проверь токены группы.';
+    }
+    if (code === 14) return 'Требуется ввод капчи в VK — попробуй через минуту.';
+    return `Ошибка [${code ?? '?'}]: ${escapeHtml(raw)}`;
 }
 
 async function likeComment(ownerId, postId, commentId, btn) {
@@ -452,15 +438,16 @@ async function likeComment(ownerId, postId, commentId, btn) {
             btn.innerHTML = '<i class="bi bi-heart-fill text-danger"></i>';
             btn.classList.remove('btn-outline-danger');
             btn.classList.add('btn-danger');
+            showToast('❤️ Лайк поставлен', 'success', 2500);
         } else {
             btn.innerHTML = originalHtml;
             btn.disabled = false;
-            alert(`Не удалось лайкнуть: ${data.error || '?'}`);
+            showToast(`Не удалось лайкнуть: ${explainLikeError(data)}`, 'danger', 9000);
         }
     } catch (e) {
         btn.innerHTML = originalHtml;
         btn.disabled = false;
-        alert(`Ошибка: ${e.message}`);
+        showToast(`Ошибка сети: ${escapeHtml(e.message)}`, 'danger', 6000);
     }
 }
 

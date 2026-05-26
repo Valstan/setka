@@ -10,12 +10,16 @@ Token routing:
   to admin user-token on VK errors 15/27 (community token lacks the scope).
   The ``via`` field in the response tells the UI which path actually
   succeeded so a future audit can spot regressions.
-- ``like_comment`` goes straight through the user-token. VK API explicitly
-  restricts ``likes.add`` to user access tokens — calling it with a community
-  token returns error 3 ``Unknown method passed`` (the method literally is
-  not exposed for that token class). The fallback set is {15, 27}, so the
-  generic retry would not even kick in. By going user-only we save one
-  doomed VK round-trip per like and avoid the misleading error in the UI.
+- ``like_comment`` goes straight through the user-token. VK returns error 3
+  ``Unknown method passed`` for ``likes.add`` in two distinct scenarios:
+  (a) the token is a community-token (VK does not expose ``likes.add`` for
+  that token class), and (b) a user-token lacks the ``wall`` / ``likes``
+  scope. The error message is identical for both, which is misleading: the
+  practical cause on this project is **almost always (b)** — the admin
+  user-token was issued without ``wall`` scope and needs to be re-minted
+  with ``wall,groups,messages,offline``. The UI surfaces a human-readable
+  hint when this happens (see ``likeComment``/``explainLikeError`` in
+  ``web/static/js/notifications.js``).
 """
 
 from __future__ import annotations

@@ -5,10 +5,44 @@
 {% block nav_section_system %}active{% endblock %}
 
 {% block content %}
-{# Уведомления центрируются в окне максимум ~1100px шириной — на больших
-   экранах карточки не растягиваются неприглядно широко, на средних/малых
-   занимают всю доступную ширину как обычно. #}
-<div class="notifications-page mx-auto" style="max-width: 1100px;">
+{# Карточки уведомлений раскладываются в CSS grid с 2 столбцами на десктопе,
+   1 столбцом на мобильных (auto-fill, minmax). Контейнер не ограничен
+   1100px как раньше — на широких экранах сетка дышит. #}
+<style>
+.notifications-page { max-width: 1400px; margin: 0 auto; }
+.notif-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 0.6rem;
+    padding: 0.5rem 0.75rem;
+}
+.notif-card {
+    border-radius: 0.4rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid transparent;
+    background: #fff;
+}
+.notif-card.bg-warning-tint { border-color: #ffe69c; background: #fffbf0; }
+.notif-card.bg-info-tint    { border-color: #b6effb; background: #f1fafd; }
+.notif-card.bg-secondary-tint { border-color: #ced4da; background: #f8f9fa; }
+.notif-card h6 { font-size: 0.92rem; margin-bottom: 0.25rem; }
+.notif-card .notif-meta { font-size: 0.78rem; color: #6c757d; }
+.notif-card .notif-body-text { font-size: 0.85rem; white-space: pre-wrap; }
+.notif-card .notif-actions { display: flex; gap: 0.25rem; flex-wrap: wrap; margin-top: 0.4rem; }
+.notif-card .btn-sm { padding: 0.15rem 0.45rem; font-size: 0.78rem; line-height: 1.2; }
+.notif-card .badge { font-size: 0.72rem; font-weight: 500; }
+.notif-card .conv-row {
+    border-top: 1px solid #eaecef;
+    padding: 0.35rem 0;
+    font-size: 0.83rem;
+}
+.notif-card .conv-row:first-child { border-top: none; padding-top: 0; }
+.notif-toast {
+    position: fixed; right: 1rem; bottom: 1rem; z-index: 1080;
+    min-width: 280px; max-width: 420px;
+}
+</style>
+<div class="notifications-page">
 <div class="row">
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center mb-4">
