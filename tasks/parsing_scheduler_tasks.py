@@ -270,6 +270,16 @@ def parse_and_publish_theme(
                         attachments=digest.attachments_list,
                     )
                     results.append(("regular", digest, publish_result))
+                    try:
+                        from monitoring.metrics import track_digest_published
+
+                        track_digest_published(
+                            region=region.code,
+                            topic=theme,
+                            result="success" if publish_result.success else "failed",
+                        )
+                    except Exception:  # pragma: no cover - metrics никогда не должны валить публикацию
+                        logger.debug("track_digest_published failed", exc_info=True)
 
             # Mourning digest
             if mourning_posts:
@@ -315,6 +325,16 @@ def parse_and_publish_theme(
                         attachments=mourning_digest.attachments_list,
                     )
                     results.append(("mourning", mourning_digest, mourning_pub))
+                    try:
+                        from monitoring.metrics import track_digest_published
+
+                        track_digest_published(
+                            region=region.code,
+                            topic="mourning",
+                            result="success" if mourning_pub.success else "failed",
+                        )
+                    except Exception:  # pragma: no cover
+                        logger.debug("track_digest_published failed", exc_info=True)
 
             # 8. Update work table
             all_included = []

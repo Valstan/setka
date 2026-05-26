@@ -1,0 +1,225 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Состояние дайджестов SETKA — когда какой регион/тема последний раз публиковал, скорость публикаций, простоявшие регионы.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Сколько часов назад регион×тема последний раз публиковались. Красный = давно, зелёный = свежо.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {"align": "auto", "cellOptions": {"type": "color-background"}},
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 3},
+              {"color": "orange", "value": 6},
+              {"color": "red", "value": 12}
+            ]
+          },
+          "unit": "h"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 14, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "editorMode": "code",
+          "expr": "(time() - setka_digest_last_published_timestamp) / 3600",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{region}}-{{topic}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Часов с последней публикации (region × topic)",
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Сколько регионов не публиковались более 12 часов. Алёрт-критерий: >0 в рабочее окно.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "orange", "value": 1},
+              {"color": "red", "value": 3}
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 10, "x": 14, "y": 0},
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "editorMode": "code",
+          "expr": "count((time() - setka_digest_last_published_timestamp) > 43200)",
+          "instant": true,
+          "legendFormat": "stale",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Регион×тема простаивает > 12h",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Темп публикаций — публикации в час по теме.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 10, "x": 14, "y": 5},
+      "id": 3,
+      "options": {
+        "legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "editorMode": "code",
+          "expr": "sum by (topic, result) (rate(setka_digest_published_total[15m]) * 3600)",
+          "legendFormat": "{{topic}} ({{result}})",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Темп публикаций (в час) по теме / result",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Всего публикаций по теме за период.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 10},
+      "id": 4,
+      "options": {
+        "displayLabels": ["percent"],
+        "legend": {"displayMode": "table", "placement": "right", "showLegend": true, "values": ["value"]},
+        "pieType": "donut",
+        "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "editorMode": "code",
+          "expr": "sum by (topic) (increase(setka_digest_published_total{result=\"success\"}[$__range]))",
+          "legendFormat": "{{topic}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Доля публикаций по темам за период",
+      "type": "piechart"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["setka", "digests"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "Prometheus", "value": "Prometheus"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "Europe/Moscow",
+  "title": "SETKA — состояние дайджестов",
+  "uid": "setka-digests",
+  "version": 1,
+  "weekStart": ""
+}

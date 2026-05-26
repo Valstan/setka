@@ -284,22 +284,32 @@ async def favicon():
 
 
 @app.get("/metrics")
-async def metrics():
+async def metrics(request: Request):
     """
-    Prometheus metrics endpoint
+    Prometheus metrics endpoint.
 
-    Returns metrics in Prometheus format
+    Доступ — только локально (127.0.0.1). Prometheus scrape'ит из того же
+    хоста, для внешних запросов отдаём 404, чтобы не светить structure.
+    Override через env ``SETKA_METRICS_PUBLIC=1`` если надо открыть наружу
+    (например, dev-локально или специально настроенный proxy).
     """
+    import os
+
+    from fastapi import HTTPException
     from fastapi.responses import Response
 
     from monitoring.metrics import get_metrics, update_business_metrics
 
-    # Update business metrics before export
+    if os.getenv("SETKA_METRICS_PUBLIC", "").strip() not in ("1", "true", "yes"):
+        client_host = request.client.host if request.client else None
+        # Через nginx-proxy client.host = 127.0.0.1, но реальный IP — в X-Forwarded-For.
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        effective_ip = forwarded or client_host or ""
+        if effective_ip not in ("127.0.0.1", "::1", "localhost", ""):
+            raise HTTPException(status_code=404)
+
     await update_business_metrics()
-
-    # Get metrics
     content, content_type = await get_metrics()
-
     return Response(content=content, media_type=content_type)
 
 

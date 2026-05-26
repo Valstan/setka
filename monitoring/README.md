@@ -1,0 +1,64 @@
+# SETKA — мониторинг
+
+Prometheus + Grafana стек для наблюдения за дайджестами, VK API, кэшем и БД.
+
+## Что есть
+
+- **`/metrics`** на setka-web (FastAPI, port 8000) — Prometheus exposition. Доступ только с `127.0.0.1` (Prometheus локально). Override `SETKA_METRICS_PUBLIC=1` если надо открыть наружу.
+- **Prometheus** — TSDB + scrape. Слушает `127.0.0.1:9090`, retention 5 дней (тонкий VPS).
+- **Grafana** — `127.0.0.1:3000`, доступ через SSH-tunnel. Дашборд «SETKA — состояние дайджестов».
+
+## Установка (один раз на проде)
+
+```bash
+ssh setka 'cd /home/valstan/SETKA && sudo bash scripts/setup-monitoring.sh'
+```
+
+Скрипт ставит `prometheus` и `grafana` через apt, копирует конфиги из репо. Идемпотентен — повторный запуск только обновляет конфиги. Доп. флаги:
+
+```bash
+PROM_RETENTION=14d sudo bash scripts/setup-monitoring.sh
+```
+
+## Доступ к Grafana
+
+```bash
+ssh -L 3000:127.0.0.1:3000 setka
+```
+
+Открыть `http://localhost:3000`. Первый вход — `admin/admin`, сменить пароль.
+
+Дашборд: **SETKA → SETKA — состояние дайджестов**.
+
+## Что показывает дашборд
+
+| Панель | Что |
+|---|---|
+| **Часов с последней публикации** | Таблица region × topic с цветом: зелёный <3h, жёлтый 3-6h, оранжевый 6-12h, красный >12h |
+| **Регион×тема простаивает >12h** | Stat-плашка с числом «застывших» комбинаций. >0 в рабочее окно = что-то сломалось |
+| **Темп публикаций (в час)** | Time-series: rate per topic + result (success/empty/failed) |
+| **Доля публикаций по темам** | Pie за выбранный период |
+
+## Новые метрики (2026-05-26)
+
+```
+setka_digest_published_total{region,topic,result}   # Counter
+setka_digest_last_published_timestamp{region,topic}  # Gauge (unix-ts)
+```
+
+`result` = `success` | `empty` | `failed`. Только `success` обновляет timestamp Gauge.
+
+## Что НЕ настроено (by design)
+
+- **alertmanager** — экономим RAM на 1.5GB VPS. Алёрты — глазами через дашборд или ручным `promtool query`.
+- **Nginx-роут** на Grafana — доступ через SSH tunnel. Если понадобится через https + auth — добавить отдельный location в `/etc/nginx/conf.d/setka.conf`.
+- **Внешние exporter'ы** (node_exporter, postgres_exporter) — пока только setka-web. При нужде добавить scrape-jobs в `prometheus.yml`.
+
+## Файлы
+
+- `monitoring/prometheus/prometheus.yml` — scrape config.
+- `monitoring/grafana/provisioning/datasources/prometheus.yml` — datasource auto-config.
+- `monitoring/grafana/provisioning/dashboards/setka.yml` — dashboard loader.
+- `monitoring/grafana/dashboards/digests.json` — JSON дашборда.
+- `monitoring/metrics.py` — Python-side метрики (импортируется из FastAPI и Celery).
+- `scripts/setup-monitoring.sh` — установщик.
