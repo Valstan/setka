@@ -574,11 +574,10 @@ class ProductionWorkflow:
 
                             if digest:
                                 # Публикация в VK
-                                from config.runtime import VK_MAIN_TOKENS
-                                from modules.publisher.vk_publisher import VKPublisher
+                                from modules.publisher.vk_publisher_extended import VKPublisher
 
-                                publisher = VKPublisher(VK_MAIN_TOKENS["VALSTAN"]["token"])
-                                target_group = publisher.get_target_group_id(
+                                publisher = VKPublisher()
+                                target_group = VKPublisher.get_target_group_id(
                                     region_code, publish_mode
                                 )
 

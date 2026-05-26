@@ -1,7 +1,10 @@
 """
 VK Publisher API endpoints
 
-Предоставляет REST API для публикации дайджестов в VK группы
+Предоставляет REST API для публикации дайджестов в VK группы.
+Использует extended VKPublisher (`modules.publisher.vk_publisher_extended`),
+который поддерживает community-tokens с fallback на publish-token и
+глобальный rate-limit против VK captcha.
 """
 
 import logging
@@ -17,7 +20,7 @@ from config.runtime import VK_MAIN_TOKENS, VK_PRODUCTION_GROUPS, VK_TEST_GROUP_I
 from database.connection import get_db_session
 from database.models import Community, Post, Region
 from modules.aggregation.aggregator import NewsAggregator
-from modules.publisher.vk_publisher import VKPublisher
+from modules.publisher.vk_publisher_extended import VKPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +72,15 @@ class GroupInfo(BaseModel):
 
 # Helper functions
 async def get_vk_publisher() -> VKPublisher:
-    """Получить VK Publisher с токеном"""
+    """Получить VK Publisher (extended) с publish-токеном из env.
+
+    Extended publisher сам берёт publish-токен через ``get_publish_token()``
+    (см. ``config.runtime``). community-tokens сюда не передаём — для UI
+    `/publisher` достаточно publish-токена; для парсинговых задач Celery
+    использует свой инстанс с пробрасыванием community-tokens из БД.
+    """
     try:
-        token = VK_MAIN_TOKENS["VALSTAN"]["token"]
-        return VKPublisher(token)
+        return VKPublisher()
     except Exception as e:
         logger.error(f"Failed to initialize VK Publisher: {e}")
         raise HTTPException(status_code=500, detail="VK Publisher initialization failed")
@@ -126,13 +134,13 @@ async def get_available_groups():
         groups = []
 
         # Тестовая группа
-        test_group_info = publisher.get_group_info(VK_TEST_GROUP_ID)
+        test_group_info = await publisher.get_group_info(VK_TEST_GROUP_ID)
         if test_group_info:
             groups.append(GroupInfo(**test_group_info))
 
         # Production группы
         for region_code, group_id in VK_PRODUCTION_GROUPS.items():
-            group_info = publisher.get_group_info(group_id)
+            group_info = await publisher.get_group_info(group_id)
             if group_info:
                 groups.append(GroupInfo(**group_info))
 
@@ -152,7 +160,7 @@ async def publish_simple_post(request: SimplePublishRequest):
         group_id = request.group_id or VK_TEST_GROUP_ID
 
         result = await publisher.publish_digest(
-            text=request.text, target_group_id=group_id, from_group=request.from_group
+            group_id=group_id, text=request.text, from_group=request.from_group
         )
 
         if result["success"]:
@@ -161,13 +169,13 @@ async def publish_simple_post(request: SimplePublishRequest):
                 message="Post published successfully",
                 post_id=result["post_id"],
                 post_url=result["url"],
-                group_id=result["group_id"],
+                group_id=result["owner_id"],
             )
         else:
             return PublishResponse(
                 success=False,
                 message="Failed to publish post",
-                error=result["error"],
+                error=result.get("error"),
                 group_id=group_id,
             )
 
@@ -197,7 +205,12 @@ async def publish_region_digest(
             )
 
         # Определяем целевую группу
-        target_group_id = publisher.get_target_group_id(request.region_code, request.publish_mode)
+        target_group_id = VKPublisher.get_target_group_id(request.region_code, request.publish_mode)
+        if target_group_id is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No target group configured for region '{request.region_code}'",
+            )
 
         # Создаем дайджест
         aggregator = NewsAggregator(max_posts_per_digest=request.max_posts)
@@ -240,14 +253,14 @@ async def publish_region_digest(
                 message="Digest published successfully",
                 post_id=result["post_id"],
                 post_url=result["url"],
-                group_id=result["group_id"],
+                group_id=result["owner_id"],
                 digest_info=digest_info,
             )
         else:
             return PublishResponse(
                 success=False,
                 message="Failed to publish digest",
-                error=result["error"],
+                error=result.get("error"),
                 group_id=target_group_id,
             )
 
@@ -270,11 +283,16 @@ async def publish_custom_digest(
             raise HTTPException(status_code=400, detail="custom_text is required")
 
         # Определяем целевую группу
-        target_group_id = publisher.get_target_group_id(request.region_code, request.publish_mode)
+        target_group_id = VKPublisher.get_target_group_id(request.region_code, request.publish_mode)
+        if target_group_id is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No target group configured for region '{request.region_code}'",
+            )
 
         # Публикуем кастомный текст
         result = await publisher.publish_digest(
-            text=request.custom_text, target_group_id=target_group_id, from_group=True
+            group_id=target_group_id, text=request.custom_text, from_group=True
         )
 
         if result["success"]:
@@ -283,13 +301,13 @@ async def publish_custom_digest(
                 message="Custom post published successfully",
                 post_id=result["post_id"],
                 post_url=result["url"],
-                group_id=result["group_id"],
+                group_id=result["owner_id"],
             )
         else:
             return PublishResponse(
                 success=False,
                 message="Failed to publish custom post",
-                error=result["error"],
+                error=result.get("error"),
                 group_id=target_group_id,
             )
 
@@ -344,7 +362,7 @@ async def get_publisher_status():
         publisher = await get_vk_publisher()
 
         # Проверяем подключение
-        test_group_info = publisher.get_group_info(VK_TEST_GROUP_ID)
+        test_group_info = await publisher.get_group_info(VK_TEST_GROUP_ID)
 
         return {
             "status": "active" if test_group_info else "inactive",

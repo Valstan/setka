@@ -23,11 +23,11 @@ logger = logging.getLogger(__name__)
 
 from sqlalchemy import and_, select  # noqa: E402
 
-from config.runtime import VK_MAIN_TOKENS, VK_TEST_GROUP_ID  # noqa: E402
+from config.runtime import VK_TEST_GROUP_ID  # noqa: E402
 from database.connection import get_db_session_context  # noqa: E402
 from database.models import Community, Post, Region  # noqa: E402
 from modules.aggregation.aggregator import NewsAggregator  # noqa: E402
-from modules.publisher.vk_publisher import VKPublisher  # noqa: E402
+from modules.publisher.vk_publisher_extended import VKPublisher  # noqa: E402
 
 
 async def test_vk_publisher_initialization():
@@ -37,14 +37,12 @@ async def test_vk_publisher_initialization():
     logger.info("=" * 60)
 
     try:
-        # Используем первый доступный токен
-        token = VK_MAIN_TOKENS["VALSTAN"]["token"]
-        publisher = VKPublisher(token)
+        publisher = VKPublisher()
 
         logger.info("✅ VK Publisher инициализирован успешно")
 
         # Проверим информацию о группе
-        group_info = publisher.get_group_info(VK_TEST_GROUP_ID)
+        group_info = await publisher.get_group_info(VK_TEST_GROUP_ID)
         if group_info:
             logger.info(f"📋 Тестовая группа: {group_info['name']}")
             logger.info(f"🔗 URL: {group_info['url']}")
@@ -65,8 +63,7 @@ async def test_simple_post_publishing():
     logger.info("=" * 60)
 
     try:
-        token = VK_MAIN_TOKENS["VALSTAN"]["token"]
-        publisher = VKPublisher(token)
+        publisher = VKPublisher()
 
         # Тестовый пост
         test_text = f"""🧪 ТЕСТ ПУБЛИКАЦИИ SETKA
@@ -80,7 +77,7 @@ async def test_simple_post_publishing():
 #Тест #SETKA #Автоматизация"""
 
         result = await publisher.publish_digest(
-            text=test_text, target_group_id=VK_TEST_GROUP_ID, from_group=True
+            group_id=VK_TEST_GROUP_ID, text=test_text, from_group=True
         )
 
         if result["success"]:
@@ -104,8 +101,7 @@ async def test_digest_publishing():
     logger.info("=" * 60)
 
     try:
-        token = VK_MAIN_TOKENS["VALSTAN"]["token"]
-        publisher = VKPublisher(token)
+        publisher = VKPublisher()
 
         # Получаем несколько постов из БД
         async with get_db_session_context() as session:
@@ -147,9 +143,7 @@ async def test_digest_publishing():
         logger.info(f"📝 Текст: {digest.aggregated_text[:100]}...")
 
         # Публикуем дайджест
-        result = await publisher.publish_aggregated_post(
-            digest=digest, target_group_id=VK_TEST_GROUP_ID
-        )
+        result = await publisher.publish_aggregated_post(digest=digest, group_id=VK_TEST_GROUP_ID)
 
         if result["success"]:
             logger.info("✅ Дайджест опубликован успешно!")
@@ -166,14 +160,18 @@ async def test_digest_publishing():
 
 
 async def test_region_publishing():
-    """Тест 4: Публикация для региона"""
+    """Тест 4: Публикация для региона (aggregator + publish_aggregated_post).
+
+    Раньше использовался `VKPublisher.publish_to_region` — этот метод жил
+    только в старом publisher и не переехал в extended. Здесь повторяем его
+    логику вручную через ``NewsAggregator`` + ``publish_aggregated_post``.
+    """
     logger.info("\n" + "=" * 60)
     logger.info("🧪 ТЕСТ 4: Публикация для региона")
     logger.info("=" * 60)
 
     try:
-        token = VK_MAIN_TOKENS["VALSTAN"]["token"]
-        publisher = VKPublisher(token)
+        publisher = VKPublisher()
 
         # Получаем посты для региона mi
         async with get_db_session_context() as session:
@@ -200,10 +198,17 @@ async def test_region_publishing():
 
         logger.info(f"📊 Найдено {len(posts)} постов для региона mi")
 
-        # Публикуем для региона
-        result = await publisher.publish_to_region(
-            region_code="mi", posts=posts, target_group_id=VK_TEST_GROUP_ID, max_posts=3
+        aggregator = NewsAggregator(max_posts_per_digest=3)
+        digest = await aggregator.aggregate(
+            posts=posts[:3],
+            title="📰 НОВОСТИ МАЛМЫЖА",
+            hashtags=["#НовостиMI"],
         )
+        if not digest:
+            logger.error("❌ Не удалось создать дайджест")
+            return False
+
+        result = await publisher.publish_aggregated_post(digest, VK_TEST_GROUP_ID)
 
         if result["success"]:
             logger.info("✅ Региональный дайджест опубликован успешно!")
@@ -211,7 +216,7 @@ async def test_region_publishing():
             logger.info(f"🔗 URL: {result['url']}")
             return True
         else:
-            logger.error(f"❌ Ошибка публикации регионального дайджеста: {result['error']}")
+            logger.error(f"❌ Ошибка публикации регионального дайджеста: {result.get('error')}")
             return False
 
     except Exception as e:

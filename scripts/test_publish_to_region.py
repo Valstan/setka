@@ -12,11 +12,10 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import and_, select
 
-from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Post, Region
 from modules.aggregation.aggregator import NewsAggregator
-from modules.publisher.vk_publisher import VKPublisher
+from modules.publisher.vk_publisher_extended import VKPublisher
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -130,16 +129,9 @@ async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode
         # Публикуем
         logger.info("\n📤 Публикация в VK группу...")
 
-        vk_token = VK_TOKENS.get("VALSTAN")
-        if not vk_token:
-            logger.error("❌ VK токен VALSTAN не найден")
-            return False
+        publisher = VKPublisher()
 
-        publisher = VKPublisher(vk_token)
-
-        result = await publisher.publish_aggregated_post(
-            digest=digest, target_group_id=region.vk_group_id
-        )
+        result = await publisher.publish_aggregated_post(digest=digest, group_id=region.vk_group_id)
 
         if result["success"]:
             logger.info("✅ УСПЕШНО ОПУБЛИКОВАНО!")

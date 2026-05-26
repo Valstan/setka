@@ -146,20 +146,20 @@ async def test_vk_publisher():
     logger.info("\n📤 Testing VK Publisher")
 
     try:
-        from config.runtime import VK_TEST_GROUP_ID, VK_TOKENS
-        from modules.publisher.vk_publisher import VKPublisher
+        from config.runtime import VK_TEST_GROUP_ID
+        from modules.publisher.vk_publisher_extended import VKPublisher
 
-        publisher = VKPublisher(VK_TOKENS["VALSTAN"])
+        publisher = VKPublisher()
 
-        # Тест получения целевой группы
-        test_group = publisher.get_target_group_id("mi", "test")
+        # Тест получения целевой группы (staticmethod)
+        test_group = VKPublisher.get_target_group_id("mi", "test")
         assert test_group == VK_TEST_GROUP_ID, f"Wrong test group: {test_group}"
 
-        production_group = publisher.get_target_group_id("mi", "production")
+        production_group = VKPublisher.get_target_group_id("mi", "production")
         assert production_group == VK_TEST_GROUP_ID, f"Wrong production group: {production_group}"
 
         # Тест получения информации о группе
-        group_info = publisher.get_group_info(VK_TEST_GROUP_ID)
+        group_info = await publisher.get_group_info(VK_TEST_GROUP_ID)
         if group_info:
             logger.info(f"✅ Group info: {group_info['name']} ({group_info['url']})")
         else:
