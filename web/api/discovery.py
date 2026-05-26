@@ -824,6 +824,159 @@ async def bulk_patch(payload: BulkPatch):
 
 
 # ─────────────────────────────────────────────────────────────────
+# POST /candidates/bulk-action — массовое действие по выбранным id
+# ─────────────────────────────────────────────────────────────────
+#
+# Отличается от /candidates/bulk (по фильтрам): здесь — явный список id
+# из UI-выбора чекбоксами. Поддерживаемые действия:
+#
+#   reject / defer        — soft status change
+#   approve               — создать Community для каждого выбранного с
+#                           конкретной ai_category (или общим category override)
+#   delete                — physical delete (как DELETE /candidates/{id})
+#   set_category          — обновить ai_category у выбранных pending'ов
+#                           без смены status (для перетасовки тематик)
+#
+# Все ветки атомарны: одна транзакция, либо всё, либо ничего.
+
+
+_BULK_ACTION_ALLOWED = {"reject", "defer", "approve", "delete", "set_category"}
+
+
+class BulkActionPayload(BaseModel):
+    """Body для bulk-action по списку id, выбранному чекбоксами в UI.
+
+    Поля:
+    - ``ids``: непустой список id кандидатов.
+    - ``action``: одно из ``_BULK_ACTION_ALLOWED``.
+    - ``category``: обязателен для ``set_category``; для ``approve`` —
+      опциональный override (если задан, перетирает ai_category каждого
+      кандидата; иначе используется собственный ai_category каждого).
+    """
+
+    ids: List[int] = Field(..., min_items=1)
+    action: str
+    category: Optional[str] = None
+
+    @validator("action")
+    def _valid_action(cls, v):
+        v = (v or "").strip().lower()
+        if v not in _BULK_ACTION_ALLOWED:
+            raise ValueError(f"unknown action {v!r}")
+        return v
+
+    @validator("category")
+    def _valid_cat(cls, v):
+        if v is None or v == "":
+            return None
+        if v not in ALLOWED_CATEGORIES:
+            raise ValueError(f"unknown category {v!r}")
+        return v
+
+
+@router.post("/candidates/bulk-action")
+async def bulk_action(payload: BulkActionPayload):
+    """Apply ``payload.action`` to candidates listed in ``payload.ids``.
+
+    Семантика статусов:
+    - ``reject`` / ``defer`` — обновляем status у любых найденных id (включая
+      уже approved/rejected — для отмены ошибочного approve через UI).
+    - ``approve`` — берём только pending; требует, чтобы у каждого выбранного
+      была конкретная категория (через ``payload.category`` или собственная
+      ai_category, не 'other'). Если хоть у одного нет — возвращаем
+      ``skipped_no_category`` со списком id, но approved остальные.
+    - ``delete`` — физически удаляем все найденные.
+    - ``set_category`` — обновляем ``ai_category`` (требует payload.category),
+      работает на любом status. Status не трогаем.
+
+    Возвращает: ``{action, matched, updated, missing_ids, skipped_no_category}``.
+    ``skipped_no_category`` присутствует только для action=approve.
+    """
+    ids = list(dict.fromkeys(int(i) for i in payload.ids))  # dedup, preserve order
+    action = payload.action
+
+    if action == "set_category" and not payload.category:
+        raise HTTPException(
+            status_code=400,
+            detail="action=set_category требует поле category",
+        )
+
+    async with AsyncSessionLocal() as session:
+        rows: List[CommunityCandidate] = (
+            (
+                await session.execute(
+                    select(CommunityCandidate).where(CommunityCandidate.id.in_(ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        found_ids = {c.id for c in rows}
+        missing_ids = [i for i in ids if i not in found_ids]
+
+        if action == "delete":
+            for cand in rows:
+                await session.delete(cand)
+            await session.commit()
+            return {
+                "action": action,
+                "matched": len(rows),
+                "updated": len(rows),
+                "missing_ids": missing_ids,
+            }
+
+        if action == "set_category":
+            for cand in rows:
+                cand.ai_category = payload.category
+                cand.updated_at = datetime.utcnow()
+            await session.commit()
+            return {
+                "action": action,
+                "matched": len(rows),
+                "updated": len(rows),
+                "missing_ids": missing_ids,
+                "category": payload.category,
+            }
+
+        if action in ("reject", "defer"):
+            new_status = "rejected" if action == "reject" else "deferred"
+            for cand in rows:
+                cand.status = new_status
+                cand.updated_at = datetime.utcnow()
+            await session.commit()
+            return {
+                "action": action,
+                "matched": len(rows),
+                "updated": len(rows),
+                "missing_ids": missing_ids,
+            }
+
+        # approve
+        approved_n = 0
+        skipped_no_category: List[int] = []
+        for cand in rows:
+            if cand.status != "pending":
+                # уже approved/rejected/deferred — пропускаем без шума
+                continue
+            cat = payload.category or cand.ai_category
+            if not cat or cat == "other" or cat not in ALLOWED_CATEGORIES:
+                skipped_no_category.append(cand.id)
+                continue
+            await _approve_candidate(session, cand, cat)
+            cand.status = "approved"
+            cand.updated_at = datetime.utcnow()
+            approved_n += 1
+        await session.commit()
+        return {
+            "action": action,
+            "matched": len(rows),
+            "updated": approved_n,
+            "missing_ids": missing_ids,
+            "skipped_no_category": skipped_no_category,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────
 # /resolve-vk-url — превратить ссылку на VK-сообщество в (group_id, name)
 # ─────────────────────────────────────────────────────────────────
 

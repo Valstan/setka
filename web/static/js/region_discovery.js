@@ -39,8 +39,21 @@
     const filterHideIrrelevant = document.getElementById('filter-hide-irrelevant');
     const bulkRejectBtn = document.getElementById('bulk-reject');
 
+    // Sticky bulk-bar для действий над выбранными чекбоксами.
+    const bulkBar = document.getElementById('bulk-bar');
+    const bulkCountEl = document.getElementById('bulk-count');
+    const bulkClearBtn = document.getElementById('bulk-clear');
+    const bulkApproveBtn = document.getElementById('bulk-approve-selected');
+    const bulkDeferBtn = document.getElementById('bulk-defer-selected');
+    const bulkRejectSelectedBtn = document.getElementById('bulk-reject-selected');
+    const bulkDeleteBtn = document.getElementById('bulk-delete-selected');
+    const bulkSetCategorySelect = document.getElementById('bulk-set-category');
+    const bulkApplyCategoryBtn = document.getElementById('bulk-apply-category');
+
     let region = null;
     let candidates = [];
+    // Идентификаторы выбранных кандидатов. Set чтобы O(1) и dedup.
+    const selectedIds = new Set();
 
     init();
 
@@ -68,6 +81,28 @@
         rerunBtn.addEventListener('click', rerunDiscovery);
         bulkRejectBtn.addEventListener('click', bulkReject);
         commitBtn.addEventListener('click', commitRegion);
+
+        // Категории в select для bulk-set-category — те же, что и в карточках,
+        // плюс «без категории» (NULL) для возможности обнулить тематику.
+        for (const cat of CATEGORIES) {
+            const opt = document.createElement('option');
+            opt.value = cat;
+            opt.textContent = CATEGORY_LABELS[cat] || cat;
+            bulkSetCategorySelect.appendChild(opt);
+        }
+        bulkSetCategorySelect.addEventListener('change', () => {
+            bulkApplyCategoryBtn.disabled = !bulkSetCategorySelect.value;
+        });
+        bulkClearBtn.addEventListener('click', clearSelection);
+        bulkApproveBtn.addEventListener('click', () => doBulkAction('approve'));
+        bulkDeferBtn.addEventListener('click', () => doBulkAction('defer'));
+        bulkRejectSelectedBtn.addEventListener('click', () => doBulkAction('reject'));
+        bulkDeleteBtn.addEventListener('click', () => doBulkAction('delete'));
+        bulkApplyCategoryBtn.addEventListener('click', () => {
+            const cat = bulkSetCategorySelect.value;
+            if (!cat) return;
+            doBulkAction('set_category', cat);
+        });
     }
 
     function renderRegionHeader(r) {
@@ -146,6 +181,14 @@
         const html = SECTION_ORDER.map(key => renderSection(key, groups[key])).join('');
         sectionsContainer.innerHTML = html;
         bindCardEventListeners();
+        // Подмести selectedIds: если карточка пропала (фильтр / load() со
+        // сменой категории / delete) — забываем её, иначе bulk-bar
+        // продолжит «висеть» с фантомными id.
+        const visibleIds = new Set(visible.map(c => c.id));
+        for (const id of Array.from(selectedIds)) {
+            if (!visibleIds.has(id)) selectedIds.delete(id);
+        }
+        renderBulkBar();
     }
 
     function renderSection(key, items) {
@@ -154,8 +197,11 @@
         const sectionId = `section-${key}`;
         return `
             <div class="thematic-section mb-4" data-section-key="${key}">
-                <h4 class="mb-2">
-                    <span class="badge ${headerColor} me-2">${escapeHtml(CATEGORY_LABELS[key] || key)}</span>
+                <h4 class="mb-2 d-flex align-items-center gap-2">
+                    <input type="checkbox" class="form-check-input section-select-all"
+                           data-section-key="${key}"
+                           title="Выбрать всех в этой секции">
+                    <span class="badge ${headerColor}">${escapeHtml(CATEGORY_LABELS[key] || key)}</span>
                     <small class="text-muted">${items.length}</small>
                 </h4>
                 <div class="row g-2" id="${sectionId}">
@@ -212,11 +258,15 @@
             ? `<small class="text-muted me-2">${escapeHtml(c.status)}</small>` : '';
         const actions = `${statusLabel}<div class="btn-group btn-group-sm" role="group">${baseButtons}${deleteBtn}</div>`;
 
+        const isSelected = selectedIds.has(c.id);
         return `
-            <div class="col-md-6" data-candidate-id="${c.id}">
-                <div class="card h-100">
+            <div class="col-md-6" data-candidate-id="${c.id}" data-section-key="${c.ai_category && CATEGORIES.includes(c.ai_category) ? c.ai_category : '_none'}">
+                <div class="card h-100${isSelected ? ' border-primary' : ''}">
                     <div class="card-body p-2">
                         <div class="d-flex gap-2">
+                            <input type="checkbox" class="form-check-input mt-1 candidate-select"
+                                   data-id="${c.id}" ${isSelected ? 'checked' : ''}
+                                   title="Выбрать для группового действия">
                             ${photo}
                             <div class="flex-grow-1 min-width-0">
                                 <div class="d-flex align-items-start justify-content-between gap-2">
@@ -248,6 +298,109 @@
         sectionsContainer.querySelectorAll('select.category-select').forEach(sel => {
             sel.addEventListener('change', () => onCategoryChange(parseInt(sel.dataset.id, 10), sel.value));
         });
+        sectionsContainer.querySelectorAll('input.candidate-select').forEach(cb => {
+            cb.addEventListener('change', () => onCandidateSelectChange(parseInt(cb.dataset.id, 10), cb.checked));
+        });
+        sectionsContainer.querySelectorAll('input.section-select-all').forEach(cb => {
+            cb.addEventListener('change', () => onSectionSelectAll(cb.dataset.sectionKey, cb.checked));
+        });
+        // Подсветить section-select-all согласно текущему selectedIds.
+        refreshSectionSelectAllState();
+    }
+
+    // ─── Selection state ──────────────────────────────────────────
+
+    function onCandidateSelectChange(id, checked) {
+        if (checked) selectedIds.add(id); else selectedIds.delete(id);
+        // Подсветка карточки
+        const card = sectionsContainer.querySelector(`[data-candidate-id="${id}"] .card`);
+        if (card) card.classList.toggle('border-primary', checked);
+        refreshSectionSelectAllState();
+        renderBulkBar();
+    }
+
+    function onSectionSelectAll(sectionKey, checked) {
+        const cards = sectionsContainer.querySelectorAll(`[data-section-key="${sectionKey}"][data-candidate-id]`);
+        cards.forEach(card => {
+            const id = parseInt(card.dataset.candidateId, 10);
+            if (checked) selectedIds.add(id); else selectedIds.delete(id);
+            const cb = card.querySelector('input.candidate-select');
+            if (cb) cb.checked = checked;
+            const cardEl = card.querySelector('.card');
+            if (cardEl) cardEl.classList.toggle('border-primary', checked);
+        });
+        renderBulkBar();
+    }
+
+    function refreshSectionSelectAllState() {
+        sectionsContainer.querySelectorAll('input.section-select-all').forEach(cb => {
+            const sectionKey = cb.dataset.sectionKey;
+            const cards = sectionsContainer.querySelectorAll(`[data-section-key="${sectionKey}"][data-candidate-id]`);
+            if (!cards.length) { cb.checked = false; cb.indeterminate = false; return; }
+            let selected = 0;
+            cards.forEach(c => { if (selectedIds.has(parseInt(c.dataset.candidateId, 10))) selected++; });
+            cb.checked = selected === cards.length;
+            cb.indeterminate = selected > 0 && selected < cards.length;
+        });
+    }
+
+    function clearSelection() {
+        selectedIds.clear();
+        sectionsContainer.querySelectorAll('input.candidate-select').forEach(cb => cb.checked = false);
+        sectionsContainer.querySelectorAll('.card.border-primary').forEach(el => el.classList.remove('border-primary'));
+        refreshSectionSelectAllState();
+        renderBulkBar();
+    }
+
+    function renderBulkBar() {
+        const n = selectedIds.size;
+        bulkCountEl.textContent = String(n);
+        bulkBar.classList.toggle('d-none', n === 0);
+        // нижний padding на body, чтобы sticky-бар не закрывал последние карточки
+        document.body.style.paddingBottom = n > 0 ? '80px' : '';
+    }
+
+    async function doBulkAction(action, category) {
+        const ids = Array.from(selectedIds);
+        if (!ids.length) return;
+        const labels = {
+            approve: 'Одобрить', defer: 'Отложить', reject: 'Отклонить',
+            delete: 'УДАЛИТЬ физически', set_category: 'Сменить категорию',
+        };
+        const label = labels[action] || action;
+        if (action === 'delete') {
+            if (!confirm(`${label} ${ids.length} кандидат(ов)?\n\nЗаписи будут физически стёрты из БД. При rerun discovery эти группы могут появиться снова, если VK их снова отдаст.`)) return;
+        } else if (action === 'reject') {
+            if (!confirm(`${label} ${ids.length} кандидат(ов)?\n\nЭто soft-операция — записи помечаются как rejected и при rerun discovery не вернутся (vk_id попадёт в exclude_list).`)) return;
+        } else if (action === 'set_category') {
+            if (!confirm(`Сменить категорию на «${CATEGORY_LABELS[category] || category}» у ${ids.length} кандидат(ов)?`)) return;
+        } else if (action === 'approve') {
+            if (!confirm(`Одобрить ${ids.length} кандидат(ов)?\n\nДля каждого будет создан Community с его текущей категорией. Кандидаты без конкретной категории (или с «other») будут пропущены — список вернётся в отчёте.`)) return;
+        } else if (action === 'defer') {
+            if (!confirm(`Отложить ${ids.length} кандидат(ов)?`)) return;
+        }
+        setStatus('info', `⏳ ${label}…`);
+        const body = {ids, action};
+        if (category) body.category = category;
+        try {
+            const resp = await fetch('/api/discovery/candidates/bulk-action', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+            const r = await resp.json();
+            if (!resp.ok) throw new Error(r.detail || `HTTP ${resp.status}`);
+            const parts = [`${label}: ${r.updated} из ${r.matched}`];
+            if (r.missing_ids && r.missing_ids.length) parts.push(`не найдено: ${r.missing_ids.length}`);
+            if (r.skipped_no_category && r.skipped_no_category.length) {
+                parts.push(`без категории (пропущено): ${r.skipped_no_category.length}`);
+            }
+            setStatus('success', `✓ ${parts.join(' · ')}`);
+            selectedIds.clear();
+            await load();
+        } catch (e) {
+            setStatus('danger', `Ошибка: ${e.message}`);
+        }
     }
 
     async function onCategoryChange(id, newCategory) {
