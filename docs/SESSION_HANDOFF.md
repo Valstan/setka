@@ -2,61 +2,55 @@
 
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
-**Status:** ACTIVE
-**Updated:** 2026-05-25 evening
+**Status:** IDLE
+**Updated:** 2026-05-26
 **Branch:** main
-**Last release in prod:** `a7bec89` (PR #44 — relevance-filter fix: center-stem + members-threshold). Применено + nginx timeout 180→600s для `/api/discovery/trigger`. Все 3 сервиса active.
+**Last release in prod:** `c3eff63` (PR #54 — fix get_group_info `group_ids` param). PR #55 в main, но не катался — удалён файл без импортов, runtime не затронут.
 
 ---
 
 ## Текущая нитка
 
-Закрытие инцидента discovery tuzha 2026-05-25. Старый relevance-фильтр пропускал ~95% мусора (1787/3784 кандидатов в логе, 278/294 омонимных в БД). Это случилось потому что ChatGPT-prompt насовал в localities реальные нп Тужинского района с омонимами обычных слов («Коробки»→коробк, «Лоскуты»→лоскут, «Соболи»→собол, «Чугуны»→чугун, «Фомино»→фомин, «Самсоны»→самсон) — старый naïve substring-фильтр пропускал «Мир Лоскутов», «Чугун на разлив», «Митя Фомин» и сотни им подобных.
+_Нет — последняя задача закрыта, открытая стартовая позиция._
 
-В этой сессии:
-- Вручную через psql: approve 13 tuzha-релевантных кандидатов с категориями (detsad/admin/novost/sosed/kultura/other), defer 3 спорных, **DELETE 278** мусора. 294 → 16 в БД.
-- PR #44 (`a7bec89`) — `_passes_relevance` с center-stem requirement + 50K members threshold; 8 новых тестов; 470/470 зелёных.
-- Прод: pull + restart выполнен, health 200 в 1.09s.
-- Nginx: `/api/discovery/trigger` proxy_read_timeout/send_timeout 180s → 600s (правка в `/etc/nginx/conf.d/setka.conf`, backup в `.bak.20260525-…`, `nginx -t` + reload). Это полу-фикс — настоящий путь Celery + polls (см. PENDING).
+Сессия 2026-05-26 закрыла:
+
+1. **Гигиена PENDING + ack брайну** ([PR #52](https://github.com/Valstan/setka/pull/52)) — оба 🔴 блокера убраны (один закрыт PR #49, Groq понижен до 🟡), F601 ⏳ → закрыт замером 0.54 %. Outbound-письмо `mailbox/to-brain/2026-05-26-adopt-session-handoff-done.md` закрыло SHOULD-долг по идее #003.
+2. **Миграция `web/api/publisher.py` на extended VKPublisher** — большая нитка из 4 PR ([#53](https://github.com/Valstan/setka/pull/53) → [#54](https://github.com/Valstan/setka/pull/54) hot-fix → [#55](https://github.com/Valstan/setka/pull/55) удаление старого + прописали `VK_TEST_GROUP_ID=-137760500` в `/etc/setka/setka.env` на проде). `/api/publisher/status` теперь возвращает `"active"` с реальным test_group. Старый `modules/publisher/vk_publisher.py` удалён, ноль импортов в репо.
+3. **SSH alias на этом компе** — переименовал `setka-prod` → `setka` в `~/.ssh/config`, обновил memory `reference_prod_access.md`. Теперь единообразно с доками и второй машиной.
 
 ## Следующий шаг
 
-**Повторный smoke на tuzha** — пользователь должен ещё раз нажать «Запустить discovery» на `/regions/tuzha/prepare` или `/regions/tuzha/discovery`. Ожидаем:
+Открытой стартовой позиции нет. Кандидатные стартовые точки из [`PENDING_FOLLOWUPS.md`](PENDING_FOLLOWUPS.md):
 
-- Размер итоговой выдачи: ~16-30 кандидатов (vs 294 ранее), все с «туж»/«тужин» в name+description.
-- Время: вероятно всё ещё ~80-200с (sync rate-lock на VK calls + Groq 403 быстро отлупает) — но nginx теперь не отвалится при <600с.
-- Если в выдаче снова мусор без «туж» — значит правило «≥2 distinct stems» в маленькой группе сработало на омонимной паре (нужен blacklist стемов).
-
-После smoke — либо закрыть нитку (✅ всё работает), либо ещё итерация по фильтру / nginx-Celery / Groq.
+- **🟡 Groq API 403** — получить новый ключ на console.groq.com, прописать в `/etc/setka/setka.env`, restart. Это вернёт кнопку «✨ AI-черновик» в модалке ответа на VK-комменты (`modules/notifications/ai_drafter.py`). Не блокер.
+- **🟢 Cross-process rate-limit для VKClient через Redis** — текущий `GLOBAL_PARSE_INTERVAL_SECONDS=0.4` через `threading.Lock` per-process. Если когда-то Celery worker станет multi-process (`-c N`), нужен общий счётчик.
+- **🟢 Grafana дашборд «состояние дайджестов»** — на основе Redis-ключей `setka:digest_last_published:*` и Celery-логов. Сейчас контроль идёт глазами по VK-стенам.
+- **🟢 UI «changed_category» quick-action** — фильтр `/communities?health_status=changed_category` + кнопка «применить suggested_category одним кликом». Сейчас модератор копирует руками.
+- **🟢 Telegram-бот с webhook** — заменить URL-кнопки `/notifications#section=...` на полноценный bot-handler с `wall.createComment`/`messages.send` без перехода в браузер.
+- **🟢 Dark mode UI** — для `/regions`, `/posts`, `/filtration` (длинные таблицы).
 
 ## Контекст
 
-- **Прод HEAD:** `a7bec89` (`fix(discovery): center-stem requirement + members-threshold`).
-- **Связанные коммиты сессии:**
-  - `a7bec89` (PR #44) — relevance-фильтр через `_passes_relevance` + 8 тестов.
-  - SQL (на проде, вручную): UPDATE 13 approved with category + UPDATE 3 deferred + DELETE 278 мусора.
-  - Nginx: `setka.conf` location `/api/discovery/trigger` timeout 180→600s (live edit, в репо НЕ записано).
-- **Прод:** HEAD `a7bec89`, health 200 в 1.09s, 3 сервиса active. tuzha candidates: **16** (13 approved + 3 deferred).
+- **План:** нет активного.
+- **Связанные коммиты сессии (4 PR):**
+  - `c37716c` ([PR #52](https://github.com/Valstan/setka/pull/52)) — chore: hygiene + ack брайну
+  - `aad610c` ([PR #53](https://github.com/Valstan/setka/pull/53)) — feat: миграция publisher на extended
+  - `c3eff63` ([PR #54](https://github.com/Valstan/setka/pull/54)) — fix: VK API `group_ids` + zero-guard
+  - `e7bf1a0` ([PR #55](https://github.com/Valstan/setka/pull/55)) — chore: удаление старого `vk_publisher.py`
+- **Прод-изменения вне репо:** `VK_TEST_GROUP_ID=-137760500` добавлен в `/etc/setka/setka.env`. SSH-alias `setka-prod` → `setka` локально на этом компе (`C:\Users\valstan\.ssh\config`).
+- **Прод:** HEAD `c3eff63` (PR #55 не катали — удалённый файл без импортов). Все 3 systemd `active`, health 200 в 1.07s, `/api/publisher/status` → `"active"` с test_group `137760500`.
 - **Открытых PR:** нет.
-- **Тесты:** 470/470 зелёных.
-
-## Failed approaches (этой нитки)
-
-- **Старый relevance-фильтр («matched > 0 → pass»)** — не различает специфичный центральный стем от омонимного дочернего. Заменён на многокомпонентный `_passes_relevance`.
-- **Hard blacklist общих стемов (коробк/лоскут/собол/…)** — рассматривался, но мутный: нужен domain-знаний список, который придётся вести вручную; разный для разных регионов. Заменено более универсальным правилом «требовать центр-стем для больших групп + ≥2 distinct stems для маленьких».
-- **Поднимать `_STEM_MIN_LEN` с 3 до 5** — отрезало бы «туж» (3 символа), сломав основной кейс. Не подходит.
+- **Тесты:** 504/504 зелёные (+14 новых: 13 на extended-методы в #53 и 1 регрессионный в #54).
 
 ## Открытые вопросы для пользователя
 
-- Прогнал ли повторный smoke на tuzha — сколько кандидатов на выходе? Все ли с «туж» в name?
-- Обновим ли `GROQ_API_KEY` в `/etc/setka/setka.env`? Без него AI-категоризация в discovery не работает (PENDING 🔴).
+_Нет._
 
 ## Не забыть (low-priority)
 
-- 🟡 nginx `/api/discovery/trigger` timeout 600s — это «костыль». Правильный путь: переписать endpoint на Celery (запуск таски + endpoint возвращает task_id + UI polls /status). Записано в PENDING.
-- 🟢 ChatGPT-prompt для localities тоже усовершенствовать — попросить ChatGPT помечать «потенциально омонимные» нп (Коробки/Лоскуты/…), чтобы UI мог их подсветить модератору как «может дать шум».
-- 🟢 Авто-discovery от ИНФО-страницы (`wall.get` главной группы + `copy_history.owner_id`) — сильный сигнал.
-- 📬 Ack-письмо в `mailbox/to-brain/` про реализованную [SESSION_HANDOFF директиву](../../brain_matrica/mailboxes/setka/from-brain/2026-05-23-adopt-session-handoff.md) — `compliance: recommend`/SHOULD, директива выполнена в PR #20, brain'у формального ack'а не отправляли. Низкий приоритет.
+- 🟡 `docs/inbox-from-brain/` (untracked локально, 6 .md от 22 мая) — legacy после asymmetric mailbox-migration. Не моя зона. Можно удалить руками или оставить — на коммит в setka не влияет.
+- 🟢 Если когда-нибудь начнём активно пользоваться `/publisher` UI — стоит подумать про community-tokens в `get_vk_publisher()` (сейчас передаётся пустой dict — publish-токен VALSTAN). Для текущего юзкейса (модератор тестирует) хватает, для регулярных публикаций — лучше пробрасывать tokens из БД, как это делает парсинговый стек.
 
 ---
 
