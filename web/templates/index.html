@@ -63,6 +63,107 @@
     </div>
 </div>
 
+<!-- Digests Status (compact widget) -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-info">
+            <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h5 class="mb-0">
+                    <i class="bi bi-bar-chart"></i> Состояние дайджестов (за 24 часа)
+                </h5>
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                    <span id="home-digests-badges">
+                        <span class="badge bg-secondary">Загрузка…</span>
+                    </span>
+                    <a href="/monitoring" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-list-check"></i> Полный список
+                    </a>
+                    <a href="/parsing-stats" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-graph-up"></i> /parsing-stats
+                    </a>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div id="home-digests-loading" class="text-center py-3 text-muted small">
+                    <div class="spinner-border spinner-border-sm"></div>
+                </div>
+                <div id="home-digests-broken" class="p-3" style="display:none;"></div>
+                <div id="home-digests-allgood" class="alert alert-success m-3" style="display:none;">
+                    <i class="bi bi-check-circle"></i> Все дайджесты в норме — нет broken/dead за последние 24 часа.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.home-digest-broken-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid #f1f3f5;
+    font-size: 0.88rem;
+}
+.home-digest-broken-row:last-child { border-bottom: none; }
+.home-digest-broken-row .badge { font-size: 0.72rem; }
+</style>
+
+<script>
+async function loadHomeDigestsStatus() {
+    const loading = document.getElementById('home-digests-loading');
+    const brokenEl = document.getElementById('home-digests-broken');
+    const allgood = document.getElementById('home-digests-allgood');
+    const badges = document.getElementById('home-digests-badges');
+    try {
+        const resp = await fetch('/api/monitoring/digests-status');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const json = await resp.json();
+        if (!json.success) throw new Error('API ответил без данных');
+        const { rows, summary } = json.data;
+
+        badges.innerHTML = `
+            <span class="badge bg-success">свежо: ${summary.fresh || 0}</span>
+            <span class="badge bg-warning text-dark">устаревает: ${summary.stale || 0}</span>
+            <span class="badge bg-danger">сломано: ${summary.broken || 0}</span>
+            <span class="badge bg-secondary">мёртво: ${summary.dead || 0}</span>
+        `;
+        loading.style.display = 'none';
+
+        const problems = rows.filter(r => r.status === 'broken' || r.status === 'dead').slice(0, 8);
+        if (!problems.length) {
+            allgood.style.display = 'block';
+            return;
+        }
+        const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        brokenEl.innerHTML = problems.map(r => {
+            const statusBadge = r.status === 'broken'
+                ? '<span class="badge bg-danger">сломано</span>'
+                : '<span class="badge bg-secondary">мёртво</span>';
+            const consecutive = r.consecutive_failed > 0
+                ? ` <small class="text-danger">(${r.consecutive_failed} подряд failed)</small>`
+                : '';
+            const lastSuccess = r.last_success_date
+                ? new Date(r.last_success_date).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                : 'никогда';
+            return `
+                <div class="home-digest-broken-row">
+                    <div>${statusBadge} <strong>${esc(r.region_name)}</strong> / <code>${esc(r.theme)}</code>${consecutive}</div>
+                    <small class="text-muted">последний успех: ${lastSuccess}</small>
+                </div>
+            `;
+        }).join('');
+        brokenEl.style.display = 'block';
+    } catch (e) {
+        loading.style.display = 'none';
+        badges.innerHTML = '<span class="badge bg-warning">недоступно</span>';
+        console.warn('home digests status failed:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadHomeDigestsStatus);
+</script>
+
 <!-- System Monitoring Section -->
 <div class="row mb-4">
     <div class="col-12">
