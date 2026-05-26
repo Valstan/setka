@@ -5,41 +5,52 @@
 **Status:** IDLE
 **Updated:** 2026-05-26
 **Branch:** main
-**Last release in prod:** `c6df1bb` (PR #57 — bulk-actions на /discovery)
+**Last release in prod:** `fba672f` (PR #62 — fix setup-monitoring, не задеплоен; функционально прод на `973ebf3` PR #61 — Grafana дашборд)
 
 ---
 
 ## Текущая нитка
 
-_Нет — последняя задача закрыта, открытая стартовая позиция._
+_Нет — все начатые задачи закрыты, открытая стартовая позиция._
 
-Сессия 2026-05-26 (вторая за день) добавила и катнула на прод **bulk-действия по чекбоксам** на странице `/regions/<code>/discovery` ([PR #57](https://github.com/Valstan/setka/pull/57), `c6df1bb`):
+Сессия 2026-05-26 (третья за день) сделала **четыре крупных PR + один минор-фикс** в один заход:
 
-- Чекбоксы на карточках кандидатов + select-all в заголовке секции (с indeterminate-состоянием).
-- Sticky bulk-bar внизу: «Выбрано N | Сбросить | Approve | [категория ▾] Применить | Отложить | Отклонить | Удалить».
-- Новый endpoint `POST /api/discovery/candidates/bulk-action` с actions: `reject`, `defer`, `approve`, `delete`, `set_category`. `approve` возвращает `skipped_no_category` для кандидатов без конкретной категории, без падения. Server-side dedup ids.
-- +15 тестов (519/519 зелёные).
-- Релиз: prod `git pull` + `sudo systemctl restart setka` (миграций нет, worker/beat не трогали). Health 200 в 1.08s, smoke endpoint валидирует пустой ids → 422.
+- [PR #59](https://github.com/Valstan/setka/pull/59) `chore(close_session): авто-merge handoff-only PR` — `/close_session` теперь сам мёрджит handoff если PR doc-only + один коммит + CI зелёный. Никаких `--admin`. CI-таймаут 180s — если Actions залип, доходит до финального отчёта без merge.
+- [PR #60](https://github.com/Valstan/setka/pull/60) `feat(vk-monitor): cross-process Redis rate-limit для VKClient` — выделил `RateLimiter` Protocol с двумя backend'ами (ThreadingRateLimiter default, RedisRateLimiter через Lua-script с PEXPIRE). Selection через env `VK_RATE_LIMIT_BACKEND`. На проде сейчас работает threading (поведение неизменно), redis включается одним env-флагом когда понадобится scale Celery worker до `-c N`.
+- [PR #61](https://github.com/Valstan/setka/pull/61) `feat(monitoring): Prometheus + Grafana дашборд` — установлен полный стек на проде: prometheus 9090 (scrape setka, retention 5d), grafana 11.4.0 (3000, доступ через SSH tunnel), дашборд «SETKA — состояние дайджестов» с 4 панелями. Новые метрики `setka_digest_published_total{region,topic,result}` + `setka_digest_last_published_timestamp{region,topic}` инжектированы в `tasks/parsing_scheduler_tasks.py` и `modules/kirov_oblast_digest.py`. Бонусом — **security-fix** для `/metrics`: раньше открыт наружу через nginx, теперь 404 для не-127.0.0.1 (override `SETKA_METRICS_PUBLIC=1`).
+- [PR #62](https://github.com/Valstan/setka/pull/62) `fix(setup-monitoring): Grafana .deb + Prometheus --config.file` — пост-инсталл фикс скрипта по двум багам найденным на проде: Grafana GPG-key URL отдаёт 403 (Grafana закрыли публичный доступ в 2026, перешёл на установку через `.deb` с dl.grafana.com); Prometheus systemd-ARGS не имел `--config.file`, из-за чего читал дефолтный пример вместо нашего конфига.
+
+Также первым шагом сессии — мёрдж [PR #58](https://github.com/Valstan/setka/pull/58) (handoff с прошлой сессии 2026-05-26 утром, висел с outage GitHub Actions).
+
+**Прод-релиз сегодня:** `git pull` + restart 3 сервисов setka + установка prometheus/grafana + restart. Все active, health 200 в 1.02s, дашборд провижится автоматически, datasource подцеплен. Скрейп `up{job="setka"} == 1`. Метрики дайджестов начнут накапливаться при первой публикации beat-таски (30-60 минут).
 
 ## Следующий шаг
 
 Открытой стартовой позиции нет. Кандидатные стартовые точки:
 
-- **Пользовательский smoke новой фичи** в браузере (не код): https://valstan.tw1.ru/regions/verhoshizhem/discovery — в секции «Без AI-категории» (150 кандидатов) потыкать чекбоксы, select-all секции, bulk-reject / bulk-delete / set_category. Если найдётся баг — фикс в новой нитке.
-- **🟡 Groq API key 403** — получить новый ключ на console.groq.com → `GROQ_API_KEY` в `/etc/setka/setka.env` → `sudo systemctl restart setka setka-celery-worker`. Это вернёт кнопку «✨ AI-черновик» в модалке ответа на VK-комменты (`modules/notifications/ai_drafter.py`). Не блокер.
-- **🟢 Cross-process rate-limit для VKClient через Redis** — текущий `GLOBAL_PARSE_INTERVAL_SECONDS=0.4` через `threading.Lock` per-process. Нужен общий счётчик, если Celery worker станет multi-process (`-c N`).
-- **🟢 Grafana дашборд «состояние дайджестов»** — на основе Redis-ключей `setka:digest_last_published:*` и Celery-логов.
-- **🟢 UI «changed_category» quick-action** — фильтр `/communities?health_status=changed_category` + кнопка «применить suggested_category одним кликом».
-- **🟢 Telegram-бот с webhook**, **🟢 Dark mode UI** — см. `PENDING_FOLLOWUPS.md` 🟢 идеи.
+- **Открыть Grafana и проверить дашборд** через ~1 час после релиза (когда beat запустит первый дайджест):
+  ```bash
+  ssh -L 3000:127.0.0.1:3000 setka
+  # http://localhost:3000  →  admin/admin (сменить пароль)  →  Dashboards → SETKA → SETKA — состояние дайджестов
+  ```
+  Если панели пустые — Prometheus не получил данные. Дёрнуть `curl 'http://127.0.0.1:9090/api/v1/query?query=setka_digest_published_total'` на проде.
+- **🟡 Groq API key 403** — получить новый ключ на console.groq.com → `GROQ_API_KEY` в `/etc/setka/setka.env` → `sudo systemctl restart setka setka-celery-worker`. Это вернёт кнопку «✨ AI-черновик» в `modules/notifications/ai_drafter.py` **и** разблокирует ⏳ `changed_category` детекцию в weekly recheck.
+- **🟢 PR 4 (отложен) — UI quick-action для `changed_category`** — либо ждать Groq, либо реализовать алгоритмический keyword-detector без AI. Подробности в [PENDING_FOLLOWUPS.md](PENDING_FOLLOWUPS.md) 🟢 идеи.
+- **🟢 Включить `VK_RATE_LIMIT_BACKEND=redis`** — если станет тесно с одним Celery worker и захочется `-c N` prefork. Сейчас single-process отлично справляется.
+- **🟢 Опционально — node_exporter** для Grafana (host-level метрики: CPU, RAM, диск). Полезно для контроля «не съел ли Prometheus всю память». ~50MB RAM. Добавить scrape-job в `monitoring/prometheus/prometheus.yml`.
 
 ## Контекст
 
 - **План:** нет активного.
-- **Связанные коммиты сессии (1 PR):**
-  - `c6df1bb` ([PR #57](https://github.com/Valstan/setka/pull/57)) — feat: bulk-действия по чекбоксам на /discovery
-- **Прод:** HEAD `c6df1bb` (синхрон с main). Все 3 systemd `active`, health 200 в 1.08s, новый endpoint `POST /api/discovery/candidates/bulk-action` зарегистрирован (валидация 422 на пустой ids подтверждена).
+- **Связанные коммиты сессии (5 PR):**
+  - `c4a0bca` ([PR #59](https://github.com/Valstan/setka/pull/59)) — chore(close_session): авто-merge handoff-only PRs.
+  - `82e0589` ([PR #60](https://github.com/Valstan/setka/pull/60)) — feat(vk-monitor): cross-process Redis rate-limit.
+  - `973ebf3` ([PR #61](https://github.com/Valstan/setka/pull/61)) — feat(monitoring): Prometheus + Grafana + security-fix /metrics.
+  - `fba672f` ([PR #62](https://github.com/Valstan/setka/pull/62)) — fix(setup-monitoring): Grafana .deb + Prometheus --config.file.
+  - (`72f78a5` [PR #58](https://github.com/Valstan/setka/pull/58) — handoff с прошлой сессии, замёржен этой сессией).
+- **Прод:** 5 сервисов active (3 setka + prometheus + grafana). HEAD на проде `973ebf3` (PR #61, фикс из #62 ещё не катнут — он только в setup-monitoring.sh, который запускается вручную при первой установке; на текущем сервере уже всё рабочее). Health 200 в 1.02s. `/metrics` снаружи 404, локально 200 (security ОК). Дашборд `setka-digests` провижен, datasource `Prometheus` isDefault=true.
 - **Открытых PR:** нет.
-- **Тесты:** 519/519 зелёные (+15 на bulk-action endpoint).
+- **Тесты:** 524/524 локально (519 базовых + 5 новых на digest_metrics; rate-limit тесты переписаны на новый API без изменения числа).
 
 ## Открытые вопросы для пользователя
 
@@ -49,6 +60,8 @@ _Нет._
 
 - 🟡 `docs/inbox-from-brain/` (untracked локально, 6 .md от 22 мая) — legacy после asymmetric mailbox-migration. Можно удалить руками — на коммит в setka не влияет.
 - 📬 В `../brain_matrica/mailboxes/setka/from-brain/2026-05-23-adopt-session-handoff.md` лежит уже отработанное письмо (ack отправлен в PR #52). Архивация — зона brain'а, у нас в инбоксе ещё висит справочно.
+- 🟢 Grafana admin/admin — **сменить пароль при первом входе**. Иначе через SSH tunnel кто угодно с моего ноута к ней достучится.
+- 🟢 Опционально снять `setup-monitoring.sh` со «свежей VPS» дополнительный smoke-test перед чем-то важным — фиксы из #62 не проверены на чистой машине, только на текущем проде вручную.
 
 ---
 
