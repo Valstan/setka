@@ -10,12 +10,19 @@ Token routing:
   to admin user-token on VK errors 15/27 (community token lacks the scope).
   The ``via`` field in the response tells the UI which path actually
   succeeded so a future audit can spot regressions.
-- ``like_comment`` goes straight through the user-token. VK API explicitly
-  restricts ``likes.add`` to user access tokens — calling it with a community
-  token returns error 3 ``Unknown method passed`` (the method literally is
-  not exposed for that token class). The fallback set is {15, 27}, so the
-  generic retry would not even kick in. By going user-only we save one
-  doomed VK round-trip per like and avoid the misleading error in the UI.
+- ``like_comment`` goes straight through the user-token, but as of
+  2026-05-26 this endpoint is **no longer wired up from the UI**. VK closed
+  both routes that would make it work: (a) ``likes.add`` via community-token
+  returns error 27 ``Group authorization failed: method is unavailable
+  with group auth``; (b) user-token with ``wall`` scope can no longer be
+  minted by physical persons — public mobile app_ids (Kate Mobile, VK
+  Mobile, VK Messenger) either strip ``wall`` from issued scope or IP-pin
+  the token, and the legacy ``vk.com/editapp?act=create`` form for
+  Standalone-apps was removed from dev.vk.com. The UI now opens a deeplink
+  to the VK post so the admin can like the comment manually (see the
+  ``<a href="https://vk.com/wall...">`` in ``loadRecentComments`` of
+  ``web/static/js/notifications.js``). The function itself is kept correct
+  in case VK ever re-opens user-token issuance with ``wall``.
 """
 
 from __future__ import annotations
