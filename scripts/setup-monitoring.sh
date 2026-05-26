@@ -72,15 +72,16 @@ else
 fi
 
 if ! systemctl list-unit-files grafana-server.service >/dev/null 2>&1; then
-  # Grafana не в стандартных apt-репах Debian/Ubuntu — добавим официальный.
-  apt-get install -y --no-install-recommends gnupg2 software-properties-common wget
-  if [ ! -f /etc/apt/sources.list.d/grafana.list ]; then
-    wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor > /etc/apt/keyrings/grafana.gpg
-    echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
-      > /etc/apt/sources.list.d/grafana.list
-    apt-get update -qq
+  # Grafana с 2026 закрыл `https://apt.grafana.com/gpg.key` (403 за токен).
+  # Поэтому ставим из официального `.deb` напрямую с dl.grafana.com — это
+  # стабильный публичный URL без auth, поддерживается Grafana Labs.
+  apt-get install -y --no-install-recommends wget
+  GRAFANA_VERSION="${GRAFANA_VERSION:-11.4.0}"
+  DEB="/tmp/grafana_${GRAFANA_VERSION}_amd64.deb"
+  if [ ! -s "$DEB" ]; then
+    wget -q -O "$DEB" "https://dl.grafana.com/oss/release/grafana_${GRAFANA_VERSION}_amd64.deb"
   fi
-  apt-get install -y --no-install-recommends grafana
+  apt-get install -y --no-install-recommends "$DEB"
 else
   echo "grafana уже установлен"
 fi
@@ -92,12 +93,16 @@ step "Prometheus: конфиг + retention $PROM_RETENTION"
 
 install -m 0644 "$PROM_CONFIG" /etc/prometheus/prometheus.yml
 
-# В Debian unit задаёт ARGS через /etc/default/prometheus.
+# В Debian unit задаёт ARGS через /etc/default/prometheus. Обязательно
+# нужен --config.file (иначе Prometheus читает дефолтный пример и не
+# скрейпит setka) и --storage.tsdb.path (иначе пишет в текущий рабочий
+# каталог systemd-unit'а).
+PROM_ARGS="--config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/var/lib/prometheus/metrics2 --storage.tsdb.retention.time=$PROM_RETENTION --web.listen-address=127.0.0.1:9090"
 if [ -f /etc/default/prometheus ]; then
   if grep -q "^ARGS=" /etc/default/prometheus; then
-    sed -i "s|^ARGS=.*|ARGS=\"--storage.tsdb.retention.time=$PROM_RETENTION --web.listen-address=127.0.0.1:9090\"|" /etc/default/prometheus
+    sed -i "s|^ARGS=.*|ARGS=\"$PROM_ARGS\"|" /etc/default/prometheus
   else
-    echo "ARGS=\"--storage.tsdb.retention.time=$PROM_RETENTION --web.listen-address=127.0.0.1:9090\"" >> /etc/default/prometheus
+    echo "ARGS=\"$PROM_ARGS\"" >> /etc/default/prometheus
   fi
 fi
 
