@@ -6,10 +6,11 @@ Handles all interactions with VK API
 import asyncio
 import logging
 import threading
-import time
 from typing import Any, ClassVar, Dict, List, Optional
 
 import vk_api
+
+from modules.vk_monitor.rate_limiter import RateLimiter, build_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def _log_vk_api_error(prefix: str, error: vk_api.exceptions.ApiError) -> None:
 class VKClient:
     """VK API Client with token rotation and rate limiting.
 
-    **Global per-token rate limit (added 2026-05-22).**
+    **Global per-token rate limit (added 2026-05-22, refactored 2026-05-26).**
 
     `vk_api` library уже sleep'ит при rate-limit (HTTP 6 / TooManyRequests),
     но это per-VkApi-session. Если в одном процессе живут несколько `VKClient`
@@ -36,25 +37,25 @@ class VKClient:
     регионов через разные task'и), они НЕ видят счётчик друг друга и могут
     разом отправить burst > 3 req/sec — VK ставит cooldown / captcha на токен.
 
-    Решение: class-level mapping `{token: last_call_ts}` под lock'ом. Любой
-    инстанс перед вызовом VK API ждёт `GLOBAL_PARSE_INTERVAL_SECONDS` с
-    момента последнего вызова **под тем же токеном**, во всех инстансах.
+    Решение: общий :class:`RateLimiter` (см. ``rate_limiter.py``). Два backend'а:
 
-    Limit: per-process. Если когда-то перейдём на multi-process Celery worker
-    (`-c N` с prefork), нужен будет общий счётчик через Redis. Пока не нужно.
+    - ``threading`` (default) — per-process через ``threading.Lock``.
+    - ``redis`` — cross-process через Redis Lua-script; нужен для multi-worker
+      Celery (`celery -c N` с prefork).
+
+    Backend выбирается через env ``VK_RATE_LIMIT_BACKEND`` (default
+    ``threading``). RedisRateLimiter с graceful fallback на threading при
+    недоступном Redis — приоритет «не повесить», а не «строгий контроль».
     """
 
     # ~2.5 req/sec — чуть ниже VK-документированного лимита 3 req/sec,
-    # запас на jitter в сети. Аналог `GLOBAL_PUBLISH_INTERVAL_SECONDS=1.5`
-    # на VKPublisher, но parse-запросов в разы больше, поэтому интервал
-    # меньше.
+    # запас на jitter в сети.
     GLOBAL_PARSE_INTERVAL_SECONDS: ClassVar[float] = 0.4
 
-    # Per-process state. Token используется как ключ — `id(self)` не подойдёт,
-    # потому что разные VKClient instances с одним токеном должны делить лимит.
-    _last_call_per_token: ClassVar[Dict[str, float]] = {}
-    _per_token_locks: ClassVar[Dict[str, threading.Lock]] = {}
-    _registry_lock: ClassVar[threading.Lock] = threading.Lock()
+    # Lazy-singleton rate-limiter, общий для всех инстансов VKClient.
+    # Сбрасывается в тестах через fixture (set to None → пересоздаётся).
+    _rate_limiter: ClassVar[Optional[RateLimiter]] = None
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(self, token: str):
         """Initialize VK client with token"""
@@ -63,29 +64,26 @@ class VKClient:
         self.vk = None
         self._init_session()
 
+    @classmethod
+    def _get_rate_limiter(cls) -> RateLimiter:
+        if cls._rate_limiter is None:
+            with cls._rate_limiter_lock:
+                if cls._rate_limiter is None:  # double-checked
+                    cls._rate_limiter = build_rate_limiter(
+                        cls.GLOBAL_PARSE_INTERVAL_SECONDS
+                    )
+        return cls._rate_limiter
+
     def _enforce_rate_limit(self) -> None:
         """Block (sleep) until `GLOBAL_PARSE_INTERVAL_SECONDS` since the last
-        VK API call under the same token. Re-entrant-safe via per-token lock.
+        VK API call under the same token. Делегирует в shared RateLimiter.
 
         Called from `api_call` and from sync wall/groups/getById wrappers.
         Async wrappers (`get_posts`, `get_groups`, `get_messages`) — тоже
         прокидываются через `asyncio.to_thread(self._enforce_rate_limit)`,
         чтобы не блокировать event loop.
         """
-        # Get/create the per-token lock atomically.
-        with self._registry_lock:
-            lock = self._per_token_locks.get(self.token)
-            if lock is None:
-                lock = threading.Lock()
-                self._per_token_locks[self.token] = lock
-
-        with lock:
-            last = self._last_call_per_token.get(self.token, 0.0)
-            now = time.monotonic()
-            wait = self.GLOBAL_PARSE_INTERVAL_SECONDS - (now - last)
-            if wait > 0:
-                time.sleep(wait)
-            self._last_call_per_token[self.token] = time.monotonic()
+        self._get_rate_limiter().wait(self.token)
 
     def _init_session(self):
         """Initialize VK session"""
