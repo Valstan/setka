@@ -14,26 +14,9 @@
 
 ## 🔴 Блокеры
 
-### VK-токен VALSTAN не имеет scope `wall`/`likes` — лайки комментам не ставятся
+_Сейчас нет._
 
-Обнаружено 2026-05-26 при разборе жалобы «лайки в Уведомлениях не работают». `account.getAppPermissions()` для текущего `VK_TOKEN_VALSTAN` возвращает bitmask **1384452** = `[photos, email, ads, offline, manage]`. Нет ни `wall` (1024), ни `groups` (2048), ни `messages` (4096). VK при вызове `likes.add(type='comment',...)` отдаёт обманчивое `[3] Unknown method passed` вместо человеческого «нет прав» — поэтому код в [`modules/notifications/vk_actions.py`](../modules/notifications/vk_actions.py) считал что метод физически недоступен. Реально проблема в scope токена.
-
-Логи прода (5+ инцидентов с 2026-05-21 по 2026-05-26):
-```
-modules.notifications.vk_actions - WARNING - Failed to like comment wall-168169352_19203 (cid=19211): [3] Unknown method passed
-```
-
-**Фикс** — не код, операционный:
-1. Перевыпустить токен через https://vk.com/dev/implicit_flow_user с правами `wall,groups,messages,offline` (вход аккаунтом «Валентин Савиных», id 20002978).
-2. Заменить `VK_TOKEN_VALSTAN` в `/etc/setka/setka.env` на новое значение.
-3. `sudo systemctl restart setka setka-celery-worker`.
-4. Smoke: нажать «лайк» под любым свежим комментарием в `/notifications`. Ожидаем `{"success": true, "likes_count": N, "via": "user-token"}`.
-
-После фикса разблокируются:
-- 💛 Лайки комментам в `/notifications` (основное)
-- 💛 Ответы на комментарии — там же `wall.createComment` уже работает через community-token fallback, но при отсутствии community-token и user-token без `wall` ответ тоже падал бы (сейчас «случайно работает» через CT).
-- 💛 Любые будущие user-token operations (`wall.post`, `messages.send`, `likes.add` где CT недоступен).
-
+- ~~**VK-токен VALSTAN не имеет scope `wall`/`likes`**~~ Закрыто 2026-05-26 (этот PR): попытка получить токен с `wall`+`groups` через четыре разных способа провалилась — VK 2026 (а) у публичных mobile-app_id (Kate Mobile, VK Messenger, VK Mobile) либо режет scope (отдаёт `[photos, email, ads, offline]`), либо привязывает токен к IP-адресу выпуска (error 5 `access_token was given to another ip address` при обращении с прод-VPS); (б) для своего Standalone-приложения VK закрыл новую форму создания (на dev.vk.com доступны только Мини-приложение / Игра / Плагин для сообществ), legacy URL `vk.com/editapp?act=create` тоже больше не показывает Standalone; (в) `likes.add` через community-token VK явно отказывается обслуживать с error 27 `Group authorization failed: method is unavailable with group auth`. **Решение**: кнопка ♥ в `/notifications` теперь — обычная ссылка-deeplink `https://vk.com/wall{owner}_{post}?reply={cid}&thread={cid}`, открывает пост в VK с фокусом на комменте, лайк ставится руками в VK. Backend endpoint `/api/notifications/comments/like` оставлен в коде на случай если когда-нибудь scope `wall` снова станет доступен для физлиц.
 - ~~**Discovery trigger длится >180s — nginx обрывает клиента**~~ Закрыто 2026-05-25 ([PR #49](https://github.com/Valstan/setka/pull/49), `0edf84b`): trigger переведён на Celery + UI polling через `/api/discovery/task/{id}/status`. UI больше не виснет. Nginx полу-фикс 600s в `/etc/nginx/conf.d/setka.conf` остался — не мешает, можно при желании откатить на 180s.
 - ~~**Groq API key возвращает 403 Forbidden**~~ Переведено в 🟡 техдолг 2026-05-26: discovery больше не зависит от Groq (PR #41 AI-batch через clipboard, PR #51 info-repost). Затрагивает только UX-фичу — AI-черновик ответа на VK-комменты в `modules/notifications/ai_drafter.py` (модератор пишет вручную). См. 🟡 ниже.
 

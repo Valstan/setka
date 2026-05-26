@@ -375,10 +375,13 @@ async function loadRecentComments(recentComments) {
                             onclick='openReplyModal({kind:"comment", ownerId:${ownerId}, postId:${postId}, commentId:${cid}, text:${JSON.stringify(notif.text || "")}, regionName:${JSON.stringify(notif.community_name || notif.region_name || "")}})'>
                         <i class="bi bi-reply"></i>
                     </button>
-                    <button class="btn btn-sm btn-outline-danger" title="Лайкнуть от имени сообщества"
-                            onclick="likeComment(${ownerId}, ${postId}, ${cid}, this)">
+                    <a href="https://vk.com/wall${ownerId}_${postId}?reply=${cid}&thread=${cid}"
+                       target="_blank" rel="noopener noreferrer"
+                       class="btn btn-sm btn-outline-danger"
+                       title="Открыть пост в VK и поставить лайк руками — VK API не разрешает лайки от имени сообщества (error 27), а user-token со scope wall на физлиц больше не выдаётся.">
                         <i class="bi bi-heart"></i>
-                    </button>
+                        <i class="bi bi-box-arrow-up-right" style="font-size: 0.7em;"></i>
+                    </a>
                     <button class="btn btn-sm btn-outline-success ms-auto" title="Отметить обработанным"
                             onclick="markHandled('recent_comment', '${cid}', this)">
                         <i class="bi bi-check2"></i>
@@ -405,51 +408,13 @@ function showToast(message, level = 'danger', durationMs = 6000) {
     }, durationMs);
 }
 
-// VK error 3 ("Unknown method passed") для likes.add реально означает «у токена нет
-// scope для wall/likes». VK возвращает обманчивое имя ошибки, но причина именно scope.
-// Подсказываем админу человеческую интерпретацию вместо технического кода.
-function explainLikeError(data) {
-    const code = data?.error_code;
-    const raw = data?.error || 'неизвестная ошибка';
-    if (code === 3) {
-        return 'У VK-токена нет scope «wall» / «likes» — выпусти новый токен ' +
-            'VALSTAN со scope <code>wall,groups,messages,offline</code> ' +
-            'и обнови <code>VK_TOKEN_VALSTAN</code> на проде.';
-    }
-    if (code === 15 || code === 27) {
-        return 'Сообщество-токен не имеет прав на эту операцию, а fallback на ' +
-            'user-token тоже не сработал. Проверь токены группы.';
-    }
-    if (code === 14) return 'Требуется ввод капчи в VK — попробуй через минуту.';
-    return `Ошибка [${code ?? '?'}]: ${escapeHtml(raw)}`;
-}
-
-async function likeComment(ownerId, postId, commentId, btn) {
-    btn.disabled = true;
-    const originalHtml = btn.innerHTML;
-    try {
-        const resp = await fetch('/api/notifications/comments/like', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ owner_id: ownerId, post_id: postId, comment_id: commentId }),
-        });
-        const data = await resp.json();
-        if (data.success) {
-            btn.innerHTML = '<i class="bi bi-heart-fill text-danger"></i>';
-            btn.classList.remove('btn-outline-danger');
-            btn.classList.add('btn-danger');
-            showToast('❤️ Лайк поставлен', 'success', 2500);
-        } else {
-            btn.innerHTML = originalHtml;
-            btn.disabled = false;
-            showToast(`Не удалось лайкнуть: ${explainLikeError(data)}`, 'danger', 9000);
-        }
-    } catch (e) {
-        btn.innerHTML = originalHtml;
-        btn.disabled = false;
-        showToast(`Ошибка сети: ${escapeHtml(e.message)}`, 'danger', 6000);
-    }
-}
+// Старый likeComment() и explainLikeError() удалены — VK 2026 принципиально
+// не разрешает likes.add ни через community-token (error 27), ни через user-token
+// без scope `wall`, а сам этот scope выпуск для physлиц перестал выдавать
+// (legacy Standalone-app форма недоступна, mobile app_id получают IP-pinning).
+// Кнопка теперь — обычная ссылка-deeplink в VK с фокусом на комменте, лайк
+// ставится руками. Backend endpoint `/api/notifications/comments/like` остаётся
+// в коде на случай если когда-нибудь будет работающий user-token с wall scope.
 
 async function markHandled(notificationType, itemId, btn) {
     btn.disabled = true;
@@ -461,8 +426,10 @@ async function markHandled(notificationType, itemId, btn) {
         });
         const data = await resp.json();
         if (data.success) {
-            // Fade out the parent list-group-item and remove
-            const card = btn.closest('.list-group-item');
+            // Fade out parent — поддерживаем оба обвалёра (старый .list-group-item
+            // и новый .notif-card в grid-layout), чтобы не сломать если где-то
+            // остался legacy вызов.
+            const card = btn.closest('.notif-card') || btn.closest('.list-group-item');
             if (card) {
                 card.style.transition = 'opacity 0.3s';
                 card.style.opacity = '0.2';
