@@ -119,6 +119,19 @@ posts_processed_total = Counter("setka_posts_processed_total", "Total posts proc
 
 posts_published_total = Counter("setka_posts_published_total", "Total posts published", ["channel"])
 
+# Дайджесты по регионам и темам — для Grafana «состояние дайджестов».
+digest_published_total = Counter(
+    "setka_digest_published_total",
+    "Опубликованные дайджесты per region per topic",
+    ["region", "topic", "result"],  # result: success | empty | failed
+)
+
+digest_last_published_timestamp = Gauge(
+    "setka_digest_last_published_timestamp",
+    "Unix timestamp последней успешной публикации дайджеста per region per topic",
+    ["region", "topic"],
+)
+
 communities_monitored = Gauge(
     "setka_communities_monitored", "Number of communities being monitored"
 )
@@ -289,6 +302,22 @@ def track_post_published(channel: str):
         channel: 'vk', 'telegram', 'ok', etc.
     """
     posts_published_total.labels(channel=channel).inc()
+
+
+def track_digest_published(region: str, topic: str, result: str = "success") -> None:
+    """Зафиксировать факт публикации дайджеста.
+
+    Args:
+        region: ``Region.code`` (например, ``"tuzha"``, ``"mi"``).
+        topic: имя темы (``"novost"``, ``"mourning"``, ``"reklama"``, …).
+        result: ``"success"`` | ``"empty"`` | ``"failed"``. Для ``"success"`` —
+            обновляется ``digest_last_published_timestamp`` (Gauge с unix-ts).
+            Для остальных — только Counter (нужно для алёртов «давно не
+            публиковали успешно»).
+    """
+    digest_published_total.labels(region=region, topic=topic, result=result).inc()
+    if result == "success":
+        digest_last_published_timestamp.labels(region=region, topic=topic).set(time.time())
 
 
 def track_error(component: str, error_type: str):

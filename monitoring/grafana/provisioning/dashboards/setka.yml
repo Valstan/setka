@@ -1,0 +1,16 @@
+# Grafana dashboards provisioning — auto-loader из файлов на диске.
+# Файл копируется в /etc/grafana/provisioning/dashboards/.
+
+apiVersion: 1
+
+providers:
+  - name: setka
+    orgId: 1
+    folder: SETKA
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 60
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/setka
+      foldersFromFilesStructure: false

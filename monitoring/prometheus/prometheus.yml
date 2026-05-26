@@ -1,0 +1,31 @@
+# Prometheus конфиг для SETKA.
+#
+# Тонкий VPS (1.5GB RAM, ограниченный диск), поэтому retention сокращён до 5d
+# и scrape_interval умеренный (30s). Если запас по памяти/диску улучшится,
+# можно поднять retention до 14d/30d в systemd unit.
+#
+# Деплой: `scripts/setup-monitoring.sh` копирует этот файл в /etc/prometheus/
+# и перезагружает службу.
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  scrape_timeout: 10s
+  external_labels:
+    cluster: setka-prod
+
+scrape_configs:
+  - job_name: setka
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['127.0.0.1:8000']
+        labels:
+          service: setka-web
+
+  # Сам Prometheus self-monitor — нужен для отладки, минимальная нагрузка.
+  - job_name: prometheus
+    static_configs:
+      - targets: ['127.0.0.1:9090']
+
+# Алёртинг через alertmanager пока не подключён (1.5GB VPS, экономим RAM).
+# При необходимости — добавить блок alerting + alertmanager на проде.

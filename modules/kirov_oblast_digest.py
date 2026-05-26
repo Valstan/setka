@@ -426,6 +426,16 @@ async def run_kirov_oblast_digest(
                 attachments=digest.attachments_list,
             )
             results.append(("regular", digest, pub))
+            try:
+                from monitoring.metrics import track_digest_published
+
+                track_digest_published(
+                    region=region.code,
+                    topic=theme,
+                    result="success" if pub.success else "failed",
+                )
+            except Exception:  # pragma: no cover
+                logger.debug("track_digest_published failed", exc_info=True)
 
     if mourning_posts:
         mourning_header, mourning_tags, mourning_local_hashtag = resolve_mourning_digest_format()
@@ -465,6 +475,16 @@ async def run_kirov_oblast_digest(
                 attachments=md.attachments_list,
             )
             results.append(("mourning", md, mp))
+            try:
+                from monitoring.metrics import track_digest_published
+
+                track_digest_published(
+                    region=region.code,
+                    topic="mourning",
+                    result="success" if mp.success else "failed",
+                )
+            except Exception:  # pragma: no cover
+                logger.debug("track_digest_published failed", exc_info=True)
 
     all_included: List[str] = []
     for _, d, _ in results:
