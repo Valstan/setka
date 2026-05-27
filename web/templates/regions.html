@@ -67,6 +67,24 @@
                                placeholder="@malmig_info">
                     </div>
                     <div class="mb-3">
+                        <label for="regionKind" class="form-label">Тип региона</label>
+                        <select class="form-select" id="regionKind">
+                            <option value="raion" selected>🏘 Район (raion) — источники: сообщества-партнёры</option>
+                            <option value="oblast">🏛 Область (oblast) — источники: главные сообщества районов</option>
+                            <option value="strana">🌍 Страна (strana) — источники: главные сообщества областей</option>
+                        </select>
+                        <small class="form-text text-muted">Иерархия <code>strana → oblast → raion</code>, см. <a href="https://github.com/Valstan/setka/blob/main/docs/REGIONS_HIERARCHY.md" target="_blank">REGIONS_HIERARCHY.md</a></small>
+                    </div>
+                    <div class="mb-3" id="regionParentWrap">
+                        <label for="regionParent" class="form-label">Родительский регион</label>
+                        <select class="form-select" id="regionParent">
+                            <option value="">— нет родителя —</option>
+                        </select>
+                        <small class="form-text text-muted">
+                            Для <code>raion</code> — выберите область, для <code>oblast</code> — страну, для <code>strana</code> — оставьте пустым.
+                        </small>
+                    </div>
+                    <div class="mb-3">
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="regionActive" checked>
                             <label class="form-check-label" for="regionActive">
@@ -114,6 +132,24 @@
                         <label for="editRegionTelegram" class="form-label">Telegram канал</label>
                         <input type="text" class="form-control" id="editRegionTelegram"
                                placeholder="@malmig_info">
+                    </div>
+                    <div class="mb-3">
+                        <label for="editRegionKind" class="form-label">Тип региона</label>
+                        <select class="form-select" id="editRegionKind">
+                            <option value="raion">🏘 Район (raion)</option>
+                            <option value="oblast">🏛 Область (oblast)</option>
+                            <option value="strana">🌍 Страна (strana)</option>
+                        </select>
+                        <small class="form-text text-muted">Иерархия <code>strana → oblast → raion</code> (миграция 015, 2026-05-27).</small>
+                    </div>
+                    <div class="mb-3" id="editRegionParentWrap">
+                        <label for="editRegionParent" class="form-label">Родительский регион</label>
+                        <select class="form-select" id="editRegionParent">
+                            <option value="">— нет родителя —</option>
+                        </select>
+                        <small class="form-text text-muted">
+                            Меняется в зависимости от выбранного типа: для <code>raion</code> показываются <code>oblast</code>, для <code>oblast</code> — <code>strana</code>.
+                        </small>
                     </div>
                     <div class="mb-3">
                         <div class="form-check">
@@ -258,6 +294,35 @@ async function loadRegions() {
     }
 }
 
+// Бейдж типа региона (миграция 015 — иерархия strana → oblast → raion).
+// Для raion — мягкий серый (это default, не загромождаем UI). Для oblast
+// и strana — заметные цвета, чтобы при беглом взгляде на список было видно.
+function renderKindBadge(region) {
+    const k = region.kind || 'raion';
+    if (k === 'strana') {
+        return '<span class="badge bg-primary" title="Регион типа «страна» — собирает дайджест с главных сообществ областей">🌍 страна</span>';
+    }
+    if (k === 'oblast') {
+        return '<span class="badge" style="background-color:#6f42c1;color:#fff;" title="Регион типа «область» — собирает каскадный дайджест с главных сообществ районов">🏛 область</span>';
+    }
+    return '<span class="badge bg-light text-dark" title="Регион типа «район» — обычный pipeline">🏘 район</span>';
+}
+
+// Ссылка на родителя в иерархии — «↑ kirov_obl» как кликабельный бейдж,
+// чтобы можно было быстро прыгнуть к карточке родителя (через якорь).
+function renderParentLink(region) {
+    if (!region.parent_region_id) return '';
+    const parent = (currentRegions || []).find(r => r.id === region.parent_region_id);
+    if (!parent) return '';
+    return `<a href="#region-card-${parent.id}" class="badge bg-info text-dark text-decoration-none" title="Родитель в иерархии: ${escapeHtmlAttr(parent.name)}">↑ ${escapeHtmlAttr(parent.code)}</a>`;
+}
+
+function escapeHtmlAttr(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
 // Форматирует относительное время «N дней назад» для last_discovery_at.
 function formatRelativeRu(iso) {
     if (!iso) return 'никогда';
@@ -324,7 +389,7 @@ function renderRegionCard(region) {
     `;
 
     return `
-        <div class="col-md-4">
+        <div class="col-md-4" id="region-card-${region.id}">
             <div class="card h-100 hover-shadow">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start mb-2">
@@ -354,6 +419,8 @@ function renderRegionCard(region) {
                     </div>
                     <p class="card-text">
                         <span class="badge bg-secondary">${region.code}</span>
+                        ${renderKindBadge(region)}
+                        ${renderParentLink(region)}
                         ${region.is_active ?
                             '<span class="badge bg-success">Активен</span>' :
                             '<span class="badge bg-warning">Неактивен</span>'}
@@ -732,58 +799,141 @@ async function resetDigestTemplateTopic(topic) {
     }
 }
 
+// Заполняет dropdown «Родительский регион» в зависимости от выбранного типа.
+// Для kind=raion показываем активные oblast'ы, для kind=oblast — strana'ы.
+// Для kind=strana скрываем (у страны нет родителя). Из списка исключаем сам
+// редактируемый регион (`selfId`) — нельзя быть собственным родителем.
+function populateParentDropdown(selectEl, wrapEl, kind, selectedId, selfId) {
+    selectEl.innerHTML = '<option value="">— нет родителя —</option>';
+    if (kind === 'strana') {
+        wrapEl.style.display = 'none';
+        selectEl.value = '';
+        return;
+    }
+    wrapEl.style.display = '';
+    const parentKind = kind === 'raion' ? 'oblast' : 'strana';
+    const candidates = (currentRegions || [])
+        .filter(r => (r.kind || 'raion') === parentKind && r.id !== selfId)
+        .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    for (const r of candidates) {
+        const opt = document.createElement('option');
+        opt.value = String(r.id);
+        opt.textContent = `${r.name} (${r.code})`;
+        if (String(selectedId) === String(r.id)) opt.selected = true;
+        selectEl.appendChild(opt);
+    }
+    if (!candidates.length) {
+        const note = document.createElement('option');
+        note.disabled = true;
+        note.textContent = parentKind === 'oblast'
+            ? '(нет ни одной области — сначала создайте oblast)'
+            : '(нет ни одной страны — сначала создайте strana)';
+        selectEl.appendChild(note);
+    }
+}
+
+// Привязывает change-handler на select «Тип» — при смене типа автоматически
+// перезаполняет parent-dropdown. Чтобы не вешать обработчик дважды, проверяем
+// dataset-flag.
+function wireKindChangeHandler(kindSelectEl, parentSelectEl, parentWrapEl, selfId) {
+    if (kindSelectEl.dataset.wired === '1') return;
+    kindSelectEl.dataset.wired = '1';
+    kindSelectEl.addEventListener('change', () => {
+        populateParentDropdown(parentSelectEl, parentWrapEl, kindSelectEl.value, '', selfId);
+    });
+}
+
 // Add region
 async function addRegion() {
     const code = document.getElementById('regionCode').value.trim();
     const name = document.getElementById('regionName').value.trim();
     const vk_group_id = document.getElementById('regionVkGroupId').value.trim();
     const telegram_channel = document.getElementById('regionTelegram').value.trim();
+    const kind = document.getElementById('regionKind').value || 'raion';
+    const parentSelectVal = document.getElementById('regionParent').value;
     const is_active = document.getElementById('regionActive').checked;
-    
+
     if (!code || !name) {
         alert('Заполните обязательные поля!');
         return;
     }
-    
+
     try {
         const data = {
             code: code.toLowerCase(),
             name,
+            kind,
             is_active
         };
-        
+
         if (vk_group_id) data.vk_group_id = parseInt(vk_group_id);
         if (telegram_channel) data.telegram_channel = telegram_channel;
-        
-        await fetch('/api/regions/', {
+        if (parentSelectVal) data.parent_region_id = parseInt(parentSelectVal, 10);
+
+        const resp = await fetch('/api/regions/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
         // Close modal and reload
         bootstrap.Modal.getInstance(document.getElementById('addRegionModal')).hide();
         document.getElementById('addRegionForm').reset();
         await loadRegions();
-        
+
         alert('Регион успешно создан!');
     } catch (err) {
         alert('Ошибка при создании региона: ' + err.message);
     }
 }
 
+// Init add-modal-on-open: каждый раз когда модалка открывается, обновляем
+// dropdown родителя по актуальным currentRegions.
+document.addEventListener('DOMContentLoaded', () => {
+    const addModal = document.getElementById('addRegionModal');
+    if (addModal) {
+        addModal.addEventListener('show.bs.modal', () => {
+            const kindSel = document.getElementById('regionKind');
+            const parentSel = document.getElementById('regionParent');
+            const parentWrap = document.getElementById('regionParentWrap');
+            // Сброс к defaults — мы создаём НОВЫЙ регион.
+            kindSel.value = 'raion';
+            populateParentDropdown(parentSel, parentWrap, 'raion', '', null);
+            wireKindChangeHandler(kindSel, parentSel, parentWrap, null);
+        });
+    }
+});
+
 // Edit region
 async function editRegion(regionId) {
     const region = currentRegions.find(r => r.id === regionId);
     if (!region) return;
-    
+
     document.getElementById('editRegionId').value = region.id;
     document.getElementById('editRegionCode').value = region.code;
     document.getElementById('editRegionName').value = region.name;
     document.getElementById('editRegionVkGroupId').value = region.vk_group_id || '';
     document.getElementById('editRegionTelegram').value = region.telegram_channel || '';
     document.getElementById('editRegionActive').checked = region.is_active;
-    
+
+    // Иерархия (миграция 015) — pre-fill type и parent.
+    const editKindSel = document.getElementById('editRegionKind');
+    const editParentSel = document.getElementById('editRegionParent');
+    const editParentWrap = document.getElementById('editRegionParentWrap');
+    editKindSel.value = region.kind || 'raion';
+    populateParentDropdown(
+        editParentSel,
+        editParentWrap,
+        editKindSel.value,
+        region.parent_region_id,
+        region.id  // исключаем сам редактируемый регион из списка родителей
+    );
+    wireKindChangeHandler(editKindSel, editParentSel, editParentWrap, region.id);
+
     new bootstrap.Modal(document.getElementById('editRegionModal')).show();
 }
 
@@ -793,28 +943,37 @@ async function saveRegion() {
     const name = document.getElementById('editRegionName').value.trim();
     const vk_group_id = document.getElementById('editRegionVkGroupId').value.trim();
     const telegram_channel = document.getElementById('editRegionTelegram').value.trim();
+    const kind = document.getElementById('editRegionKind').value || 'raion';
+    const parentSelectVal = document.getElementById('editRegionParent').value;
     const is_active = document.getElementById('editRegionActive').checked;
-    
+
     if (!name) {
         alert('Название региона обязательно!');
         return;
     }
-    
+
     try {
-        const data = { name, is_active };
+        const data = { name, kind, is_active };
         if (vk_group_id) data.vk_group_id = parseInt(vk_group_id);
         if (telegram_channel) data.telegram_channel = telegram_channel;
-        
-        await fetch(`/api/regions/${regionId}`, {
+        // Явно передаём parent_region_id: либо новое значение, либо null
+        // (чтобы можно было «открепить» регион от родителя).
+        data.parent_region_id = parentSelectVal ? parseInt(parentSelectVal, 10) : null;
+
+        const resp = await fetch(`/api/regions/${regionId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
         // Close modal and reload
         bootstrap.Modal.getInstance(document.getElementById('editRegionModal')).hide();
         await loadRegions();
-        
+
         alert('Регион успешно обновлен!');
     } catch (err) {
         alert('Ошибка при обновлении региона: ' + err.message);

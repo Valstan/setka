@@ -18,6 +18,11 @@
     const vkGroupPreview = document.getElementById('vk-group-preview');
     const vkGroupIdHidden = document.getElementById('vk-group-id-hidden');
 
+    // Иерархия (миграция 015) — опциональный select «родительская область».
+    // Может отсутствовать в DOM, если кто-то откатит template — тогда тихо
+    // пропускаем (создаём raion без parent — backward-compat).
+    const parentOblastSelect = document.getElementById('parent-oblast-select');
+
     const createBtn = document.getElementById('create-btn');
     const statusEl = document.getElementById('status');
 
@@ -159,6 +164,29 @@
         createBtn.disabled = !(hasName && hasCode && hasGroup);
     }
 
+    // ─── Подгрузка списка oblast'ов в select «Родительская область» ───
+    // Идём в GET /api/regions/ и фильтруем kind === 'oblast'. Если их нет —
+    // оставляем единственную опцию «без области» и тихо выходим.
+    (async function loadParentOblastChoices() {
+        if (!parentOblastSelect) return;
+        try {
+            const resp = await fetch('/api/regions/');
+            if (!resp.ok) return;
+            const all = await resp.json();
+            const oblasts = (Array.isArray(all) ? all : [])
+                .filter(r => (r.kind || 'raion') === 'oblast' && r.is_active)
+                .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+            for (const r of oblasts) {
+                const opt = document.createElement('option');
+                opt.value = String(r.id);
+                opt.textContent = `${r.name} (${r.code})`;
+                parentOblastSelect.appendChild(opt);
+            }
+        } catch (e) {
+            console.warn('Не удалось подгрузить список oblast-регионов:', e);
+        }
+    })();
+
     // ─── submit ───
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -174,7 +202,16 @@
                 vk_city_id: vkCityIdInput.value ? parseInt(vkCityIdInput.value, 10) : null,
                 vk_group_id: parseInt(vkGroupIdHidden.value, 10),
                 is_active: false,
+                // Wizard всегда создаёт raion (kind=raion — default на бэке).
+                // Опционально пользователь указал родительскую область.
+                kind: 'raion',
             };
+            const parentOblastId = parentOblastSelect && parentOblastSelect.value
+                ? parseInt(parentOblastSelect.value, 10)
+                : null;
+            if (Number.isFinite(parentOblastId)) {
+                payload.parent_region_id = parentOblastId;
+            }
             if (!payload.code) throw new Error('Не удалось сгенерировать код региона из названия');
             if (!Number.isFinite(payload.vk_group_id)) throw new Error('Главная VK-группа не распознана');
 
