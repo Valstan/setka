@@ -188,7 +188,6 @@ async def run_cascaded_digest(
     """
     from types import SimpleNamespace
 
-    from config.runtime import get_parse_tokens
     from database.models import Community, Region
     from database.models_extended import RegionConfig, WorkTable
     from modules.deduplication.digest_history import (
@@ -307,11 +306,16 @@ async def run_cascaded_digest(
             "stats": {},
         }
 
-    parse_tokens = get_parse_tokens()
+    # Выбор READ-токена с фильтром disabled_until (миграция 014).
+    # Без фильтра парсинг падал на первом токене (VALSTAN) когда тот в
+    # cooldown — см. инцидент 2026-05-27 с VK error 5 «User authorization
+    # failed: user is blocked».
+    from modules.vk_token_router import get_active_parse_tokens
+
+    parse_tokens = await get_active_parse_tokens(session)
     if not parse_tokens:
-        return {"success": False, "error": "No VK tokens configured"}
-    parse_token = next(iter(parse_tokens.values()))
-    vk = VKClient(parse_token)
+        return {"success": False, "error": "No active VK READ tokens (all in cooldown?)"}
+    vk = VKClient(next(iter(parse_tokens.values())))
 
     # Dedup-наборы по всем темам этого региона — чтобы тот же пост, который мы
     # уже включали в предыдущий oblast-выпуск, второй раз не пошёл.

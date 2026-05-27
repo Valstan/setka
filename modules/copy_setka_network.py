@@ -60,19 +60,19 @@ async def execute_copy_setka_network(
     *,
     test_mode: bool = False,
 ) -> Dict[str, Any]:
-    from config.runtime import (copy_setka_disabled,
-                                get_copy_setka_max_post_age_hours,
-                                get_copy_setka_repost_message,
-                                get_copy_setka_source_owner_id,
-                                get_copy_setka_target_region_codes,
-                                get_parse_tokens)
+    from config.runtime import (
+        copy_setka_disabled,
+        get_copy_setka_max_post_age_hours,
+        get_copy_setka_repost_message,
+        get_copy_setka_source_owner_id,
+        get_copy_setka_target_region_codes,
+    )
     from database.models import Region
     from database.models_extended import WorkTable
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_monitor.vk_client import VKClient
     from utils.post_utils import clear_copy_history, lip_of_post
-    from utils.vk_attachments import (build_attachments_list,
-                                      extract_vk_attachments)
+    from utils.vk_attachments import build_attachments_list, extract_vk_attachments
 
     if copy_setka_disabled():
         logger.info("COPY_SETKA_DISABLED — сетевой хаб пропущен")
@@ -87,15 +87,16 @@ async def execute_copy_setka_network(
 
     # Фильтр disabled-токенов через TokenPolicy (миграция 014):
     # если Valstan в cooldown — берётся следующий из env (обычно Vita).
+    # ВАЖНО: НЕ fallback'ить на полный get_parse_tokens() — это вернёт
+    # заблокированный VALSTAN и worker уйдёт в loop с error 5 от VK
+    # (инцидент 2026-05-27).
     from modules.vk_token_router import get_active_parse_tokens
 
     parse_tokens = await get_active_parse_tokens(session)
     if not parse_tokens:
-        parse_tokens = get_parse_tokens()
-    if not parse_tokens:
         return {
             "success": False,
-            "error": "No VK tokens configured (all in cooldown?)",
+            "error": "No active VK READ tokens (all in cooldown?)",
             "stats": _empty_stats(),
         }
 
@@ -236,9 +237,7 @@ async def execute_copy_setka_network(
                 )
             if out.get("success"):
                 successes += 1
-                logger.info(
-                    "copy-setka: %s -> %s OK %s", src_lip, reg.code, out.get("url")
-                )
+                logger.info("copy-setka: %s -> %s OK %s", src_lip, reg.code, out.get("url"))
             else:
                 errors.append(f"{reg.code}: {out.get('error', 'unknown')}")
         except Exception as e:

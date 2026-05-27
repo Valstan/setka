@@ -34,7 +34,9 @@ def parse_and_publish_theme(
     """
     from sqlalchemy import select
 
-    from config.runtime import get_parse_tokens
+    # NB: ранее тут импортировался ``get_parse_tokens`` — теперь
+    # parsing использует ``get_active_parse_tokens(session)`` (с фильтром
+    # disabled_until), see use site below.
     from database.connection import AsyncSessionLocal
     from database.models import Community, Region
     from database.models_extended import ParsingStats, RegionConfig, WorkTable
@@ -184,11 +186,16 @@ def parse_and_publish_theme(
             )
             group_names = {str(abs(row[0])): row[1] for row in comm_meta.fetchall()}
 
-            # 5. Parse
-            parse_tokens = get_parse_tokens()
+            # 5. Parse — берём READ-токен с фильтром disabled_until (миграция 014).
+            # ВАЖНО: НЕ `next(iter(get_parse_tokens().values()))` — это вернёт
+            # заблокированный VALSTAN и worker уйдёт в loop с error 5
+            # (инцидент 2026-05-27, hot-fix PR).
+            from modules.vk_token_router import get_active_parse_tokens
+
+            parse_tokens = await get_active_parse_tokens(session)
             parse_token = next(iter(parse_tokens.values())) if parse_tokens else None
             if not parse_token:
-                return {"success": False, "error": "No VK tokens configured"}
+                return {"success": False, "error": "No active VK READ tokens (all in cooldown?)"}
             vk_client = VKClient(parse_token)
             parser = AdvancedVKParser(vk_client)
             pipeline_eff = get_effective_pipeline_settings(region_config, theme)
