@@ -5,7 +5,7 @@
 **Status:** IDLE
 **Updated:** 2026-05-27
 **Branch:** main
-**Last release in prod:** `e156017` (PR #68 — TokenPolicy с авто-fallback). 3/3 сервиса setka + prometheus + grafana = 5/5 active, health 200 в 1.07s.
+**Last release in prod:** `c6f1dac` (PR #72 — hot-fix parsing, фильтр disabled_until). 3/3 сервиса setka + prometheus + grafana = 5/5 active, health 200 в 1.09s.
 
 ---
 
@@ -13,54 +13,57 @@
 
 _Нет — последняя задача закрыта, открытая стартовая позиция._
 
-Сессия 2026-05-27 (первая в день) посвящена одной большой задаче — переделать routing VK-токенов так, чтобы:
-- Vita НИКОГДА не публиковала (deny-list).
-- При недоступности Valstan система автоматически переключалась на следующего кандидата.
-- Был manual disable/enable через UI + REST.
+Сессия 2026-05-27 закрыла 3 PR:
 
-Сделано одним PR:
+- [PR #70](https://github.com/Valstan/setka/pull/70) `feat(regions): иерархия strana→oblast→raion + каскадный дайджест` — миграция 015 (`regions.kind` + `regions.parent_region_id`), создан `kirov_obl` (id=21, vk_group_id=-168170001), 13 кировских районов привязаны через FK. Универсальный `modules/cascaded_digest.py` берёт по 5 свежих постов с главных сообществ детей, фильтрует рекламу/религию/дубли. Старый `kirov_oblast_digest.py` — thin wrapper. `docs/REGIONS_HIERARCHY.md` — словарь и схема.
+- [PR #71](https://github.com/Valstan/setka/pull/71) `feat(regions-ui)` — селекторы «Тип» + «Родительский регион» в add/edit-модалках на `/regions`, бейджи `🏘/🏛/🌍` на карточках, опциональный «Родительская область» в wizard `/regions/new`.
+- [PR #72](https://github.com/Valstan/setka/pull/72) `fix(parsing): skip disabled tokens` — **🔴 hot-fix продa**. С 10:00 весь парсинг лежал: 3 hot-path'а брали `next(iter(get_parse_tokens().values()))` без проверки `disabled_until`, iteration order отдавал VALSTAN (заблокирован VK) → wall.get падал с error 5. Заменено на `get_active_parse_tokens(session)` в `tasks/parsing_scheduler_tasks.py`, `modules/cascaded_digest.py`, `modules/copy_setka_network.py`. Подтверждено smoke 11:52 UTC: cascaded-таска собрала 55 постов вместо 0.
 
-- [PR #68](https://github.com/Valstan/setka/pull/68) `feat(tokens): TokenPolicy с авто-fallback и cooldown по VK error 5/17/29` — миграция 014 + полноценный `TokenPolicy` (READ/COMMUNITY_WRITE/USER_WRITE) + ротация по error 5/17/29 + Telegram-alert + manual disable/enable + UI кнопки на `/tokens` + интеграция во все 5 горячих путей (parsing_tasks / discovery_tasks / parsing_scheduler_tasks / copy_setka / kirov_oblast_digest / web/api/notifications). Vita защищена deny-list'ом в 3 слоях: env, runtime helpers, TokenPolicy.pick.
-
-**Релиз на прод 2026-05-27 ~10:00:** git pull → migrate 014 (поля `disabled_until` / `last_error_code` / `last_error_at` / `consecutive_errors` в `vk_tokens`) → restart 3 сервисов → health 200 в 1.07s → `POST /api/tokens/VALSTAN/disable?hours=24` → Valstan disabled до **2026-05-28T06:59:03**.
+Тесты: **588/588** (+4 в `tests/test_api/test_regions.py` для kind/parent edge-cases).
 
 **Что работает прямо сейчас на проде:**
-- Парсинг (wall.get, groups.search и пр.) — автоматически через Vita (Valstan skip'нут по `disabled_until`).
-- Notifications check (wall.getComments, messages.getConversations) — `via=community-token` в логе worker'а.
-- wall.post дайджеста — пойдёт через community-токен группы (через `VKPublisher.create_with_policy`); если у группы community-токена нет — будет ошибка «no publish-token available» (нормально, Valstan в cooldown).
-- wall.repost (copy_setka хаб) — недоступен до восстановления Valstan (VK API не принимает community-токен для wall.repost).
-
-Тесты: **569/569** (+24 новых: 10 на env-helpers deny-list, 10 на TokenPolicy.pick/report/disable, 4 на VKPublisher ротацию по error 5).
+- Парсинг районных стен (wall.get) — через VITA (hot-fix фильтр disabled_until).
+- Каскадный дайджест kirov_obl собирается корректно (55 кандидатов с 12 детей, после фильтров 28 готовых, дайджест из 3 постов).
+- **Финальный wall.post в kirov_obl падает** с «no publish-token available» — у `kirov_obl` нет community-token в БД, VALSTAN в cooldown.
+- Районные дайджесты (raion-pipeline) — публикуются через community-токены районов (все 13 в БД, `COMM_*`).
 
 ## Следующий шаг
 
 Открытой стартовой позиции нет. Кандидатные стартовые точки (по приоритету):
 
-- **Проверить статус Valstan ~2026-05-28 07:00.** После истечения cooldown'а `disabled_until` автоматически перестаёт работать (SQL-фильтр `disabled_until > now()`). Если VK сам снял бан — токен снова в работе без действий. Если VK вернёт error 5 на первом же вызове — TokenPolicy сам поставит ещё 24ч и пришлёт Telegram-alert. Никаких manual действий не нужно, но проверить статус через `curl -s http://127.0.0.1:8000/api/tokens/VALSTAN | jq` или Kombo-кнопкой «Включить сейчас» на `/tokens` — полезно.
-- **🟡 Если Valstan не вернётся в адекватный срок** — добавить второго user-token в whitelist для USER_WRITE (wall.repost). Например OLGA если она получит wall scope, или новый аккаунт. Тогда copy_setka снова заработает без правки кода: `VK_PUBLISH_TOKEN_NAMES="VALSTAN,OLGA"` в `/etc/setka/setka.env` + `systemctl restart setka setka-celery-worker` + `INSERT INTO vk_tokens (name, token, is_active) VALUES ('OLGA', '...', true)` (если ещё не в БД).
-- **🟡 kirov_obl (oblast) — `dead`.** Старая нитка из handoff #67: 0/174 успехов за 30 дней, `total_groups_checked=0`. Падает на preconditions в [modules/kirov_oblast_digest.py:132](../modules/kirov_oblast_digest.py:132). Действие: запустить таску с `LOG_LEVEL=DEBUG` и посмотреть `debug_counters`.
-- **🟡 `setka_digest_published_total` пуст** несмотря на успешные публикации. Beat-таски не вызывают `track_digest_published()`. Поднять `logger.debug → warning` в [tasks/parsing_scheduler_tasks.py:281,336](../tasks/parsing_scheduler_tasks.py).
-- **🟢 UI поле «соседи»** в `region_new.html` (Region.neighbors есть в БД, нет в UI). Маленький PR ~30 строк.
-- **🟢 `modules/publisher/neighbor_sharing.py` (dead code)** — реанимировать или удалить.
+1. **Проверить статус ~07:00 (2026-05-28).** VALSTAN `disabled_until=2026-05-28T06:59:03` — после этого SQL-фильтр перестанет его прятать. Если VK снял ban — токен снова в работе, и `wall.post` в kirov_obl + `wall.repost` (copy_setka) заработают. Команды: `curl -s http://127.0.0.1:8000/api/tokens/VALSTAN | jq` или кнопка «Включить сейчас» на `/tokens`. Если VK всё ещё блокирует — на первом же вызове TokenPolicy сам поставит ещё 24ч и пришлёт Telegram-alert.
+2. **🟡 Метрика `setka_digest_published_total` пуста (multiproc-issue).** В сессии найдена корневая гипотеза: drop-in `setka-celery-worker.service` имеет `ExecStartPre=/bin/rm -rf /var/lib/setka/prom_multiproc`, который сносит файлы web при каждом restart worker'а. Файлы `scripts/setup-monitoring.sh` + drop-in'ы в `/etc/systemd/system/setka{,-celery-worker}.service.d/prometheus-multiproc.conf`. Фикс: убрать `rm -rf` — `mark_process_dead(pid)` в worker_shutdown hook делает корректную очистку без выноса всего каталога. См. [PENDING_FOLLOWUPS](PENDING_FOLLOWUPS.md) подробно.
+3. **🟡 community-token для kirov_obl** — если пользователь даст, добавить как `COMM_168170001` в `vk_tokens`. Тогда oblast будет публиковать через свой community-token независимо от VALSTAN. Открытый вопрос пользователю (см. ниже).
+4. **🟢 UI поле «соседи»** в `region_new.html` (~30 строк). `Region.neighbors` есть в БД/API, нет в HTML-форме. Маленький UI-PR.
+5. **🟢 Создать `tatarstan_obl`** для `bal` и `kukmor` — сейчас они без `parent_region_id` (Татарстан, не Кировская область). Если будут добавляться дайджесты по Татарстану — отдельная oblast.
+6. **🟢 `modules/publisher/neighbor_sharing.py` (dead code)** — реанимировать на основе новой иерархии regions.neighbors или удалить.
 
 ## Контекст
 
 - **План:** нет активного.
-- **Связанные коммиты сессии (1 PR):**
-  - `e156017` ([PR #68](https://github.com/Valstan/setka/pull/68)) — feat(tokens): TokenPolicy с авто-fallback (+1521/-299, 13 файлов, +24 тестов).
-- **Прод:** HEAD на `e156017`, 5/5 сервисов active (setka + celery-worker + celery-beat + prometheus + grafana). Миграция 014 применена. Health 200 в 1.07s. **Valstan disabled** до 2026-05-28T06:59:03 (24ч cooldown через `/api/tokens/VALSTAN/disable`). Vita active.
+- **Связанные коммиты сессии (3 PR):**
+  - `9de1f95` ([PR #70](https://github.com/Valstan/setka/pull/70)) — feat(regions): иерархия + cascaded_digest (+1181/-726, 13 файлов).
+  - `fddb177` ([PR #71](https://github.com/Valstan/setka/pull/71)) — feat(regions-ui): селекторы Тип+Родитель + бейджи (+272/-18, 4 файла).
+  - `c6f1dac` ([PR #72](https://github.com/Valstan/setka/pull/72)) — fix(parsing): skip disabled tokens (+33/-23, 3 файла).
+- **Прод:** HEAD на `c6f1dac`, 5/5 сервисов active (setka + celery-worker + celery-beat + prometheus + grafana). Миграция 015 применена. Health 200 в 1.09s. **VALSTAN disabled** до 2026-05-28T06:59:03. **kirov_obl без community-token**.
 - **Открытых PR:** нет (handoff-PR создаётся этим вызовом `/close_session`).
+
+## Failed approaches (этой нитки)
+
+- **Гипотеза «12 параллельных beat-тасок забили rate-limit VITA»** — отклонена. Re-smoke на тишине через celery worker (`5da3c9e0`) тоже вернул `child_posts_scanned: 0`, значит дело не в параллельности. Реальная причина — отсутствие фильтра `disabled_until` в выборе READ-токена (см. PR #72).
+- **Подход «TokenPolicy.pick(TokenOp.READ)» в cascaded_digest** — изначально написал, потом для consistency с уже существующим `copy_setka_network.py` переключился на `get_active_parse_tokens(session)`. Оба работают, но `get_active_parse_tokens` уже использовался в проекте и проще (без обёртки в TokenCandidate).
+- **Формулировка «опубликует через VITA»** в моём отчёте после hot-fix — ошибочная. VITA в hard deny-list для публикаций (`config/runtime.py:209-219`, `validate_publish_token`, `TokenPolicy.pick(COMMUNITY_WRITE)`). Публикация районных дайджестов идёт через community-токены районов (`COMM_*`). Урок: при ответе о token routing — сначала смотреть hard deny-list, потом whitelist, не полагаться на интуицию.
 
 ## Открытые вопросы для пользователя
 
-_Нет._
+- **Дать community-token для группы https://vk.com/kirovskaya_info (kirov_obl)?** В админке группы → API → «Создать ключ» со scope `wall`. После — добавить в БД как `COMM_168170001` (пример SQL: `INSERT INTO vk_tokens (name, token, is_active, community_id) VALUES ('COMM_168170001', '<token>', true, 168170001);`). Альтернатива — подождать разлока VALSTAN (~17ч от 2026-05-27 14:00 UTC).
 
 ## Не забыть (low-priority)
 
-- 🟢 **Через ~24ч (2026-05-28 ~07:00) — посмотреть `/tokens` или `curl /api/tokens/VALSTAN`.** Если `disabled_until` уже в прошлом — токен снова работает; если попал в auto-disable (Telegram-alert) — VK всё ещё блокирует, добавить второй publish-token или ждать дальше.
+- 🟢 **Через ~17ч (2026-05-28 ~07:00) — посмотреть `/tokens` или `curl /api/tokens/VALSTAN`.** Если `disabled_until` в прошлом — VK снял ban; если попал в auto-disable (Telegram-alert) — VK всё ещё блокирует, нужен alt-path для oblast.
+- 🟢 **Bal/Kukmor сейчас сироты** — они в Татарстане, не имеют `parent_region_id`. Если в их главные сообщества когда-нибудь добавится oblast (tatarstan_obl), привязать.
 - 🟢 **Grafana через nginx-proxy с basic-auth.** Из прошлой сессии — пользователь выбирал этот вариант наряду с виджетом на /monitoring. Виджет сделан 2026-05-26, Grafana-proxy отложен.
 - 🟢 **node_exporter** для host-level метрик в Grafana. ~50MB RAM.
-- 🟢 **Grafana admin/admin** — при первом входе Grafana просит сменить, можно «Skip».
 
 ---
 
