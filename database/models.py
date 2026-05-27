@@ -4,18 +4,8 @@ SQLAlchemy models for SETKA project
 
 from datetime import datetime
 
-from sqlalchemy import (
-    JSON,
-    Boolean,
-    Column,
-    DateTime,
-    Float,
-    ForeignKey,
-    Index,
-    Integer,
-    String,
-    Text,
-)
+from sqlalchemy import (JSON, Boolean, Column, DateTime, Float, ForeignKey,
+                        Index, Integer, String, Text)
 from sqlalchemy.orm import relationship
 
 from database.connection import Base
@@ -27,7 +17,9 @@ class Region(Base):
     __tablename__ = "regions"
 
     id = Column(Integer, primary_key=True, index=True)
-    code = Column(String(50), unique=True, nullable=False, index=True)  # mi, nolinsk, arbazh
+    code = Column(
+        String(50), unique=True, nullable=False, index=True
+    )  # mi, nolinsk, arbazh
     name = Column(String(200), nullable=False)  # МАЛМЫЖ - ИНФО
 
     # VK and Telegram
@@ -79,7 +71,9 @@ class Community(Base):
     name = Column(String(300), nullable=False)
 
     # Category
-    category = Column(String(50), nullable=False, index=True)  # admin, novost, reklama, etc
+    category = Column(
+        String(50), nullable=False, index=True
+    )  # admin, novost, reklama, etc
 
     # Monitoring settings
     is_active = Column(Boolean, default=True)
@@ -94,9 +88,15 @@ class Community(Base):
     # Health (миграция 011 — модуль авто-регистрации/recheck)
     health_status = Column(String(30), default="active", index=True)
     # active / dormant / dead / changed_category
-    last_post_at = Column(DateTime, nullable=True)  # timestamp последнего поста на стене
-    checked_at = Column(DateTime, nullable=True)  # когда последний раз делали health-check
-    suggested_category = Column(String(50), nullable=True)  # если AI считает что category устарел
+    last_post_at = Column(
+        DateTime, nullable=True
+    )  # timestamp последнего поста на стене
+    checked_at = Column(
+        DateTime, nullable=True
+    )  # когда последний раз делали health-check
+    suggested_category = Column(
+        String(50), nullable=True
+    )  # если AI считает что category устарел
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -129,7 +129,9 @@ class CommunityCandidate(Base):
     __tablename__ = "community_candidates"
 
     id = Column(Integer, primary_key=True, index=True)
-    region_id = Column(Integer, ForeignKey("regions.id", ondelete="CASCADE"), nullable=False)
+    region_id = Column(
+        Integer, ForeignKey("regions.id", ondelete="CASCADE"), nullable=False
+    )
 
     # VK group snapshot (на момент discovery)
     vk_id = Column(Integer, nullable=False)  # abs(group_id), положительный
@@ -243,7 +245,9 @@ class Post(Base):
         String(50), nullable=True, index=True
     )  # Структурный: "owner_id_post_id"
     fingerprint_media = Column(JSON, nullable=True)  # [photo_id1, photo_id2, video_id1]
-    fingerprint_text = Column(String(100), nullable=True, index=True)  # Hash полного "рафинада"
+    fingerprint_text = Column(
+        String(100), nullable=True, index=True
+    )  # Hash полного "рафинада"
     fingerprint_text_core = Column(
         String(100), nullable=True, index=True
     )  # Hash "сердцевины" (20-70%)
@@ -304,9 +308,14 @@ class Filter(Base):
 class VKToken(Base):
     """VK токены для динамического управления.
 
-    Если `community_id` задан — это community access token, привязанный к
-    конкретному сообществу (используется для `messages.getConversations` без
-    группового scope у user-токена). Хранится как `abs(group_id)`.
+    Если ``community_id`` задан — это community access token, привязанный к
+    конкретному сообществу (используется для ``messages.getConversations`` без
+    группового scope у user-токена). Хранится как ``abs(group_id)``.
+
+    Поля ``disabled_until`` / ``last_error_code`` / ``consecutive_errors``
+    добавлены миграцией 014 — описывают «динамическое» состояние токена для
+    :class:`modules.vk_token_router.TokenPolicy` (cooldown после VK error 5/17/29,
+    ручное отключение на N часов через ``/api/tokens/{name}/disable``).
     """
 
     __tablename__ = "vk_tokens"
@@ -319,13 +328,26 @@ class VKToken(Base):
     community_id = Column(
         Integer, nullable=True, index=True
     )  # abs(vk_group_id), если это community token
-    is_active = Column(Boolean, default=True, index=True)  # Активен ли токен
+    is_active = Column(
+        Boolean, default=True, index=True
+    )  # Активен ли токен (hard-флаг)
     last_used = Column(DateTime, nullable=True)  # Последнее использование
     last_validated = Column(DateTime, nullable=True)  # Последняя валидация
-    validation_status = Column(String(20), default="unknown", index=True)  # valid, invalid, unknown
+    validation_status = Column(
+        String(20), default="unknown", index=True
+    )  # valid, invalid, unknown
     error_message = Column(Text)  # Сообщение об ошибке при валидации
     permissions = Column(JSON)  # Права доступа токена
-    user_info = Column(JSON)  # Информация о пользователе / community-info для community-токенов
+    user_info = Column(
+        JSON
+    )  # Информация о пользователе / community-info для community-токенов
+
+    # --- TokenPolicy (миграция 014) ---
+    disabled_until = Column(DateTime, nullable=True)
+    last_error_code = Column(Integer, nullable=True)
+    last_error_at = Column(DateTime, nullable=True)
+    consecutive_errors = Column(Integer, nullable=False, default=0)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -346,15 +368,27 @@ class VKToken(Base):
             "community_id": self.community_id,
             "is_active": self.is_active,
             "last_used": self.last_used.isoformat() if self.last_used else None,
-            "last_validated": self.last_validated.isoformat() if self.last_validated else None,
+            "last_validated": (
+                self.last_validated.isoformat() if self.last_validated else None
+            ),
             "validation_status": self.validation_status,
             "error_message": self.error_message,
             "permissions": (
                 self.permissions
                 if isinstance(self.permissions, list)
-                else (self.permissions.get("permissions", []) if self.permissions else [])
+                else (
+                    self.permissions.get("permissions", []) if self.permissions else []
+                )
             ),
             "user_info": self.user_info,
+            "disabled_until": (
+                self.disabled_until.isoformat() if self.disabled_until else None
+            ),
+            "last_error_code": self.last_error_code,
+            "last_error_at": (
+                self.last_error_at.isoformat() if self.last_error_at else None
+            ),
+            "consecutive_errors": int(self.consecutive_errors or 0),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

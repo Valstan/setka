@@ -18,6 +18,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# VK error codes, при которых текущий publish-token считается «больше не
+# подходящим» — нужно повернуться к следующему кандидату из ``_publish_candidates``.
+# Совпадает с :data:`modules.vk_token_router._AUTO_DISABLE_CODES_HOURS` —
+# TokenPolicy в эти же моменты ставит cooldown в БД.
+_PUBLISH_ROTATE_CODES = frozenset({5, 17, 29})
+
+
 class VKPublisher:
     """
     Publishes posts to VK groups.
@@ -66,30 +73,62 @@ class VKPublisher:
         test_polygon_mode: bool = False,
         test_polygon_group_id: int = -137760500,
         community_tokens: Optional[Dict[int, str]] = None,
+        publish_candidates: Optional[List[Tuple[str, str]]] = None,
     ):
         """
         Args:
-            vk_client: Optional VK API client. If None, creates one with the publish token.
+            vk_client: Optional VK API client. If None, создаётся ленивно из
+                первого валидного кандидата (publish_candidates → legacy
+                get_publish_token).
             test_polygon_mode: If True, post to test group instead
             test_polygon_group_id: Test polygon VK group ID
             community_tokens: {abs(group_id): token} per-community access tokens —
                 имеют приоритет над общим publish-токеном для своих групп.
+            publish_candidates: упорядоченный список ``(name, token)`` user-токенов
+                для wall.post / wall.repost. Используется как fallback, если
+                community-токен не подходит. Если не задан — берётся legacy
+                ``get_publish_token()`` (один токен, обычно VALSTAN). Если задан
+                пустой список — публикация через user-token невозможна; будут
+                использоваться только community-токены. Имена в верхнем регистре.
         """
         from config.runtime import get_publish_token
         from modules.vk_monitor.vk_client import VKClient
+
+        self._publish_candidates: List[Tuple[str, str]] = list(publish_candidates or [])
+        # Имя текущего «активного» publish-токена для лога. Меняется при fallback
+        # внутри ``_call_wall_post`` (см. _try_publish_candidates).
+        self._active_publish_name: Optional[str] = None
+        # Optional TokenPolicy, заполняется фабрикой ``create_with_policy``.
+        # Если не None — report_success/report_error будут вызваны автоматически.
+        self._policy = None  # type: ignore[assignment]
 
         if vk_client is not None:
             # Use provided client (for tests that already set up correctly)
             self.vk_client = vk_client
         else:
-            # Create own client with PUBLISH token
-            publish_token = get_publish_token()
-            if not publish_token:
-                raise RuntimeError(
-                    "No VK publish token configured. Set VK_PUBLISH_TOKEN_NAME=VALSTAN in env."
+            # Создаём клиента из лучшего доступного кандидата.
+            first_token: Optional[str] = None
+            if self._publish_candidates:
+                self._active_publish_name, first_token = self._publish_candidates[0]
+            else:
+                # legacy single-token путь
+                first_token = get_publish_token()
+                self._active_publish_name = "ENV"
+            if first_token:
+                self.vk_client = VKClient(first_token)
+                logger.info(
+                    "VKPublisher: client created with publish token %s",
+                    self._active_publish_name,
                 )
-            self.vk_client = VKClient(publish_token)
-            logger.info("VKPublisher: created own client with publish token")
+            else:
+                # Нет ни одного user-token'а для публикации — продолжаем работу
+                # только с community-токенами. wall.repost станет недоступен,
+                # wall.post — только в группы, у которых есть community-токен.
+                self.vk_client = None
+                logger.warning(
+                    "VKPublisher: no publish-token available. wall.post будет работать "
+                    "только в группах с community-token; wall.repost недоступен."
+                )
 
         self.test_polygon_mode = test_polygon_mode
         self.test_polygon_group_id = test_polygon_group_id
@@ -97,11 +136,73 @@ class VKPublisher:
         self._community_tokens = dict(community_tokens or {})
         # Кеш community-клиентов (VKClient инициализирует session, не хочется делать заново).
         self._community_clients: Dict[int, Any] = {}
+        # Кеш user-клиентов по имени токена (для fallback'а между кандидатами).
+        self._user_clients: Dict[str, Any] = {}
+        if self._active_publish_name and self.vk_client is not None:
+            self._user_clients[self._active_publish_name] = self.vk_client
         if self._community_tokens:
             logger.info(
                 "VKPublisher: %d community tokens available for per-group publish",
                 len(self._community_tokens),
             )
+        if self._publish_candidates:
+            logger.info(
+                "VKPublisher: %d publish-candidates available (%s)",
+                len(self._publish_candidates),
+                ", ".join(n for n, _ in self._publish_candidates),
+            )
+
+    @classmethod
+    async def create_with_policy(
+        cls,
+        session,
+        target_group_id: Optional[int] = None,
+        **kwargs,
+    ) -> "VKPublisher":
+        """Async factory: VKPublisher с подгруженной TokenPolicy.
+
+        ``target_group_id`` нужен для подбора community-токена конкретной
+        группы. Если None — берутся только user-кандидаты (актуально для
+        ``copy_setka``: там group_id у каждой target-стены свой).
+        """
+        from modules.vk_token_router import TokenOp, TokenPolicy
+
+        policy = TokenPolicy(session)
+        comm_map = (
+            await policy._load_communities()
+        )  # noqa: SLF001 — intended internal use
+        community_tokens = {cid: vt.token for cid, vt in comm_map.items()}
+
+        candidates = await policy.pick(
+            TokenOp.COMMUNITY_WRITE,
+            group_id=target_group_id,
+        )
+        publish_user_candidates: List[Tuple[str, str]] = [
+            (c.name, c.token) for c in candidates if c.source == "user"
+        ]
+        inst = cls(
+            community_tokens=community_tokens,
+            publish_candidates=publish_user_candidates,
+            **kwargs,
+        )
+        inst._policy = policy
+        return inst
+
+    def set_publish_candidates(self, candidates: List[Tuple[str, str]]) -> None:
+        """Обновить список user-token кандидатов на лету.
+
+        Применимо, например, в copy_setka: первый раз вызвали для одного
+        target-региона, потом для другого с другим community-токеном — но
+        список user-кандидатов глобальный и обновляется отдельно.
+        """
+        self._publish_candidates = list(candidates or [])
+        if self._publish_candidates and self.vk_client is None:
+            from modules.vk_monitor.vk_client import VKClient
+
+            name, tok = self._publish_candidates[0]
+            self._active_publish_name = name
+            self.vk_client = VKClient(tok)
+            self._user_clients[name] = self.vk_client
 
     def _client_for_group(self, target_group_id: int):
         """Возвращает клиент, под которым нужно постить в эту группу.
@@ -147,7 +248,9 @@ class VKPublisher:
         # Determine target group
         if self.test_polygon_mode:
             target_group_id = self._normalize_group_owner_id(self.test_polygon_group_id)
-            logger.info(f"🧪 TEST POLYGON MODE: Posting to test group {target_group_id}")
+            logger.info(
+                f"🧪 TEST POLYGON MODE: Posting to test group {target_group_id}"
+            )
         else:
             target_group_id = normalized_group_id
 
@@ -307,34 +410,72 @@ class VKPublisher:
         Call VK API wall.post / wall.repost.
 
         Strategy:
-        1. If method is in `_USER_TOKEN_ONLY_METHODS` (e.g. wall.repost which
-           VK fundamentally doesn't allow with a group token), bypass any
-           community-client and go straight to publish-token.
-        2. Otherwise use `client` if provided (community-token, when available
-           for the target group).
-        3. On VK error 15 or 27 from a community-client, retry via publish-token.
-        4. All publish-token calls go through `_enforce_publish_token_rate_limit`
-           which globally throttles VALSTAN to one API call every
-           GLOBAL_PUBLISH_INTERVAL_SECONDS — fights VK's anti-burst captcha.
+        1. If method in ``_USER_TOKEN_ONLY_METHODS`` (e.g. wall.repost which VK
+           fundamentally doesn't allow with a group token) — bypass community
+           and either go via the legacy ``self.vk_client`` (если кандидатов нет)
+           либо перебираем ``_publish_candidates`` через :meth:`_try_publish_candidates`.
+        2. Otherwise — use ``client`` if provided (community-token).
+        3. On community-token error 15/27 → fallback на publish-token (legacy путь
+           если кандидатов нет, иначе через :meth:`_try_publish_candidates`).
+        4. On publish-token error 5/17/29 → попробовать следующего кандидата,
+           пометить текущего ``policy.report_error``.
 
         Returns:
-            (response, via_label) where via_label is one of
-            'publish-token' / 'community-token' / 'community-fallback-publish'.
+            (response, via_label) — old labels ``publish-token`` /
+            ``community-token`` / ``community-fallback-publish`` сохранены для
+            обратной совместимости; при работе по кандидатам label принимает
+            форму ``publish-token:<NAME>``.
         """
+        # Локальные кандидаты — с backward-compat getattr (старые тесты
+        # инстанцируют через __new__ без __init__).
+        candidates = getattr(self, "_publish_candidates", None) or []
+        policy = getattr(self, "_policy", None)
+        active_name = getattr(self, "_active_publish_name", None)
+
         # Step 1: VK API restrictions — never try a group-token call we know fails
         if method in self._USER_TOKEN_ONLY_METHODS:
+            if candidates:
+                return await self._try_publish_candidates(
+                    method, params, via_prefix="publish-token"
+                )
+            if self.vk_client is None:
+                raise RuntimeError(
+                    "VKPublisher: no publish-token available for "
+                    f"{method} (no candidates, no legacy client)."
+                )
             await self._enforce_publish_token_rate_limit()
             response = await self._invoke(self.vk_client, method, params)
             return response, "publish-token"
 
         primary_client = client if client is not None else self.vk_client
-        is_publish_token = primary_client is self.vk_client
+        is_publish_token = (
+            primary_client is self.vk_client and primary_client is not None
+        )
 
         try:
             if is_publish_token:
                 await self._enforce_publish_token_rate_limit()
+            if primary_client is None:
+                raise Exception(
+                    "VKPublisher: no token available for this group "
+                    "(no community-token, no active publish-token)."
+                )
             response = await self._invoke(primary_client, method, params)
-            return response, ("publish-token" if is_publish_token else "community-token")
+            if policy is not None and active_name and is_publish_token:
+                try:
+                    await policy.report_success(active_name)
+                except Exception:  # pragma: no cover — defensive
+                    logger.exception("policy.report_success failed")
+            if is_publish_token:
+                # backward-compat label: только если кандидаты заданы, добавляем имя
+                via_label = (
+                    f"publish-token:{active_name}"
+                    if (candidates and active_name)
+                    else "publish-token"
+                )
+            else:
+                via_label = "community-token"
+            return response, via_label
         except _VKApiCallError as e:
             if not is_publish_token and e.code in self._COMMUNITY_FALLBACK_CODES:
                 logger.info(
@@ -343,10 +484,114 @@ class VKPublisher:
                     e.code,
                     method,
                 )
+                if candidates:
+                    return await self._try_publish_candidates(
+                        method, params, via_prefix="community-fallback-publish"
+                    )
                 await self._enforce_publish_token_rate_limit()
                 response = await self._invoke(self.vk_client, method, params)
                 return response, "community-fallback-publish"
+            # publish-token упал с кодом, требующим перехода на следующего кандидата
+            if is_publish_token and e.code in _PUBLISH_ROTATE_CODES and candidates:
+                logger.warning(
+                    "publish-token %s failed with code %s on %s — rotating to next candidate",
+                    active_name,
+                    e.code,
+                    method,
+                )
+                if policy is not None and active_name:
+                    try:
+                        await policy.report_error(active_name, e.code)
+                    except Exception:  # pragma: no cover — defensive
+                        logger.exception("policy.report_error failed")
+                self._drop_active_publish_candidate()
+                return await self._try_publish_candidates(
+                    method, params, via_prefix="publish-token"
+                )
             raise Exception(f"VK API error: {e.message}") from e
+
+    def _drop_active_publish_candidate(self) -> None:
+        """Удалить ``_active_publish_name`` из списка кандидатов и сбросить vk_client."""
+        name = getattr(self, "_active_publish_name", None)
+        if not name:
+            return
+        self._publish_candidates = [
+            (n, t) for (n, t) in getattr(self, "_publish_candidates", []) if n != name
+        ]
+        getattr(self, "_user_clients", {}).pop(name, None)
+        self._active_publish_name = None
+        self.vk_client = None
+
+    async def _try_publish_candidates(
+        self,
+        method: str,
+        params: Dict[str, Any],
+        *,
+        via_prefix: str,
+    ) -> Tuple[Dict, str]:
+        """Перебрать publish-кандидатов в порядке списка, пока один не сработает.
+
+        Используется и для wall.repost (USER_WRITE), и как fallback для wall.post
+        после ошибок community-token. Каждый rotate'нный кандидат, упавший с
+        ``_PUBLISH_ROTATE_CODES`` (5/17/29), сообщается в TokenPolicy и
+        отбрасывается из локального списка.
+        """
+        from modules.vk_monitor.vk_client import VKClient
+
+        last_error: Optional[Exception] = None
+        # Текущий vk_client может быть устаревшим — пересобираем из первого
+        # доступного кандидата каждый раз.
+        if not hasattr(self, "_user_clients"):
+            self._user_clients = {}
+        while getattr(self, "_publish_candidates", []):
+            name, tok = self._publish_candidates[0]
+            client = self._user_clients.get(name)
+            if client is None:
+                client = VKClient(tok)
+                self._user_clients[name] = client
+            self.vk_client = client
+            self._active_publish_name = name
+            try:
+                await self._enforce_publish_token_rate_limit()
+                response = await self._invoke(client, method, params)
+                policy = getattr(self, "_policy", None)
+                if policy is not None:
+                    try:
+                        await policy.report_success(name)
+                    except Exception:  # pragma: no cover — defensive
+                        logger.exception("policy.report_success failed")
+                return response, f"{via_prefix}:{name}"
+            except _VKApiCallError as e:
+                last_error = Exception(f"VK API error: {e.message}")
+                if e.code in _PUBLISH_ROTATE_CODES:
+                    logger.warning(
+                        "publish-token %s failed with code %s on %s — rotating",
+                        name,
+                        e.code,
+                        method,
+                    )
+                    policy = getattr(self, "_policy", None)
+                    if policy is not None:
+                        try:
+                            await policy.report_error(name, e.code)
+                        except Exception:  # pragma: no cover — defensive
+                            logger.exception("policy.report_error failed")
+                    self._drop_active_publish_candidate()
+                    continue
+                # Не-ротируемый код — поднимаем как обычно
+                raise last_error from e
+            except Exception as e:  # network / other
+                last_error = e
+                logger.exception("publish-token %s: unexpected error, rotating", name)
+                self._drop_active_publish_candidate()
+                continue
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(
+            "VKPublisher: no publish-token available for "
+            f"{method} (whitelist пуст или все в cooldown)."
+        )
 
     @classmethod
     async def _enforce_publish_token_rate_limit(cls) -> None:
@@ -418,7 +663,9 @@ class VKPublisher:
             elapsed = (datetime.now() - last_post_time).total_seconds()
             if elapsed < self.POST_INTERVAL_SECONDS:
                 wait_time = self.POST_INTERVAL_SECONDS - elapsed
-                logger.info(f"⏳ Rate limiting: waiting {wait_time:.1f}s before next post")
+                logger.info(
+                    f"⏳ Rate limiting: waiting {wait_time:.1f}s before next post"
+                )
                 await asyncio.sleep(wait_time)
 
     def is_test_mode(self) -> bool:

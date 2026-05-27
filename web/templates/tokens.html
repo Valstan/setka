@@ -464,24 +464,36 @@ function displayTokens(tokens) {
         return;
     }
     
-    container.innerHTML = tokens.map(token => `
+    container.innerHTML = tokens.map(token => {
+        const now = new Date();
+        const cooldownUntil = token.disabled_until ? new Date(token.disabled_until) : null;
+        const inCooldown = cooldownUntil && cooldownUntil > now;
+        const cooldownLabel = inCooldown
+            ? `<div class="text-danger"><strong>⏸ В cooldown до:</strong> ${cooldownUntil.toLocaleString('ru-RU')}${token.last_error_code ? ` (VK error ${token.last_error_code})` : ''}</div>`
+            : '';
+        const errStreak = (token.consecutive_errors || 0) > 0
+            ? `<div class="text-warning"><strong>Подряд ошибок:</strong> ${token.consecutive_errors}</div>`
+            : '';
+        return `
         <div class="col-md-6 col-lg-4">
-            <div class="token-card ${getTokenCardClass(token)}">
+            <div class="token-card ${getTokenCardClass(token)} ${inCooldown ? 'border-danger' : ''}">
                 <div class="d-flex justify-content-between align-items-start mb-2">
                     <h6 class="mb-0">${token.name}</h6>
                     <span class="status-badge ${getTokenStatusBadgeClass(token)}">
-                        ${getTokenStatusText(token)}
+                        ${inCooldown ? '⏸ Cooldown' : getTokenStatusText(token)}
                     </span>
                 </div>
-                
+
                 <div class="token-info">
                     <div><strong>ID:</strong> ${token.id}</div>
                     <div><strong>Активен:</strong> ${token.is_active ? 'Да' : 'Нет'}</div>
                     <div><strong>Статус:</strong> ${token.validation_status || 'unknown'}</div>
                     <div><strong>Токен:</strong> ${escapeHtml(token.token || '')}</div>
+                    ${cooldownLabel}
+                    ${errStreak}
                     ${token.user_info && (token.user_info.first_name || token.user_info.last_name) ? `<div><strong>Пользователь:</strong> ${escapeHtml((token.user_info.first_name || '') + ' ' + (token.user_info.last_name || ''))}</div>` : ''}
                 </div>
-                
+
                 <div class="token-actions">
                     <button class="btn btn-sm btn-outline-primary" onclick="editToken('${token.name}')">
                         <i class="bi bi-pencil"></i> Редактировать
@@ -489,10 +501,57 @@ function displayTokens(tokens) {
                     <button class="btn btn-sm btn-outline-success" onclick="validateToken('${token.name}')">
                         <i class="bi bi-check-circle"></i> Проверить
                     </button>
+                    ${inCooldown
+                        ? `<button class="btn btn-sm btn-outline-warning" onclick="enableTokenManual('${token.name}')"><i class="bi bi-play-fill"></i> Включить сейчас</button>`
+                        : `<button class="btn btn-sm btn-outline-danger" onclick="disableTokenManual('${token.name}')"><i class="bi bi-pause-fill"></i> Выкл. на 24ч</button>`
+                    }
                 </div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
+}
+
+async function disableTokenManual(tokenName) {
+    const raw = prompt(`На сколько часов отключить ${tokenName}?`, '24');
+    if (raw === null) return;
+    const hours = parseFloat(raw);
+    if (!Number.isFinite(hours) || hours <= 0) {
+        showError('Введи положительное число часов');
+        return;
+    }
+    try {
+        const response = await fetch(`/api/tokens/${encodeURIComponent(tokenName)}/disable`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({hours: hours, reason: 'manual via UI'})
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        showSuccess(`${tokenName} отключён на ${hours}ч`);
+        loadTokens();
+    } catch (error) {
+        showError('Ошибка disable: ' + error.message);
+    }
+}
+
+async function enableTokenManual(tokenName) {
+    if (!confirm(`Снять cooldown с ${tokenName} прямо сейчас?`)) return;
+    try {
+        const response = await fetch(`/api/tokens/${encodeURIComponent(tokenName)}/enable`, {
+            method: 'POST',
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        showSuccess(`${tokenName} включён`);
+        loadTokens();
+    } catch (error) {
+        showError('Ошибка enable: ' + error.message);
+    }
 }
 
 function updateStatistics(tokens) {

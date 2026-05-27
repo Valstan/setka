@@ -21,16 +21,13 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import func, select, update
 
-from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Community, CommunityCandidate, Region
 from modules.discovery.ai_categorizer import categorize_candidate
-from modules.discovery.health_check import (
-    DEFAULT_DORMANT_DAYS,
-    DEFAULT_POSTS_SAMPLE,
-    CommunityHealth,
-    check_community_health,
-)
+from modules.discovery.health_check import (DEFAULT_DORMANT_DAYS,
+                                            DEFAULT_POSTS_SAMPLE,
+                                            CommunityHealth,
+                                            check_community_health)
 from modules.discovery.vk_search import DiscoveredGroup, discover_for_region
 from modules.vk_monitor.vk_client import VKClient
 
@@ -40,11 +37,12 @@ logger = logging.getLogger(__name__)
 def _pick_parse_token() -> Optional[str]:
     """Return a VK token suitable for parse-side calls (groups.search etc.).
 
-    VK_TOKENS — dict загруженный из env (`VK_TOKEN_VALSTAN`, `VK_TOKEN_VITA`).
-    Возвращаем первый непустой; токенов хватает на одну discovery-серию
-    (lim ~1000 groups.search/сутки на токен).
+    Учитывает ``vk_tokens.disabled_until`` через TokenPolicy (миграция 014).
+    Если Valstan в cooldown — берётся следующий по env-порядку (обычно Vita).
     """
-    for name, tok in (VK_TOKENS or {}).items():
+    from modules.vk_token_router import get_active_parse_tokens_sync
+
+    for name, tok in get_active_parse_tokens_sync().items():
         if tok:
             logger.debug("discovery: using token %s", name)
             return tok
@@ -60,7 +58,9 @@ async def _touch_region_last_discovery_at(region_id: int) -> None:
     """
     async with AsyncSessionLocal() as session:
         await session.execute(
-            update(Region).where(Region.id == region_id).values(last_discovery_at=datetime.utcnow())
+            update(Region)
+            .where(Region.id == region_id)
+            .values(last_discovery_at=datetime.utcnow())
         )
         await session.commit()
 
@@ -73,7 +73,9 @@ async def _existing_vk_ids(session, region_id: int) -> set[int]:
     их (AI-score мог измениться, появилась более свежая активность). Так что
     они получают ``ON CONFLICT DO UPDATE`` ниже.
     """
-    q1 = await session.execute(select(Community.vk_id).where(Community.region_id == region_id))
+    q1 = await session.execute(
+        select(Community.vk_id).where(Community.region_id == region_id)
+    )
     q2 = await session.execute(
         select(CommunityCandidate.vk_id).where(
             CommunityCandidate.region_id == region_id,
@@ -124,7 +126,9 @@ async def _ai_categorize_all(
             logger.debug("discovery: wall.get failed for %s: %s", g.vk_id, e)
             return
         g.recent_posts = [
-            (p.get("text") or "").strip() for p in posts if (p.get("text") or "").strip()
+            (p.get("text") or "").strip()
+            for p in posts
+            if (p.get("text") or "").strip()
         ]
 
     async def _one(g: DiscoveredGroup) -> tuple[int, Dict[str, Any]]:
@@ -306,7 +310,10 @@ async def run_discovery_for_region_async(
 
     token = _pick_parse_token()
     if not token:
-        return {"success": False, "error": "no VK parse-token configured (VK_TOKENS empty)"}
+        return {
+            "success": False,
+            "error": "no VK parse-token configured (VK_TOKENS empty)",
+        }
 
     client = VKClient(token=token)
 
@@ -414,7 +421,10 @@ async def recheck_communities_for_region_async(
     """
     token = _pick_parse_token()
     if not token:
-        return {"success": False, "error": "no VK parse-token configured (VK_TOKENS empty)"}
+        return {
+            "success": False,
+            "error": "no VK parse-token configured (VK_TOKENS empty)",
+        }
 
     async with AsyncSessionLocal() as session:
         region: Optional[Region] = (
@@ -449,17 +459,30 @@ async def recheck_communities_for_region_async(
             }
 
         client = VKClient(token=token)
-        dd = dormant_days if dormant_days is not None else _dormant_days_for_region(region)
+        dd = (
+            dormant_days
+            if dormant_days is not None
+            else _dormant_days_for_region(region)
+        )
         semaphore = asyncio.Semaphore(max_concurrent)
         region_name = region.name or region.code
 
         results: List[CommunityHealth] = await asyncio.gather(
-            *(_recheck_one(client, c, region_name, dd, posts_sample, semaphore) for c in rows),
+            *(
+                _recheck_one(client, c, region_name, dd, posts_sample, semaphore)
+                for c in rows
+            ),
             return_exceptions=False,
         )
 
         now = datetime.utcnow()
-        counts = {"active": 0, "dormant": 0, "dead": 0, "changed_category": 0, "errors": 0}
+        counts = {
+            "active": 0,
+            "dormant": 0,
+            "dead": 0,
+            "changed_category": 0,
+            "errors": 0,
+        }
         by_id = {c.id: c for c in rows}
         for res in results:
             counts[res.status] = counts.get(res.status, 0) + 1
@@ -507,7 +530,9 @@ async def recheck_all_active_regions_async(
             r.id
             for r in (
                 await session.execute(
-                    select(Region).where(Region.is_active.is_(True)).order_by(Region.code)
+                    select(Region)
+                    .where(Region.is_active.is_(True))
+                    .order_by(Region.code)
                 )
             )
             .scalars()
@@ -555,12 +580,16 @@ def _format_recheck_message(reports: List[Dict[str, Any]]) -> str:
     region_lines: List[str] = []
     for r in reports:
         if not r.get("success"):
-            region_lines.append(f"  • <b>{r.get('region', '?')}</b>: ошибка — {r.get('error', '')}")
+            region_lines.append(
+                f"  • <b>{r.get('region', '?')}</b>: ошибка — {r.get('error', '')}"
+            )
             continue
         for k in totals:
             totals[k] += int(r.get(k, 0) or 0)
         non_active = (
-            (r.get("dead") or 0) + (r.get("dormant") or 0) + (r.get("changed_category") or 0)
+            (r.get("dead") or 0)
+            + (r.get("dormant") or 0)
+            + (r.get("changed_category") or 0)
         )
         if non_active == 0:
             continue
@@ -576,7 +605,9 @@ def _format_recheck_message(reports: List[Dict[str, Any]]) -> str:
     lines: List[str] = []
     lines.append("<b>🔬 Discovery recheck</b>")
     lines.append("")
-    lines.append(f"Регионов: <b>{len(reports)}</b>, сообществ проверено: <b>{totals['total']}</b>")
+    lines.append(
+        f"Регионов: <b>{len(reports)}</b>, сообществ проверено: <b>{totals['total']}</b>"
+    )
     lines.append(
         f"💀 dead: <b>{totals['dead']}</b>, "
         f"😴 dormant: <b>{totals['dormant']}</b>, "
@@ -696,7 +727,9 @@ async def _select_oldest_discovery_region(session) -> Optional[Region]:
     return eligible[0]
 
 
-async def discover_rolling_one_region_async(*, send_telegram: bool = True) -> Dict[str, Any]:
+async def discover_rolling_one_region_async(
+    *, send_telegram: bool = True
+) -> Dict[str, Any]:
     """Daily rolling: 1 регион — самый давний discovery первым.
 
     Discovery исключает уже-добавленные communities через
@@ -736,7 +769,9 @@ async def discover_rolling_one_region_async(*, send_telegram: bool = True) -> Di
 
     async with AsyncSessionLocal() as session:
         await session.execute(
-            update(Region).where(Region.id == region_id).values(last_discovery_at=datetime.utcnow())
+            update(Region)
+            .where(Region.id == region_id)
+            .values(last_discovery_at=datetime.utcnow())
         )
         await session.commit()
 
@@ -852,7 +887,9 @@ try:
     from utils.celery_asyncio import run_coro as _run_coro
 
     @_celery_app.task(name="tasks.discovery_tasks.run_discovery_for_region")
-    def run_discovery_for_region(region_id: int, categories: Optional[List[str]] = None):
+    def run_discovery_for_region(
+        region_id: int, categories: Optional[List[str]] = None
+    ):
         """Celery task: запускает discovery для одного региона.
 
         После успеха обновляет ``regions.last_discovery_at = NOW()`` —
@@ -860,7 +897,9 @@ try:
         async-путь (через ``trigger-async``) полагается на эту запись, иначе
         UI ``/regions`` не увидит свежую дату после polling-завершения.
         """
-        result = _run_coro(run_discovery_for_region_async(region_id, categories=categories))
+        result = _run_coro(
+            run_discovery_for_region_async(region_id, categories=categories)
+        )
         if result.get("success"):
             try:
                 _run_coro(_touch_region_last_discovery_at(region_id))

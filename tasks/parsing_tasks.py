@@ -15,14 +15,10 @@ from html import escape
 from typing import Any, Dict, List, Optional, Tuple
 
 from celery_app import app
-from config.runtime import VK_TOKENS
-from core.exceptions import (
-    VKAccessDeniedException,
-    VKAPIException,
-    VKRateLimitException,
-    VKTokenInvalidException,
-)
-from modules.vk_monitor.vk_client_async import VKClientAsync, VKTokenRotatorAsync
+from core.exceptions import (VKAccessDeniedException, VKAPIException,
+                             VKRateLimitException, VKTokenInvalidException)
+from modules.vk_monitor.vk_client_async import (VKClientAsync,
+                                                VKTokenRotatorAsync)
 from utils.cache import get_cache
 from utils.celery_asyncio import run_coro
 
@@ -55,7 +51,9 @@ def _init_logger() -> logging.Logger:
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     try:
         os.makedirs(SETKA_LOGS_DIR, exist_ok=True)
-        handler: logging.Handler = logging.FileHandler(os.path.join(SETKA_LOGS_DIR, "parser.log"))
+        handler: logging.Handler = logging.FileHandler(
+            os.path.join(SETKA_LOGS_DIR, "parser.log")
+        )
     except (OSError, PermissionError) as exc:
         handler = logging.StreamHandler()
         # Без logger.warning — он сам ещё не настроен; print, чтобы не глотать.
@@ -159,7 +157,9 @@ async def _resolve_owner_id(client: VKClientAsync, source: str) -> Tuple[int, st
         numeric_id = int(screen_name[2:])
         return numeric_id, f"user_{numeric_id}"
 
-    resolved = await client._make_request("utils.resolveScreenName", {"screen_name": screen_name})
+    resolved = await client._make_request(
+        "utils.resolveScreenName", {"screen_name": screen_name}
+    )
     if not resolved:
         raise ValueError(f"Не удалось найти объект '{screen_name}' в VK")
 
@@ -170,7 +170,9 @@ async def _resolve_owner_id(client: VKClientAsync, source: str) -> Tuple[int, st
     if obj_type == "user":
         return int(obj_id), f"user_{obj_id}"
 
-    raise ValueError(f"Объект '{screen_name}' не является сообществом или пользователем")
+    raise ValueError(
+        f"Объект '{screen_name}' не является сообществом или пользователем"
+    )
 
 
 def _parse_attachments(post: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -181,7 +183,9 @@ def _parse_attachments(post: Dict[str, Any]) -> List[Dict[str, Any]]:
             photo = att.get("photo", {})
             sizes = photo.get("sizes", [])
             if sizes:
-                largest = max(sizes, key=lambda x: x.get("width", 0) * x.get("height", 0))
+                largest = max(
+                    sizes, key=lambda x: x.get("width", 0) * x.get("height", 0)
+                )
                 attachments.append(
                     {
                         "type": "photo",
@@ -250,7 +254,9 @@ def _render_html(posts: List[Dict[str, Any]], include: dict) -> str:
         lines.append("<div style='border:1px solid #ddd;padding:12px;margin:12px 0;'>")
         post_date = escape(post["date"])
         post_url = post["url"]
-        lines.append(f"<div><strong>{post_date}</strong> | <a href='{post_url}'>Источник</a></div>")
+        lines.append(
+            f"<div><strong>{post_date}</strong> | <a href='{post_url}'>Источник</a></div>"
+        )
         if include.get("text"):
             lines.append(
                 f"<pre style='white-space:pre-wrap'>{escape(post.get('text') or '')}</pre>"
@@ -268,7 +274,9 @@ def _render_html(posts: List[Dict[str, Any]], include: dict) -> str:
                         )
                 elif att_type == "video" and include.get("videos"):
                     size_bytes = att.get("size_bytes") or 0
-                    size_mb = f" ({size_bytes // (1024 * 1024)}MB)" if size_bytes else ""
+                    size_mb = (
+                        f" ({size_bytes // (1024 * 1024)}MB)" if size_bytes else ""
+                    )
                     video_title = escape(att.get("title") or "video")
                     local_path = att.get("local_path")
                     if local_path:
@@ -293,12 +301,16 @@ def _render_html(posts: List[Dict[str, Any]], include: dict) -> str:
                 elif att_type == "link" and include.get("links"):
                     link_url = att.get("url")
                     link_title = escape(att.get("title") or att.get("url") or "")
-                    lines.append(f"<li>Ссылка: <a href='{link_url}'>{link_title}</a></li>")
+                    lines.append(
+                        f"<li>Ссылка: <a href='{link_url}'>{link_title}</a></li>"
+                    )
                 elif att_type == "document" and include.get("docs"):
                     doc_title = escape(att.get("title") or "")
                     local_path = att.get("local_path")
                     doc_url = local_path or att.get("url")
-                    lines.append(f"<li>Документ: <a href='{doc_url}'>{doc_title}</a></li>")
+                    lines.append(
+                        f"<li>Документ: <a href='{doc_url}'>{doc_title}</a></li>"
+                    )
                 elif att_type == "poll" and include.get("polls"):
                     lines.append(f"<li>Опрос: {escape(att.get('question') or '')}</li>")
             lines.append("</ul>")
@@ -373,7 +385,11 @@ async def _download_videos(
     if not include.get("videos"):
         return
     os.makedirs(attachments_dir, exist_ok=True)
-    tokens = [t for t in VK_TOKENS.values() if t]
+    # Фильтр disabled-токенов через TokenPolicy (миграция 014 / 2026-05-27):
+    # если Valstan/Vita сейчас в cooldown, не подсовываем их в rotator.
+    from modules.vk_token_router import get_active_parse_tokens_sync
+
+    tokens = [t for t in get_active_parse_tokens_sync().values() if t]
     if not tokens:
         return
     rotator = VKTokenRotatorAsync(tokens)
@@ -435,11 +451,15 @@ async def _download_videos(
             else:
                 att["size_bytes"] = size_bytes
                 att["skip_reason"] = reason
-                await _add_video_report(job_id, f"[post {post_id}] {title}: причина {reason}")
+                await _add_video_report(
+                    job_id, f"[post {post_id}] {title}: причина {reason}"
+                )
     await rotator.close_all()
 
 
-async def _get_video_url(client: VKClientAsync, owner_id: int, video_id: int) -> Optional[str]:
+async def _get_video_url(
+    client: VKClientAsync, owner_id: int, video_id: int
+) -> Optional[str]:
     try:
         response = await client._make_request(
             "video.get",
@@ -473,7 +493,9 @@ async def _update_video_status(
             found = True
             break
     if not found:
-        downloads.append({"id": video_id, "title": title, "progress": progress, "status": status})
+        downloads.append(
+            {"id": video_id, "title": title, "progress": progress, "status": status}
+        )
     job["video_downloads"] = downloads
     await cache.set(_job_key(job_id), job, ttl=JOB_TTL_SECONDS)
 
@@ -532,7 +554,8 @@ async def _download_video_with_progress(
                 if resp.status != 200:
                     await _update_video_status(job_id, video_id, title, 0, "error")
                     await _add_video_report(
-                        job_id, f"[post {post_id}] {title}: ошибка загрузки (HTTP {resp.status})"
+                        job_id,
+                        f"[post {post_id}] {title}: ошибка загрузки (HTTP {resp.status})",
                     )
                     return False, 0, "http_error"
                 total = int(resp.headers.get("Content-Length") or 0)
@@ -555,16 +578,21 @@ async def _download_video_with_progress(
                     )
                     return False, total, "too_large"
                 if total and total > remaining_bytes:
-                    await _update_video_status(job_id, video_id, title, 0, "limit_total")
+                    await _update_video_status(
+                        job_id, video_id, title, 0, "limit_total"
+                    )
                     await _add_video_report(
-                        job_id, f"[post {post_id}] {title}: лимит 1000MB исчерпан, пропущено"
+                        job_id,
+                        f"[post {post_id}] {title}: лимит 1000MB исчерпан, пропущено",
                     )
                     return False, total, "limit_total"
                 downloaded = 0
                 with open(dest_path, "wb") as f:
                     async for chunk in resp.content.iter_chunked(1024 * 256):
                         if await _is_video_skipped(job_id, video_id):
-                            await _update_video_status(job_id, video_id, title, 0, "skipped")
+                            await _update_video_status(
+                                job_id, video_id, title, 0, "skipped"
+                            )
                             try:
                                 f.close()
                                 if os.path.exists(dest_path):
@@ -572,13 +600,16 @@ async def _download_video_with_progress(
                             except Exception:
                                 pass
                             await _add_video_report(
-                                job_id, f"[post {post_id}] {title}: пропущено пользователем"
+                                job_id,
+                                f"[post {post_id}] {title}: пропущено пользователем",
                             )
                             return False, total, "skipped"
                         f.write(chunk)
                         downloaded += len(chunk)
                         pct = int((downloaded / total) * 100) if total else 0
-                        await _update_video_status(job_id, video_id, title, pct, "downloading")
+                        await _update_video_status(
+                            job_id, video_id, title, pct, "downloading"
+                        )
         await _update_video_status(job_id, video_id, title, 100, "done")
         await asyncio.sleep(REQUEST_DELAY_SECONDS)
         return True, total, "ok"
@@ -662,7 +693,9 @@ async def _collect_posts(
             collected.append(
                 {
                     "id": post.get("id"),
-                    "date": datetime.fromtimestamp(post_ts).strftime("%Y-%m-%d %H:%M:%S"),
+                    "date": datetime.fromtimestamp(post_ts).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    ),
                     "text": post.get("text", ""),
                     "url": f"https://vk.com/wall{owner_id}_{post.get('id')}",
                     "attachments": _parse_attachments(post),
@@ -718,9 +751,12 @@ def parse_vk_posts_task(job_id: str, payload: Dict[str, Any]):
     _set_job(job_id, status)
 
     try:
-        tokens = [token for token in VK_TOKENS.values() if token]
+        # Фильтр disabled-токенов через TokenPolicy (миграция 014).
+        from modules.vk_token_router import get_active_parse_tokens_sync
+
+        tokens = [token for token in get_active_parse_tokens_sync().values() if token]
         if not tokens:
-            raise ValueError("VK токены не настроены")
+            raise ValueError("VK токены не настроены или все в cooldown")
 
         download_attachments = bool(payload.get("download_attachments", True))
         include = {
@@ -802,7 +838,11 @@ def parse_vk_posts_task(job_id: str, payload: Dict[str, Any]):
         _set_job(job_id, status)
         logger.info(f"Parsing completed: {zip_path}")
 
-    except (VKTokenInvalidException, VKAccessDeniedException, VKRateLimitException) as e:
+    except (
+        VKTokenInvalidException,
+        VKAccessDeniedException,
+        VKRateLimitException,
+    ) as e:
         logger.error(f"VK error: {e.message}")
         status.update(
             {
