@@ -34,26 +34,56 @@ class TokenResponse(BaseModel):
     error_message: str | None
     permissions: List[str] | None  # Изменено на список
     user_info: Dict[str, Any] | None
+    # TokenPolicy state (миграция 014)
+    disabled_until: str | None = None
+    last_error_code: int | None = None
+    last_error_at: str | None = None
+    consecutive_errors: int = 0
     created_at: str | None
     updated_at: str | None
+
+
+class TokenDisableRequest(BaseModel):
+    """POST /api/tokens/{name}/disable body."""
+
+    hours: float = Field(
+        24.0,
+        gt=0,
+        le=24 * 30,
+        description="На сколько часов отключить (макс 30 дней).",
+    )
+    reason: str = Field(
+        "manual",
+        max_length=200,
+        description="Произвольная причина для аудита (попадёт в error_message).",
+    )
 
 
 class TokenUpdateRequest(BaseModel):
     """Запрос на обновление токена"""
 
-    token: str | None = Field(None, min_length=10, description="VK API токен (опционально)")
-    validate_token: bool = Field(True, description="Валидировать токен после обновления")
-    is_active: bool | None = Field(None, description="Включить/выключить токен (опционально)")
+    token: str | None = Field(
+        None, min_length=10, description="VK API токен (опционально)"
+    )
+    validate_token: bool = Field(
+        True, description="Валидировать токен после обновления"
+    )
+    is_active: bool | None = Field(
+        None, description="Включить/выключить токен (опционально)"
+    )
 
 
 class TokenCreateRequest(BaseModel):
     """Запрос на создание токена"""
 
-    name: str = Field(..., min_length=2, max_length=50, description="Имя токена (например VALSTAN)")
+    name: str = Field(
+        ..., min_length=2, max_length=50, description="Имя токена (например VALSTAN)"
+    )
     token: str = Field(..., min_length=10, description="VK API токен")
     validate_token: bool = Field(True, description="Валидировать токен после создания")
     community_id: int | None = Field(
-        None, description="abs(vk_group_id) если токен community access token; None для user-токена"
+        None,
+        description="abs(vk_group_id) если токен community access token; None для user-токена",
     )
 
 
@@ -149,9 +179,13 @@ async def list_community_tokens(db: AsyncSession = Depends(get_db_session)):
                     ),
                     is_active=bool(t.is_active),
                     validation_status=t.validation_status or "unknown",
-                    last_validated=t.last_validated.isoformat() if t.last_validated else None,
+                    last_validated=(
+                        t.last_validated.isoformat() if t.last_validated else None
+                    ),
                     error_message=t.error_message,
-                    permissions=t.permissions if isinstance(t.permissions, list) else None,
+                    permissions=(
+                        t.permissions if isinstance(t.permissions, list) else None
+                    ),
                 )
             )
         else:
@@ -183,7 +217,9 @@ async def upsert_community_token(
     )
     region = region_q.scalar_one_or_none()
     if not region:
-        raise HTTPException(status_code=404, detail=f"No region with vk_group_id={community_id}")
+        raise HTTPException(
+            status_code=404, detail=f"No region with vk_group_id={community_id}"
+        )
 
     existing_q = await db.execute(select(VKToken).where(VKToken.community_id == cid))
     token = existing_q.scalar_one_or_none()
@@ -227,13 +263,17 @@ async def upsert_community_token(
         ),
         is_active=bool(token.is_active),
         validation_status=token.validation_status or "unknown",
-        last_validated=token.last_validated.isoformat() if token.last_validated else None,
+        last_validated=(
+            token.last_validated.isoformat() if token.last_validated else None
+        ),
         error_message=token.error_message,
         permissions=token.permissions if isinstance(token.permissions, list) else None,
     )
 
 
-@router.post("/communities/{community_id}/validate", response_model=TokenValidationResponse)
+@router.post(
+    "/communities/{community_id}/validate", response_model=TokenValidationResponse
+)
 async def validate_community_token_endpoint(
     community_id: int,
     db: AsyncSession = Depends(get_db_session),
@@ -242,7 +282,9 @@ async def validate_community_token_endpoint(
     q = await db.execute(select(VKToken).where(VKToken.community_id == cid))
     token = q.scalar_one_or_none()
     if not token:
-        raise HTTPException(status_code=404, detail=f"No community token for {community_id}")
+        raise HTTPException(
+            status_code=404, detail=f"No community token for {community_id}"
+        )
 
     v = await validate_community_token(token.token, cid)
     token.validation_status = "valid" if v["is_valid"] else "invalid"
@@ -271,17 +313,89 @@ async def delete_community_token(
     q = await db.execute(select(VKToken).where(VKToken.community_id == cid))
     token = q.scalar_one_or_none()
     if not token:
-        raise HTTPException(status_code=404, detail=f"No community token for {community_id}")
+        raise HTTPException(
+            status_code=404, detail=f"No community token for {community_id}"
+        )
     await db.execute(delete(VKToken).where(VKToken.id == token.id))
     await db.commit()
     return {"success": True, "community_id": cid}
+
+
+# ---------------------------------------------------------------------------
+# TokenPolicy: ручной disable / enable (миграция 014, 2026-05-27).
+# Регистрируется ДО `/{token_name}` — иначе FastAPI поймает path как имя токена.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{token_name}/disable", response_model=TokenResponse)
+async def disable_token(
+    token_name: str,
+    payload: TokenDisableRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Отключить токен на ``hours`` часов (manual disable).
+
+    Записывает ``disabled_until = now() + hours`` в ``vk_tokens``. Применяется
+    TokenPolicy: токен сразу выпадает из ``pick(...)`` для всех операций.
+
+    Если запись в БД ещё нет (а имя есть в env) — создаётся новая. Возвращает
+    обновлённую запись.
+    """
+    from modules.vk_token_router import TokenPolicy
+
+    upper = token_name.upper()
+    policy = TokenPolicy(db)
+    ok = await policy.disable(upper, hours=payload.hours, reason=payload.reason)
+    if not ok:
+        raise HTTPException(
+            status_code=404, detail=f"Token {upper} not found in env or DB"
+        )
+    result = await db.execute(
+        select(VKToken).where(VKToken.name == upper, VKToken.community_id.is_(None))
+    )
+    token = result.scalar_one_or_none()
+    if not token:
+        raise HTTPException(
+            status_code=500, detail="disable succeeded but row not found"
+        )
+    return TokenResponse(**token.to_dict())
+
+
+@router.post("/{token_name}/enable", response_model=TokenResponse)
+async def enable_token(
+    token_name: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Снять ручной/авто-disable: ``disabled_until=NULL`` + сброс ``consecutive_errors``.
+
+    404 если записи в БД нет (значит токен и так не был disabled — нечего
+    «включать»).
+    """
+    from modules.vk_token_router import TokenPolicy
+
+    upper = token_name.upper()
+    policy = TokenPolicy(db)
+    ok = await policy.enable(upper)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Token {upper} not in DB")
+    result = await db.execute(
+        select(VKToken).where(VKToken.name == upper, VKToken.community_id.is_(None))
+    )
+    token = result.scalar_one_or_none()
+    if not token:
+        raise HTTPException(
+            status_code=500, detail="enable succeeded but row not found"
+        )
+    return TokenResponse(**token.to_dict())
 
 
 @router.get("/{token_name}", response_model=TokenResponse)
 async def get_token(token_name: str, db: AsyncSession = Depends(get_db_session)):
     """Получить конкретный токен"""
     try:
-        result = await db.execute(select(VKToken).where(VKToken.name == token_name.upper()))
+        result = await db.execute(
+            select(VKToken).where(VKToken.name == token_name.upper())
+        )
         token = result.scalar_one_or_none()
 
         if not token:
@@ -298,12 +412,16 @@ async def get_token(token_name: str, db: AsyncSession = Depends(get_db_session))
 
 @router.put("/{token_name}", response_model=TokenResponse)
 async def update_token(
-    token_name: str, request: TokenUpdateRequest, db: AsyncSession = Depends(get_db_session)
+    token_name: str,
+    request: TokenUpdateRequest,
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Обновить токен"""
     try:
         # Найти токен
-        result = await db.execute(select(VKToken).where(VKToken.name == token_name.upper()))
+        result = await db.execute(
+            select(VKToken).where(VKToken.name == token_name.upper())
+        )
         token = result.scalar_one_or_none()
 
         if not token:
@@ -322,10 +440,14 @@ async def update_token(
         # Валидировать токен если требуется
         if request.validate_token:
             if token.community_id:
-                validation_result = await validate_community_token(token.token, token.community_id)
+                validation_result = await validate_community_token(
+                    token.token, token.community_id
+                )
             else:
                 validation_result = await validate_single_token(token.token)
-            token.validation_status = "valid" if validation_result["is_valid"] else "invalid"
+            token.validation_status = (
+                "valid" if validation_result["is_valid"] else "invalid"
+            )
             token.error_message = validation_result.get("error_message")
             token.user_info = validation_result.get("user_info")
             token.permissions = validation_result.get("permissions")
@@ -346,7 +468,9 @@ async def update_token(
 
 
 @router.post("/add", response_model=TokenResponse)
-async def add_token(request: TokenCreateRequest, db: AsyncSession = Depends(get_db_session)):
+async def add_token(
+    request: TokenCreateRequest, db: AsyncSession = Depends(get_db_session)
+):
     """Создать новый токен"""
     try:
         token_name = request.name.strip().upper()
@@ -356,7 +480,9 @@ async def add_token(request: TokenCreateRequest, db: AsyncSession = Depends(get_
         # Check duplicate
         existing = await db.execute(select(VKToken).where(VKToken.name == token_name))
         if existing.scalar_one_or_none() is not None:
-            raise HTTPException(status_code=409, detail=f"Token {token_name} already exists")
+            raise HTTPException(
+                status_code=409, detail=f"Token {token_name} already exists"
+            )
 
         vk_token = VKToken(
             name=token_name,
@@ -376,7 +502,9 @@ async def add_token(request: TokenCreateRequest, db: AsyncSession = Depends(get_
                 )
             else:
                 validation_result = await validate_single_token(vk_token.token)
-            vk_token.validation_status = "valid" if validation_result["is_valid"] else "invalid"
+            vk_token.validation_status = (
+                "valid" if validation_result["is_valid"] else "invalid"
+            )
             vk_token.error_message = validation_result.get("error_message")
             vk_token.user_info = validation_result.get("user_info")
             vk_token.permissions = validation_result.get("permissions")
@@ -422,7 +550,9 @@ async def validate_token(token_name: str, db: AsyncSession = Depends(get_db_sess
     """Валидировать токен"""
     try:
         # Найти токен
-        result = await db.execute(select(VKToken).where(VKToken.name == token_name.upper()))
+        result = await db.execute(
+            select(VKToken).where(VKToken.name == token_name.upper())
+        )
         token = result.scalar_one_or_none()
 
         if not token:
@@ -440,12 +570,16 @@ async def validate_token(token_name: str, db: AsyncSession = Depends(get_db_sess
 
         # Валидировать токен (community-токены — отдельная ветка, у них нет users.get)
         if token.community_id:
-            validation_result = await validate_community_token(token.token, token.community_id)
+            validation_result = await validate_community_token(
+                token.token, token.community_id
+            )
         else:
             validation_result = await validate_single_token(token.token)
 
         # Обновить статус в БД
-        token.validation_status = "valid" if validation_result["is_valid"] else "invalid"
+        token.validation_status = (
+            "valid" if validation_result["is_valid"] else "invalid"
+        )
         token.error_message = validation_result.get("error_message")
         token.user_info = validation_result.get("user_info")
         token.permissions = validation_result.get("permissions")
@@ -494,12 +628,16 @@ async def validate_all_tokens(db: AsyncSession = Depends(get_db_session)):
 
             # Валидировать токен (community-токены — отдельная ветка)
             if token.community_id:
-                validation_result = await validate_community_token(token.token, token.community_id)
+                validation_result = await validate_community_token(
+                    token.token, token.community_id
+                )
             else:
                 validation_result = await validate_single_token(token.token)
 
             # Обновить статус в БД
-            token.validation_status = "valid" if validation_result["is_valid"] else "invalid"
+            token.validation_status = (
+                "valid" if validation_result["is_valid"] else "invalid"
+            )
             token.error_message = validation_result.get("error_message")
             token.user_info = validation_result.get("user_info")
             token.permissions = validation_result.get("permissions")
@@ -627,4 +765,9 @@ async def validate_single_token(token: str) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        return {"is_valid": False, "error_message": str(e), "user_info": None, "permissions": None}
+        return {
+            "is_valid": False,
+            "error_message": str(e),
+            "user_info": None,
+            "permissions": None,
+        }

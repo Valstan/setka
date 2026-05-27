@@ -60,20 +60,19 @@ async def execute_copy_setka_network(
     *,
     test_mode: bool = False,
 ) -> Dict[str, Any]:
-    from config.runtime import (
-        copy_setka_disabled,
-        get_copy_setka_max_post_age_hours,
-        get_copy_setka_repost_message,
-        get_copy_setka_source_owner_id,
-        get_copy_setka_target_region_codes,
-        get_parse_tokens,
-    )
+    from config.runtime import (copy_setka_disabled,
+                                get_copy_setka_max_post_age_hours,
+                                get_copy_setka_repost_message,
+                                get_copy_setka_source_owner_id,
+                                get_copy_setka_target_region_codes,
+                                get_parse_tokens)
     from database.models import Region
     from database.models_extended import WorkTable
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_monitor.vk_client import VKClient
     from utils.post_utils import clear_copy_history, lip_of_post
-    from utils.vk_attachments import build_attachments_list, extract_vk_attachments
+    from utils.vk_attachments import (build_attachments_list,
+                                      extract_vk_attachments)
 
     if copy_setka_disabled():
         logger.info("COPY_SETKA_DISABLED — сетевой хаб пропущен")
@@ -86,9 +85,19 @@ async def execute_copy_setka_network(
 
     source_owner_id = get_copy_setka_source_owner_id()
 
-    parse_tokens = get_parse_tokens()
+    # Фильтр disabled-токенов через TokenPolicy (миграция 014):
+    # если Valstan в cooldown — берётся следующий из env (обычно Vita).
+    from modules.vk_token_router import get_active_parse_tokens
+
+    parse_tokens = await get_active_parse_tokens(session)
     if not parse_tokens:
-        return {"success": False, "error": "No VK tokens configured", "stats": _empty_stats()}
+        parse_tokens = get_parse_tokens()
+    if not parse_tokens:
+        return {
+            "success": False,
+            "error": "No VK tokens configured (all in cooldown?)",
+            "stats": _empty_stats(),
+        }
 
     parse_token = next(iter(parse_tokens.values()))
     vk = VKClient(parse_token)
@@ -172,12 +181,15 @@ async def execute_copy_setka_network(
 
     msg_suffix = get_copy_setka_repost_message()
 
-    # Подгрузим community-токены: copy_setka льёт пост в стены наших регионов,
-    # значит выгодно использовать community-токен каждой целевой группы.
-    from modules.vk_token_router import load_community_tokens
-
-    community_tokens = await load_community_tokens(session)
-    publisher = VKPublisher(test_polygon_mode=test_mode, community_tokens=community_tokens)
+    # Подгружаем community-токены и user-кандидатов для публикации через
+    # TokenPolicy (миграция 014). Vita исключена deny-list'ом, Valstan в
+    # cooldown — пропускается. wall.repost (USER_WRITE) при пустом списке
+    # user-кандидатов вернёт «no publish token» и copy_setka запишет ошибку.
+    publisher = await VKPublisher.create_with_policy(
+        session,
+        target_group_id=None,
+        test_polygon_mode=test_mode,
+    )
 
     repost_pair: Optional[Tuple[int, int]] = None
     copy_text: str = ""
@@ -224,7 +236,9 @@ async def execute_copy_setka_network(
                 )
             if out.get("success"):
                 successes += 1
-                logger.info("copy-setka: %s -> %s OK %s", src_lip, reg.code, out.get("url"))
+                logger.info(
+                    "copy-setka: %s -> %s OK %s", src_lip, reg.code, out.get("url")
+                )
             else:
                 errors.append(f"{reg.code}: {out.get('error', 'unknown')}")
         except Exception as e:

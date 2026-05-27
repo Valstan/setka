@@ -115,7 +115,11 @@ async def _resolve_source_region_codes(
     d = _defaults_dict(region_config)
     raw = d.get("oblast_source_region_codes")
     if isinstance(raw, list) and raw:
-        return [str(x).strip() for x in raw if str(x).strip() and str(x).strip() != oblast_code]
+        return [
+            str(x).strip()
+            for x in raw
+            if str(x).strip() and str(x).strip() != oblast_code
+        ]
 
     from database.models import Region
 
@@ -142,27 +146,19 @@ async def run_kirov_oblast_digest(
     from database.models import Community, Region
     from database.models_extended import RegionConfig, WorkTable
     from modules.deduplication.digest_history import (
-        GLOBAL_REGION_WORK_THEME,
-        TARGET_GROUP_POSTS_SCAN_LIMIT,
-        append_unique_limited,
-        build_region_dedup_sets,
-        extract_source_lips_from_target_group_posts,
-    )
+        GLOBAL_REGION_WORK_THEME, TARGET_GROUP_POSTS_SCAN_LIMIT,
+        append_unique_limited, build_region_dedup_sets,
+        extract_source_lips_from_target_group_posts)
     from modules.deduplication.fingerprints import (
-        create_media_fingerprint,
-        create_text_core_fingerprint,
-        create_text_fingerprint,
-        create_text_simhash,
-        text_to_rafinad,
-    )
-    from modules.digest_pipeline_settings import get_effective_pipeline_settings
+        create_media_fingerprint, create_text_core_fingerprint,
+        create_text_fingerprint, create_text_simhash, text_to_rafinad)
+    from modules.digest_pipeline_settings import \
+        get_effective_pipeline_settings
     from modules.publisher.digest_builder import DigestBuilder
     from modules.publisher.digest_splitter import DigestSplitter
     from modules.publisher.postopus_digest_headers import (
-        resolve_digest_hashtags,
-        resolve_digest_header,
-        resolve_mourning_digest_format,
-    )
+        resolve_digest_hashtags, resolve_digest_header,
+        resolve_mourning_digest_format)
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_monitor.advanced_parser import AdvancedVKParser
     from modules.vk_monitor.vk_client import VKClient
@@ -172,7 +168,10 @@ async def run_kirov_oblast_digest(
     result = await session.execute(select(Region).where(Region.code == region_code))
     region = result.scalars().first()
     if not region or not region.vk_group_id:
-        return {"success": False, "error": f"Region {region_code} missing or no vk_group_id"}
+        return {
+            "success": False,
+            "error": f"Region {region_code} missing or no vk_group_id",
+        }
 
     cfg_result = await session.execute(
         select(RegionConfig).where(RegionConfig.region_code == region_code)
@@ -229,7 +228,9 @@ async def run_kirov_oblast_digest(
     max_refs = int(ddef.get("oblast_max_wall_refs", 200))
     max_refs = max(10, min(max_refs, 500))
 
-    source_codes = await _resolve_source_region_codes(session, region_code, region_config)
+    source_codes = await _resolve_source_region_codes(
+        session, region_code, region_config
+    )
     if not source_codes:
         return {
             "success": True,
@@ -266,11 +267,18 @@ async def run_kirov_oblast_digest(
     }
     try:
         target_group_posts = await asyncio.to_thread(
-            vk.get_wall_posts, -abs(int(region.vk_group_id)), TARGET_GROUP_POSTS_SCAN_LIMIT, 0
+            vk.get_wall_posts,
+            -abs(int(region.vk_group_id)),
+            TARGET_GROUP_POSTS_SCAN_LIMIT,
+            0,
         )
-        region_lips.update(extract_source_lips_from_target_group_posts(target_group_posts))
+        region_lips.update(
+            extract_source_lips_from_target_group_posts(target_group_posts)
+        )
     except Exception as e:
-        logger.warning("Kirov oblast: failed to load target group digest history: %s", e)
+        logger.warning(
+            "Kirov oblast: failed to load target group digest history: %s", e
+        )
 
     refs_ordered: List[Tuple[int, int]] = []
     seen: Set[Tuple[int, int]] = set()
@@ -283,7 +291,9 @@ async def run_kirov_oblast_digest(
             continue
         owner = -abs(int(src_region.vk_group_id))
         try:
-            wall_posts = await asyncio.to_thread(vk.get_wall_posts, owner, wall_depth, 0)
+            wall_posts = await asyncio.to_thread(
+                vk.get_wall_posts, owner, wall_depth, 0
+            )
         except Exception as e:
             logger.warning("Kirov oblast: wall.get failed for %s: %s", code, e)
             continue
@@ -379,12 +389,8 @@ async def run_kirov_oblast_digest(
     header = resolve_digest_header(region_config, theme, region)
     theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
 
-    # Community-токены: для своей публикации Кировской области используем
-    # community-токен этой группы (если сохранён в /tokens).
-    from modules.vk_token_router import load_community_tokens
-
-    community_tokens = await load_community_tokens(session)
-
+    # Community-токены + publish-кандидаты — внутри ``VKPublisher.create_with_policy``
+    # (см. modules.vk_token_router.TokenPolicy).
     results = []
     selected_by_lip: Dict[str, Dict[str, Any]] = {}
     if regular_posts:
@@ -416,9 +422,10 @@ async def run_kirov_oblast_digest(
                     for p in regular_posts
                 }
             )
-            vk_pub = VKPublisher(
+            vk_pub = await VKPublisher.create_with_policy(
+                session,
+                target_group_id=region.vk_group_id,
                 test_polygon_mode=test_mode,
-                community_tokens=community_tokens,
             )
             pub = await vk_pub.publish_digest(
                 group_id=region.vk_group_id,
@@ -438,7 +445,9 @@ async def run_kirov_oblast_digest(
                 logger.debug("track_digest_published failed", exc_info=True)
 
     if mourning_posts:
-        mourning_header, mourning_tags, mourning_local_hashtag = resolve_mourning_digest_format()
+        mourning_header, mourning_tags, mourning_local_hashtag = (
+            resolve_mourning_digest_format()
+        )
         mb = DigestBuilder(
             header=mourning_header,
             hashtags=mourning_tags,
@@ -465,9 +474,10 @@ async def run_kirov_oblast_digest(
                     for p in mourning_posts
                 }
             )
-            vk_pub2 = VKPublisher(
+            vk_pub2 = await VKPublisher.create_with_policy(
+                session,
+                target_group_id=region.vk_group_id,
                 test_polygon_mode=test_mode,
-                community_tokens=community_tokens,
             )
             mp = await vk_pub2.publish_digest(
                 group_id=region.vk_group_id,
@@ -538,7 +548,9 @@ async def run_kirov_oblast_digest(
     first_url = results[0][2].get("url") if results else None
 
     return {
-        "success": all(r[2].get("success", False) for r in results) if results else True,
+        "success": (
+            all(r[2].get("success", False) for r in results) if results else True
+        ),
         "posts_published": total_published,
         "published_url": first_url,
         "mourning_posts": len(mourning_posts),

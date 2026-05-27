@@ -3,7 +3,7 @@ Notifications API endpoints
 """
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -77,7 +77,11 @@ async def get_all_notifications():
                 comments_timestamp = comments_data["timestamp"]
 
         # Используем более свежий timestamp (из 3 источников)
-        candidates = [t for t in [suggested_timestamp, messages_timestamp, comments_timestamp] if t]
+        candidates = [
+            t
+            for t in [suggested_timestamp, messages_timestamp, comments_timestamp]
+            if t
+        ]
         if candidates:
             data["timestamp"] = max(candidates)
 
@@ -168,15 +172,21 @@ async def _load_vk_routing():
     """
     from sqlalchemy import select
 
-    from config.runtime import VK_TOKENS
     from database.connection import AsyncSessionLocal
     from database.models import VKToken
-
-    vk_token = VK_TOKENS.get("VALSTAN")
-    if not vk_token:
-        return None, {}
+    from modules.vk_token_router import TokenOp, TokenPolicy
 
     async with AsyncSessionLocal() as session:
+        # Подбор user_token для notifications через TokenPolicy:
+        # whitelist VK_PUBLISH_TOKEN_NAMES минус VK_NEVER_PUBLISH_TOKEN_NAMES (Vita).
+        # Berём первого живого кандидата — это и есть наш «admin user-token».
+        policy = TokenPolicy(session)
+        candidates = await policy.pick(TokenOp.COMMUNITY_WRITE)
+        vk_token: Optional[str] = next(
+            (c.token for c in candidates if c.source == "user"), None
+        )
+        if not vk_token:
+            return None, {}
         q = await session.execute(
             select(VKToken).where(
                 VKToken.community_id.isnot(None),
@@ -408,7 +418,9 @@ async def clear_notifications():
 
     return {
         "success": success,
-        "message": "Notifications cleared" if success else "Failed to clear notifications",
+        "message": (
+            "Notifications cleared" if success else "Failed to clear notifications"
+        ),
     }
 
 
@@ -433,21 +445,23 @@ async def check_all_now():
 
     from sqlalchemy import select
 
-    from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS, VK_TOKENS
+    from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
     from database.connection import AsyncSessionLocal
     from database.models import Region, VKToken
     from modules.notifications.storage import NotificationsStorage
-    from modules.notifications.telegram_alert import send_telegram_notifications_alert
+    from modules.notifications.telegram_alert import \
+        send_telegram_notifications_alert
     from modules.notifications.vk_messages_checker import VKMessagesChecker
     from modules.notifications.vk_suggested_checker import VKSuggestedChecker
     from modules.service_activity_notifier import (
         notify_vk_notifications_check_complete,
-        notify_vk_notifications_check_start,
-    )
+        notify_vk_notifications_check_start)
 
     try:
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Region).where(Region.vk_group_id.isnot(None)))
+            result = await session.execute(
+                select(Region).where(Region.vk_group_id.isnot(None))
+            )
             regions = list(result.scalars())
 
             if not regions:
@@ -467,11 +481,19 @@ async def check_all_now():
                 for r in regions
             ]
 
-            vk_token = VK_TOKENS.get("VALSTAN")
+            # Подбор user_token через TokenPolicy: whitelist минус deny-list (Vita).
+            from modules.vk_token_router import TokenOp, TokenPolicy
+
+            _policy = TokenPolicy(session)
+            _candidates = await _policy.pick(TokenOp.COMMUNITY_WRITE)
+            vk_token = next((c.token for c in _candidates if c.source == "user"), None)
             if not vk_token:
                 return {
                     "success": False,
-                    "message": "VK token not found",
+                    "message": (
+                        "VK token not found (все user-токены недоступны / "
+                        "Valstan в cooldown, Vita исключена deny-list'ом)"
+                    ),
                     "total_count": 0,
                 }
 
@@ -487,16 +509,24 @@ async def check_all_now():
             notify_vk_notifications_check_start(len(region_groups))
             start_time = datetime.now()
 
-            suggested_checker = VKSuggestedChecker(vk_token, community_tokens=community_tokens)
+            suggested_checker = VKSuggestedChecker(
+                vk_token, community_tokens=community_tokens
+            )
             suggested = await suggested_checker.check_all_region_groups(region_groups)
 
-            messages_checker = VKMessagesChecker(vk_token, community_tokens=community_tokens)
-            messages_result = await messages_checker.check_all_region_groups(region_groups)
+            messages_checker = VKMessagesChecker(
+                vk_token, community_tokens=community_tokens
+            )
+            messages_result = await messages_checker.check_all_region_groups(
+                region_groups
+            )
             messages = messages_result["notifications"]
             messages_denied = messages_result["denied_groups"]
 
             processing_time = (datetime.now() - start_time).total_seconds()
-            notify_vk_notifications_check_complete(len(suggested), len(messages), processing_time)
+            notify_vk_notifications_check_complete(
+                len(suggested), len(messages), processing_time
+            )
 
             # Сохраняем в Redis. Ручной запуск — без keep_if_empty: пользователь
             # явно сказал «обнови сейчас» и ожидает реального текущего состояния.
@@ -508,7 +538,8 @@ async def check_all_now():
             # Comments в фоне через Celery (избегаем nginx timeout)
             comments_queued = False
             try:
-                from tasks.celery_app import check_recent_comments as celery_check_recent_comments
+                from tasks.celery_app import \
+                    check_recent_comments as celery_check_recent_comments
 
                 celery_check_recent_comments.delay()
                 comments_queued = True
