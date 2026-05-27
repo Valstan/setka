@@ -39,19 +39,27 @@ def parse_and_publish_theme(
     from database.models import Community, Region
     from database.models_extended import ParsingStats, RegionConfig, WorkTable
     from modules.deduplication.digest_history import (
-        GLOBAL_REGION_WORK_THEME, TARGET_GROUP_POSTS_SCAN_LIMIT,
-        append_unique_limited, build_region_dedup_sets,
-        extract_source_lips_from_target_group_posts)
+        GLOBAL_REGION_WORK_THEME,
+        TARGET_GROUP_POSTS_SCAN_LIMIT,
+        append_unique_limited,
+        build_region_dedup_sets,
+        extract_source_lips_from_target_group_posts,
+    )
     from modules.deduplication.fingerprints import (
-        create_media_fingerprint, create_text_core_fingerprint,
-        create_text_fingerprint, create_text_simhash, text_to_rafinad)
-    from modules.digest_pipeline_settings import \
-        get_effective_pipeline_settings
+        create_media_fingerprint,
+        create_text_core_fingerprint,
+        create_text_fingerprint,
+        create_text_simhash,
+        text_to_rafinad,
+    )
+    from modules.digest_pipeline_settings import get_effective_pipeline_settings
     from modules.publisher.digest_builder import DigestBuilder
     from modules.publisher.digest_splitter import DigestSplitter
     from modules.publisher.postopus_digest_headers import (
-        resolve_digest_hashtags, resolve_digest_header,
-        resolve_mourning_digest_format)
+        resolve_digest_hashtags,
+        resolve_digest_header,
+        resolve_mourning_digest_format,
+    )
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_monitor.advanced_parser import AdvancedVKParser
     from modules.vk_monitor.vk_client import VKClient
@@ -65,17 +73,23 @@ def parse_and_publish_theme(
             # Псевдо-регион «copy» + тема «setka» — отдельный сетевой хаб
             # (env COPY_SETKA_*), без RegionConfig.
             if region_code == "copy" and theme == "setka":
-                from modules.copy_setka_network import \
-                    execute_copy_setka_network
+                from modules.copy_setka_network import execute_copy_setka_network
 
                 return await execute_copy_setka_network(session, test_mode=test_mode)
 
-            # Кировская область: дайджест из ссылок на источники в постах
-            # районных групп (тема oblast).
-            if region_code == "kirov_obl" and theme == "oblast":
-                from modules.kirov_oblast_digest import run_kirov_oblast_digest
+            # Каскадный дайджест для регионов kind in {'oblast','strana'} —
+            # ловим по типу региона, а не по жёсткому коду, чтобы новые
+            # oblast/strana работали без правки кода (см. ``docs/REGIONS_HIERARCHY.md``).
+            from database.models import Region as _Region
 
-                return await run_kirov_oblast_digest(
+            kind_result = await session.execute(
+                select(_Region.kind).where(_Region.code == region_code)
+            )
+            region_kind = kind_result.scalar_one_or_none()
+            if region_kind in ("oblast", "strana"):
+                from modules.cascaded_digest import run_cascaded_digest
+
+                return await run_cascaded_digest(
                     session,
                     region_code=region_code,
                     theme=theme,
@@ -88,9 +102,7 @@ def parse_and_publish_theme(
             )
             region_config = result.scalars().first()
             if not region_config:
-                logger.warning(
-                    f"RegionConfig not found for {region_code}; using safe defaults"
-                )
+                logger.warning(f"RegionConfig not found for {region_code}; using safe defaults")
                 region_config = SimpleNamespace(
                     region_code=region_code,
                     zagolovki={},
@@ -112,9 +124,7 @@ def parse_and_publish_theme(
             )
             work_table = result.scalars().first()
             if not work_table:
-                work_table = WorkTable(
-                    region_code=region_code, theme=theme, lip=[], hash=[]
-                )
+                work_table = WorkTable(region_code=region_code, theme=theme, lip=[], hash=[])
                 session.add(work_table)
                 await session.commit()
 
@@ -136,9 +146,7 @@ def parse_and_publish_theme(
                 await session.commit()
 
             # 3. Get region
-            region_result = await session.execute(
-                select(Region).where(Region.code == region_code)
-            )
+            region_result = await session.execute(select(Region).where(Region.code == region_code))
             region = region_result.scalars().first()
             if not region or not region.vk_group_id:
                 return {
@@ -172,9 +180,7 @@ def parse_and_publish_theme(
 
             # Имена сообществ для кликабельных ссылок «источник» в дайджесте
             comm_meta = await session.execute(
-                select(Community.vk_id, Community.name).where(
-                    Community.region_id == region.id
-                )
+                select(Community.vk_id, Community.name).where(Community.region_id == region.id)
             )
             group_names = {str(abs(row[0])): row[1] for row in comm_meta.fetchall()}
 
@@ -190,9 +196,7 @@ def parse_and_publish_theme(
             all_wt_result = await session.execute(
                 select(WorkTable).where(WorkTable.region_code == region_code)
             )
-            region_lips, region_hashes = build_region_dedup_sets(
-                all_wt_result.scalars().all()
-            )
+            region_lips, region_hashes = build_region_dedup_sets(all_wt_result.scalars().all())
             try:
                 target_group_posts = await asyncio.to_thread(
                     vk_client.get_wall_posts,
@@ -200,9 +204,7 @@ def parse_and_publish_theme(
                     TARGET_GROUP_POSTS_SCAN_LIMIT,
                     0,
                 )
-                region_lips.update(
-                    extract_source_lips_from_target_group_posts(target_group_posts)
-                )
+                region_lips.update(extract_source_lips_from_target_group_posts(target_group_posts))
             except Exception as e:
                 logger.warning(
                     "Failed to load target group digest history for %s: %s",
@@ -224,9 +226,7 @@ def parse_and_publish_theme(
             # 6. Split by sentiment
             splitter = DigestSplitter()
             mourning_posts, regular_posts = splitter.split_posts(posts)
-            logger.info(
-                f"Split: {len(mourning_posts)} mourning, {len(regular_posts)} regular"
-            )
+            logger.info(f"Split: {len(mourning_posts)} mourning, {len(regular_posts)} regular")
 
             # 7. Build digests (заголовки/хештеги как в old_postopus, см. postopus_digest_headers)
             header = resolve_digest_header(region_config, theme, region)
@@ -380,14 +380,10 @@ def parse_and_publish_theme(
                         if rafinad_len >= 80:
                             simhash = create_text_simhash(text)
                             if simhash:
-                                new_hash_entries.append(
-                                    f"txtsim:{rafinad_len // 20}:{simhash}"
-                                )
+                                new_hash_entries.append(f"txtsim:{rafinad_len // 20}:{simhash}")
 
                     atts = p.get("attachments")
-                    media_ids = create_media_fingerprint(
-                        atts if isinstance(atts, list) else []
-                    )
+                    media_ids = create_media_fingerprint(atts if isinstance(atts, list) else [])
                     new_hash_entries.extend(media_ids)
 
                 work_table.hash = append_unique_limited(
@@ -406,11 +402,7 @@ def parse_and_publish_theme(
             total_published = sum(d.post_count for _, d, _ in results)
             first_url = results[0][2].get("url") if results else None
             return {
-                "success": (
-                    all(r[2].get("success", False) for r in results)
-                    if results
-                    else True
-                ),
+                "success": (all(r[2].get("success", False) for r in results) if results else True),
                 "posts_published": total_published,
                 "published_url": first_url,
                 "mourning_posts": len(mourning_posts),
@@ -435,15 +427,9 @@ def parse_and_publish_theme(
                         run_type="scheduled",
                         duration_seconds=(datetime.now() - start_time).total_seconds(),
                         success=result.get("success", False),
-                        total_groups_checked=result.get("stats", {}).get(
-                            "total_groups_checked", 0
-                        ),
-                        total_posts_scanned=result.get("stats", {}).get(
-                            "total_posts_scanned", 0
-                        ),
-                        posts_filtered_old=result.get("stats", {}).get(
-                            "posts_filtered_old", 0
-                        ),
+                        total_groups_checked=result.get("stats", {}).get("total_groups_checked", 0),
+                        total_posts_scanned=result.get("stats", {}).get("total_posts_scanned", 0),
+                        posts_filtered_old=result.get("stats", {}).get("posts_filtered_old", 0),
                         posts_filtered_duplicate_lip=result.get("stats", {}).get(
                             "posts_filtered_duplicate_lip", 0
                         ),
@@ -465,9 +451,7 @@ def parse_and_publish_theme(
                         posts_filtered_no_attachments=result.get("stats", {}).get(
                             "posts_filtered_no_attachments", 0
                         ),
-                        posts_final_count=result.get("stats", {}).get(
-                            "posts_final_count", 0
-                        ),
+                        posts_final_count=result.get("stats", {}).get("posts_final_count", 0),
                         published_to_test_polygon=test_mode,
                     )
                     session.add(record)

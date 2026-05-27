@@ -4,23 +4,51 @@ SQLAlchemy models for SETKA project
 
 from datetime import datetime
 
-from sqlalchemy import (JSON, Boolean, Column, DateTime, Float, ForeignKey,
-                        Index, Integer, String, Text)
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import relationship
 
 from database.connection import Base
 
 
 class Region(Base):
-    """Регион (район)"""
+    """Регион в иерархии strana → oblast → raion.
+
+    Тип задаётся полем ``kind``:
+      * ``raion``  — район (низший уровень). Источники дайджеста — записи в
+        ``communities`` с ``region_id = region.id`` (текущая логика).
+      * ``oblast`` — область. Источники — ``vk_group_id`` подчинённых районов
+        (``parent_region_id = region.id``). Каскадная логика в
+        ``modules/cascaded_digest.py``.
+      * ``strana`` — страна. Источники — ``vk_group_id`` подчинённых областей.
+
+    ``parent_region_id`` — FK self-ref на родителя в иерархии (NULL для strana
+    и для legacy-районов без области). См. ``docs/REGIONS_HIERARCHY.md``.
+    """
 
     __tablename__ = "regions"
 
     id = Column(Integer, primary_key=True, index=True)
     code = Column(
         String(50), unique=True, nullable=False, index=True
-    )  # mi, nolinsk, arbazh
+    )  # mi, nolinsk, arbazh, kirov_obl
     name = Column(String(200), nullable=False)  # МАЛМЫЖ - ИНФО
+
+    # Иерархия (миграция 015) — тип региона и родитель.
+    kind = Column(String(20), nullable=False, default="raion", index=True)
+    parent_region_id = Column(
+        Integer, ForeignKey("regions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # VK and Telegram
     vk_group_id = Column(Integer, nullable=True)  # ID группы VK для публикации
@@ -52,9 +80,20 @@ class Region(Base):
     communities = relationship("Community", back_populates="region")
     posts = relationship("Post", back_populates="region")
     candidates = relationship("CommunityCandidate", back_populates="region")
+    parent = relationship(
+        "Region",
+        remote_side="Region.id",
+        back_populates="children",
+        foreign_keys=[parent_region_id],
+    )
+    children = relationship(
+        "Region",
+        back_populates="parent",
+        foreign_keys=[parent_region_id],
+    )
 
     def __repr__(self):
-        return f"<Region {self.code}: {self.name}>"
+        return f"<Region {self.code}: {self.name} kind={self.kind}>"
 
 
 class Community(Base):
@@ -71,9 +110,7 @@ class Community(Base):
     name = Column(String(300), nullable=False)
 
     # Category
-    category = Column(
-        String(50), nullable=False, index=True
-    )  # admin, novost, reklama, etc
+    category = Column(String(50), nullable=False, index=True)  # admin, novost, reklama, etc
 
     # Monitoring settings
     is_active = Column(Boolean, default=True)
@@ -88,15 +125,9 @@ class Community(Base):
     # Health (миграция 011 — модуль авто-регистрации/recheck)
     health_status = Column(String(30), default="active", index=True)
     # active / dormant / dead / changed_category
-    last_post_at = Column(
-        DateTime, nullable=True
-    )  # timestamp последнего поста на стене
-    checked_at = Column(
-        DateTime, nullable=True
-    )  # когда последний раз делали health-check
-    suggested_category = Column(
-        String(50), nullable=True
-    )  # если AI считает что category устарел
+    last_post_at = Column(DateTime, nullable=True)  # timestamp последнего поста на стене
+    checked_at = Column(DateTime, nullable=True)  # когда последний раз делали health-check
+    suggested_category = Column(String(50), nullable=True)  # если AI считает что category устарел
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -129,9 +160,7 @@ class CommunityCandidate(Base):
     __tablename__ = "community_candidates"
 
     id = Column(Integer, primary_key=True, index=True)
-    region_id = Column(
-        Integer, ForeignKey("regions.id", ondelete="CASCADE"), nullable=False
-    )
+    region_id = Column(Integer, ForeignKey("regions.id", ondelete="CASCADE"), nullable=False)
 
     # VK group snapshot (на момент discovery)
     vk_id = Column(Integer, nullable=False)  # abs(group_id), положительный
@@ -245,9 +274,7 @@ class Post(Base):
         String(50), nullable=True, index=True
     )  # Структурный: "owner_id_post_id"
     fingerprint_media = Column(JSON, nullable=True)  # [photo_id1, photo_id2, video_id1]
-    fingerprint_text = Column(
-        String(100), nullable=True, index=True
-    )  # Hash полного "рафинада"
+    fingerprint_text = Column(String(100), nullable=True, index=True)  # Hash полного "рафинада"
     fingerprint_text_core = Column(
         String(100), nullable=True, index=True
     )  # Hash "сердцевины" (20-70%)
@@ -328,19 +355,13 @@ class VKToken(Base):
     community_id = Column(
         Integer, nullable=True, index=True
     )  # abs(vk_group_id), если это community token
-    is_active = Column(
-        Boolean, default=True, index=True
-    )  # Активен ли токен (hard-флаг)
+    is_active = Column(Boolean, default=True, index=True)  # Активен ли токен (hard-флаг)
     last_used = Column(DateTime, nullable=True)  # Последнее использование
     last_validated = Column(DateTime, nullable=True)  # Последняя валидация
-    validation_status = Column(
-        String(20), default="unknown", index=True
-    )  # valid, invalid, unknown
+    validation_status = Column(String(20), default="unknown", index=True)  # valid, invalid, unknown
     error_message = Column(Text)  # Сообщение об ошибке при валидации
     permissions = Column(JSON)  # Права доступа токена
-    user_info = Column(
-        JSON
-    )  # Информация о пользователе / community-info для community-токенов
+    user_info = Column(JSON)  # Информация о пользователе / community-info для community-токенов
 
     # --- TokenPolicy (миграция 014) ---
     disabled_until = Column(DateTime, nullable=True)
@@ -368,26 +389,18 @@ class VKToken(Base):
             "community_id": self.community_id,
             "is_active": self.is_active,
             "last_used": self.last_used.isoformat() if self.last_used else None,
-            "last_validated": (
-                self.last_validated.isoformat() if self.last_validated else None
-            ),
+            "last_validated": (self.last_validated.isoformat() if self.last_validated else None),
             "validation_status": self.validation_status,
             "error_message": self.error_message,
             "permissions": (
                 self.permissions
                 if isinstance(self.permissions, list)
-                else (
-                    self.permissions.get("permissions", []) if self.permissions else []
-                )
+                else (self.permissions.get("permissions", []) if self.permissions else [])
             ),
             "user_info": self.user_info,
-            "disabled_until": (
-                self.disabled_until.isoformat() if self.disabled_until else None
-            ),
+            "disabled_until": (self.disabled_until.isoformat() if self.disabled_until else None),
             "last_error_code": self.last_error_code,
-            "last_error_at": (
-                self.last_error_at.isoformat() if self.last_error_at else None
-            ),
+            "last_error_at": (self.last_error_at.isoformat() if self.last_error_at else None),
             "consecutive_errors": int(self.consecutive_errors or 0),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
