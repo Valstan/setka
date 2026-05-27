@@ -22,6 +22,9 @@ from utils.cache import cache, invalidate_cache
 router = APIRouter()
 
 
+REGION_KINDS = ("raion", "oblast", "strana")
+
+
 class RegionCreate(BaseModel):
     """Region create model"""
 
@@ -50,6 +53,18 @@ class RegionCreate(BaseModel):
     center_city: Optional[str] = Field(
         None, max_length=200, description="Имя центра района: 'Малмыж'"
     )
+    # Иерархия (миграция 015) — тип региона и родитель.
+    kind: str = Field(
+        "raion",
+        description="Тип региона: raion | oblast | strana",
+        pattern="^(raion|oblast|strana)$",
+    )
+    parent_region_id: Optional[int] = Field(
+        None,
+        description=(
+            "ID родителя в иерархии: raion → oblast.id, oblast → strana.id, " "strana → null"
+        ),
+    )
 
 
 class RegionUpdate(BaseModel):
@@ -61,6 +76,8 @@ class RegionUpdate(BaseModel):
     neighbors: Optional[str] = Field(None, max_length=500)
     local_hashtags: Optional[str] = None
     is_active: Optional[bool] = None
+    kind: Optional[str] = Field(None, pattern="^(raion|oblast|strana)$")
+    parent_region_id: Optional[int] = None
 
 
 class RegionResponse(BaseModel):
@@ -85,6 +102,9 @@ class RegionResponse(BaseModel):
     last_discovery_at: str | None = None
     pending_candidates_count: int = 0
     has_discovery_config: bool = False
+    # Иерархия (миграция 015) — тип и родитель.
+    kind: str = "raion"
+    parent_region_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -340,6 +360,8 @@ async def get_regions(skip: int = 0, limit: int = 100, db: AsyncSession = Depend
             ),
             "pending_candidates_count": pending_counts.get(region.id, 0),
             "has_discovery_config": bool(loc_list and region.center_city),
+            "kind": getattr(region, "kind", None) or "raion",
+            "parent_region_id": getattr(region, "parent_region_id", None),
         }
         regions_with_counts.append(region_dict)
 
@@ -387,6 +409,8 @@ async def get_region(region_code: str, db: AsyncSession = Depends(get_db_session
         ),
         "pending_candidates_count": pending_count.scalar() or 0,
         "has_discovery_config": bool(loc_list and region.center_city),
+        "kind": getattr(region, "kind", None) or "raion",
+        "parent_region_id": getattr(region, "parent_region_id", None),
     }
 
 
@@ -400,7 +424,8 @@ async def create_region(region_data: RegionCreate, db: AsyncSession = Depends(ge
             status_code=400, detail=f"Region with code '{region_data.code}' already exists"
         )
 
-    # Create new region
+    # Создание record — `kind` валидируется pydantic-pattern на raion/oblast/strana,
+    # `parent_region_id` принимаем без доп. проверки целостности (FK на уровне БД).
     new_region = Region(
         code=region_data.code,
         name=region_data.name,
@@ -411,6 +436,8 @@ async def create_region(region_data: RegionCreate, db: AsyncSession = Depends(ge
         is_active=region_data.is_active,
         vk_city_id=region_data.vk_city_id,
         center_city=region_data.center_city,
+        kind=region_data.kind,
+        parent_region_id=region_data.parent_region_id,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
@@ -433,6 +460,8 @@ async def create_region(region_data: RegionCreate, db: AsyncSession = Depends(ge
         "created_at": new_region.created_at.isoformat(),
         "communities_count": 0,
         "posts_count": 0,
+        "kind": new_region.kind,
+        "parent_region_id": new_region.parent_region_id,
     }
 
 
@@ -478,6 +507,8 @@ async def update_region(
         "created_at": region.created_at.isoformat(),
         "communities_count": comm_count.scalar() or 0,
         "posts_count": posts_count.scalar() or 0,
+        "kind": region.kind,
+        "parent_region_id": region.parent_region_id,
     }
 
 
