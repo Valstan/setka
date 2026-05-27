@@ -84,3 +84,49 @@ def test_region_response_defaults():
     )
     assert resp.kind == "raion"
     assert resp.parent_region_id is None
+
+
+def test_region_update_can_clear_parent_explicitly():
+    """UI: saveRegion передаёт `parent_region_id: null` для «открепить регион
+    от родителя». RegionUpdate должен это принять и pass-through на ORM."""
+    payload = regions_api.RegionUpdate(
+        name="МАЛМЫЖ - ИНФО",
+        parent_region_id=None,
+    )
+    assert payload.name == "МАЛМЫЖ - ИНФО"
+    assert payload.parent_region_id is None
+    # `kind` остаётся None — не перетираем при partial update.
+    assert payload.kind is None
+
+
+def test_region_create_strana_no_parent():
+    """strana — верх иерархии, не должна иметь parent (но pydantic это не
+    enforce, валидация на уровне БД/UI). Проверяем что None принимается."""
+    payload = regions_api.RegionCreate(
+        code="rf",
+        name="РОССИЯ - ИНФО",
+        kind="strana",
+        parent_region_id=None,
+    )
+    assert payload.kind == "strana"
+    assert payload.parent_region_id is None
+
+
+def test_region_response_with_full_hierarchy_payload():
+    """Smoke: RegionResponse корректно десериализуется из словаря с kind +
+    parent_region_id (миграция 015)."""
+    resp = regions_api.RegionResponse(
+        id=21,
+        code="kirov_obl",
+        name="КИРОВСКАЯ ОБЛАСТЬ - ИНФО",
+        vk_group_id=-168170001,
+        telegram_channel=None,
+        neighbors=None,
+        is_active=True,
+        created_at="2026-05-27T07:00:00",
+        kind="oblast",
+        parent_region_id=None,
+    )
+    assert resp.kind == "oblast"
+    assert resp.parent_region_id is None
+    assert resp.id == 21

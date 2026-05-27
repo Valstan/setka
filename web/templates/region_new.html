@@ -46,6 +46,18 @@
             <input type="hidden" name="vk_group_id" id="vk-group-id-hidden">
         </div>
 
+        <div class="mb-3">
+            <label class="form-label">Родительская область <span class="text-muted">(необязательно)</span></label>
+            <select id="parent-oblast-select" class="form-select">
+                <option value="">— без области (раз­мес­тить отдельно) —</option>
+            </select>
+            <div class="form-text">
+                Если новый район входит в существующую область — выбери её. Тогда район будет
+                автоматически попадать в каскадный дайджест этой области (5 свежих постов
+                с твоего сообщества раз в N часов). Подробнее — <a href="https://github.com/Valstan/setka/blob/main/docs/REGIONS_HIERARCHY.md" target="_blank">REGIONS_HIERARCHY.md</a>.
+            </div>
+        </div>
+
         <div class="d-flex align-items-center gap-2">
             <button id="create-btn" class="btn btn-primary btn-lg" type="submit" disabled>
                 <i class="bi bi-rocket-takeoff"></i> Создать новый регион
@@ -65,5 +77,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/js/region_new.js?v=20260525"></script>
+<script src="/static/js/region_new.js?v=20260527"></script>
 {% endblock %}
