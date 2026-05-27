@@ -3,44 +3,53 @@
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
 **Status:** IDLE
-**Updated:** 2026-05-26
+**Updated:** 2026-05-27
 **Branch:** main
-**Last release in prod:** `df4686d` (PR #66 — виджет «состояние дайджестов»). Все три PR этой сессии накатаны, 5/5 сервисов active, health 200 в 1.02s.
+**Last release in prod:** `e156017` (PR #68 — TokenPolicy с авто-fallback). 3/3 сервиса setka + prometheus + grafana = 5/5 active, health 200 в 1.07s.
 
 ---
 
 ## Текущая нитка
 
-_Нет — все стартовые задачи сессии закрыты, открытая стартовая позиция._
+_Нет — последняя задача закрыта, открытая стартовая позиция._
 
-Сессия 2026-05-26 (четвёртая за день) была разбита на 3 ветки в один заход:
+Сессия 2026-05-27 (первая в день) посвящена одной большой задаче — переделать routing VK-токенов так, чтобы:
+- Vita НИКОГДА не публиковала (deny-list).
+- При недоступности Valstan система автоматически переключалась на следующего кандидата.
+- Был manual disable/enable через UI + REST.
 
-- [PR #64](https://github.com/Valstan/setka/pull/64) `fix(monitoring): multiprocess Prometheus` — Celery worker писал digest-метрики в свой in-memory registry, а `/metrics` в web их не видел. Поднят `PROMETHEUS_MULTIPROC_DIR=/var/lib/setka/prom_multiproc` через systemd drop-in для setka + setka-celery-worker, `MultiProcessCollector` в `monitoring/metrics.py`, `digest_last_published_timestamp` Gauge — `multiprocess_mode='max'`, остальные — `'livesum'`. Worker shutdown hook вызывает `mark_process_dead(pid)`. +4 теста. Бонусом обнаружено: метрики worker'а (`setka_notifications_check_total`) реально доходят до Prometheus, но `track_digest_published` ни разу не вызывается несмотря на успешные beat-публикации — отдельный 🟡 в PENDING.
-- [PR #65](https://github.com/Valstan/setka/pull/65) `fix(notifications): UI compact + лайк deeplink в VK` — компактный grid (2-3 столбца вместо 1) для всех секций `/notifications`, +inline CSS. Кнопка ♥ для лайка коммента переделана с API call на обычный `<a href="https://vk.com/wall{owner}_{post}?reply={cid}&thread={cid}">` — потому что: (а) VK error 27 запрещает `likes.add` через community-token «by-design»; (б) выпустить user-token со scope `wall` для физлица в VK 2026 невозможно (Kate Mobile / VK Mobile / VK Messenger режут scope или IP-pинят токен; форма Standalone-app на dev.vk.com убрана из редизайна; legacy `vk.com/editapp?act=create` тоже больше не показывает Standalone). Backend endpoint `/api/notifications/comments/like` и функция `like_comment()` сохранены на случай если VK когда-нибудь снова откроет user-token issuance с wall.
-- [PR #66](https://github.com/Valstan/setka/pull/66) `feat(monitoring): виджет «состояние дайджестов»` — новый endpoint `GET /api/monitoring/digests-status` агрегирует `parsing_stats` за 30 дней по (region_code, theme), классифицирует fresh/stale/broken/dead через pure-функцию `_classify_digest_row`. Виджет с таблицей (status badge + last_success + last_run + posts_24h + success_30d) добавлен **перед** «Статус регионов» на `/monitoring`. Компактный quick-widget с топ-8 проблемных пар — на главной (`/`). Источник — таблица `parsing_stats` (16610 строк), без зависимости от Prometheus. +9 unit-тестов на классификатор.
+Сделано одним PR:
 
-Параллельно — час потратили на разбор «лайки не работают» (выяснилось: VK 2026 полностью закрыл этот путь для физлиц, итог — deeplink workaround) и «где смотреть Prometheus на сайте» (выяснилось: `/parsing-stats` страница уже есть, добавили `/monitoring` виджет + главную для overview).
+- [PR #68](https://github.com/Valstan/setka/pull/68) `feat(tokens): TokenPolicy с авто-fallback и cooldown по VK error 5/17/29` — миграция 014 + полноценный `TokenPolicy` (READ/COMMUNITY_WRITE/USER_WRITE) + ротация по error 5/17/29 + Telegram-alert + manual disable/enable + UI кнопки на `/tokens` + интеграция во все 5 горячих путей (parsing_tasks / discovery_tasks / parsing_scheduler_tasks / copy_setka / kirov_oblast_digest / web/api/notifications). Vita защищена deny-list'ом в 3 слоях: env, runtime helpers, TokenPolicy.pick.
+
+**Релиз на прод 2026-05-27 ~10:00:** git pull → migrate 014 (поля `disabled_until` / `last_error_code` / `last_error_at` / `consecutive_errors` в `vk_tokens`) → restart 3 сервисов → health 200 в 1.07s → `POST /api/tokens/VALSTAN/disable?hours=24` → Valstan disabled до **2026-05-28T06:59:03**.
+
+**Что работает прямо сейчас на проде:**
+- Парсинг (wall.get, groups.search и пр.) — автоматически через Vita (Valstan skip'нут по `disabled_until`).
+- Notifications check (wall.getComments, messages.getConversations) — `via=community-token` в логе worker'а.
+- wall.post дайджеста — пойдёт через community-токен группы (через `VKPublisher.create_with_policy`); если у группы community-токена нет — будет ошибка «no publish-token available» (нормально, Valstan в cooldown).
+- wall.repost (copy_setka хаб) — недоступен до восстановления Valstan (VK API не принимает community-токен для wall.repost).
+
+Тесты: **569/569** (+24 новых: 10 на env-helpers deny-list, 10 на TokenPolicy.pick/report/disable, 4 на VKPublisher ротацию по error 5).
 
 ## Следующий шаг
 
 Открытой стартовой позиции нет. Кандидатные стартовые точки (по приоритету):
 
-- **🟡 Регион «Кировская область Инфо» (kirov_obl) пустой.** После релиза #66 видно невооружённым глазом на `/monitoring` — `oblast` светится `dead`, `success_30d=0/174` за месяц. `total_groups_checked=0` в каждом из 6 ежедневных запусков. Скорее всего падает на preconditions в `modules/kirov_oblast_digest.py:132` до этапа сканирования. Действие: `ssh setka 'cd /home/valstan/SETKA && ./venv/bin/celery -A celery_app call tasks.parsing_scheduler_tasks.parse_and_publish_theme --kwargs=...{"region_code":"kirov_obl","theme":"oblast"}'` с поднятым `LOG_LEVEL=DEBUG` для этой таски + посмотреть `debug_counters` в return value.
-- **🟡 `setka_digest_published_total` пуст несмотря на успешные публикации.** Smoke-test на проде показал что прямой вызов `track_digest_published()` работает (мы видели `gauge_max_*.db` в multiproc dir + counter в `/metrics`). Значит beat-таски `parse_and_publish_theme` (которые успешно публикуют ~2-9 постов каждые ~10 минут) **не вызывают** функцию. Первый шаг — поднять `logger.debug` → `logger.warning` в except-блоках в [tasks/parsing_scheduler_tasks.py:281,336](../tasks/parsing_scheduler_tasks.py) и [modules/kirov_oblast_digest.py:438,487](../modules/kirov_oblast_digest.py), задеплоить, после одного beat-цикла посмотреть лог. Если ошибки в логе нет — значит код вообще не входит в этот код-path (условие `regular_posts` / `publish_result.success`).
-- **🟡 UI поле «соседи» при создании региона.** `Region.neighbors` есть в БД и в Pydantic-моделях ([web/api/regions.py:41,54,74](../web/api/regions.py)), но в `web/templates/region_new.html` UI-поля нет. Маленький PR (~30 строк) — multi-select из активных кодов регионов.
-- **🟡 Cross-region обмен новостями.** `modules/publisher/neighbor_sharing.py` (247 строк) написан, но мёртв: ожидает `vk_monitor.get_recent_posts_for_region()` который не существует, никем не вызывается. Либо реанимировать (написать недостающий метод + добавить в beat), либо удалить как dead code.
-- **🟢 Discovery — расширенные источники кандидатов.** Подписки админов уже-добавленных сообществ, members ИНФО-страницы → users.getSubscriptions для top активных, wall.search по localities, hashtag-mentions. Существенно улучшит подбор для давно работающих регионов.
+- **Проверить статус Valstan ~2026-05-28 07:00.** После истечения cooldown'а `disabled_until` автоматически перестаёт работать (SQL-фильтр `disabled_until > now()`). Если VK сам снял бан — токен снова в работе без действий. Если VK вернёт error 5 на первом же вызове — TokenPolicy сам поставит ещё 24ч и пришлёт Telegram-alert. Никаких manual действий не нужно, но проверить статус через `curl -s http://127.0.0.1:8000/api/tokens/VALSTAN | jq` или Kombo-кнопкой «Включить сейчас» на `/tokens` — полезно.
+- **🟡 Если Valstan не вернётся в адекватный срок** — добавить второго user-token в whitelist для USER_WRITE (wall.repost). Например OLGA если она получит wall scope, или новый аккаунт. Тогда copy_setka снова заработает без правки кода: `VK_PUBLISH_TOKEN_NAMES="VALSTAN,OLGA"` в `/etc/setka/setka.env` + `systemctl restart setka setka-celery-worker` + `INSERT INTO vk_tokens (name, token, is_active) VALUES ('OLGA', '...', true)` (если ещё не в БД).
+- **🟡 kirov_obl (oblast) — `dead`.** Старая нитка из handoff #67: 0/174 успехов за 30 дней, `total_groups_checked=0`. Падает на preconditions в [modules/kirov_oblast_digest.py:132](../modules/kirov_oblast_digest.py:132). Действие: запустить таску с `LOG_LEVEL=DEBUG` и посмотреть `debug_counters`.
+- **🟡 `setka_digest_published_total` пуст** несмотря на успешные публикации. Beat-таски не вызывают `track_digest_published()`. Поднять `logger.debug → warning` в [tasks/parsing_scheduler_tasks.py:281,336](../tasks/parsing_scheduler_tasks.py).
+- **🟢 UI поле «соседи»** в `region_new.html` (Region.neighbors есть в БД, нет в UI). Маленький PR ~30 строк.
+- **🟢 `modules/publisher/neighbor_sharing.py` (dead code)** — реанимировать или удалить.
 
 ## Контекст
 
 - **План:** нет активного.
-- **Связанные коммиты сессии (3 PR):**
-  - `71e2290` ([PR #64](https://github.com/Valstan/setka/pull/64)) — multiprocess Prometheus + `MultiProcessCollector` + 4 теста.
-  - `1f367cf` ([PR #65](https://github.com/Valstan/setka/pull/65)) — UI compact карточки + ♥ deeplink в VK + переписан docstring `vk_actions.py` + PENDING-разбивка по 7 темам.
-  - `df4686d` ([PR #66](https://github.com/Valstan/setka/pull/66)) — виджет «состояние дайджестов» на `/monitoring` + главной + 9 unit-тестов на классификатор.
-- **Прод:** HEAD на `df4686d`, 5/5 сервисов active (setka + celery-worker + celery-beat + prometheus + grafana-server). Health 200 в 1.02s. `/api/monitoring/digests-status` возвращает реальные данные (правильно классифицирует kirov_obl как dead).
-- **Открытых PR:** нет.
-- **Тесты:** 545/545 локально (было 532, +13 новых: 4 multiproc + 9 digests-status).
+- **Связанные коммиты сессии (1 PR):**
+  - `e156017` ([PR #68](https://github.com/Valstan/setka/pull/68)) — feat(tokens): TokenPolicy с авто-fallback (+1521/-299, 13 файлов, +24 тестов).
+- **Прод:** HEAD на `e156017`, 5/5 сервисов active (setka + celery-worker + celery-beat + prometheus + grafana). Миграция 014 применена. Health 200 в 1.07s. **Valstan disabled** до 2026-05-28T06:59:03 (24ч cooldown через `/api/tokens/VALSTAN/disable`). Vita active.
+- **Открытых PR:** нет (handoff-PR создаётся этим вызовом `/close_session`).
 
 ## Открытые вопросы для пользователя
 
@@ -48,9 +57,10 @@ _Нет._
 
 ## Не забыть (low-priority)
 
-- 🟢 **Опционально — Grafana через nginx-proxy.** В прошлом опросе пользователь выбирал этот вариант наряду с виджетом на /monitoring. Виджет сделан — Grafana-proxy отложен. Нужен PR с location `/grafana/` в nginx + basic-auth (htpasswd) + ссылка в navbar «Полный дашборд». Security-thinking требует отдельного review.
-- 🟢 **node_exporter** для host-level метрик в Grafana (CPU, RAM, диск). ~50MB RAM. Полезно для контроля Prometheus self-usage.
-- 🟢 **Grafana admin/admin** — пользователь явно решил оставить (доступ только через SSH tunnel на 127.0.0.1), но Grafana при первом входе **просит** сменить — нужно либо сменить руками, либо нажать «Skip» (будет напоминать на каждом входе).
+- 🟢 **Через ~24ч (2026-05-28 ~07:00) — посмотреть `/tokens` или `curl /api/tokens/VALSTAN`.** Если `disabled_until` уже в прошлом — токен снова работает; если попал в auto-disable (Telegram-alert) — VK всё ещё блокирует, добавить второй publish-token или ждать дальше.
+- 🟢 **Grafana через nginx-proxy с basic-auth.** Из прошлой сессии — пользователь выбирал этот вариант наряду с виджетом на /monitoring. Виджет сделан 2026-05-26, Grafana-proxy отложен.
+- 🟢 **node_exporter** для host-level метрик в Grafana. ~50MB RAM.
+- 🟢 **Grafana admin/admin** — при первом входе Grafana просит сменить, можно «Skip».
 
 ---
 
