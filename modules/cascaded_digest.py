@@ -173,18 +173,61 @@ async def _resolve_child_regions(
     return list(r.scalars().all())
 
 
+async def _resolve_neighbor_regions(session: AsyncSession, region: Any) -> List[Any]:
+    """Возвращает список регионов-соседей (Region objects) с непустым ``vk_group_id``.
+
+    Источник — ``Region.neighbors`` (запятая/точка-с-запятой-список кодов
+    соседних регионов). Это движок «обмена новостями между соседями» (бывший
+    ``modules/publisher/neighbor_sharing.py``, переписан под текущую иерархию):
+    регион подтягивает посты с главных групп тех регионов, что отмечены его
+    соседями. Сам регион из списка исключается (защита от само-репоста).
+    """
+    from database.models import Region
+
+    raw = (getattr(region, "neighbors", None) or "").strip()
+    if not raw:
+        return []
+    codes = [
+        c.strip()
+        for c in raw.replace(";", ",").split(",")
+        if c.strip() and c.strip() != region.code
+    ]
+    if not codes:
+        return []
+    r = await session.execute(
+        select(Region).where(
+            Region.code.in_(codes),
+            Region.is_active.is_(True),
+            Region.vk_group_id.isnot(None),
+        )
+    )
+    return list(r.scalars().all())
+
+
 async def run_cascaded_digest(
     session: AsyncSession,
     *,
     region_code: str,
     theme: str = "oblast",
     test_mode: bool = False,
+    source_mode: str = "children",
+    require_hashtag: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Собрать и опубликовать каскадный дайджест для региона.
 
-    Подходит для регионов с ``kind in {'oblast', 'strana'}``. Для ``raion``
-    эта функция не применима — используется обычный pipeline в
-    ``tasks/parsing_scheduler_tasks.parse_and_publish_theme``.
+    Два режима источников (``source_mode``):
+
+    * ``"children"`` (default) — каскад вниз по иерархии. Источники = главные
+      сообщества детей (``parent_region_id = region.id``). Только для регионов
+      ``kind in {'oblast', 'strana'}``.
+    * ``"neighbors"`` — обмен новостями между соседями. Источники = главные
+      сообщества регионов из ``Region.neighbors``. Применим к любому региону
+      (обычно ``raion``). Так реализован бывший ``neighbor_sharing.py`` без
+      дублирования пайплайна — тот же сбор/фильтр/публикация.
+
+    ``require_hashtag`` — если задан (например ``"#Новости"``), в кандидаты
+    попадают только посты, содержащие этот хэштег (гейт для соседского обмена:
+    репостим лишь то, что сосед явно пометил как новость).
     """
     from types import SimpleNamespace
 
@@ -229,7 +272,7 @@ async def run_cascaded_digest(
             "success": False,
             "error": f"Region {region_code} has no vk_group_id",
         }
-    if (region.kind or "raion") not in ("oblast", "strana"):
+    if source_mode == "children" and (region.kind or "raion") not in ("oblast", "strana"):
         return {
             "success": False,
             "error": (
@@ -293,14 +336,25 @@ async def run_cascaded_digest(
     lookback_hours = float(ddef.get("cascade_lookback_hours", DEFAULT_LOOKBACK_HOURS))
     lookback_hours = max(1.0, min(lookback_hours, 168.0))
 
-    children = await _resolve_child_regions(session, region.id, region.code, region_config)
+    # `children` держит регионы-источники: дети (parent_region_id) в режиме
+    # "children" либо соседи (Region.neighbors) в режиме "neighbors". Имя
+    # переменной историческое — остальной пайплайн идентичен для обоих режимов.
+    if source_mode == "neighbors":
+        children = await _resolve_neighbor_regions(session, region)
+        no_sources_msg = (
+            f"no active neighbors for region {region_code} "
+            "(Region.neighbors empty or all inactive/without vk_group_id)"
+        )
+    else:
+        children = await _resolve_child_regions(session, region.id, region.code, region_config)
+        no_sources_msg = (
+            f"no active children for region {region_code} "
+            "(parent_region_id link or cascade_source_region_codes override)"
+        )
     if not children:
         return {
             "success": True,
-            "message": (
-                f"no active children for region {region_code} "
-                "(parent_region_id link or cascade_source_region_codes override)"
-            ),
+            "message": no_sources_msg,
             "posts_published": 0,
             "digests_count": 0,
             "stats": {},
@@ -331,6 +385,7 @@ async def run_cascaded_digest(
         "children_scanned": 0,
         "child_posts_scanned": 0,
         "child_posts_too_old": 0,
+        "posts_without_required_hashtag": 0,
         "candidate_posts": 0,
         "filtered_posts_after_pipeline": 0,
         "filtered_posts_non_news_ads": 0,
@@ -371,6 +426,9 @@ async def run_cascaded_digest(
             debug_counters["child_posts_scanned"] += 1
             if not _is_recent_enough(wp, lookback_hours):
                 debug_counters["child_posts_too_old"] += 1
+                continue
+            if require_hashtag and require_hashtag.lower() not in (wp.get("text") or "").lower():
+                debug_counters["posts_without_required_hashtag"] += 1
                 continue
             candidate_posts.append(wp)
 
@@ -553,3 +611,44 @@ async def run_cascaded_digest(
         "candidate_posts": len(candidate_posts),
         "debug": debug_counters,
     }
+
+
+DEFAULT_NEIGHBOR_HASHTAG = "#Новости"
+
+
+async def run_neighbor_digest(
+    session: AsyncSession,
+    *,
+    region_code: str,
+    test_mode: bool = False,
+    require_hashtag: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Обмен новостями между соседями: репост `#Новости` с главных групп соседей.
+
+    Тонкая обёртка над :func:`run_cascaded_digest` с ``source_mode="neighbors"``,
+    ``theme="neighbors"`` и гейтом по хэштегу. Источники соседей — ``Region.neighbors``.
+    Это единственный модуль соседского обмена (бывший ``neighbor_sharing.py`` удалён).
+
+    ``require_hashtag`` по умолчанию берётся из ``region.config['neighbor_hashtag']``
+    (если задан), иначе :data:`DEFAULT_NEIGHBOR_HASHTAG` (``#Новости``).
+    """
+    gate = require_hashtag
+    if gate is None:
+        from database.models import Region
+
+        res = await session.execute(select(Region).where(Region.code == region_code))
+        region = res.scalars().first()
+        cfg = getattr(region, "config", None) if region else None
+        if isinstance(cfg, dict):
+            gate = cfg.get("neighbor_hashtag")
+        if not gate:
+            gate = DEFAULT_NEIGHBOR_HASHTAG
+
+    return await run_cascaded_digest(
+        session,
+        region_code=region_code,
+        theme="neighbors",
+        test_mode=test_mode,
+        source_mode="neighbors",
+        require_hashtag=gate,
+    )

@@ -824,6 +824,15 @@ app.conf.beat_schedule = {
         "args": ("sosed",),
         "options": {"expires": 3600},
     },
+    # Соседский обмен новостями (cross-region): раз в сутки утром. Каждый регион
+    # с непустым Region.neighbors репостит #Новости с главных групп соседей.
+    # Это НЕ тема "sosed" выше (та — парсинг сообществ category="sosed" внутри
+    # региона). Движок — modules.cascaded_digest.run_neighbor_digest.
+    "digest-share-neighbors-daily": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_neighbor_share",
+        "schedule": crontab(minute=30, hour=8),
+        "options": {"expires": 3600},
+    },
     # Novost (news): 40 6,11,12,16,18,20 * * *
     "postopus-novost-6": {
         "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",

@@ -28,6 +28,7 @@ POSTOPUS_DIGEST_THEMES: List[str] = [
     "detsad",
     "setka",
     "oblast",
+    "neighbors",
 ]
 
 # Значения по умолчанию, если в БД пусто
