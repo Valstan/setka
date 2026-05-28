@@ -61,6 +61,18 @@ Beat-таски `postopus-kirov-oblast-*` (`tasks/celery_app.py`) вызываю
 
 ---
 
+## Соседский обмен новостями (cross-region)
+
+Помимо вертикали `strana → oblast → raion` есть **горизонтальный** обмен между равными регионами-соседями. Каждый регион репостит к себе важные новости с главных групп тех регионов, что отмечены его соседями.
+
+* **Источник соседей** — поле `Region.neighbors` (запятая-список кодов). Задаётся галочками в UI добавления/редактирования региона (multi-select существующих регионов) — адреса групп вводить не нужно, берётся `vk_group_id` каждого соседа.
+* **Гейт** — в кандидаты попадают только посты с хэштегом `#Новости` (по умолчанию; override через `region.config['neighbor_hashtag']`). Реклама/детсады/прочее без хэштега не репостятся.
+* **Движок** — тот же `modules/cascaded_digest.run_cascaded_digest` с `source_mode="neighbors"`, `theme="neighbors"` (тонкая обёртка `run_neighbor_digest`). **Без дублирования**: тот же сбор/фильтр/дедуп/публикация, что у каскадного дайджеста. Старый `modules/publisher/neighbor_sharing.py` удалён.
+* **Расписание** — beat `digest-share-neighbors-daily` (раз в сутки, 8:30) → `run_all_regions_neighbor_share` → `share_neighbor_news(region_code)` по всем регионам с непустым `neighbors`.
+* **Не путать с темой `sosed`** — та парсит сообщества с `category="sosed"` *внутри* одного региона (тема контента), это не cross-region обмен.
+
+---
+
 ## Создание нового региона в иерархии
 
 ### Новый район (под существующую область)
@@ -83,7 +95,7 @@ VALUES (
 
 ```sql
 INSERT INTO regions (code, name, vk_group_id, kind, is_active)
-VALUES ('tatarstan_obl', 'ТАТАРСТАН - ИНФО', -...., 'oblast', TRUE);
+VALUES ('tatarstan_obl', 'ТАТАРСТАН - ИНФО', -239149826, 'oblast', TRUE);
 
 -- Привязать районы к ней
 UPDATE regions
@@ -91,7 +103,9 @@ SET parent_region_id = (SELECT id FROM regions WHERE code = 'tatarstan_obl')
 WHERE code IN ('bal', 'kukmor');
 ```
 
-Beat-таска для новой oblast не создастся автоматически — нужно добавить запись в `tasks/celery_app.py` (по аналогии с `postopus-kirov-oblast-*`).
+✅ **`tatarstan_obl` реально создан миграцией 016** (`vk.com/tatar_stan_info`, id=239149826). bal/kukmor привязаны.
+
+Beat-таска для новой oblast не создаётся автоматически — нужно добавить запись в `tasks/celery_app.py` (для `tatarstan_obl` уже добавлены `postopus-tatarstan-oblast-9/-19`, по аналогии с `postopus-kirov-oblast-*`). Публикация требует community-токен группы (для tatarstan_obl — `COMM_239149826` через `/tokens`).
 
 ### Новая страна
 
@@ -109,3 +123,4 @@ WHERE kind = 'oblast';
 ## История
 
 * **2026-05-27** — миграция 015: добавлены `regions.kind` + `regions.parent_region_id`, создана запись `kirov_obl`, привязаны 13 районов Кировской области. Старый `modules/kirov_oblast_digest.py` стал тонким wrapper'ом над универсальным `modules/cascaded_digest.py`. См. PR с этим документом.
+* **2026-05-28** — миграция 016: создан `tatarstan_obl` (oblast, `vk.com/tatar_stan_info`, id=239149826), привязаны районы Татарстана bal/kukmor. Добавлены beat-слоты `postopus-tatarstan-oblast-9/-19`. Публикация — после добавления community-токена `COMM_239149826` через `/tokens`.

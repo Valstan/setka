@@ -35,6 +35,7 @@ def _vk_token_row(
     is_active=True,
     disabled_until=None,
     consecutive_errors=0,
+    validation_status=None,
 ):
     """Лёгкий builder реальной модели VKToken (не Mock — модель ловит атрибуты).
 
@@ -49,6 +50,7 @@ def _vk_token_row(
         is_active=is_active,
         disabled_until=disabled_until,
         consecutive_errors=consecutive_errors,
+        validation_status=validation_status,
     )
 
 
@@ -200,9 +202,7 @@ async def test_pick_skips_valstan_in_cooldown():
         _vk_token_row("VITA", "tok_vita"),
     ]
     # Для _token_exists_but_disabled — отдельный execute с одним row Valstan.
-    valstan_disabled = _vk_token_row(
-        "VALSTAN", "tok_v", disabled_until=future, is_active=True
-    )
+    valstan_disabled = _vk_token_row("VALSTAN", "tok_v", disabled_until=future, is_active=True)
 
     session = AsyncMock()
     call_count = {"n": 0}
@@ -265,9 +265,7 @@ async def test_report_error_5_sets_24h_cooldown():
     session.execute = AsyncMock(return_value=result)
     session.commit = AsyncMock()
 
-    with patch(
-        "modules.vk_token_router._send_telegram_alert_safe", new_callable=AsyncMock
-    ):
+    with patch("modules.vk_token_router._send_telegram_alert_safe", new_callable=AsyncMock):
         policy = TokenPolicy(session)
         before = datetime.utcnow()
         await policy.report_error("VALSTAN", 5)
@@ -289,9 +287,7 @@ async def test_report_error_29_sets_1h_cooldown():
     session.execute = AsyncMock(return_value=result)
     session.commit = AsyncMock()
 
-    with patch(
-        "modules.vk_token_router._send_telegram_alert_safe", new_callable=AsyncMock
-    ):
+    with patch("modules.vk_token_router._send_telegram_alert_safe", new_callable=AsyncMock):
         policy = TokenPolicy(session)
         before = datetime.utcnow()
         await policy.report_error("VALSTAN", 29)
@@ -392,3 +388,105 @@ async def test_enable_returns_false_if_no_row():
     policy = TokenPolicy(session)
     ok = await policy.enable("NONEXISTENT")
     assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# get_active_parse_tokens: значения берутся из БД (single source of truth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_active_parse_tokens_returns_db_values():
+    """Возвращает {name: token} из БД для active user-токенов."""
+    from modules.vk_token_router import get_active_parse_tokens
+
+    rows = [
+        _vk_token_row("VALSTAN", "db_tok_valstan", validation_status="valid"),
+        _vk_token_row("VITA", "db_tok_vita", validation_status="valid"),
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows])
+    out = await get_active_parse_tokens(session)
+    assert out == {"VALSTAN": "db_tok_valstan", "VITA": "db_tok_vita"}
+
+
+@pytest.mark.asyncio
+async def test_active_parse_tokens_value_from_db_not_env():
+    """Значение токена — из БД, даже если в env лежит другое (рассинхрон)."""
+    from modules.vk_token_router import get_active_parse_tokens
+
+    rows = [_vk_token_row("VALSTAN", "fresh_db_token", validation_status="valid")]
+    session = _make_session_with_rows(rows_by_query=[rows])
+    with patch.dict(os.environ, {"VK_TOKEN_VALSTAN": "stale_env_token"}, clear=False):
+        out = await get_active_parse_tokens(session)
+    assert out == {"VALSTAN": "fresh_db_token"}
+
+
+@pytest.mark.asyncio
+async def test_active_parse_tokens_skips_invalid():
+    """validation_status='invalid' — токен в парсинг не берётся."""
+    from modules.vk_token_router import get_active_parse_tokens
+
+    rows = [
+        _vk_token_row("VALSTAN", "tok_valstan", validation_status="invalid"),
+        _vk_token_row("VITA", "tok_vita", validation_status="valid"),
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows])
+    out = await get_active_parse_tokens(session)
+    assert out == {"VITA": "tok_vita"}
+
+
+@pytest.mark.asyncio
+async def test_active_parse_tokens_keeps_unknown():
+    """validation_status='unknown'/None — годится (свежедобавленный токен)."""
+    from modules.vk_token_router import get_active_parse_tokens
+
+    rows = [
+        _vk_token_row("VALSTAN", "tok_valstan", validation_status="unknown"),
+        _vk_token_row("VITA", "tok_vita", validation_status=None),
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows])
+    out = await get_active_parse_tokens(session)
+    assert out == {"VALSTAN": "tok_valstan", "VITA": "tok_vita"}
+
+
+@pytest.mark.asyncio
+async def test_active_parse_tokens_skips_inactive():
+    """is_active=False — исключён."""
+    from modules.vk_token_router import get_active_parse_tokens
+
+    rows = [
+        _vk_token_row("VALSTAN", "tok_valstan", is_active=False, validation_status="valid"),
+        _vk_token_row("VITA", "tok_vita", validation_status="valid"),
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows])
+    out = await get_active_parse_tokens(session)
+    assert out == {"VITA": "tok_vita"}
+
+
+@pytest.mark.asyncio
+async def test_active_parse_tokens_skips_cooldown():
+    """disabled_until > now() — на cooldown, исключён."""
+    from modules.vk_token_router import get_active_parse_tokens
+
+    future = datetime.utcnow() + timedelta(hours=2)
+    rows = [
+        _vk_token_row("VALSTAN", "tok_valstan", disabled_until=future, validation_status="valid"),
+        _vk_token_row("VITA", "tok_vita", validation_status="valid"),
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows])
+    out = await get_active_parse_tokens(session)
+    assert out == {"VITA": "tok_vita"}
+
+
+@pytest.mark.asyncio
+async def test_active_parse_tokens_skips_empty_token():
+    """Пустой token в БД — исключён (плейсхолдер-строки)."""
+    from modules.vk_token_router import get_active_parse_tokens
+
+    rows = [
+        _vk_token_row("ELIS", "", validation_status="unknown"),
+        _vk_token_row("VITA", "tok_vita", validation_status="valid"),
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows])
+    out = await get_active_parse_tokens(session)
+    assert out == {"VITA": "tok_vita"}

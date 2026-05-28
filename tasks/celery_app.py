@@ -824,6 +824,15 @@ app.conf.beat_schedule = {
         "args": ("sosed",),
         "options": {"expires": 3600},
     },
+    # Соседский обмен новостями (cross-region): раз в сутки утром. Каждый регион
+    # с непустым Region.neighbors репостит #Новости с главных групп соседей.
+    # Это НЕ тема "sosed" выше (та — парсинг сообществ category="sosed" внутри
+    # региона). Движок — modules.cascaded_digest.run_neighbor_digest.
+    "digest-share-neighbors-daily": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_neighbor_share",
+        "schedule": crontab(minute=30, hour=8),
+        "options": {"expires": 3600},
+    },
     # Novost (news): 40 6,11,12,16,18,20 * * *
     "postopus-novost-6": {
         "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
@@ -897,6 +906,22 @@ app.conf.beat_schedule = {
         "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
         "schedule": crontab(minute=45, hour=20),
         "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+        "options": {"expires": 3600},
+    },
+    # Татарстан (областной каскадный дайджест из главных групп bal/kukmor).
+    # Детей всего 2 — 2 слота/сутки достаточно (чаще = повторы). minute=45 как
+    # у kirov-oblast (после волн novost :40). Публикует при наличии
+    # community-токена COMM_239149826 (см. миграцию 016).
+    "postopus-tatarstan-oblast-9": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=45, hour=9),
+        "kwargs": {"region_code": "tatarstan_obl", "theme": "oblast"},
+        "options": {"expires": 3600},
+    },
+    "postopus-tatarstan-oblast-19": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=45, hour=19),
+        "kwargs": {"region_code": "tatarstan_obl", "theme": "oblast"},
         "options": {"expires": 3600},
     },
     # Kultura (culture): 20 7,13,16,19,21 * * *
