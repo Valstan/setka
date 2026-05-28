@@ -206,3 +206,108 @@ def test_kirov_oblast_wrapper_constants():
 
     assert kod.DEFAULT_REGION_CODE == "kirov_obl"
     assert kod.THEME_OBLAST == "oblast"
+
+
+# ---------------------------------------------------------------------------
+# Соседский обмен (source_mode="neighbors")
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_neighbor_regions_parses_and_excludes_self():
+    """`_resolve_neighbor_regions` парсит Region.neighbors, исключая сам регион."""
+    from modules.cascaded_digest import _resolve_neighbor_regions
+
+    session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [
+        SimpleNamespace(code="vp", vk_group_id=-1, is_active=True),
+        SimpleNamespace(code="ur", vk_group_id=-2, is_active=True),
+    ]
+    session.execute = AsyncMock(return_value=mock_result)
+    region = SimpleNamespace(code="mi", neighbors="vp, ur ; mi")  # self (mi) исключается
+    out = await _resolve_neighbor_regions(session, region)
+    assert len(out) == 2
+    assert session.execute.called
+
+
+@pytest.mark.asyncio
+async def test_resolve_neighbor_regions_empty_neighbors_no_db():
+    """Пустые neighbors → пустой список, в БД не ходим."""
+    from modules.cascaded_digest import _resolve_neighbor_regions
+
+    session = AsyncMock()
+    session.execute = AsyncMock()
+    out = await _resolve_neighbor_regions(session, SimpleNamespace(code="mi", neighbors=""))
+    assert out == []
+    assert not session.execute.called
+
+
+@pytest.mark.asyncio
+async def test_resolve_neighbor_regions_only_self_no_db():
+    """neighbors указывает только на сам регион → пусто, в БД не ходим."""
+    from modules.cascaded_digest import _resolve_neighbor_regions
+
+    session = AsyncMock()
+    session.execute = AsyncMock()
+    out = await _resolve_neighbor_regions(session, SimpleNamespace(code="mi", neighbors="mi"))
+    assert out == []
+    assert not session.execute.called
+
+
+@pytest.mark.asyncio
+async def test_run_neighbor_digest_defaults_to_novosti_hashtag(monkeypatch):
+    """Без config-override гейт = #Новости, theme/source_mode = neighbors."""
+    from modules.cascaded_digest import DEFAULT_NEIGHBOR_HASHTAG, run_neighbor_digest
+
+    captured = {}
+
+    async def fake_cascaded(
+        session, *, region_code, theme, test_mode, source_mode, require_hashtag
+    ):
+        captured.update(
+            region_code=region_code,
+            theme=theme,
+            source_mode=source_mode,
+            require_hashtag=require_hashtag,
+        )
+        return {"success": True}
+
+    monkeypatch.setattr("modules.cascaded_digest.run_cascaded_digest", fake_cascaded)
+
+    session = AsyncMock()
+    res = MagicMock()
+    res.scalars.return_value.first.return_value = SimpleNamespace(code="mi", config=None)
+    session.execute = AsyncMock(return_value=res)
+
+    out = await run_neighbor_digest(session, region_code="mi")
+    assert out == {"success": True}
+    assert captured["theme"] == "neighbors"
+    assert captured["source_mode"] == "neighbors"
+    assert captured["require_hashtag"] == DEFAULT_NEIGHBOR_HASHTAG == "#Новости"
+
+
+@pytest.mark.asyncio
+async def test_run_neighbor_digest_respects_config_hashtag(monkeypatch):
+    """region.config['neighbor_hashtag'] переопределяет гейт."""
+    from modules.cascaded_digest import run_neighbor_digest
+
+    captured = {}
+
+    async def fake_cascaded(
+        session, *, region_code, theme, test_mode, source_mode, require_hashtag
+    ):
+        captured["require_hashtag"] = require_hashtag
+        return {"success": True}
+
+    monkeypatch.setattr("modules.cascaded_digest.run_cascaded_digest", fake_cascaded)
+
+    session = AsyncMock()
+    res = MagicMock()
+    res.scalars.return_value.first.return_value = SimpleNamespace(
+        code="mi", config={"neighbor_hashtag": "#Срочно"}
+    )
+    session.execute = AsyncMock(return_value=res)
+
+    await run_neighbor_digest(session, region_code="mi")
+    assert captured["require_hashtag"] == "#Срочно"

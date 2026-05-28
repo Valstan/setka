@@ -520,6 +520,53 @@ def parse_sosed(region_code: str):
 
 
 @shared_task
+def share_neighbor_news(region_code: str):
+    """Соседский обмен новостями: репост ``#Новости`` с главных групп соседей.
+
+    Источники — регионы из ``Region.neighbors``. Единый движок —
+    ``modules.cascaded_digest.run_neighbor_digest`` (source_mode=neighbors,
+    theme=neighbors, гейт по хэштегу). Не путать с темой ``sosed`` (парсинг
+    сообществ с ``category="sosed"`` внутри региона) — это разные механики.
+    """
+    from database.connection import AsyncSessionLocal
+    from modules.cascaded_digest import run_neighbor_digest
+
+    async def _run():
+        async with AsyncSessionLocal() as session:
+            return await run_neighbor_digest(session, region_code=region_code)
+
+    return run_coro(_run())
+
+
+@shared_task
+def run_all_regions_neighbor_share():
+    """Запустить соседский обмен по всем регионам с непустым ``Region.neighbors``."""
+    from sqlalchemy import select
+
+    from database.connection import AsyncSessionLocal
+    from database.models import Region
+
+    async def _get_regions():
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Region.code).where(
+                    Region.is_active.is_(True),
+                    Region.vk_group_id.isnot(None),
+                    Region.neighbors.isnot(None),
+                    Region.neighbors != "",
+                )
+            )
+            return list(result.scalars().all())
+
+    regions = run_coro(_get_regions())
+    results = []
+    for rc in regions:
+        r = share_neighbor_news.delay(rc)
+        results.append(r)
+    return {"task": "neighbor_share", "regions": regions, "tasks": [r.id for r in results]}
+
+
+@shared_task
 def run_all_regions_theme(theme: str):
     """Run parsing for specific theme across all regions."""
     from sqlalchemy import exists, select
