@@ -85,6 +85,13 @@
                         </small>
                     </div>
                     <div class="mb-3">
+                        <label for="regionNeighbors" class="form-label">Соседи (обмен новостями)</label>
+                        <select class="form-select" id="regionNeighbors" multiple size="6"></select>
+                        <small class="form-text text-muted">
+                            Регион будет репостить посты с хэштегом <code>#Новости</code> с главных групп отмеченных соседей (раз в сутки). Ctrl/Cmd — выбрать несколько.
+                        </small>
+                    </div>
+                    <div class="mb-3">
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="regionActive" checked>
                             <label class="form-check-label" for="regionActive">
@@ -149,6 +156,13 @@
                         </select>
                         <small class="form-text text-muted">
                             Меняется в зависимости от выбранного типа: для <code>raion</code> показываются <code>oblast</code>, для <code>oblast</code> — <code>strana</code>.
+                        </small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editRegionNeighbors" class="form-label">Соседи (обмен новостями)</label>
+                        <select class="form-select" id="editRegionNeighbors" multiple size="6"></select>
+                        <small class="form-text text-muted">
+                            Регион репостит посты с хэштегом <code>#Новости</code> с главных групп отмеченных соседей (раз в сутки). Ctrl/Cmd — выбрать несколько.
                         </small>
                     </div>
                     <div class="mb-3">
@@ -843,6 +857,38 @@ function wireKindChangeHandler(kindSelectEl, parentSelectEl, parentWrapEl, selfI
     });
 }
 
+// Заполняет multi-select «Соседи» всеми активными регионами (по коду), кроме
+// самого региона (selfCode). selectedCsv — текущее Region.neighbors
+// (запятая-список кодов) для пометки выбранных. Соседи — равные регионы, чьи
+// #Новости репостятся (см. neighbor-обмен, modules/cascaded_digest).
+function populateNeighborsSelect(selectEl, selectedCsv, selfCode) {
+    selectEl.innerHTML = '';
+    const selected = new Set(
+        (selectedCsv || '')
+            .split(',')
+            .map(s => s.trim().toLowerCase())
+            .filter(Boolean)
+    );
+    const candidates = (currentRegions || [])
+        .filter(r => r.code && r.code !== selfCode)
+        .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    for (const r of candidates) {
+        const opt = document.createElement('option');
+        opt.value = r.code;
+        opt.textContent = `${r.name} (${r.code})`;
+        if (selected.has(String(r.code).toLowerCase())) opt.selected = true;
+        selectEl.appendChild(opt);
+    }
+}
+
+// Считывает выбранные коды соседей в запятую-строку (или '' если ничего).
+function readSelectedNeighbors(selectEl) {
+    return Array.from(selectEl.selectedOptions)
+        .map(o => o.value)
+        .filter(Boolean)
+        .join(',');
+}
+
 // Add region
 async function addRegion() {
     const code = document.getElementById('regionCode').value.trim();
@@ -869,6 +915,8 @@ async function addRegion() {
         if (vk_group_id) data.vk_group_id = parseInt(vk_group_id);
         if (telegram_channel) data.telegram_channel = telegram_channel;
         if (parentSelectVal) data.parent_region_id = parseInt(parentSelectVal, 10);
+        const neighborsCsv = readSelectedNeighbors(document.getElementById('regionNeighbors'));
+        if (neighborsCsv) data.neighbors = neighborsCsv;
 
         const resp = await fetch('/api/regions/', {
             method: 'POST',
@@ -904,6 +952,7 @@ document.addEventListener('DOMContentLoaded', () => {
             kindSel.value = 'raion';
             populateParentDropdown(parentSel, parentWrap, 'raion', '', null);
             wireKindChangeHandler(kindSel, parentSel, parentWrap, null);
+            populateNeighborsSelect(document.getElementById('regionNeighbors'), '', null);
         });
     }
 });
@@ -934,6 +983,12 @@ async function editRegion(regionId) {
     );
     wireKindChangeHandler(editKindSel, editParentSel, editParentWrap, region.id);
 
+    populateNeighborsSelect(
+        document.getElementById('editRegionNeighbors'),
+        region.neighbors || '',
+        region.code  // сам регион не может быть себе соседом
+    );
+
     new bootstrap.Modal(document.getElementById('editRegionModal')).show();
 }
 
@@ -959,6 +1014,8 @@ async function saveRegion() {
         // Явно передаём parent_region_id: либо новое значение, либо null
         // (чтобы можно было «открепить» регион от родителя).
         data.parent_region_id = parentSelectVal ? parseInt(parentSelectVal, 10) : null;
+        // neighbors передаём всегда (в т.ч. пусто — чтобы можно было очистить).
+        data.neighbors = readSelectedNeighbors(document.getElementById('editRegionNeighbors'));
 
         const resp = await fetch(`/api/regions/${regionId}`, {
             method: 'PUT',
