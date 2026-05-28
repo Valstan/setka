@@ -147,9 +147,15 @@ step "Prometheus multiprocess: $PROM_MULTIPROC_DIR"
 install -d -m 0750 -o "$SETKA_RUN_USER" -g "$SETKA_RUN_GROUP" "$PROM_MULTIPROC_DIR"
 
 # Drop-in патчит и web (setka.service), и Celery worker. Beat ничего в метрики
-# не пишет — env-var ему не нужен. `ExecStartPre=` чистит mmap-файлы от
-# предыдущего PID; без чистки старый dead-процесс продолжал бы влиять на
-# агрегации (особенно `digest_last_published_timestamp` с mode=max).
+# не пишет — env-var ему не нужен. Каталог общий между web и worker — это
+# обязательно, иначе `/metrics` (web) не увидит counter'ы из worker'а.
+#
+# ВАЖНО: НЕ чистить каталог через `rm -rf` в ExecStartPre. Каталог общий, и
+# рестарт ЛЮБОГО из двух сервисов сносил бы mmap-файлы другого — counter
+# `setka_digest_published_total` обнулялся при каждом restart'е (баг 2026-05-27).
+# Очистка stale-файлов dead-PID'ов уже делается корректно: worker зовёт
+# `multiprocess.mark_process_dead(pid)` в worker_shutdown hook
+# (tasks/celery_app.py). mkdir/chown/chmod идемпотентны и безопасны.
 write_dropin() {
   local unit="$1"
   local dir="/etc/systemd/system/${unit}.d"
@@ -157,7 +163,6 @@ write_dropin() {
   cat > "$dir/prometheus-multiproc.conf" <<EOF
 [Service]
 Environment=PROMETHEUS_MULTIPROC_DIR=$PROM_MULTIPROC_DIR
-ExecStartPre=/bin/rm -rf $PROM_MULTIPROC_DIR
 ExecStartPre=/bin/mkdir -p $PROM_MULTIPROC_DIR
 ExecStartPre=/bin/chown $SETKA_RUN_USER:$SETKA_RUN_GROUP $PROM_MULTIPROC_DIR
 ExecStartPre=/bin/chmod 0750 $PROM_MULTIPROC_DIR
