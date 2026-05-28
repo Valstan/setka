@@ -238,8 +238,7 @@ class TokenPolicy:
             список — нет ни одного подходящего токена; caller обязан вернуть
             понятную ошибку («сейчас публиковать нечем»).
         """
-        from config.runtime import (VK_TOKENS, get_never_publish_token_names,
-                                    get_publish_token_names)
+        from config.runtime import VK_TOKENS, get_never_publish_token_names, get_publish_token_names
 
         never_publish = get_never_publish_token_names()
         publish_whitelist = set(get_publish_token_names())
@@ -365,9 +364,7 @@ class TokenPolicy:
         row.consecutive_errors = int(row.consecutive_errors or 0) + 1
         if disabled_until is not None:
             row.disabled_until = disabled_until
-            row.error_message = (
-                f"auto-disable: VK error {vk_error_code} at {now.isoformat()}"
-            )
+            row.error_message = f"auto-disable: VK error {vk_error_code} at {now.isoformat()}"
         await self._session.commit()
         self._invalidate_cache()
 
@@ -435,9 +432,7 @@ class TokenPolicy:
             row.error_message = f"manual disable: {reason}"
         await self._session.commit()
         self._invalidate_cache()
-        logger.info(
-            "TokenPolicy: %s disabled until %s (reason: %s)", upper, until, reason
-        )
+        logger.info("TokenPolicy: %s disabled until %s (reason: %s)", upper, until, reason)
         return True
 
     async def enable(self, name: str) -> bool:
@@ -478,27 +473,33 @@ async def get_active_parse_tokens(session: AsyncSession) -> Dict[str, str]:
     Используется legacy-местами, которые создают
     ``VKTokenRotatorAsync(list_of_tokens)`` и не хотят интегрироваться в
     :class:`TokenPolicy` целиком. Возвращаемое значение можно скармливать
-    в ``[VK_TOKENS[n] for n in active_names]``.
+    в ``VKTokenRotatorAsync([...values()])``.
 
-    Фильтрация: только imena из env (``VK_TOKENS``); исключаем те, для
-    которых в БД запись с ``is_active=False`` или ``disabled_until>now()``.
+    Источник значений — **БД** (``vk_tokens``), а не env. Единый источник
+    истины: токены добавляются/меняются через ``/tokens`` UI, парсинг и
+    публикация читают одну и ту же запись (раньше парсинг брал значение из
+    env ``VK_TOKENS``, публикация — из БД, что приводило к рассинхрону при
+    ротации токена — инцидент VALSTAN 2026-05-28).
+
+    Фильтр (user-токены, ``community_id IS NULL``):
+    - ``is_active = TRUE`` и непустой ``token``;
+    - не на cooldown: ``disabled_until IS NULL`` или ``< now()``;
+    - ``validation_status != 'invalid'`` — явно протухший токен в парсинг не
+      берём, иначе словим VK error 5 и авто-disable на ровном месте.
+      ``unknown`` / ``valid`` — годятся (свежедобавленный токен ещё «unknown»).
     """
-    from config.runtime import VK_TOKENS
-
     now = datetime.utcnow()
     q = await session.execute(select(VKToken).where(VKToken.community_id.is_(None)))
-    disabled_names: set = set()
+    out: Dict[str, str] = {}
     for t in q.scalars():
-        if not t.is_active:
-            disabled_names.add(t.name.upper())
+        if not t.is_active or not t.token:
             continue
         if t.disabled_until is not None and t.disabled_until > now:
-            disabled_names.add(t.name.upper())
-    return {
-        name.upper(): tok
-        for name, tok in (VK_TOKENS or {}).items()
-        if tok and name.upper() not in disabled_names
-    }
+            continue
+        if t.validation_status == "invalid":
+            continue
+        out[t.name.upper()] = t.token
+    return out
 
 
 async def get_publish_candidates_for_group(
@@ -516,10 +517,13 @@ def get_active_parse_tokens_sync() -> Dict[str, str]:
     """Sync-friendly обёртка над ``get_active_parse_tokens``.
 
     Подразумевает наличие активного event-loop'а (Celery task через
-    ``utils.celery_asyncio.run_coro`` — обычный кейс на проде). Если БД
-    недоступна / запись не найдена — fallback на полный ``VK_TOKENS`` из env
-    (то есть «работаем как раньше», без потери токенов из-за случайной
-    DB-ошибки в горячем пути парсинга).
+    ``utils.celery_asyncio.run_coro`` — обычный кейс на проде).
+
+    Основной источник — БД (см. ``get_active_parse_tokens``). env ``VK_TOKENS``
+    остаётся только аварийным fallback'ом на случай недоступной БД в горячем
+    пути парсинга — чтобы случайная DB-ошибка не обнулила токены. Если env
+    позже почистят (токены живут в БД) — fallback вернёт пусто, парсинг
+    залогирует отсутствие токенов; это допустимая деградация при DB-down.
     """
     from config.runtime import VK_TOKENS
 
