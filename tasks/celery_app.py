@@ -899,6 +899,22 @@ app.conf.beat_schedule = {
         "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
         "options": {"expires": 3600},
     },
+    # Татарстан (областной каскадный дайджест из главных групп bal/kukmor).
+    # Детей всего 2 — 2 слота/сутки достаточно (чаще = повторы). minute=45 как
+    # у kirov-oblast (после волн novost :40). Публикует при наличии
+    # community-токена COMM_239149826 (см. миграцию 016).
+    "postopus-tatarstan-oblast-9": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=45, hour=9),
+        "kwargs": {"region_code": "tatarstan_obl", "theme": "oblast"},
+        "options": {"expires": 3600},
+    },
+    "postopus-tatarstan-oblast-19": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=45, hour=19),
+        "kwargs": {"region_code": "tatarstan_obl", "theme": "oblast"},
+        "options": {"expires": 3600},
+    },
     # Kultura (culture): 20 7,13,16,19,21 * * *
     "postopus-kultura-7": {
         "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",

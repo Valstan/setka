@@ -83,7 +83,7 @@ VALUES (
 
 ```sql
 INSERT INTO regions (code, name, vk_group_id, kind, is_active)
-VALUES ('tatarstan_obl', 'ТАТАРСТАН - ИНФО', -...., 'oblast', TRUE);
+VALUES ('tatarstan_obl', 'ТАТАРСТАН - ИНФО', -239149826, 'oblast', TRUE);
 
 -- Привязать районы к ней
 UPDATE regions
@@ -91,7 +91,9 @@ SET parent_region_id = (SELECT id FROM regions WHERE code = 'tatarstan_obl')
 WHERE code IN ('bal', 'kukmor');
 ```
 
-Beat-таска для новой oblast не создастся автоматически — нужно добавить запись в `tasks/celery_app.py` (по аналогии с `postopus-kirov-oblast-*`).
+✅ **`tatarstan_obl` реально создан миграцией 016** (`vk.com/tatar_stan_info`, id=239149826). bal/kukmor привязаны.
+
+Beat-таска для новой oblast не создаётся автоматически — нужно добавить запись в `tasks/celery_app.py` (для `tatarstan_obl` уже добавлены `postopus-tatarstan-oblast-9/-19`, по аналогии с `postopus-kirov-oblast-*`). Публикация требует community-токен группы (для tatarstan_obl — `COMM_239149826` через `/tokens`).
 
 ### Новая страна
 
@@ -109,3 +111,4 @@ WHERE kind = 'oblast';
 ## История
 
 * **2026-05-27** — миграция 015: добавлены `regions.kind` + `regions.parent_region_id`, создана запись `kirov_obl`, привязаны 13 районов Кировской области. Старый `modules/kirov_oblast_digest.py` стал тонким wrapper'ом над универсальным `modules/cascaded_digest.py`. См. PR с этим документом.
+* **2026-05-28** — миграция 016: создан `tatarstan_obl` (oblast, `vk.com/tatar_stan_info`, id=239149826), привязаны районы Татарстана bal/kukmor. Добавлены beat-слоты `postopus-tatarstan-oblast-9/-19`. Публикация — после добавления community-токена `COMM_239149826` через `/tokens`.
