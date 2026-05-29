@@ -2,56 +2,51 @@
 
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
-**Status:** IDLE
-**Updated:** 2026-05-28
+**Status:** ACTIVE
+**Updated:** 2026-05-29
 **Branch:** main
-**Last release in prod:** `c95666a` (PR #76-79 выкатаны 2026-05-28). 3/3 сервиса setka active, health 200, миграция 016 применена. VALSTAN-токен перевыпущен и валиден.
+**Last release in prod:** `1c245e6` ([PR #82](https://github.com/Valstan/setka/pull/82)). 3/3 сервиса setka active, health 200 в 1.0s. Соседи нормализованы на проде (`scripts/normalize_neighbors.py --apply`: 12 регионов, асимметрия 0, идемпотентно).
 
 ---
 
 ## Текущая нитка
 
-_Нет — все задачи сессии закрыты, открытая стартовая позиция._
+**Улучшение «соседей» + расписание дайджестов** — серия PR по запросу пользователя 2026-05-29. PR1 (соседи: UX + двунаправленность + нормализация данных) **сделан и на проде**. Остаются PR2 (автодетект гео-соседей) и PR3 (расписание области-агрегатора), плюс всплывший баг Тужи.
 
-Сессия 2026-05-28:
-
-1. **Перевыпуск мёртвого VALSTAN-токена.** Старый инвалидировался сменой пароля. Новый получен через своё приложение `client_id=51421557` (scope `wall,groups,photos,docs,video,stories,pages,notifications,stats,market,offline` — `messages` VK отказал без модерации приложения). Пользователь ввёл через `/tokens` (БД), я пробросил в env (`VK_TOKEN_VALSTAN` синхронизирован из БД), restart, `enable`, validate → `valid`.
-2. **Метрик-фикс `rm -rf`** ([PR #75](https://github.com/Valstan/setka/pull/75)) — убран из обоих drop-in на проде, файлы метрик переживают рестарт.
-3. **Письмо в brain** ([PR #74](https://github.com/Valstan/setka/pull/74)) — паттерн «секреты вне репозитория» (`/etc/<project>/<project>.env`).
-4. **4 feature-PR смержены и выкатаны на прод 2026-05-28:**
-   - [#76](https://github.com/Valstan/setka/pull/76) `refactor(tokens)` — парсинг читает токен из БД (single source of truth), фильтр `validation_status=invalid`. env теперь только DB-down fallback.
-   - [#77](https://github.com/Valstan/setka/pull/77) `feat(regions): tatarstan_obl` — миграция 016 (`tatarstan_obl`, vk_group_id=-239149826, vk.com/tatar_stan_info), bal/kukmor привязаны. Beat-слоты `postopus-tatarstan-oblast-9/-19`.
-   - [#78](https://github.com/Valstan/setka/pull/78) `feat(digest)` — соседский обмен новостями: переиспользует движок cascaded (`source_mode="neighbors"`, тема `neighbors`, гейт `#Новости`). Мёртвый `neighbor_sharing.py` удалён (один модуль, без дубляжа). Beat `digest-share-neighbors-daily` (8:30).
-   - [#79](https://github.com/Valstan/setka/pull/79) `feat(regions-ui)` — multi-select «соседи» в add/edit модалках `/regions`.
-
-Тесты: 595 (токены) / 593 (соседи). Прод-проверка после релиза: health 200, 3/3 active, `get_active_parse_tokens` → `['VALSTAN','VITA']` из БД, beat-слоты загружены, tatarstan_obl виден в API с детьми bal/kukmor.
+Порядок, согласованный с пользователем: ~~PR1 соседи~~ → **PR2 автодетект** → **PR3 расписание** → **баг Тужи**.
 
 ## Следующий шаг
 
-Открытой нитки нет. Кандидатные стартовые точки (по приоритету):
+Пользователь поставил паузу после PR1. Кандидаты к продолжению (по согласованному порядку):
 
-1. **Действие пользователя:** добавить community-токен группы Татарстана как **`COMM_239149826`** через `/tokens` (scope `wall`). До этого `tatarstan_obl` собирает дайджест, но `wall.post` падает с «no publish-token» (слоты 9:45/19:45 MSK). Аналогично тому, как заводили kirov_obl.
-2. **Действие пользователя + верификация:** настроить соседей через `/regions` → «Редактировать» → multi-select «Соседи». Пока `Region.neighbors` пуст у всех — beat `digest-share-neighbors-daily` (8:30) отрабатывает вхолостую. **Браузер-верификация UI «соседи»** — локально не проверял (нужен PG+Redis), проверить на проде.
-3. **Верификация tatarstan_obl** — на ближайшем beat-слоте (9:45/19:45) проверить, что каскадный дайджест собирает посты с главных групп bal/kukmor: `/celery` или `journalctl -u setka-celery-worker | grep tatarstan`.
-4. **🟡 Опционально:** почистить env `VK_TOKEN_VALSTAN`/`VK_TOKEN_VITA` из `/etc/setka/setka.env` — после #76 они только аварийный DB-down fallback. Безопасно оставить как есть.
-5. **🟡/🟢 Опционально:** 2-й user-токен (OLGA) в `VK_PUBLISH_TOKEN_NAMES` как fallback для `wall.repost` (copy_setka). VALSTAN восстановлен, так что не срочно.
+1. **PR2 — автоопределение гео-соседей.** Подход (выбран пользователем): по расстоянию центров через геокодинг `center_city` (OSM Nominatim). При создании региона авто-находить соседей среди существующих + проставлять **обоюдно** (готовый `_sync_bidirectional_neighbors` в [web/api/regions.py](../web/api/regions.py)). + кнопка «Найти соседей» в UI `/regions`. ⚠️ `center_city` заполнен НЕ у всех (у большинства `None`) — нужен fallback (парсить из `name` без « - ИНФО» или ручной ввод) + кэш координат в `region.config['geo']`. Детали в [PENDING → Регионы → 🟢 PR2](PENDING_FOLLOWUPS.md).
+2. **PR3 — расписание дайджестов области.** 8 слотов/сутки 7:30–22:00 + лимит постов/выпуск (чтобы kirov_obl не выливал залпом). Править `app.conf.beat_schedule` в [tasks/celery_app.py](../tasks/celery_app.py) (`postopus-kirov-oblast-*` + `postopus-tatarstan-oblast-*`). Детали в [PENDING → Регионы → 🟢 PR3](PENDING_FOLLOWUPS.md).
+3. **🐞 Баг Тужи** — `tuzha.vk_group_id=239050321` положительный (у всех остальных отрицательный) → вероятно публикация уходит не в ту группу. Проверить знак, ожидаемый `VKPublisher.publish_digest`. Детали в [PENDING → Регионы → 🐞 Тужа](PENDING_FOLLOWUPS.md).
 
 ## Контекст
 
-- **План:** нет активного.
-- **Связанные коммиты сессии:** `78ec043` (#74 mailbox), `4b6be82` (#75 metrics), `978be48` (#76 token single-source), `76e2304` (#77 tatarstan_obl), `d50bb83` (#78 neighbor exchange), `c95666a` (#79 UI соседи).
-- **Прод:** HEAD `c95666a`, 3/3 сервиса active, health 200, миграция 016 применена. VALSTAN valid (новый токен). `get_active_parse_tokens` отдаёт VALSTAN+VITA из БД.
-- **Открытых PR:** нет (handoff-PR создаётся этим вызовом `/close_session`).
+- **План:** нет активного (серия мелких PR, план в голове + PENDING).
+- **Связанные коммиты сессии:**
+  - `02418e9` ([PR #81](https://github.com/Valstan/setka/pull/81)) — соседи: чекбоксы вместо `<select multiple>`, `_normalize_neighbor_codes` + `_sync_bidirectional_neighbors` (обоюдность), `scripts/normalize_neighbors.py`, +11 тестов.
+  - `1c245e6` ([PR #82](https://github.com/Valstan/setka/pull/82)) — fix резолвера: `_region_label_variants` стрипает « - ИНФО»/гео-хвост/юникод-тире (прод dry-run показал, что без этого соседи терялись: ur 7→2, nema 8→0), +4 теста.
+- **Прод:** HEAD `1c245e6`, 3/3 active, health 200. Соседи применены (`--apply`): bal→klz,kukmor,mi,ur,vp; ur→10 соседей; асимметрия 0, само-соседей 0. Расхождений с main нет.
+- **Открытых PR:** нет (оба смержены, ветки удалены).
+- **Тесты:** 615/615 локально (было 600, +15: соседи + резолвер).
+
+## Failed approaches (этой нитки)
+
+- **Тесты соседей через реальный SQLite (aiosqlite)** — первая версия `tests/test_api/test_neighbors_bidirectional.py` падала: `ModuleNotFoundError: No module named 'aiosqlite'` (в venv нет). Переписано на `AsyncMock` в стиле `tests/test_cascaded_digest.py` (проект не поднимает реальную БД в unit-тестах). **Не повторять** попытку SQLite — мокать сессию.
+- **Первая версия резолвера матчила имя как есть** (`str(label).strip().lower()`) — теряла соседей, т.к. `neighbors` забиты голыми названиями («лебяжье»), а `name`='ЛЕБЯЖЬЕ - ИНФО'. Поймано прод dry-run'ом **до** `--apply` (данные не пострадали). Фикс — `_region_label_variants` (PR #82). Урок: **всегда dry-run `normalize_neighbors.py` перед `--apply`**.
 
 ## Открытые вопросы для пользователя
 
-_Нет._ (Действия пользователя перечислены в «Следующий шаг» п.1-2.)
+_Нет._ (Продолжение — по согласованному порядку PR2 → PR3 → баг Тужи, когда пользователь возобновит.)
 
 ## Не забыть (low-priority)
 
-- 🟡 **VK app `51421557` не выдаёт scope `messages`** без модерации приложения — user-токены получают wall/groups/photos/docs/video/stories/pages/notifications/stats/market/offline, но не messages. Инбокс сообществ читается `COMM_*` community-токенами, так что для проекта это не блокер.
-- 🟢 **gauge_max_*.db в `/var/lib/setka/prom_multiproc`** должен появиться после первой реальной публикации дайджеста (финальная проверка метрик-фикса).
-- 🟢 **Grafana через nginx-proxy с basic-auth** + **node_exporter** (host-метрики ~50MB RAM) — перенесено из прошлых сессий, низкий приоритет.
+- **Верификация на проде:** Татарстан-Инфо разблокирован (токен добавлен сегодня) — на слотах **9:45/19:45 MSK** должен опубликовать каскад с bal/kukmor (если есть свежие ≤72ч не-рекламные посты). Проверить `/celery` или `journalctl -u setka-celery-worker | grep tatarstan`.
+- **Соседский обмен** `digest-share-neighbors-daily` (8:30) теперь имеет валидные данные — проверить первый реальный выпуск.
+- 🟢 Из прошлых сессий: `setka_digest_published_total` пуст несмотря на публикации (Prometheus); Grafana через nginx-proxy + node_exporter.
 
 ---
 
