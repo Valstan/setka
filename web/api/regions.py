@@ -32,17 +32,54 @@ def _parse_neighbor_tokens(raw: str | None) -> List[str]:
     return [t.strip() for t in raw.replace(";", ",").split(",") if t.strip()]
 
 
+def _region_label_variants(name: str | None, center: str | None) -> set[str]:
+    """Варианты человекочитаемых меток региона для матчинга соседей по имени.
+
+    Исторические ``Region.neighbors`` забиты **голыми названиями городов**
+    («лебяжье», «советск», «пижанка»), тогда как ``Region.name`` хранится в
+    формате «ЛЕБЯЖЬЕ - ИНФО» / «Тужа, Кировская область». Без нормализации
+    суффиксов прямой матч имени проваливался и реальные соседи терялись.
+
+    Возвращает набор lowercase-вариантов:
+
+    * полное имя;
+    * имя без хвоста после первой запятой («Тужа, Кировская область» → «тужа»);
+    * имя без суффикса «- ИНФО» при любом виде тире (``-`` / ``–`` / ``—``);
+    * ``center_city`` (как есть и без гео-хвоста после запятой).
+    """
+    variants: set[str] = set()
+    for label in (name, center):
+        if not label:
+            continue
+        base = str(label).strip()
+        if not base:
+            continue
+        variants.add(base.lower())
+        head = base.split(",", 1)[0].strip()  # отрезаем «, Кировская область»
+        if head:
+            variants.add(head.lower())
+        for dash in ("-", "–", "—"):
+            marker = f"{dash} ИНФО"
+            idx = head.upper().rfind(marker.upper())
+            if idx != -1:
+                trimmed = head[:idx].strip()
+                if trimmed:
+                    variants.add(trimmed.lower())
+    return variants
+
+
 async def _normalize_neighbor_codes(db: AsyncSession, raw: str | None, self_code: str) -> List[str]:
     """Привести список соседей к валидным кодам регионов.
 
     Движок соседского обмена (``modules.cascaded_digest.run_neighbor_digest``)
     матчит соседей по ``Region.code.in_(codes)`` — поэтому в ``Region.neighbors``
     должны лежать именно **коды** регионов (латиница), а не русские названия.
-    Исторически часть данных была забита названиями («кукмор», «балтаси»),
-    из-за чего обмен молча не находил соседей. Эта функция:
+    Исторически часть данных была забита названиями («кукмор», «балтаси»,
+    «лебяжье»), из-за чего обмен молча не находил соседей. Эта функция:
 
     * принимает токен как код региона (case-insensitive) **или**
-      как ``name`` / ``center_city`` (русское название) и резолвит в код;
+      как ``name`` / ``center_city`` (в т.ч. «ЛЕБЯЖЬЕ - ИНФО» → «лебяжье»
+      через :func:`_region_label_variants`) и резолвит в код;
     * отбрасывает неизвестные токены и сам регион (само-сосед запрещён);
     * возвращает отсортированный уникальный список кодов.
     """
@@ -55,9 +92,8 @@ async def _normalize_neighbor_codes(db: AsyncSession, raw: str | None, self_code
     by_code = {r[0].lower(): r[0] for r in rows}
     by_name: Dict[str, str] = {}
     for code, name, center in rows:
-        for label in (name, center):
-            if label:
-                by_name.setdefault(str(label).strip().lower(), code)
+        for variant in _region_label_variants(name, center):
+            by_name.setdefault(variant, code)
 
     resolved: List[str] = []
     seen: set[str] = set()
