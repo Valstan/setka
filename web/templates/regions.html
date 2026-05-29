@@ -86,9 +86,9 @@
                     </div>
                     <div class="mb-3">
                         <label for="regionNeighbors" class="form-label">Соседи (обмен новостями)</label>
-                        <select class="form-select" id="regionNeighbors" multiple size="6"></select>
+                        <div class="border rounded p-2" id="regionNeighbors" style="max-height:220px;overflow-y:auto;"></div>
                         <small class="form-text text-muted">
-                            Регион будет репостить посты с хэштегом <code>#Новости</code> с главных групп отмеченных соседей (раз в сутки). Ctrl/Cmd — выбрать несколько.
+                            Регион будет репостить посты с хэштегом <code>#Новости</code> с главных групп отмеченных соседей (раз в сутки). Отметьте галочками нужные регионы — связь делается обоюдной автоматически.
                         </small>
                     </div>
                     <div class="mb-3">
@@ -160,9 +160,9 @@
                     </div>
                     <div class="mb-3">
                         <label for="editRegionNeighbors" class="form-label">Соседи (обмен новостями)</label>
-                        <select class="form-select" id="editRegionNeighbors" multiple size="6"></select>
+                        <div class="border rounded p-2" id="editRegionNeighbors" style="max-height:220px;overflow-y:auto;"></div>
                         <small class="form-text text-muted">
-                            Регион репостит посты с хэштегом <code>#Новости</code> с главных групп отмеченных соседей (раз в сутки). Ctrl/Cmd — выбрать несколько.
+                            Регион репостит посты с хэштегом <code>#Новости</code> с главных групп отмеченных соседей (раз в сутки). Отметьте галочками нужные регионы — связь делается обоюдной автоматически.
                         </small>
                     </div>
                     <div class="mb-3">
@@ -857,7 +857,7 @@ function wireKindChangeHandler(kindSelectEl, parentSelectEl, parentWrapEl, selfI
     });
 }
 
-// Заполняет multi-select «Соседи» всеми активными регионами (по коду), кроме
+// Заполняет список чекбоксов «Соседи» всеми активными регионами (по коду), кроме
 // самого региона (selfCode). selectedCsv — текущее Region.neighbors
 // (запятая-список кодов) для пометки выбранных. Соседи — равные регионы, чьи
 // #Новости репостятся (см. neighbor-обмен, modules/cascaded_digest).
@@ -872,18 +872,33 @@ function populateNeighborsSelect(selectEl, selectedCsv, selfCode) {
     const candidates = (currentRegions || [])
         .filter(r => r.code && r.code !== selfCode)
         .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    if (!candidates.length) {
+        selectEl.innerHTML = '<div class="text-muted small">Нет других регионов</div>';
+        return;
+    }
     for (const r of candidates) {
-        const opt = document.createElement('option');
-        opt.value = r.code;
-        opt.textContent = `${r.name} (${r.code})`;
-        if (selected.has(String(r.code).toLowerCase())) opt.selected = true;
-        selectEl.appendChild(opt);
+        const cbId = `neighbor-${selectEl.id}-${r.code}`;
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check';
+        const input = document.createElement('input');
+        input.className = 'form-check-input neighbor-checkbox';
+        input.type = 'checkbox';
+        input.value = r.code;
+        input.id = cbId;
+        if (selected.has(String(r.code).toLowerCase())) input.checked = true;
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.htmlFor = cbId;
+        label.textContent = `${r.name} (${r.code})`;
+        wrap.appendChild(input);
+        wrap.appendChild(label);
+        selectEl.appendChild(wrap);
     }
 }
 
 // Считывает выбранные коды соседей в запятую-строку (или '' если ничего).
 function readSelectedNeighbors(selectEl) {
-    return Array.from(selectEl.selectedOptions)
+    return Array.from(selectEl.querySelectorAll('input.neighbor-checkbox:checked'))
         .map(o => o.value)
         .filter(Boolean)
         .join(',');
