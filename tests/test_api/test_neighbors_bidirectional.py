@@ -91,6 +91,41 @@ async def test_normalize_resolves_russian_names():
     assert codes == ["bal", "kukmor"]
 
 
+def test_region_label_variants_strips_info_suffix():
+    # «ЛЕБЯЖЬЕ - ИНФО» → должно дать вариант «лебяжье» для матчинга голого имени.
+    v = regions_api._region_label_variants("ЛЕБЯЖЬЕ - ИНФО", None)
+    assert "лебяжье" in v
+    assert "лебяжье - инфо" in v
+
+
+def test_region_label_variants_strips_geo_tail():
+    # «Тужа, Кировская область» → вариант «тужа».
+    v = regions_api._region_label_variants("Тужа, Кировская область", "Тужа")
+    assert "тужа" in v
+
+
+def test_region_label_variants_handles_unicode_dashes():
+    for dash in ("-", "–", "—"):
+        v = regions_api._region_label_variants(f"СОВЕТСК {dash} ИНФО", None)
+        assert "советск" in v
+
+
+@pytest.mark.asyncio
+async def test_normalize_resolves_bare_city_name_against_info_suffix():
+    # Главный кейс прод-данных: токен «лебяжье», а в БД name='ЛЕБЯЖЬЕ - ИНФО'.
+    session = _session_returning_rows(
+        [
+            ("leb", "ЛЕБЯЖЬЕ - ИНФО", None),
+            ("sovetsk", "СОВЕТСК - ИНФО", None),
+            ("ur", "УРЖУМ - ИНФО", None),
+        ]
+    )
+    codes = await regions_api._normalize_neighbor_codes(
+        session, "лебяжье, советск, уржум", "nolinsk"
+    )
+    assert codes == ["leb", "sovetsk", "ur"]
+
+
 @pytest.mark.asyncio
 async def test_normalize_resolves_by_center_city():
     session = _session_returning_rows(
