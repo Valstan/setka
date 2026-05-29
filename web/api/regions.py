@@ -25,6 +25,90 @@ router = APIRouter()
 REGION_KINDS = ("raion", "oblast", "strana")
 
 
+def _parse_neighbor_tokens(raw: str | None) -> List[str]:
+    """Разбить CSV-строку соседей в список непустых токенов (запятая или ;)."""
+    if not raw:
+        return []
+    return [t.strip() for t in raw.replace(";", ",").split(",") if t.strip()]
+
+
+async def _normalize_neighbor_codes(db: AsyncSession, raw: str | None, self_code: str) -> List[str]:
+    """Привести список соседей к валидным кодам регионов.
+
+    Движок соседского обмена (``modules.cascaded_digest.run_neighbor_digest``)
+    матчит соседей по ``Region.code.in_(codes)`` — поэтому в ``Region.neighbors``
+    должны лежать именно **коды** регионов (латиница), а не русские названия.
+    Исторически часть данных была забита названиями («кукмор», «балтаси»),
+    из-за чего обмен молча не находил соседей. Эта функция:
+
+    * принимает токен как код региона (case-insensitive) **или**
+      как ``name`` / ``center_city`` (русское название) и резолвит в код;
+    * отбрасывает неизвестные токены и сам регион (само-сосед запрещён);
+    * возвращает отсортированный уникальный список кодов.
+    """
+    tokens = _parse_neighbor_tokens(raw)
+    if not tokens:
+        return []
+
+    result = await db.execute(select(Region.code, Region.name, Region.center_city))
+    rows = result.all()
+    by_code = {r[0].lower(): r[0] for r in rows}
+    by_name: Dict[str, str] = {}
+    for code, name, center in rows:
+        for label in (name, center):
+            if label:
+                by_name.setdefault(str(label).strip().lower(), code)
+
+    resolved: List[str] = []
+    seen: set[str] = set()
+    self_lower = (self_code or "").lower()
+    for tok in tokens:
+        low = tok.lower()
+        code = by_code.get(low) or by_name.get(low)
+        if not code:
+            continue
+        if code.lower() == self_lower:
+            continue
+        if code not in seen:
+            seen.add(code)
+            resolved.append(code)
+    return sorted(resolved)
+
+
+async def _sync_bidirectional_neighbors(
+    db: AsyncSession, self_code: str, old_csv: str | None, new_codes: List[str]
+) -> None:
+    """Сделать связь соседей обоюдной (двунаправленной).
+
+    Если у региона A в соседях появился B — у B тоже должен появиться A; если
+    A убрал B из соседей — A исчезает из соседей B. Меняем только затронутые
+    регионы (added ∪ removed), не трогая остальных. Без ``commit`` — вызывающий
+    делает его в общей транзакции вместе с записью самого региона.
+    """
+    old_set = {c.lower() for c in _parse_neighbor_tokens(old_csv)}
+    new_set = {c.lower() for c in new_codes}
+    added = [c for c in new_codes if c.lower() not in old_set]
+    removed = [c for c in _parse_neighbor_tokens(old_csv) if c.lower() not in new_set]
+
+    affected = {c for c in added} | {c for c in removed}
+    if not affected:
+        return
+
+    result = await db.execute(select(Region).where(Region.code.in_(list(affected))))
+    regions = {r.code: r for r in result.scalars().all()}
+
+    added_lower = {c.lower() for c in added}
+    for code, region in regions.items():
+        cur = _parse_neighbor_tokens(region.neighbors)
+        cur_lower = {c.lower() for c in cur}
+        if code.lower() in added_lower:
+            if self_code.lower() not in cur_lower:
+                cur.append(self_code)
+        else:  # removed
+            cur = [c for c in cur if c.lower() != self_code.lower()]
+        region.neighbors = ",".join(sorted(set(cur))) or None
+
+
 class RegionCreate(BaseModel):
     """Region create model"""
 
@@ -424,6 +508,10 @@ async def create_region(region_data: RegionCreate, db: AsyncSession = Depends(ge
             status_code=400, detail=f"Region with code '{region_data.code}' already exists"
         )
 
+    # Соседи: нормализуем в коды регионов (UI отдаёт коды, но API защищаем от
+    # русских названий) и делаем связь обоюдной (см. _sync_bidirectional_neighbors).
+    neighbor_codes = await _normalize_neighbor_codes(db, region_data.neighbors, region_data.code)
+
     # Создание record — `kind` валидируется pydantic-pattern на raion/oblast/strana,
     # `parent_region_id` принимаем без доп. проверки целостности (FK на уровне БД).
     new_region = Region(
@@ -431,7 +519,7 @@ async def create_region(region_data: RegionCreate, db: AsyncSession = Depends(ge
         name=region_data.name,
         vk_group_id=region_data.vk_group_id,
         telegram_channel=region_data.telegram_channel,
-        neighbors=region_data.neighbors,
+        neighbors=(",".join(neighbor_codes) or None),
         local_hashtags=region_data.local_hashtags,
         is_active=region_data.is_active,
         vk_city_id=region_data.vk_city_id,
@@ -443,6 +531,7 @@ async def create_region(region_data: RegionCreate, db: AsyncSession = Depends(ge
     )
 
     db.add(new_region)
+    await _sync_bidirectional_neighbors(db, region_data.code, None, neighbor_codes)
     await db.commit()
     await db.refresh(new_region)
 
@@ -479,8 +568,23 @@ async def update_region(
 
     # Update fields
     update_data = region_data.dict(exclude_unset=True)
+
+    # Соседи обрабатываем отдельно: нормализуем в коды регионов + делаем связь
+    # обоюдной (если A добавил B в соседи — B получает A, и наоборот при удалении).
+    neighbors_in_update = "neighbors" in update_data
+    new_neighbor_codes: List[str] = []
+    old_csv = region.neighbors
+    if neighbors_in_update:
+        new_neighbor_codes = await _normalize_neighbor_codes(
+            db, update_data.pop("neighbors"), region.code
+        )
+
     for field, value in update_data.items():
         setattr(region, field, value)
+
+    if neighbors_in_update:
+        region.neighbors = ",".join(new_neighbor_codes) or None
+        await _sync_bidirectional_neighbors(db, region.code, old_csv, new_neighbor_codes)
 
     region.updated_at = datetime.utcnow()
 
