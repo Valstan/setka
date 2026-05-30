@@ -870,42 +870,116 @@ app.conf.beat_schedule = {
         "args": ("novost",),
         "options": {"expires": 3600},
     },
-    # Кировская область (областной дайджест из ссылок в районных постах):
-    # 45 мин — после волн novost :40
-    "postopus-kirov-oblast-6": {
-        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
-        "schedule": crontab(minute=45, hour=6),
-        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+    # ───────────────────────────────────────────────────────────────────────
+    # Областные тематические волны (community-mode oblast, 2026-05).
+    # kirov_obl перешёл с каскада (дайджест-дайджестов из районов) на свой пул
+    # communities по темам — публикует тематические дайджесты как район.
+    # Базовые темы (novost/sport/kultura/admin) область получает на ОБЩИХ волнах
+    # postopus-<theme>-* (после снятия хардкод-исключения kirov_obl). Ниже —
+    # волны под расширенную областную повестку. strict=True: волна берёт только
+    # регионы с communities ИМЕННО этой темы (районы не затрагиваются — у них
+    # таких сообществ нет). Слоты разнесены 7:30–22:00 на :50/:10 (свободны от
+    # :40/:45/:20/:30 базовых тем). Старые postopus-kirov-oblast-* (каскад) сняты.
+    "postopus-proisshestviya-8": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=8),
+        "kwargs": {"theme": "proisshestviya", "strict": True},
         "options": {"expires": 3600},
     },
-    "postopus-kirov-oblast-11": {
-        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
-        "schedule": crontab(minute=45, hour=11),
-        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+    "postopus-proisshestviya-14": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=14),
+        "kwargs": {"theme": "proisshestviya", "strict": True},
         "options": {"expires": 3600},
     },
-    "postopus-kirov-oblast-12": {
-        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
-        "schedule": crontab(minute=45, hour=12),
-        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+    "postopus-proisshestviya-20": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=20),
+        "kwargs": {"theme": "proisshestviya", "strict": True},
         "options": {"expires": 3600},
     },
-    "postopus-kirov-oblast-16": {
-        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
-        "schedule": crontab(minute=45, hour=16),
-        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+    "postopus-zhkh-7": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=7),
+        "kwargs": {"theme": "zhkh", "strict": True},
         "options": {"expires": 3600},
     },
-    "postopus-kirov-oblast-18": {
-        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
-        "schedule": crontab(minute=45, hour=18),
-        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+    "postopus-zhkh-15": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=15),
+        "kwargs": {"theme": "zhkh", "strict": True},
         "options": {"expires": 3600},
     },
-    "postopus-kirov-oblast-20": {
-        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
-        "schedule": crontab(minute=45, hour=20),
-        "kwargs": {"region_code": "kirov_obl", "theme": "oblast"},
+    "postopus-selhoz-9": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=9),
+        "kwargs": {"theme": "selhoz", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-selhoz-16": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=16),
+        "kwargs": {"theme": "selhoz", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-nauka-10": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=10),
+        "kwargs": {"theme": "nauka", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-nauka-17": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=17),
+        "kwargs": {"theme": "nauka", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-promyshlennost-11": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=11),
+        "kwargs": {"theme": "promyshlennost", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-promyshlennost-19": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=19),
+        "kwargs": {"theme": "promyshlennost", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-molodezh-12": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=12),
+        "kwargs": {"theme": "molodezh", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-molodezh-18": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=18),
+        "kwargs": {"theme": "molodezh", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-zdorovie-13": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=13),
+        "kwargs": {"theme": "zdorovie", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-zdorovie-21": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=50, hour=21),
+        "kwargs": {"theme": "zdorovie", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-priroda-12": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=10, hour=12),
+        "kwargs": {"theme": "priroda", "strict": True},
+        "options": {"expires": 3600},
+    },
+    "postopus-priroda-19": {
+        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
+        "schedule": crontab(minute=10, hour=19),
+        "kwargs": {"theme": "priroda", "strict": True},
         "options": {"expires": 3600},
     },
     # Татарстан (областной каскадный дайджест из главных групп bal/kukmor).

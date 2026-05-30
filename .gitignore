@@ -79,6 +79,12 @@ Thumbs.db
 *.temp
 temp/
 
+# discovery scratch (см. /discover_communities) — keeper-скрипты без префикса `_`
+# (scripts/discover_scan.py, scripts/seed_region_communities.py) коммитим; всё `_`-scratch — нет
+scripts/_*.json
+scripts/_*.sh
+_scan_*.json
+
 # Node modules (if any)
 node_modules/
 

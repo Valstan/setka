@@ -37,6 +37,15 @@ ALLOWED_CATEGORIES: tuple[str, ...] = (
     "kultura",
     "sport",
     "detsad",
+    # Расширенная областная повестка (community-mode oblast)
+    "proisshestviya",
+    "molodezh",
+    "nauka",
+    "promyshlennost",
+    "selhoz",
+    "zdorovie",
+    "zhkh",
+    "priroda",
     "other",
 )
 
