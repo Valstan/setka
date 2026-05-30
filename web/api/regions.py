@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -225,6 +225,23 @@ async def _ensure_region_coords(
     return geo
 
 
+def _to_negative_owner_id(v: Optional[int]) -> Optional[int]:
+    """Нормализует ``vk_group_id`` к VK owner-форме (отрицательный id группы).
+
+    Инвариант колонки ``regions.vk_group_id`` — отрицательное число (как
+    ``-168170001``): VK wall.post/wall.repost требуют отрицательный ``owner_id``
+    для групп. Модератор в /regions легко вводит «голый» положительный id —
+    так в БД попал ``tuzha=239050321`` (единственный положительный из 17).
+    Рантайм-публикация это переживает (весь publish-путь делает ``-abs``), но
+    положительный id нарушает инвариант и сбивает прямые сравнения по id без
+    ``abs``. Нормализуем на входе, чтобы он не повторился. ``None`` (поле не
+    задано в update) пропускаем без изменений.
+    """
+    if v is None:
+        return v
+    return -abs(int(v))
+
+
 class RegionCreate(BaseModel):
     """Region create model"""
 
@@ -266,6 +283,8 @@ class RegionCreate(BaseModel):
         ),
     )
 
+    _normalize_vk_group_id = validator("vk_group_id", allow_reuse=True)(_to_negative_owner_id)
+
 
 class RegionUpdate(BaseModel):
     """Region update model"""
@@ -278,6 +297,8 @@ class RegionUpdate(BaseModel):
     is_active: Optional[bool] = None
     kind: Optional[str] = Field(None, pattern="^(raion|oblast|strana)$")
     parent_region_id: Optional[int] = None
+
+    _normalize_vk_group_id = validator("vk_group_id", allow_reuse=True)(_to_negative_owner_id)
 
 
 class RegionResponse(BaseModel):
