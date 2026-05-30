@@ -3,50 +3,49 @@
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
 **Status:** ACTIVE
-**Updated:** 2026-05-29
+**Updated:** 2026-05-30
 **Branch:** main
-**Last release in prod:** `1c245e6` ([PR #82](https://github.com/Valstan/setka/pull/82)). 3/3 сервиса setka active, health 200 в 1.0s. Соседи нормализованы на проде (`scripts/normalize_neighbors.py --apply`: 12 регионов, асимметрия 0, идемпотентно).
+**Last release in prod:** `f11a4b4` ([PR #84](https://github.com/Valstan/setka/pull/84)). PR2 на проде: `backfill_region_geo.py --apply` (16 регионов в `config['geo']`), 3/3 сервиса active, health 200. Session-sync (#86) — dev-инструментарий, прод не трогает.
 
 ---
 
 ## Текущая нитка
 
-**Улучшение «соседей» + расписание дайджестов** — серия PR по запросу пользователя 2026-05-29. PR1 (соседи: UX + двунаправленность + нормализация данных) **сделан и на проде**. Остаются PR2 (автодетект гео-соседей) и PR3 (расписание области-агрегатора), плюс всплывший баг Тужи.
+**Соседи + расписание дайджестов.** PR1 (соседи: UX + двунаправленность + нормализация) и **PR2 (автоопределение гео-соседей)** — сделаны и на проде. Остаются **PR3 (расписание дайджестов области)** и **🐞 баг Тужи**.
 
-Порядок, согласованный с пользователем: ~~PR1 соседи~~ → **PR2 автодетект** → **PR3 расписание** → **баг Тужи**.
+Порядок: ~~PR1~~ → ~~PR2~~ → **PR3 расписание** → **баг Тужи**.
 
 ## Следующий шаг
 
-Пользователь поставил паузу после PR1. Кандидаты к продолжению (по согласованному порядку):
-
-1. **PR2 — автоопределение гео-соседей.** Подход (выбран пользователем): по расстоянию центров через геокодинг `center_city` (OSM Nominatim). При создании региона авто-находить соседей среди существующих + проставлять **обоюдно** (готовый `_sync_bidirectional_neighbors` в [web/api/regions.py](../web/api/regions.py)). + кнопка «Найти соседей» в UI `/regions`. ⚠️ `center_city` заполнен НЕ у всех (у большинства `None`) — нужен fallback (парсить из `name` без « - ИНФО» или ручной ввод) + кэш координат в `region.config['geo']`. Детали в [PENDING → Регионы → 🟢 PR2](PENDING_FOLLOWUPS.md).
-2. **PR3 — расписание дайджестов области.** 8 слотов/сутки 7:30–22:00 + лимит постов/выпуск (чтобы kirov_obl не выливал залпом). Править `app.conf.beat_schedule` в [tasks/celery_app.py](../tasks/celery_app.py) (`postopus-kirov-oblast-*` + `postopus-tatarstan-oblast-*`). Детали в [PENDING → Регионы → 🟢 PR3](PENDING_FOLLOWUPS.md).
-3. **🐞 Баг Тужи** — `tuzha.vk_group_id=239050321` положительный (у всех остальных отрицательный) → вероятно публикация уходит не в ту группу. Проверить знак, ожидаемый `VKPublisher.publish_digest`. Детали в [PENDING → Регионы → 🐞 Тужа](PENDING_FOLLOWUPS.md).
+1. **PR3 — расписание дайджестов области.** 8 слотов/сутки 7:30–22:00 + лимит постов/выпуск (чтобы `kirov_obl`/`tatarstan_obl` не выливали залпом). Править `app.conf.beat_schedule` в [tasks/celery_app.py](../tasks/celery_app.py) (`postopus-kirov-oblast-*` + `postopus-tatarstan-oblast-*`).
+2. **🐞 Баг Тужи** — `tuzha.vk_group_id=239050321` положительный (у остальных отрицательный) → вероятно публикация уходит не в ту группу. Проверить знак, ожидаемый `VKPublisher.publish_digest`.
 
 ## Контекст
 
 - **План:** нет активного (серия мелких PR, план в голове + PENDING).
 - **Связанные коммиты сессии:**
-  - `02418e9` ([PR #81](https://github.com/Valstan/setka/pull/81)) — соседи: чекбоксы вместо `<select multiple>`, `_normalize_neighbor_codes` + `_sync_bidirectional_neighbors` (обоюдность), `scripts/normalize_neighbors.py`, +11 тестов.
-  - `1c245e6` ([PR #82](https://github.com/Valstan/setka/pull/82)) — fix резолвера: `_region_label_variants` стрипает « - ИНФО»/гео-хвост/юникод-тире (прод dry-run показал, что без этого соседи терялись: ur 7→2, nema 8→0), +4 теста.
-- **Прод:** HEAD `1c245e6`, 3/3 active, health 200. Соседи применены (`--apply`): bal→klz,kukmor,mi,ur,vp; ur→10 соседей; асимметрия 0, само-соседей 0. Расхождений с main нет.
-- **Открытых PR:** нет (оба смержены, ветки удалены).
-- **Тесты:** 615/615 локально (было 600, +15: соседи + резолвер).
+  - `f11a4b4` ([PR #84](https://github.com/Valstan/setka/pull/84)) — PR2: гео-подсказка соседей (OSM Nominatim), endpoint `/api/regions/suggest-neighbors`, `modules/geo/geocoder.py`, `scripts/backfill_region_geo.py`, кнопка в `/regions`, +22 теста. Прод: 16 регионов геокодировано.
+  - `ec024aa` ([PR #86](https://github.com/Valstan/setka/pull/86)) — session-sync: `/close_session` стал **единственной** командой закрытия (sync-гейт `scripts/git_sync_check.sh`), SessionStart-хук-предупреждение, `/finish` удалена, правило «GitHub = источник истины между машинами» в CLAUDE.md.
+  - `3996909` ([PR #85](https://github.com/Valstan/setka/pull/85)) — fix: дубль индекса `ix_posts_status` (`create_all` падал на чистой БД). Спавн-задача из PR2-сессии, исправлена.
+- **Прод:** HEAD `f11a4b4`, 3/3 active, health 200 (~1.0s). PR2 backfill применён (`config['geo']` у 16 регионов). Session-sync (#86) на проде НЕ требуется — это dev-tooling, прод-компонента нет (Claude-сессии на прод-машине не гоняются).
+- **Открытых PR:** нет.
+- **Тесты:** 637/637 локально (615 + 22 PR2).
 
 ## Failed approaches (этой нитки)
 
-- **Тесты соседей через реальный SQLite (aiosqlite)** — первая версия `tests/test_api/test_neighbors_bidirectional.py` падала: `ModuleNotFoundError: No module named 'aiosqlite'` (в venv нет). Переписано на `AsyncMock` в стиле `tests/test_cascaded_digest.py` (проект не поднимает реальную БД в unit-тестах). **Не повторять** попытку SQLite — мокать сессию.
-- **Первая версия резолвера матчила имя как есть** (`str(label).strip().lower()`) — теряла соседей, т.к. `neighbors` забиты голыми названиями («лебяжье»), а `name`='ЛЕБЯЖЬЕ - ИНФО'. Поймано прод dry-run'ом **до** `--apply` (данные не пострадали). Фикс — `_region_label_variants` (PR #82). Урок: **всегда dry-run `normalize_neighbors.py` перед `--apply`**.
+- **PR2 — bare-name геокод без области** — омонимы уезжали (Советск→Калининград, Лебяжье→Курск). Фикс — hint родительской области в `geocode(..., region_hint=...)` (`_region_geo_hint` в [web/api/regions.py](../web/api/regions.py)). **Не геокодить центр без region_hint.** Поймано локальной верификацией (поднял локальный `setka` с копией прод-данных) ДО прода.
+- **PR1 — тесты соседей через реальный SQLite** — нет `aiosqlite` в venv; мокать сессию через `AsyncMock` (как в `tests/test_cascaded_digest.py`). Не повторять SQLite.
 
 ## Открытые вопросы для пользователя
 
-_Нет._ (Продолжение — по согласованному порядку PR2 → PR3 → баг Тужи, когда пользователь возобновит.)
+_Нет._
 
 ## Не забыть (low-priority)
 
-- **Верификация на проде:** Татарстан-Инфо разблокирован (токен добавлен сегодня) — на слотах **9:45/19:45 MSK** должен опубликовать каскад с bal/kukmor (если есть свежие ≤72ч не-рекламные посты). Проверить `/celery` или `journalctl -u setka-celery-worker | grep tatarstan`.
-- **Соседский обмен** `digest-share-neighbors-daily` (8:30) теперь имеет валидные данные — проверить первый реальный выпуск.
-- 🟢 Из прошлых сессий: `setka_digest_published_total` пуст несмотря на публикации (Prometheus); Grafana через nginx-proxy + node_exporter.
+- **Session-sync (#86) на ДРУГИХ машинах:** сделать `git pull` в setka, чтобы SessionStart-хук и новый `/close_session` там появились. Отключить Cowork «Classify session states» (Claude Desktop → вкладка Cowork → настройки) — это останавливает авто-архивацию сессий.
+- **Письмо в brain** `mailbox/to-brain/2026-05-30-session-sync-safeguard.md` отправлено — ждёт обработки brain (он оформит пул и разошлёт паттерн другим проектам).
+- **Верификация прода:** `tatarstan_obl` токен — каскад на слотах 9:45/19:45 MSK (bal/kukmor); соседский обмен `digest-share-neighbors-daily` 8:30. Проверить через `/celery`.
+- 🟢 Из прошлых сессий: `setka_digest_published_total` пуст несмотря на публикации (Prometheus).
 
 ---
 
