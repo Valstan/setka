@@ -1,0 +1,3 @@
+# Шелл-скрипты обязаны оставаться LF: CRLF ломает bash (ошибки $'\r' на Linux и
+# при запуске git_sync_check.sh как SessionStart-хука). Нормализуем на всех машинах.
+*.sh text eol=lf
