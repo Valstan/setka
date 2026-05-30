@@ -3,7 +3,7 @@ Regions API endpoints
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -17,6 +17,7 @@ from modules.digest_template import (
     compute_effective_digest_settings,
     topic_to_default_hashtag,
 )
+from modules.geo.geocoder import geocode, haversine_km
 from utils.cache import cache, invalidate_cache
 
 router = APIRouter()
@@ -143,6 +144,85 @@ async def _sync_bidirectional_neighbors(
         else:  # removed
             cur = [c for c in cur if c.lower() != self_code.lower()]
         region.neighbors = ",".join(sorted(set(cur))) or None
+
+
+def _geocodable_label(name: str | None, center_city: str | None = None) -> str | None:
+    """Имя для геокодинга центра региона.
+
+    Предпочитаем ``center_city`` (без гео-хвоста после запятой); при пустом —
+    голову ``name`` без суффикса «- ИНФО» (та же чистка, что в
+    :func:`_region_label_variants`, но возвращаем единственную метку с
+    сохранением регистра — для геокода и отображения). ``«МАЛМЫЖ - ИНФО»`` →
+    ``«МАЛМЫЖ»``, ``«Тужа, Кировская область»`` → ``«Тужа»``.
+    """
+    center = (center_city or "").split(",", 1)[0].strip()
+    if center:
+        return center
+    base = (name or "").strip()
+    if not base:
+        return None
+    head = base.split(",", 1)[0].strip()  # отрезаем «, Кировская область»
+    for dash in ("-", "–", "—"):
+        idx = head.upper().rfind(f"{dash} ИНФО")
+        if idx != -1:
+            head = head[:idx].strip()
+            break
+    return head or None
+
+
+async def _region_geo_hint(db: AsyncSession, region: Region) -> Optional[str]:
+    """Имя родительской области как гео-подсказка для дизамбигуации омонимов.
+
+    «Советск»/«Лебяжье» есть в нескольких регионах РФ — без области Nominatim
+    промахивается. Берём ``_geocodable_label`` родителя (``«Кировская область»``).
+    """
+    if not region.parent_region_id:
+        return None
+    result = await db.execute(
+        select(Region.name, Region.center_city).where(Region.id == region.parent_region_id)
+    )
+    row = result.first()
+    if not row:
+        return None
+    return _geocodable_label(row[0], row[1])
+
+
+async def _ensure_region_coords(
+    db: AsyncSession, region: Region, *, force: bool = False
+) -> Optional[Dict[str, Any]]:
+    """Вернуть закэшированные координаты центра региона или геокодировать их.
+
+    Кэш — ``region.config['geo'] = {lat, lon, label, source, geocoded_at}``.
+    При ``force`` геокодируем заново. Возвращает dict с ``lat``/``lon`` либо
+    ``None`` (пустой лейбл / геокод не удался). При успешном геокоде коммитит
+    (паттерн записи JSON — переприсваивание ``region.config``).
+    """
+    cfg: Dict[str, Any] = region.config if isinstance(region.config, dict) else {}
+    cached = cfg.get("geo")
+    if not force and isinstance(cached, dict) and "lat" in cached and "lon" in cached:
+        return cached
+
+    label = _geocodable_label(region.name, region.center_city)
+    if not label:
+        return None
+    hint = await _region_geo_hint(db, region)
+    coords = await geocode(label, region_hint=hint)
+    if not coords:
+        return None
+
+    geo = {
+        "lat": coords[0],
+        "lon": coords[1],
+        "label": label,
+        "source": "nominatim",
+        "geocoded_at": datetime.utcnow().isoformat(),
+    }
+    cfg = dict(cfg)
+    cfg["geo"] = geo
+    region.config = cfg
+    region.updated_at = datetime.utcnow()
+    await db.commit()
+    return geo
 
 
 class RegionCreate(BaseModel):
@@ -486,6 +566,114 @@ async def get_regions(skip: int = 0, limit: int = 100, db: AsyncSession = Depend
         regions_with_counts.append(region_dict)
 
     return regions_with_counts
+
+
+class NeighborSuggestion(BaseModel):
+    """Один кандидат-сосед с расстоянием до центра цели."""
+
+    code: str
+    name: str
+    distance_km: float
+    within_threshold: bool
+
+
+class SuggestNeighborsResponse(BaseModel):
+    """Ответ ``GET /suggest-neighbors``: цель + ранжированные кандидаты."""
+
+    target: Dict[str, Any]
+    suggestions: List[NeighborSuggestion]
+    not_geocoded: List[str]
+
+
+# ВАЖНО: объявлено ДО ``@router.get("/{region_code}")`` — иначе FastAPI примет
+# «suggest-neighbors» за path-параметр region_code и роут будет недостижим.
+@router.get("/suggest-neighbors", response_model=SuggestNeighborsResponse)
+async def suggest_neighbors(
+    code: Optional[str] = None,
+    label: Optional[str] = None,
+    kind: str = "raion",
+    max_km: float = 90.0,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Подсказать соседей региона по гео-близости центров (OSM-координаты).
+
+    Два режима:
+      * ``code`` — существующий регион: координаты берём из ``config['geo']``
+        (геокодим лениво, если ещё нет), ``kind`` — из самого региона;
+      * ``label`` + ``kind`` — регион ещё не создан (add-модалка): геокодим лейбл.
+
+    Чужие регионы в реквесте **не** геокодим (rate-limit Nominatim ≤1 req/s) —
+    берём только закэшированные ``config['geo']``. Не закэшированные возвращаем в
+    ``not_geocoded`` — их заполняет ``scripts/backfill_region_geo.py``. Связь
+    делается обоюдной при сохранении (см. ``_sync_bidirectional_neighbors``);
+    этот endpoint только подсказывает, ничего не применяя.
+    """
+    self_code: Optional[str] = None
+    target_kind = kind
+    target_label = label
+    target_coords: Optional[Tuple[float, float]] = None
+
+    if code:
+        result = await db.execute(select(Region).where(Region.code == code))
+        region = result.scalar_one_or_none()
+        if not region:
+            raise HTTPException(status_code=404, detail="Region not found")
+        self_code = region.code
+        target_kind = region.kind
+        geo = await _ensure_region_coords(db, region)
+        if geo:
+            target_coords = (geo["lat"], geo["lon"])
+            target_label = geo.get("label")
+    elif label:
+        target_label = _geocodable_label(label) or label
+        target_coords = await geocode(target_label)
+    else:
+        raise HTTPException(status_code=400, detail="Either 'code' or 'label' is required")
+
+    if not target_coords:
+        return {
+            "target": {"label": target_label, "lat": None, "lon": None, "geocoded": False},
+            "suggestions": [],
+            "not_geocoded": [],
+        }
+
+    # Кандидаты — регионы того же kind (raion↔raion), кроме себя и служебного 'test'.
+    # По parent_region_id НЕ фильтруем: трансграничные соседи (Татарстан↔Киров)
+    # реальны, и расстояние центров их ловит.
+    result = await db.execute(select(Region).where(Region.kind == target_kind))
+    candidates = result.scalars().all()
+
+    suggestions: List[Dict[str, Any]] = []
+    not_geocoded: List[str] = []
+    for r in candidates:
+        if r.code == self_code or r.code == "test":
+            continue
+        cfg = r.config if isinstance(r.config, dict) else {}
+        geo = cfg.get("geo")
+        if not (isinstance(geo, dict) and "lat" in geo and "lon" in geo):
+            not_geocoded.append(r.code)
+            continue
+        dist = haversine_km(target_coords, (geo["lat"], geo["lon"]))
+        suggestions.append(
+            {
+                "code": r.code,
+                "name": r.name,
+                "distance_km": round(dist, 1),
+                "within_threshold": dist <= max_km,
+            }
+        )
+    suggestions.sort(key=lambda s: s["distance_km"])
+
+    return {
+        "target": {
+            "label": target_label,
+            "lat": target_coords[0],
+            "lon": target_coords[1],
+            "geocoded": True,
+        },
+        "suggestions": suggestions,
+        "not_geocoded": sorted(not_geocoded),
+    }
 
 
 @router.get("/{region_code}", response_model=RegionResponse)

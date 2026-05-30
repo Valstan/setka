@@ -90,6 +90,10 @@
                         <small class="form-text text-muted">
                             Регион будет репостить посты с хэштегом <code>#Новости</code> с главных групп отмеченных соседей (раз в сутки). Отметьте галочками нужные регионы — связь делается обоюдной автоматически.
                         </small>
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="addSuggestNeighborsBtn"
+                                onclick="suggestNeighbors('regionNeighbors', {label: (document.getElementById('regionName').value||'').trim(), kind: document.getElementById('regionKind').value||'raion'}, this)">
+                            <i class="bi bi-geo-alt"></i> Найти соседей по гео
+                        </button>
                     </div>
                     <div class="mb-3">
                         <div class="form-check">
@@ -164,6 +168,10 @@
                         <small class="form-text text-muted">
                             Регион репостит посты с хэштегом <code>#Новости</code> с главных групп отмеченных соседей (раз в сутки). Отметьте галочками нужные регионы — связь делается обоюдной автоматически.
                         </small>
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="editSuggestNeighborsBtn"
+                                onclick="suggestNeighbors('editRegionNeighbors', {code: document.getElementById('editRegionCode').value}, this)">
+                            <i class="bi bi-geo-alt"></i> Найти соседей по гео
+                        </button>
                     </div>
                     <div class="mb-3">
                         <div class="form-check">
@@ -902,6 +910,74 @@ function readSelectedNeighbors(selectEl) {
         .map(o => o.value)
         .filter(Boolean)
         .join(',');
+}
+
+// PR2 «гео-соседи»: дёргает GET /api/regions/suggest-neighbors, пред-отмечает
+// чекбоксы соседей в радиусе порога (within_threshold) и дописывает дистанцию к
+// меткам. params: {code} (существующий регион) ИЛИ {label, kind} (add-модалка).
+// Координаты остальных регионов берутся из кэша config['geo'] — если их нет,
+// сервер вернёт not_geocoded, подсказываем прогнать backfill-скрипт.
+async function suggestNeighbors(containerId, params, btnEl) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const qs = new URLSearchParams();
+    if (params.code) {
+        qs.set('code', params.code);
+    } else if (params.label) {
+        qs.set('label', params.label);
+        qs.set('kind', params.kind || 'raion');
+    } else {
+        alert('Сначала укажите название региона.');
+        return;
+    }
+
+    const oldHtml = btnEl ? btnEl.innerHTML : null;
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Ищу…';
+    }
+    try {
+        const resp = await fetch(`/api/regions/suggest-neighbors?${qs.toString()}`);
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+        const data = await resp.json();
+        if (!data.target || !data.target.geocoded) {
+            alert('Не удалось определить координаты центра региона. Проверьте название / center_city.');
+            return;
+        }
+
+        const byCode = {};
+        (data.suggestions || []).forEach(s => { byCode[String(s.code).toLowerCase()] = s; });
+
+        let checkedN = 0;
+        container.querySelectorAll('input.neighbor-checkbox').forEach(cb => {
+            const s = byCode[String(cb.value).toLowerCase()];
+            if (!s) return;
+            const lbl = container.querySelector(`label[for="${cb.id}"]`);
+            if (lbl && !lbl.dataset.distAnnotated) {
+                lbl.textContent = `${lbl.textContent} — ${s.distance_km} км`;
+                lbl.dataset.distAnnotated = '1';
+            }
+            if (s.within_threshold) { cb.checked = true; checkedN++; }
+        });
+
+        let msg = `Отмечено ${checkedN} ближайших соседей (≤ 90 км). Проверьте галочки и сохраните.`;
+        if ((data.not_geocoded || []).length) {
+            msg += `\n\nБез координат (не учтены): ${data.not_geocoded.join(', ')}.`
+                + `\nЗапустите scripts/backfill_region_geo.py --apply, чтобы их геокодировать.`;
+        }
+        alert(msg);
+    } catch (err) {
+        alert('Ошибка поиска соседей: ' + err.message);
+    } finally {
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.innerHTML = oldHtml;
+        }
+    }
 }
 
 // Add region
