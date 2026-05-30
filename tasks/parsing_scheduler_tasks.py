@@ -21,6 +21,23 @@ WORK_TABLE_LIP_LIMIT = 1000
 WORK_TABLE_HASH_LIMIT = 5000
 
 
+def _use_cascade_digest(region_kind: str | None, region_config: Any) -> bool:
+    """Решает, собирать ли дайджест каскадом (из главных групп детей/соседей)
+    или обычным путём (из собственных ``communities`` региона).
+
+    Каскад — для ``kind in {'oblast','strana'}`` ПО УМОЛЧАНИЮ. Но если у региона
+    в ``config['digest_mode'] == 'communities'`` — он ведёт себя как район:
+    собирает тематические дайджесты из своего пула communities (см.
+    `/discover_communities`). Так ``kirov_obl`` (2026-05) перешёл с каскада на
+    собственный пул из 50+ областных источников, не варясь в новостях своих же
+    районов. ``tatarstan_obl`` / ``rf`` без флага остаются на каскаде.
+    """
+    if region_kind not in ("oblast", "strana"):
+        return False
+    mode = region_config.get("digest_mode") if isinstance(region_config, dict) else None
+    return mode != "communities"
+
+
 @shared_task(bind=True, max_retries=3)
 def parse_and_publish_theme(
     self,
@@ -82,13 +99,18 @@ def parse_and_publish_theme(
             # Каскадный дайджест для регионов kind in {'oblast','strana'} —
             # ловим по типу региона, а не по жёсткому коду, чтобы новые
             # oblast/strana работали без правки кода (см. ``docs/REGIONS_HIERARCHY.md``).
+            # ИСКЛЮЧЕНИЕ: если region.config['digest_mode']=='communities' — область
+            # ведёт себя как район (собирает из своего пула communities, а не каскадом).
             from database.models import Region as _Region
 
-            kind_result = await session.execute(
-                select(_Region.kind).where(_Region.code == region_code)
-            )
-            region_kind = kind_result.scalar_one_or_none()
-            if region_kind in ("oblast", "strana"):
+            kind_row = (
+                await session.execute(
+                    select(_Region.kind, _Region.config).where(_Region.code == region_code)
+                )
+            ).first()
+            region_kind = kind_row[0] if kind_row else None
+            region_kind_config = kind_row[1] if kind_row else None
+            if _use_cascade_digest(region_kind, region_kind_config):
                 from modules.cascaded_digest import run_cascaded_digest
 
                 return await run_cascaded_digest(
@@ -97,6 +119,13 @@ def parse_and_publish_theme(
                     theme=theme,
                     test_mode=test_mode,
                 )
+
+            # Сюда дошла либо обычный район, либо community-mode область/страна
+            # (digest_mode='communities'). Для области важно НЕ публиковать тему,
+            # которой у неё нет источников: иначе fallback «все communities» ниже
+            # сделает, напр., «Объявления» из новостных пабликов. Поэтому для
+            # community-mode oblast/strana fallback отключаем (см. шаг 4).
+            is_community_sourced_oblast = region_kind in ("oblast", "strana")
 
             # 1. Get region config
             result = await session.execute(
@@ -166,7 +195,7 @@ def parse_and_publish_theme(
             )
             community_ids = [row[0] for row in communities_result.fetchall()]
 
-            if not community_ids:
+            if not community_ids and not is_community_sourced_oblast:
                 logger.warning(
                     f"No communities found for {region_code}/{theme}; "
                     "falling back to all active communities in region"
@@ -178,7 +207,12 @@ def parse_and_publish_theme(
                 )
                 community_ids = [row[0] for row in fallback_result.fetchall()]
             if not community_ids:
-                return {"success": False, "error": "No communities found"}
+                # Для community-mode области это норма: просто нет источников
+                # этой темы (не публикуем «не свою» тему из общих пабликов).
+                msg = "No communities found"
+                if is_community_sourced_oblast:
+                    msg = f"No '{theme}' communities for community-mode region {region_code}"
+                return {"success": True, "message": msg, "posts_published": 0}
 
             # Имена сообществ для кликабельных ссылок «источник» в дайджесте
             comm_meta = await session.execute(
@@ -567,8 +601,18 @@ def run_all_regions_neighbor_share():
 
 
 @shared_task
-def run_all_regions_theme(theme: str):
-    """Run parsing for specific theme across all regions."""
+def run_all_regions_theme(theme: str, strict: bool = False):
+    """Run parsing for specific theme across all regions.
+
+    ``strict=False`` (дефолт, исторический): регион попадает в волну, если у него
+    есть communities этой темы **ИЛИ** вообще любые (fallback на «все communities»
+    в parse_and_publish_theme). Нужен для агрегатных тем (addons и т.п.).
+
+    ``strict=True``: только регионы с communities именно этой темы. Используется
+    для новых областных тем (proisshestviya/molodezh/nauka/promyshlennost/selhoz/
+    zdorovie/zhkh/priroda), чтобы волна не затягивала районы (у них таких
+    communities нет) и не плодила «не свои» дайджесты.
+    """
     from sqlalchemy import exists, select
 
     from database.connection import AsyncSessionLocal
@@ -594,13 +638,20 @@ def run_all_regions_theme(theme: str):
                 )
                 .exists()
             )
+            # NB: раньше тут был хардкод ``Region.code != "kirov_obl"`` — область
+            # держалась вне тематических волн (жила на каскад-слотах). С переходом
+            # kirov_obl на digest_mode='communities' (2026-05) исключение снято:
+            # каскадные регионы (tatarstan_obl/rf) и так отсекаются проверкой
+            # наличия communities ниже (у них пул пуст).
+            community_gate = (
+                has_theme_communities if strict else (has_theme_communities | has_any_communities)
+            )
             result = await session.execute(
                 select(Region.code).where(
                     Region.is_active.is_(True),
                     Region.vk_group_id.isnot(None),
-                    Region.code != "kirov_obl",
                     exists().where(RegionConfig.region_code == Region.code),
-                    (has_theme_communities | has_any_communities),
+                    community_gate,
                 )
             )
             return list(result.scalars().all())

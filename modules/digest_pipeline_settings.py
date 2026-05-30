@@ -29,6 +29,17 @@ POSTOPUS_DIGEST_THEMES: List[str] = [
     "setka",
     "oblast",
     "neighbors",
+    # Расширенная повестка для областных сообществ (community-mode oblast,
+    # 2026-05). Применимы к любому региону, у которого есть communities с
+    # такой category — районам не мешают (просто нет таких сообществ).
+    "proisshestviya",
+    "molodezh",
+    "nauka",
+    "promyshlennost",
+    "selhoz",
+    "zdorovie",
+    "zhkh",
+    "priroda",
 ]
 
 # Значения по умолчанию, если в БД пусто

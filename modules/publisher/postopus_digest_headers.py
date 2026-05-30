@@ -24,6 +24,15 @@ _THEME_TITLE: dict[str, str] = {
     "setka": "Сетка регионов",
     "oblast": "Главное в области",
     "neighbors": "Новости соседей",
+    # Расширенная областная повестка (community-mode oblast)
+    "proisshestviya": "Происшествия",
+    "molodezh": "Молодёжь",
+    "nauka": "Наука и образование",
+    "promyshlennost": "Экономика и промышленность",
+    "selhoz": "Сельское хозяйство",
+    "zdorovie": "Здоровье",
+    "zhkh": "ЖКХ",
+    "priroda": "Природа и туризм",
 }
 
 # Часть хештега по теме (кириллица, без #). К региональной части из
@@ -41,6 +50,15 @@ _THEME_HASHTAG_WORD: dict[str, str] = {
     "setka": "сетка",
     "oblast": "область",
     "neighbors": "соседи",
+    # Расширенная областная повестка (community-mode oblast)
+    "proisshestviya": "происшествия",
+    "molodezh": "молодёжь",
+    "nauka": "наука",
+    "promyshlennost": "экономика",
+    "selhoz": "сельхоз",
+    "zdorovie": "здоровье",
+    "zhkh": "жкх",
+    "priroda": "природа",
 }
 
 
