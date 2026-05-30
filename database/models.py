@@ -261,9 +261,10 @@ class Post(Base):
     sentiment_emotions = Column(JSON, nullable=True)  # {joy, sadness, anger, fear}
 
     # Publishing status
-    status = Column(
-        String(20), default="new", index=True
-    )  # new, analyzed, approved, published, rejected
+    # NB: индекс по status объявлен явно в __table_args__ (ix_posts_status).
+    # НЕ добавлять index=True сюда — иначе SQLAlchemy создаст второй одноимённый
+    # индекс и create_all() на чистой БД упадёт DuplicateTableError.
+    status = Column(String(20), default="new")  # new, analyzed, approved, published, rejected
     published_at = Column(DateTime, nullable=True)
     published_vk = Column(Boolean, default=False)
     published_telegram = Column(Boolean, default=False)
