@@ -2,38 +2,40 @@
 
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
-**Status:** ACTIVE
+**Status:** IDLE
 **Updated:** 2026-05-31
 **Branch:** main
-**Last release in prod:** prod на `0d2774b` ([PR #90](https://github.com/Valstan/setka/pull/90)+[#91](https://github.com/Valstan/setka/pull/91)), 3/3 active, health 200. **main ушёл вперёд на [#93](https://github.com/Valstan/setka/pull/93) (`894477d`) — деплой кода НЕ нужен** (сканер `discover_scan.py` гоняется ad-hoc из `/tmp`). Данные Малмыжа (`communities` для `mi`) засеяны прямо в прод-БД этой сессией (97→118).
+**Last release in prod:** прод на `8aa3f28` (#95+#96+#97 задеплоены), миграция 018 применена, 3/3 active, health 200.
 
 ---
 
 ## Текущая нитка
 
-**Областные дайджесты `kirov_obl` из собственного пула (community-mode) — задеплоено, верификация первых публикаций по слотам всё ещё НЕ сделана** (ждёт дневного окна 7:30–22:00 MSK; в прошлые проверки было ночное время / окно ещё не отрабатывало). Это главная незакрытая нитка.
+_Нет — нитка `kirov_obl` (community-mode область) полностью закрыта и задеплоена в этой сессии, публикация подтверждена живьём. Открытая стартовая позиция._
 
-Параллельно в этой сессии **закрыт side-task**: обкатка и доработка скила [`/discover_communities`](../.claude/commands/discover_communities.md) на **Малмыжском районе** (`mi`) — 5 новых источников в сканере, сравнение с ручным пулом, засев +21 группы. Merged в [#93](https://github.com/Valstan/setka/pull/93). Нитка завершена.
+Сессия 2026-05-31 закрыла 5 хвостов (3 кодовых PR + 2 прохода добора пула):
+- **Баг `kirov_obl`** ([#95](https://github.com/Valstan/setka/pull/95)): community-mode oblast выпадала из всех тематических волн (гейт `run_all_regions_theme` требовал строку `region_configs`, которой у области не было) → с 30.05 не публиковала ничего. Фикс гейта (пускает community-mode без `region_configs`) + миграция 018 (брендированные заголовки). Подтверждено публикацией `wall-168170001_3005`.
+- **UI-дропдаун** `Community.category` ([#96](https://github.com/Valstan/setka/pull/96)): 8 новых тем + устранена 4-кратная дупликация (канон `window.communityCategories`).
+- **Discovery `info_links`** ([#97](https://github.com/Valstan/setka/pull/97)): перенос источника «блок Ссылки главной» из скила в `vk_search.py` (`get_groups_by_refs`).
+- **Тонкие пулы `kirov_obl`**: добор через `/discover_communities` — sport 1→4, selhoz 2→5, zdorovie 2→3 (пул 53→60).
 
 ## Следующий шаг
 
-1. **Проверить первые реальные публикации `kirov_obl`** по тематическим слотам днём (окно 7:30–22:00 MSK): `/celery` (последние публикации + cooldown) или `ssh setka "tail -200 /home/valstan/SETKA/logs/celery-worker.log | grep -i kirov_obl"`. Ожидаем дайджесты в `vk.com/kirovskaya_info` через токен `COMM_168170001`. Если пусто/ошибки — смотреть отбор в `run_all_regions_theme` + `parse_and_publish_theme` для `kirov_obl`.
-2. **Добрать тонкие темы** `kirov_obl` через `/discover_communities`: `selhoz`/`zdorovie`/`sport` — мало источников.
-3. Опц. перевести `tatarstan_obl` на community-mode (сейчас на каскаде — backward-compat).
+Активной нитки нет. Кандидатные стартовые точки (из PENDING_FOLLOWUPS, по убыванию ценности):
+
+1. **`tatarstan_obl` → community-mode** — по образцу kirov_obl: `regions.config->>'digest_mode'='communities'` + засев пула через `/discover_communities`. **Сначала** добавить community-токен `COMM_239149826` (vk.com/tatar_stan_info) через `/tokens` — без него `wall.post` падает.
+2. **Точечно добрать ВятГАТУ** в `selhoz` пул kirov_obl (флагман-агроуниверситет не всплыл в 2 проходах скила) — резолвить хэндл напрямую через `groups.getById screen_name`.
+3. Мелкие 🟢 из PENDING: стоп-словарь омонимов locality-стема; UI `changed_category` quick-action; тёмная тема UI.
 
 ## Контекст
 
-- **План:** для `kirov_obl` — нет отдельного файла. План Малмыжа — `C:\Users\valstan\.claude\plans\modular-percolating-bunny.md` (выполнен полностью).
+- **План:** нет активного плана.
 - **Связанные коммиты сессии:**
-  - `894477d` ([PR #93](https://github.com/Valstan/setka/pull/93)) — feat(discovery): район-источники скила `discover_communities` (локалити-автозапросы, репосты/упоминания/блок «Ссылки» главной, `newsfeed.search`, краулинг подписок) + locality-скоринг + засев Малмыжа +21 (пул 97→118) + 19 тестов + раздел «Режим: район» в доке + таблица канон↔легаси таксономии. Деплой кода не нужен; данные Малмыжа уже в проде.
-- **Прод:** HEAD `0d2774b`, 3/3 active, health 200. main впереди на #93 (deploy не требуется). `communities` для `mi`: 97→118.
+  - `3495dea` ([#95](https://github.com/Valstan/setka/pull/95)) — fix(scheduler): гейт `run_all_regions_theme` пускает community-mode регионы без `region_configs` + миграция 018 (брендированные заголовки kirov_obl) + тест на реальный SQL гейта.
+  - `f52e187` ([#96](https://github.com/Valstan/setka/pull/96)) — feat(ui): полный список тем в дропдауне `Community.category` (канон `window.communityCategories`).
+  - `8aa3f28` ([#97](https://github.com/Valstan/setka/pull/97)) — feat(discovery): источник `info_links` (блок «Ссылки» главной) в `vk_search.py` + `VKClient.get_groups_by_refs`.
+- **Прод:** HEAD `8aa3f28`, 3/3 active, health 200. main = прод (всё задеплоено). Миграция 018 применена. Пул `kirov_obl` в БД: 60 источников.
 - **Открытых PR:** нет (этот handoff — отдельный doc-only PR).
-
-## Failed approaches (нитки kirov_obl)
-
-- **Каскадный областной дайджест («дайджест дайджестов» из главных групп районов)** — отвергнут: матрёшка-форматирование, перекос к крупным районам, замыкание на свои же районы. Заменён на собственный пул communities. **Не возвращать** для kirov_obl.
-- **VK `groups.search` + сортировка по подписчикам для подбора пула** — перекос в общегородские паблики/коммерцию, нишевые/официальные тонут. Обязательны `--per-label-top` + `--region-filter` + `--name-filter` (область) либо `--localities` + locality-скоринг (район, см. #93).
-- **Запись `vk_id`/`vk_group_id` без знака** — колонка хранит **отрицательный** id (owner_id-форма). `seed_region_communities.py` сам пишет `-abs(id)`.
 
 ## Открытые вопросы для пользователя
 
@@ -41,10 +43,9 @@ _Нет._
 
 ## Не забыть (low-priority)
 
-- 🟢 `kirov_obl`: UI-дропдаун `Community.category` не содержит новых 8 тем — добавить из `POSTOPUS_DIGEST_THEMES`.
-- 🟢 Опц. перевести `tatarstan_obl` на community-mode.
-- 🟢 **discovery (из #93, всё в [PENDING](PENDING_FOLLOWUPS.md)):** перенести район-источники из `discover_scan.py` в `vk_search.py` (beat/UI-путь разошёлся со скилом); стоп-словарь омонимов locality-стемминга (`Калинино`→`калинин`=фамилия); длинный хвост сельских пабликов <100 подписчиков — вручную (потолок API recall ≈45%); `newsfeed.search` мягко троттлит до `count:0`; `crawl-subscriptions` не работает обычным токеном (VK error 15).
-- ℹ️ В живом пуле `mi` есть положительные vk_id (личные профили блогеров) и дубль `-156168183` — гигиена данных, не срочно.
+- 🟢 `tatarstan_obl` community-mode ждёт токен `COMM_239149826`.
+- 🟢 ВятГАТУ в selhoz пул kirov_obl (точечный резолв хэндла).
+- ℹ️ discovery: newsfeed.search / crawl-subscriptions намеренно НЕ перенесены в `vk_search.py` (троттл / нужен админ-токен) — остаются скил-онли (`discover_scan.py`).
 
 ---
 
