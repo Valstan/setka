@@ -37,12 +37,7 @@
                         <label class="form-label">Категория</label>
                         <select class="form-select" id="filter-category">
                             <option value="">Все категории</option>
-                            <option value="admin">Администрация</option>
-                            <option value="novost">Новости</option>
-                            <option value="kultura">Культура</option>
-                            <option value="sport">Спорт</option>
-                            <option value="reklama">Реклама</option>
-                            <option value="other">Другое</option>
+                            <!-- опции заполняются из window.communityCategories -->
                         </select>
                     </div>
                     <div class="col-md-4">
@@ -126,12 +121,7 @@
                                 <label for="communityCategory" class="form-label">Категория <span class="text-danger">*</span></label>
                                 <select class="form-select" id="communityCategory" required>
                                     <option value="">Выберите категорию</option>
-                                    <option value="admin">Администрация</option>
-                                    <option value="novost">Новости</option>
-                                    <option value="kultura">Культура</option>
-                                    <option value="sport">Спорт</option>
-                                    <option value="reklama">Реклама</option>
-                                    <option value="other">Другое</option>
+                                    <!-- опции заполняются из window.communityCategories -->
                                 </select>
                             </div>
                         </div>
@@ -186,15 +176,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         const regions = await apiClient.getRegions();
         window.communityRegions = regions;
+        // Канонический список категорий сообществ — единственный источник истины
+        // для всех дропдаунов на странице (фильтр, модалка добавления, инлайновый
+        // select в строке таблицы) + getCategoryLabel. Совпадает с назначаемыми
+        // category из POSTOPUS_DIGEST_THEMES (modules/digest_pipeline_settings.py).
+        // Расширенная областная повестка (community-mode oblast, 2026-05) — после
+        // базовых тем, перед «Другое».
         window.communityCategories = [
             { value: 'admin', label: 'Админ' },
             { value: 'novost', label: 'Новости' },
             { value: 'kultura', label: 'Культура' },
             { value: 'sport', label: 'Спорт' },
             { value: 'reklama', label: 'Реклама' },
+            { value: 'proisshestviya', label: 'Происшествия' },
+            { value: 'molodezh', label: 'Молодёжь' },
+            { value: 'nauka', label: 'Наука' },
+            { value: 'promyshlennost', label: 'Экономика' },
+            { value: 'selhoz', label: 'Сельхоз' },
+            { value: 'zdorovie', label: 'Здоровье' },
+            { value: 'zhkh', label: 'ЖКХ' },
+            { value: 'priroda', label: 'Природа' },
             { value: 'other', label: 'Другое' }
         ];
-        
+
+        // Заполнить статические select'ы категорий из канонического списка
+        // (плейсхолдер-опция уже в разметке). Раньше опции были захардкожены в
+        // трёх местах и разъезжались — теперь один источник.
+        [
+            document.getElementById('filter-category'),
+            document.getElementById('communityCategory'),
+        ].forEach(sel => {
+            if (!sel) return;
+            window.communityCategories.forEach(cat => {
+                const opt = document.createElement('option');
+                opt.value = cat.value;
+                opt.textContent = cat.label;
+                sel.appendChild(opt);
+            });
+        });
+
         // Populate filter dropdown
         const regionFilter = document.getElementById('filter-region');
         if (regionFilter) {
@@ -343,21 +363,24 @@ function getCategoryColor(category) {
         'kultura': 'bg-warning',
         'sport': 'bg-success',
         'reklama': 'bg-danger',
+        'proisshestviya': 'bg-danger',
+        'molodezh': 'bg-info',
+        'nauka': 'bg-primary',
+        'promyshlennost': 'bg-dark',
+        'selhoz': 'bg-success',
+        'zdorovie': 'bg-success',
+        'zhkh': 'bg-warning',
+        'priroda': 'bg-success',
         'other': 'bg-secondary'
     };
     return colors[category] || 'bg-secondary';
 }
 
 function getCategoryLabel(category) {
-    const labels = {
-        'admin': 'Админ',
-        'novost': 'Новости',
-        'kultura': 'Культура',
-        'sport': 'Спорт',
-        'reklama': 'Реклама',
-        'other': 'Другое'
-    };
-    return labels[category] || category;
+    // Источник истины — канонический список window.communityCategories.
+    const cats = window.communityCategories || [];
+    const found = cats.find(c => c.value === category);
+    return found ? found.label : category;
 }
 
 async function toggleActive(communityId, newStatus) {
