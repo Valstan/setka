@@ -646,11 +646,22 @@ def run_all_regions_theme(theme: str, strict: bool = False):
             community_gate = (
                 has_theme_communities if strict else (has_theme_communities | has_any_communities)
             )
+            # Регион допускается в волну, если у него есть строка RegionConfig
+            # **ИЛИ** он community-mode (config.digest_mode='communities'). Второе —
+            # для областей/стран, переведённых на собственный пул (kirov_obl, 2026-05):
+            # им строка RegionConfig не нужна (parse_and_publish_theme сам подставляет
+            # safe-defaults, заголовки/хэштеги имеют fallback по теме+имени региона).
+            # Без этого community-mode oblast молча выпадает из каждой волны.
+            # ``Region.config`` — generic JSON-колонка (без .astext), поэтому
+            # достаём digest_mode PG-оператором ``->>`` (возвращает text).
+            config_gate = exists().where(RegionConfig.region_code == Region.code) | (
+                Region.config.op("->>")("digest_mode") == "communities"
+            )
             result = await session.execute(
                 select(Region.code).where(
                     Region.is_active.is_(True),
                     Region.vk_group_id.isnot(None),
-                    exists().where(RegionConfig.region_code == Region.code),
+                    config_gate,
                     community_gate,
                 )
             )
