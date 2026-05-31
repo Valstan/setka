@@ -9,6 +9,7 @@ from modules.discovery.vk_search import (
     CATEGORY_KEYWORDS,
     _build_search_plan,
     _count_localities_in_text,
+    _harvest_main_group_link_refs,
     _harvest_repost_owner_ids,
     _make_stem,
     _passes_relevance,
@@ -634,3 +635,121 @@ def test_discover_skips_info_repost_for_excluded_vk_ids():
         exclude_vk_ids=[111],  # 111 уже добавлен
     )
     assert [g.vk_id for g in groups] == [222]
+
+
+# ───────── ИНФО-страница: блок «Ссылки» (info_links, портировано 2026-05-31) ─────────
+
+
+def test_harvest_main_group_link_refs_parses_and_filters():
+    """Из блока «Ссылки» забираем screen_name'ы сообществ; ``wall``/``id``
+    (посты и личные профили) и внешние домены отбрасываем; dedup."""
+    client = MagicMock()
+    client.get_groups_by_ids.return_value = [
+        {
+            "links": [
+                {"url": "https://vk.com/tuzha_sport"},
+                {"url": "https://vk.com/club12345"},
+                {"url": "https://vk.com/tuzha_sport"},  # dup
+                {"url": "https://vk.com/wall-1_2"},  # пост → исключить
+                {"url": "https://vk.com/id777"},  # личный профиль → исключить
+                {"url": "https://example.com/external"},  # не vk → no match
+                {"url": ""},  # пусто
+            ]
+        }
+    ]
+    refs = _harvest_main_group_link_refs(client, main_group_id=42)
+    assert refs == ["club12345", "tuzha_sport"]
+    # links-блок тянется через groups.getById с fields=links
+    assert client.get_groups_by_ids.call_args.kwargs["fields"] == "links"
+
+
+def test_harvest_main_group_link_refs_empty_on_error_or_no_group():
+    client = MagicMock()
+    client.get_groups_by_ids.side_effect = RuntimeError("VK error")
+    assert _harvest_main_group_link_refs(client, main_group_id=42) == []
+
+    client2 = MagicMock()
+    assert _harvest_main_group_link_refs(client2, main_group_id=0) == []
+    client2.get_groups_by_ids.assert_not_called()
+
+
+def test_discover_info_links_adds_candidates_from_links_block():
+    """Блок «Ссылки» главной → кандидаты с ``discovered_via='info_links'``."""
+    client = MagicMock()
+    client.get_wall_posts.return_value = []  # нет репостов
+    client.get_groups_by_ids.side_effect = [
+        # Step 0b: links-блок главной
+        [
+            {
+                "links": [
+                    {"url": "https://vk.com/tuzha_sport"},
+                    {"url": "https://vk.com/wall-1_2"},  # исключить
+                ]
+            }
+        ],
+        # Step 4: enrichment (кандидат уже обогащён через refs)
+        [],
+    ]
+    client.get_groups_by_refs.return_value = [
+        {"id": 777, "name": "Спорт Тужа", "members_count": 300, "screen_name": "tuzha_sport"},
+    ]
+    client.search_groups.return_value = []
+
+    groups = discover_for_region(
+        client=client,
+        center_city="Тужа",
+        vk_group_id=42,
+        localities=["Тужа"],
+        keywords=[],
+    )
+    assert [g.vk_id for g in groups] == [777]
+    assert groups[0].discovered_via == "info_links"
+    refs_arg = client.get_groups_by_refs.call_args[0][0]
+    assert "tuzha_sport" in refs_arg
+    assert not any(r.startswith("wall") or r.startswith("id") for r in refs_arg)
+
+
+def test_discover_source_priority_repost_then_links_then_search():
+    """Дедуп-приоритет: info_repost > info_links > search."""
+    client = MagicMock()
+    client.get_wall_posts.return_value = [{"copy_history": [{"owner_id": -100}]}]  # repost 100
+    client.get_groups_by_ids.side_effect = [
+        # Step 0b links: 100 (дубль репоста) + 200
+        [{"links": [{"url": "https://vk.com/club100"}, {"url": "https://vk.com/club200"}]}],
+        # Step 4 enrichment для всех id
+        [
+            {"id": 100, "name": "Тужа A", "members_count": 100},
+            {"id": 200, "name": "Тужа B", "members_count": 100},
+            {"id": 300, "name": "Тужа C", "members_count": 100},
+        ],
+    ]
+    client.get_groups_by_refs.return_value = [
+        {"id": 100, "name": "Тужа A", "members_count": 100},  # дубль репоста
+        {"id": 200, "name": "Тужа B", "members_count": 100},
+    ]
+    # search находит 200 (дубль links) и 300 (новый)
+    client.search_groups.return_value = [
+        {"id": 200, "name": "Тужа B"},
+        {"id": 300, "name": "Тужа C"},
+    ]
+    groups = discover_for_region(
+        client=client,
+        center_city="Тужа",
+        vk_group_id=42,
+        localities=["Тужа"],
+        keywords=[],
+    )
+    via = {g.vk_id: g.discovered_via for g in groups}
+    assert via[100] == "info_repost"  # репост побеждает блок «Ссылки»
+    assert via[200] == "info_links"  # блок «Ссылки» побеждает search
+    assert via[300] == "geo_search"  # только из search
+
+
+def test_discover_skips_info_links_when_no_vk_group_id():
+    client = MagicMock()
+    client.search_groups.return_value = []
+    client.get_groups_by_ids.return_value = []
+    discover_for_region(
+        client=client, center_city="Тужа", vk_group_id=None, localities=["Тужа"], keywords=[]
+    )
+    client.get_groups_by_refs.assert_not_called()

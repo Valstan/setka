@@ -142,6 +142,43 @@ def test_get_groups_by_ids_empty_input_no_call():
 
 
 # ──────────────────────────────────────────────────────────────────
+# get_groups_by_refs (screen_name / club<id> — для блока «Ссылки»)
+# ──────────────────────────────────────────────────────────────────
+
+
+def test_get_groups_by_refs_joins_string_refs():
+    client = _make_client()
+    client.vk.groups.getById.return_value = [{"id": 5, "screen_name": "a"}]
+    out = client.get_groups_by_refs(["tuzha_sport", "club123"], fields="description")
+    assert out == [{"id": 5, "screen_name": "a"}]
+    _, kwargs = client.vk.groups.getById.call_args
+    # refs передаются строкой через запятую (не abs(int) как в get_groups_by_ids)
+    assert kwargs["group_ids"] == "tuzha_sport,club123"
+    assert kwargs["fields"] == "description"
+
+
+def test_get_groups_by_refs_skips_blank_and_empty_input():
+    client = _make_client()
+    assert client.get_groups_by_refs([]) == []
+    assert client.get_groups_by_refs(["", "  ", None]) == []  # type: ignore[list-item]
+    client.vk.groups.getById.assert_not_called()
+
+
+def test_get_groups_by_refs_one_failed_chunk_does_not_abort_others():
+    client = _make_client()
+    err = vk_api.exceptions.ApiError(
+        vk=None,
+        method="groups.getById",
+        values={},
+        raw=None,
+        error={"error_code": 100, "error_msg": "boom"},
+    )
+    client.vk.groups.getById.side_effect = [err, [{"id": 999}]]
+    result = client.get_groups_by_refs([f"club{i}" for i in range(1000)])  # 2 chunks of 500
+    assert result == [{"id": 999}]
+
+
+# ──────────────────────────────────────────────────────────────────
 # resolve_city
 # ──────────────────────────────────────────────────────────────────
 
