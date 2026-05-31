@@ -69,9 +69,7 @@ class VKClient:
         if cls._rate_limiter is None:
             with cls._rate_limiter_lock:
                 if cls._rate_limiter is None:  # double-checked
-                    cls._rate_limiter = build_rate_limiter(
-                        cls.GLOBAL_PARSE_INTERVAL_SECONDS
-                    )
+                    cls._rate_limiter = build_rate_limiter(cls.GLOBAL_PARSE_INTERVAL_SECONDS)
         return cls._rate_limiter
 
     def _enforce_rate_limit(self) -> None:
@@ -286,6 +284,46 @@ class VKClient:
                 _log_vk_api_error(f"VK groups.getById batch error (size={len(chunk)})", e)
             except Exception as e:
                 logger.error(f"Unexpected groups.getById batch error (size={len(chunk)}): {e}")
+        return out
+
+    def get_groups_by_refs(
+        self,
+        refs: List[str],
+        fields: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Batch ``groups.getById`` по строковым refs (screen_name / ``club123``).
+
+        В отличие от :meth:`get_groups_by_ids` (только числовые id, делает abs),
+        принимает текстовые refs — например, screen_name'ы из блока «Ссылки»
+        главной ИНФО-страницы района. VK молча отбрасывает пользовательские
+        домены (getById вернёт только сообщества), так что лишние refs безопасны.
+
+        Args:
+            refs: список screen_name / ``club<id>`` строк (до 500 за вызов).
+            fields: comma-separated extra fields VK API.
+
+        Returns:
+            Объединённый список ``items``. Ошибка chunk'а не валит весь вызов.
+        """
+        clean = [str(r).strip() for r in (refs or []) if str(r or "").strip()]
+        if not clean:
+            return []
+        out: List[Dict[str, Any]] = []
+        batch_size = 500
+        for i in range(0, len(clean), batch_size):
+            chunk = clean[i : i + batch_size]
+            try:
+                self._enforce_rate_limit()
+                kwargs: Dict[str, Any] = {"group_ids": ",".join(chunk)}
+                if fields:
+                    kwargs["fields"] = fields
+                resp = self.vk.groups.getById(**kwargs)
+                if resp:
+                    out.extend(resp)
+            except vk_api.exceptions.ApiError as e:
+                _log_vk_api_error(f"VK groups.getById refs error (size={len(chunk)})", e)
+            except Exception as e:
+                logger.error(f"Unexpected groups.getById refs error (size={len(chunk)}): {e}")
         return out
 
     def resolve_city(

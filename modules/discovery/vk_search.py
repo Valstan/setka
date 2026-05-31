@@ -7,6 +7,11 @@ Strategy (2026-05-25 rework: localities-driven, см. PR feat/discovery-localiti
    уникальные ``copy_history.owner_id``. Это самый качественный источник —
    оператор главной страницы сам выбрал кого репостить (минимум
    false-positive). ``discovered_via='info_repost'``.
+0b. **Info-page links** (2026-05-31, портировано из скила discover_scan) — блок
+   «Ссылки» главной ИНФО-страницы (``groups.getById fields=links``). Оператор
+   часто прямо линкует партнёрские/сельские/официальные паблики — высокоточный
+   курируемый источник, который ``groups.search`` пропускает. screen_name'ы
+   резолвятся через ``groups.getById``. ``discovered_via='info_links'``.
 1. **Geo search** — ``groups.search(q="<center_city>", city_id=<vk_city_id>)``.
 2. **Localities search** — для каждого нп из ``region.config['localities']``
    шлём ``groups.search(q="<нп>")`` без city_id. Это даёт мелкие районные
@@ -309,6 +314,42 @@ def _harvest_repost_owner_ids(
     return sorted(seen_ids)
 
 
+def _harvest_main_group_link_refs(
+    client: VKClient,
+    *,
+    main_group_id: int,
+) -> List[str]:
+    """Собирает group-refs (screen_name) из блока «Ссылки» главной ИНФО-группы.
+
+    Высокоточный курируемый источник: оператор главной страницы района часто
+    прямо линкует партнёрские/сельские/официальные паблики в блоке «Ссылки»
+    (так пул обычно и собирался вручную). Эмпирика Малмыжа (скил discover_scan,
+    2026-05): блок даёт точные хиты, которые ``groups.search`` пропускает.
+
+    Возвращает refs (screen_name'ы) для резолва через
+    :meth:`VKClient.get_groups_by_refs`. ``wall``/``id`` (посты и личные профили)
+    отбрасываются. Пустой список при ошибке или отсутствии блока.
+    """
+    if not main_group_id:
+        return []
+    try:
+        groups = client.get_groups_by_ids([abs(int(main_group_id))], fields="links")
+    except Exception as e:
+        logger.warning("discovery: info_links getById failed for %s: %s", main_group_id, e)
+        return []
+    refs: set[str] = set()
+    for g in groups or []:
+        for ln in g.get("links") or []:
+            m = re.search(r"vk\.com/([A-Za-z0-9_]+)", (ln.get("url") or ""))
+            if not m:
+                continue
+            ref = m.group(1)
+            if ref.startswith("wall") or ref.startswith("id"):
+                continue
+            refs.add(ref)
+    return sorted(refs)
+
+
 def discover_for_region(
     *,
     client: VKClient,
@@ -381,6 +422,30 @@ def discover_for_region(
             # Полные metadata (name, description, members_count) заберём
             # в Step 4 общим вызовом get_groups_by_ids.
             seen[gid] = DiscoveredGroup(vk_id=gid, name="", discovered_via="info_repost")
+
+    # Step 0b: блок «Ссылки» главной ИНФО-страницы. Тоже курируемый оператором
+    # источник (партнёрские паблики, собранные в блок «Ссылки» вручную), но
+    # слабее репостов в дедупе — добавляем вторым. Резолвим screen_name'ы сразу
+    # с metadata (Step 4 их потом перепроверит общим вызовом — идемпотентно).
+    if vk_group_id:
+        link_refs = _harvest_main_group_link_refs(client, main_group_id=int(vk_group_id))
+        if link_refs:
+            try:
+                resolved = client.get_groups_by_refs(link_refs, fields=_ENRICH_FIELDS)
+            except Exception as e:
+                logger.warning("discovery: info_links resolve failed: %s", e)
+                resolved = []
+            added = 0
+            for it in resolved:
+                gid = int(it.get("id") or 0)
+                if not gid or gid in seen or gid in exclude_set:
+                    continue
+                g = _normalize_search_item(it)
+                g.discovered_via = "info_links"
+                seen[gid] = g
+                added += 1
+            if added:
+                logger.info("discovery: info_links — %d новых сообществ из блока «Ссылки»", added)
 
     # Step 1+2+3: search.
     for query, source, use_city_id in plan:
