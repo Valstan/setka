@@ -155,6 +155,8 @@ class CommunityResponse(BaseModel):
     name: str
     category: str
     is_active: bool
+    health_status: str
+    suggested_category: str | None
     last_checked: str | None
     posts_count: int
     created_at: str
@@ -163,12 +165,37 @@ class CommunityResponse(BaseModel):
         from_attributes = True
 
 
+def _community_to_dict(c: Community) -> dict:
+    """Сериализация ``Community`` в JSON-ответ.
+
+    Регион должен быть eager-loaded (``selectinload(Community.region)``) —
+    иначе обращение к ``c.region`` в async-контексте поднимет lazy-load ошибку.
+    """
+    return {
+        "id": c.id,
+        "region_id": c.region_id,
+        "region_code": c.region.code if c.region else None,
+        "region_name": c.region.name if c.region else None,
+        "vk_id": c.vk_id,
+        "screen_name": c.screen_name,
+        "name": c.name,
+        "category": c.category,
+        "is_active": c.is_active,
+        "health_status": c.health_status or "active",
+        "suggested_category": c.suggested_category,
+        "last_checked": c.last_checked.isoformat() if c.last_checked else None,
+        "posts_count": c.posts_count,
+        "created_at": c.created_at.isoformat() if c.created_at else "",
+    }
+
+
 @router.get("/", response_model=List[CommunityResponse])
 @cache(ttl=300, key_prefix="communities")  # Cache for 5 minutes
 async def get_all_communities(
     region_id: Optional[int] = None,
     category: Optional[str] = None,
     is_active: Optional[bool] = None,
+    health_status: Optional[str] = None,
     limit: int = 1000,
     skip: int = 0,
     db: AsyncSession = Depends(get_db_session),
@@ -186,6 +213,8 @@ async def get_all_communities(
         query = query.where(Community.category == category)
     if is_active is not None:
         query = query.where(Community.is_active == is_active)
+    if health_status is not None:
+        query = query.where(Community.health_status == health_status)
 
     # Apply pagination
     query = query.offset(skip).limit(limit)
@@ -193,23 +222,7 @@ async def get_all_communities(
     result = await db.execute(query.order_by(Community.category, Community.name))
     communities = result.scalars().all()
 
-    return [
-        {
-            "id": c.id,
-            "region_id": c.region_id,
-            "region_code": c.region.code if c.region else None,
-            "region_name": c.region.name if c.region else None,
-            "vk_id": c.vk_id,
-            "screen_name": c.screen_name,
-            "name": c.name,
-            "category": c.category,
-            "is_active": c.is_active,
-            "last_checked": c.last_checked.isoformat() if c.last_checked else None,
-            "posts_count": c.posts_count,
-            "created_at": c.created_at.isoformat() if c.created_at else "",
-        }
-        for c in communities
-    ]
+    return [_community_to_dict(c) for c in communities]
 
 
 @router.get("/region/{region_id}", response_model=List[CommunityResponse])
@@ -226,23 +239,7 @@ async def get_region_communities(region_id: int, db: AsyncSession = Depends(get_
     )
     communities = result.scalars().all()
 
-    return [
-        {
-            "id": c.id,
-            "region_id": c.region_id,
-            "region_code": c.region.code if c.region else None,
-            "region_name": c.region.name if c.region else None,
-            "vk_id": c.vk_id,
-            "screen_name": c.screen_name,
-            "name": c.name,
-            "category": c.category,
-            "is_active": c.is_active,
-            "last_checked": c.last_checked.isoformat() if c.last_checked else None,
-            "posts_count": c.posts_count,
-            "created_at": c.created_at.isoformat() if c.created_at else "",
-        }
-        for c in communities
-    ]
+    return [_community_to_dict(c) for c in communities]
 
 
 @router.post("/", response_model=CommunityResponse, status_code=201)
@@ -339,6 +336,8 @@ async def add_community(
             "name": new_community.name,
             "category": new_community.category,
             "is_active": new_community.is_active,
+            "health_status": new_community.health_status or "active",
+            "suggested_category": new_community.suggested_category,
             "last_checked": None,
             "posts_count": 0,
             "created_at": new_community.created_at.isoformat(),
@@ -399,20 +398,46 @@ async def update_community(
     # Invalidate communities cache
     await invalidate_cache("communities:*")
 
-    return {
-        "id": community.id,
-        "region_id": community.region_id,
-        "region_code": community.region.code if community.region else None,
-        "region_name": community.region.name if community.region else None,
-        "vk_id": community.vk_id,
-        "screen_name": community.screen_name,
-        "name": community.name,
-        "category": community.category,
-        "is_active": community.is_active,
-        "last_checked": community.last_checked.isoformat() if community.last_checked else None,
-        "posts_count": community.posts_count,
-        "created_at": community.created_at.isoformat(),
-    }
+    return _community_to_dict(community)
+
+
+@router.post("/{community_id}/apply-suggested-category", response_model=CommunityResponse)
+async def apply_suggested_category(community_id: int, db: AsyncSession = Depends(get_db_session)):
+    """Применить AI-подсказку категории одним кликом.
+
+    Weekly-recheck (``modules/discovery/health_check``) при дрейфе тематики
+    ставит ``health_status='changed_category'`` + ``suggested_category``. Этот
+    эндпоинт переносит подсказку в ``category``, сбрасывает статус в ``active``
+    и очищает подсказку — чтобы модератор не правил три поля руками.
+    """
+    from sqlalchemy.orm import selectinload
+
+    result = await db.execute(
+        select(Community)
+        .options(selectinload(Community.region))
+        .where(Community.id == community_id)
+    )
+    community = result.scalar_one_or_none()
+
+    if not community:
+        raise HTTPException(status_code=404, detail="Community not found")
+    if not community.suggested_category:
+        raise HTTPException(
+            status_code=400, detail="У сообщества нет suggested_category для применения"
+        )
+
+    community.category = community.suggested_category
+    community.suggested_category = None
+    community.health_status = "active"
+    community.updated_at = datetime.utcnow()
+
+    await db.commit()
+    await db.refresh(community)
+
+    # Invalidate communities cache
+    await invalidate_cache("communities:*")
+
+    return _community_to_dict(community)
 
 
 @router.delete("/{community_id}")
