@@ -277,6 +277,7 @@ def parse_and_publish_theme(
             # ``VKPublisher.create_with_policy`` (см. modules.vk_token_router.TokenPolicy).
             results = []
             selected_by_lip: Dict[str, Dict[str, Any]] = {}
+            mourning_header = ""  # captured for Telegram mirror (Flow A)
 
             # Regular digest
             if regular_posts:
@@ -438,6 +439,54 @@ def parse_and_publish_theme(
                     WORK_TABLE_HASH_LIMIT,
                 )
                 await session.commit()
+
+            # 8.5 Mirror published digests to Telegram (Flow A — e.g. Малмыж @malmyzh_info).
+            # Data-driven: only regions with telegram_channel set AND config.telegram_bot.
+            # Wrapped so a Telegram failure NEVER breaks VK publishing.
+            try:
+                from modules.publisher.telegram_repost import mirror_digest_to_telegram
+                from modules.publisher.telegram_repost_config import (
+                    get_telegram_extra_hashtags,
+                    telegram_repost_disabled,
+                )
+
+                tg_bot = (region.config or {}).get("telegram_bot")
+                if (
+                    region.telegram_channel
+                    and tg_bot
+                    and results
+                    and not telegram_repost_disabled()
+                ):
+                    from modules.vk_monitor.vk_client_async import VKClientAsync
+
+                    extra_tags = get_telegram_extra_hashtags(region.telegram_channel)
+                    async with VKClientAsync(parse_token) as tg_vk:
+                        for kind, d, pub in results:
+                            if not pub.get("success", False):
+                                continue
+                            tg_header = header if kind == "regular" else mourning_header
+                            posts_for = [
+                                selected_by_lip[lip]
+                                for lip in d.posts_included
+                                if lip in selected_by_lip
+                            ]
+                            if not posts_for:
+                                continue
+                            await mirror_digest_to_telegram(
+                                tg_bot,
+                                region.telegram_channel,
+                                tg_header,
+                                posts_for,
+                                tg_vk,
+                                extra_hashtags=extra_tags,
+                                test_mode=test_mode,
+                            )
+            except Exception:
+                logger.exception(
+                    "Telegram mirror (Flow A) failed for %s/%s; VK publish unaffected",
+                    region_code,
+                    theme,
+                )
 
             # 9. Return result
             total_published = sum(d.post_count for _, d, _ in results)
