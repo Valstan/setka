@@ -722,3 +722,21 @@ def run_all_regions_theme(theme: str, strict: bool = False):
         r = parse_and_publish_theme.delay(rc, theme)
         results.append(r)
     return {"theme": theme, "regions": regions, "tasks": [r.id for r in results]}
+
+
+@shared_task(bind=True, max_retries=2)
+def mirror_community_to_telegram(self, community_id: int = None) -> Dict[str, Any]:
+    """Flow B: mirror a VK community wall to its Telegram channel (e.g. Гоньба).
+
+    Beat-scheduled. Defaults to the community configured via GONBA_COMMUNITY_ID.
+    Idempotent per run (WorkTable lip-dedup); failures are logged, not raised.
+    """
+
+    async def _run():
+        from database.connection import AsyncSessionLocal
+        from modules.telegram_gonba_mirror import execute_gonba_telegram_mirror
+
+        async with AsyncSessionLocal() as session:
+            return await execute_gonba_telegram_mirror(session, community_id=community_id)
+
+    return run_coro(_run())
