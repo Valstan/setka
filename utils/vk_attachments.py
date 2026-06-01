@@ -187,6 +187,37 @@ def get_video_info(attachments: Dict[str, List[Dict]]) -> List[Dict[str, Any]]:
     return videos
 
 
+async def resolve_video_url(client: Any, owner_id: int, video_id: int) -> Optional[str]:
+    """
+    Resolve a VK video attachment to a playable URL via ``video.get``.
+
+    Returns the highest available direct ``mp4_*`` file URL, then falls back to
+    ``files.external`` or the embed ``player`` URL. Callers that need a *sendable*
+    media URL (e.g. Telegram ``sendVideo``) must additionally reject embed/player
+    pages — only direct ``*.mp4`` links are uploadable by URL.
+
+    ``client`` is duck-typed: any object exposing ``async _make_request(method, params)``
+    (e.g. :class:`modules.vk_monitor.vk_client_async.VKClientAsync`). Kept here in
+    ``utils`` so publisher modules can reuse it without importing ``tasks/``.
+    """
+    try:
+        response = await client._make_request(
+            "video.get",
+            {"videos": f"{owner_id}_{video_id}"},
+        )
+        items = response.get("items", [])
+        if not items:
+            return None
+        video = items[0]
+        files = video.get("files", {}) or {}
+        for key in ("mp4_720", "mp4_480", "mp4_360", "mp4_240", "mp4_144"):
+            if files.get(key):
+                return files.get(key)
+        return files.get("external") or video.get("player")
+    except Exception:
+        return None
+
+
 def count_attachments(attachments: Dict[str, List[Dict]]) -> int:
     """Count total number of attachments."""
     return sum(len(items) for items in attachments.values())
