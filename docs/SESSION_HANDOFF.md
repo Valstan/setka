@@ -3,49 +3,46 @@
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
 **Status:** IDLE
-**Updated:** 2026-05-31
+**Updated:** 2026-06-01
 **Branch:** main
-**Last release in prod:** прод на `8aa3f28` (#95+#96+#97 задеплоены), миграция 018 применена, 3/3 active, health 200.
+**Last release in prod:** прод на `632b324` ([PR #100](https://github.com/Valstan/setka/pull/100) задеплоен), миграция 019 применена, 3/3 active, health 200.
 
 ---
 
 ## Текущая нитка
 
-_Нет — нитка `kirov_obl` (community-mode область) полностью закрыта и задеплоена в этой сессии, публикация подтверждена живьём. Открытая стартовая позиция._
+_Нет — нитка `tatarstan_obl → community-mode` полностью закрыта и задеплоена, публикация подтверждена вживую. Открытая стартовая позиция._
 
-Сессия 2026-05-31 закрыла 5 хвостов (3 кодовых PR + 2 прохода добора пула):
-- **Баг `kirov_obl`** ([#95](https://github.com/Valstan/setka/pull/95)): community-mode oblast выпадала из всех тематических волн (гейт `run_all_regions_theme` требовал строку `region_configs`, которой у области не было) → с 30.05 не публиковала ничего. Фикс гейта (пускает community-mode без `region_configs`) + миграция 018 (брендированные заголовки). Подтверждено публикацией `wall-168170001_3005`.
-- **UI-дропдаун** `Community.category` ([#96](https://github.com/Valstan/setka/pull/96)): 8 новых тем + устранена 4-кратная дупликация (канон `window.communityCategories`).
-- **Discovery `info_links`** ([#97](https://github.com/Valstan/setka/pull/97)): перенос источника «блок Ссылки главной» из скила в `vk_search.py` (`get_groups_by_refs`).
-- **Тонкие пулы `kirov_obl`**: добор через `/discover_communities` — sport 1→4, selhoz 2→5, zdorovie 2→3 (пул 53→60).
+Сессия 2026-06-01:
+- **`tatarstan_obl` → community-mode** ([PR #100](https://github.com/Valstan/setka/pull/100), merged+deployed): миграция 019 (`digest_mode='communities'` merge в json + строка `region_configs` с брендингом `#Татарстан16`). Правок кода/beat не потребовалось — гейт волн уже region-агностичен (PR #95). Пул засеян **44 источниками** через `/discover_communities` (нейро-классификация по постам: офиц. министерства/вузы/клубы РТ + новостники Казани/Челнов/районов; отсеяна коммерция/барахолки/мульти-регион). **Первая публикация подтверждена** в живой 11:40-волне novost: `wall-239149826_9` через токен `COMM_239149826`. Темы: novost 18, molodezh 6, nauka 4, zdorovie/sport/kultura 3, priroda/proisshestviya 2, admin/selhoz/zhkh 1; `promyshlennost` пуст.
+- **UI changed_category quick-action** ([PR #99](https://github.com/Valstan/setka/pull/99), **OPEN — ждёт ревью**): endpoint `POST /api/communities/{id}/apply-suggested-category` + фильтр «Здоровье» + кнопка-магия на `/communities`. +6 тестов (696/696). Чистый additive-код, миграция не нужна, только restart setka после merge.
 
 ## Следующий шаг
 
-Активной нитки нет. Кандидатные стартовые точки (из PENDING_FOLLOWUPS, по убыванию ценности):
+Активной нитки нет. Кандидатные стартовые точки (по убыванию ценности):
 
-1. **`tatarstan_obl` → community-mode** — по образцу kirov_obl: `regions.config->>'digest_mode'='communities'` + засев пула через `/discover_communities`. **Сначала** добавить community-токен `COMM_239149826` (vk.com/tatar_stan_info) через `/tokens` — без него `wall.post` падает.
-2. **Точечно добрать ВятГАТУ** в `selhoz` пул kirov_obl (флагман-агроуниверситет не всплыл в 2 проходах скила) — резолвить хэндл напрямую через `groups.getById screen_name`.
-3. Мелкие 🟢 из PENDING: стоп-словарь омонимов locality-стема; UI `changed_category` quick-action; тёмная тема UI.
+1. **Ревью + merge [PR #99](https://github.com/Valstan/setka/pull/99)** (changed_category quick-action) — код готов, CI зелёный, ждёт твоего OK на diff → `gh pr merge 99 --squash --delete-branch` → `/reliz` (restart setka, миграции нет).
+2. **Глянуть первый дайджест tatarstan** живьём: https://vk.com/wall-239149826_9 — проверить рендер заголовка «Новости Татарстана:» + `#Татарстан16`. Если тег не нравится — поправить через UI `/regions` или миграцией.
+3. **Добрать `promyshlennost`** в пул tatarstan_obl (опц.) — точечный резолв офиц. хэндлов (Татнефть/КАМАЗ/Минпромторг РТ) через `groups.getById` + `seed_region_communities.py`. См. PENDING.
 
 ## Контекст
 
 - **План:** нет активного плана.
 - **Связанные коммиты сессии:**
-  - `3495dea` ([#95](https://github.com/Valstan/setka/pull/95)) — fix(scheduler): гейт `run_all_regions_theme` пускает community-mode регионы без `region_configs` + миграция 018 (брендированные заголовки kirov_obl) + тест на реальный SQL гейта.
-  - `f52e187` ([#96](https://github.com/Valstan/setka/pull/96)) — feat(ui): полный список тем в дропдауне `Community.category` (канон `window.communityCategories`).
-  - `8aa3f28` ([#97](https://github.com/Valstan/setka/pull/97)) — feat(discovery): источник `info_links` (блок «Ссылки» главной) в `vk_search.py` + `VKClient.get_groups_by_refs`.
-- **Прод:** HEAD `8aa3f28`, 3/3 active, health 200. main = прод (всё задеплоено). Миграция 018 применена. Пул `kirov_obl` в БД: 60 источников.
-- **Открытых PR:** нет (этот handoff — отдельный doc-only PR).
+  - `632b324` ([PR #100](https://github.com/Valstan/setka/pull/100)) — feat(regions): tatarstan_obl → community-mode (миграция 019: config digest_mode + region_configs брендинг).
+  - [PR #99](https://github.com/Valstan/setka/pull/99) (ветка `feat/communities-changed-category-action`, OPEN) — feat(communities): one-click apply suggested_category.
+- **Прод:** HEAD `632b324`, 3/3 active, health 200. Миграция 019 применена. Пул `tatarstan_obl` в БД: 44 источника, публикует.
+- **Открытых PR:** [#99](https://github.com/Valstan/setka/pull/99) (код, ждёт ревью) + doc-only handoff-PR этого `/close_session`.
 
 ## Открытые вопросы для пользователя
 
-_Нет._
+- **[PR #99](https://github.com/Valstan/setka/pull/99)** ждёт твоего ревью/merge (единственный незакрытый deliverable сессии).
 
 ## Не забыть (low-priority)
 
-- 🟢 `tatarstan_obl` community-mode ждёт токен `COMM_239149826`.
-- 🟢 ВятГАТУ в selhoz пул kirov_obl (точечный резолв хэндла).
-- ℹ️ discovery: newsfeed.search / crawl-subscriptions намеренно НЕ перенесены в `vk_search.py` (троттл / нужен админ-токен) — остаются скил-онли (`discover_scan.py`).
+- 🟢 `tatarstan_obl` — добрать `promyshlennost` (пустая тема), точечный резолв хэндлов. См. PENDING.
+- ℹ️ Первый дайджест tatarstan крупный (286 постов) — «холодный старт» свежего пула, дедуп-история пустая. Следующие волны нормализуются (как было на kirov).
+- ℹ️ Локальный хэштег tatarstan — `#Татарстан16` (миррор `#Киров43`, имя+автокод). Меняется через UI `/regions`.
 
 ---
 
