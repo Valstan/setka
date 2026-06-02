@@ -1196,20 +1196,22 @@ app.conf.beat_schedule = {
             "catchup": False,
         },
     },
-    # Rolling discovery — ежедневно 03:30 MSK. Один регион в день, по
-    # очереди (самый давний last_discovery_at первым; NULL = highest priority).
-    # Только активные регионы с заполненным config (localities + center_city)
-    # и vk_group_id. Дубли с существующими communities исключаются
-    # автоматически (см. _existing_vk_ids). При появлении новых pending
-    # кандидатов — Telegram-alert. См. tasks.discovery_tasks.discover_rolling_one_region.
-    "discovery-rolling-daily": {
-        "task": "tasks.discovery_tasks.discover_rolling_one_region",
-        "schedule": crontab(hour=3, minute=30),
-        "options": {
-            "expires": 3600,
-            "catchup": False,
-        },
-    },
+    # Rolling discovery — ОТКЛЮЧЕНО 2026-06-02 (по решению владельца).
+    # Алгоритмический авто-подбор кандидатов БЕЗ нейро-классификации (Groq 403)
+    # даёт ~98% мусора: на Туже из 136 авто-кандидатов годных ≈0 — омонимы
+    # («Тужа» ↔ фраза «не тужи(ть)»), чужие сёла (Ситки→Аляска,
+    # Михайловское→Карелия), коммерция, Киров-wide паблики. Без нейронки в петле
+    # подбор ведём ВРУЧНУЮ через скил `/discover_communities` (читаем посты,
+    # классифицируем в чате). Вернуть, когда к discovery подключат нейро-фильтр.
+    # См. tasks.discovery_tasks.discover_rolling_one_region.
+    # "discovery-rolling-daily": {
+    #     "task": "tasks.discovery_tasks.discover_rolling_one_region",
+    #     "schedule": crontab(hour=3, minute=30),
+    #     "options": {
+    #         "expires": 3600,
+    #         "catchup": False,
+    #     },
+    # },
     # Copy Setka (network repost): 7,37 * * * *
     "postopus-copy-setka-07": {
         "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",

@@ -110,3 +110,23 @@ def test_region_gate_admits_community_mode_oblast_without_region_config():
         assert "communities" in sql
         # старая ветка (наличие RegionConfig) сохранена
         assert "region_configs" in sql
+
+
+def test_region_gate_admits_region_with_community_pool_without_region_config():
+    """Район с активным пулом communities попадает в волну даже без строки
+    RegionConfig и без digest_mode (онбординг-фикс 2026-06, баг Тужи).
+
+    ``config_gate`` теперь содержит OR-ветку ``has_any_communities`` — поэтому в
+    скомпилированном SQL появляется дополнительный EXISTS по ``communities``
+    (помимо ``community_gate``): для strict-темы их становится 2, для non-strict
+    — 3. До фикса было 1 и 2 соответственно.
+    """
+    strict_sql = _compiled_region_gate_sql("nauka", strict=True).lower()
+    nonstrict_sql = _compiled_region_gate_sql("novost", strict=False).lower()
+    # strict:    community_gate=has_theme (1) + config_gate.has_any (1) = 2
+    assert strict_sql.count("from communities") == 2
+    # non-strict: community_gate=has_theme|has_any (2) + config_gate.has_any (1) = 3
+    assert nonstrict_sql.count("from communities") == 3
+    # старые ветки config_gate сохранены (RegionConfig + digest_mode)
+    assert "region_configs" in strict_sql
+    assert "digest_mode" in strict_sql
