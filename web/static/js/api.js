@@ -55,8 +55,14 @@ const apiClient = {
         });
     },
 
-    async sendAdReply(id) {
-        return this.request(`/ad-cabinet/requests/${id}/send`, { method: 'POST' });
+    async sendAdReply(id, payload = {}) {
+        return this.request(`/ad-cabinet/requests/${id}/send`, {
+            method: 'POST',
+            body: JSON.stringify({
+                message: payload.message ?? null,
+                images: payload.images ?? null
+            })
+        });
     },
 
     async setAdStatus(id, status) {
@@ -68,6 +74,32 @@ const apiClient = {
 
     async getAdTemplates() {
         return this.request('/templates/?include_inactive=0');
+    },
+
+    // Ad cabinet — библиотека офферных картинок
+    async getOfferImages() {
+        return this.request('/ad-cabinet/offer-images');
+    },
+
+    async uploadOfferImage(file) {
+        const fd = new FormData();
+        fd.append('file', file);
+        // Без Content-Type вручную — браузер сам проставит multipart boundary.
+        const resp = await fetch(`${this.baseUrl}/ad-cabinet/offer-images`, {
+            method: 'POST',
+            body: fd
+        });
+        if (!resp.ok) {
+            const e = await resp.json().catch(() => ({ detail: resp.statusText }));
+            throw new Error(e.detail || `HTTP ${resp.status}`);
+        }
+        return resp.json();
+    },
+
+    async deleteOfferImage(name) {
+        return this.request(`/ad-cabinet/offer-images/${encodeURIComponent(name)}`, {
+            method: 'DELETE'
+        });
     },
 
     // Regions endpoints

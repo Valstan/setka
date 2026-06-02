@@ -182,3 +182,115 @@ async def test_set_status_published():
     out = await api.set_status(1, api.StatusIn(status="published"), db=db)
     assert out["status"] == "published"
     assert ar.status == "published"
+
+
+# ---------------------------------------------------------------- send with body/images
+
+
+async def test_send_uses_edited_message_and_selected_images(monkeypatch):
+    """Правки оператора и выбранные картинки доходят до send_message."""
+    ar = _ad_request(prepared_message="старый текст")
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=ar)
+    monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
+    monkeypatch.setattr(vk_actions, "messages_allowed", MagicMock(return_value=True))
+    captured = {}
+
+    def _fake_send(**kw):
+        captured.update(kw)
+        return {"success": True, "message_id": 7, "via": "community-token"}
+
+    monkeypatch.setattr(vk_actions, "send_message", MagicMock(side_effect=_fake_send))
+    monkeypatch.setattr(
+        api, "_build_offer_attachment", lambda *a, **k: "photo-1_2" if k.get("filenames") else ""
+    )
+
+    out = await api.send_reply(1, api.SendIn(message="новый текст", images=["a.png"]), db=db)
+    assert out["success"] is True
+    assert ar.prepared_message == "новый текст"
+    assert captured["message"] == "новый текст"
+    assert captured["attachment"] == "photo-1_2"
+
+
+async def test_send_empty_images_attaches_nothing(monkeypatch, tmp_path):
+    """Пустой список картинок = текст без вложений (выбор пуст, не legacy)."""
+    ar = _ad_request(prepared_message="привет")
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=ar)
+    monkeypatch.setattr(api, "_offer_dir", lambda: tmp_path)
+    monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
+    monkeypatch.setattr(vk_actions, "messages_allowed", MagicMock(return_value=True))
+    captured = {}
+
+    def _fake_send(**kw):
+        captured.update(kw)
+        return {"success": True, "message_id": 8, "via": "user-token"}
+
+    monkeypatch.setattr(vk_actions, "send_message", MagicMock(side_effect=_fake_send))
+    # При images=[] фильтр оставит paths пустым → '' (никаких картинок).
+    out = await api.send_reply(1, api.SendIn(message="привет", images=[]), db=db)
+    assert out["success"] is True
+    assert captured.get("attachment") is None  # 'attachment or None'
+
+
+# ---------------------------------------------------------------- offer images library
+
+
+class _FakeUpload:
+    """Минимальный stand-in для fastapi.UploadFile (нужны filename + read())."""
+
+    def __init__(self, filename, data):
+        self.filename = filename
+        self._data = data
+
+    async def read(self):
+        return self._data
+
+
+async def test_offer_images_upload_list_delete(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "_offer_dir", lambda: tmp_path)
+
+    up = await api.upload_offer_image(file=_FakeUpload("Прайс 1.png", b"\x89PNG..."))
+    assert up["name"] == "Прайс 1.png"
+    assert up["url"].startswith("/static/ad_offers/")
+    assert (tmp_path / "Прайс 1.png").is_file()
+
+    listed = await api.list_offer_images()
+    assert [i["name"] for i in listed["images"]] == ["Прайс 1.png"]
+
+    res = await api.delete_offer_image("Прайс 1.png")
+    assert res["success"] is True
+    assert not (tmp_path / "Прайс 1.png").exists()
+
+
+async def test_offer_images_reject_bad_ext(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "_offer_dir", lambda: tmp_path)
+    with pytest.raises(HTTPException) as exc:
+        await api.upload_offer_image(file=_FakeUpload("virus.exe", b"x"))
+    assert exc.value.status_code == 400
+
+
+async def test_offer_images_reject_oversize(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "_offer_dir", lambda: tmp_path)
+    big = b"x" * (api._MAX_IMG_BYTES + 1)
+    with pytest.raises(HTTPException) as exc:
+        await api.upload_offer_image(file=_FakeUpload("big.png", big))
+    assert exc.value.status_code == 400
+
+
+def test_safe_offer_name_blocks_traversal():
+    # Пустое/скрытое/«..» — отклоняем.
+    for bad in ("", "   ", "..", ".hidden"):
+        with pytest.raises(HTTPException):
+            api._safe_offer_name(bad)
+    # Traversal нейтрализуется извлечением базового имени (не уходим из каталога).
+    assert api._safe_offer_name("../secret.png") == "secret.png"
+    assert api._safe_offer_name("dir/sub/ok.png") == "ok.png"
+    assert api._safe_offer_name("/etc/passwd.png") == "passwd.png"
+
+
+async def test_delete_offer_image_404(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "_offer_dir", lambda: tmp_path)
+    with pytest.raises(HTTPException) as exc:
+        await api.delete_offer_image("nope.png")
+    assert exc.value.status_code == 404
