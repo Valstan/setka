@@ -695,16 +695,24 @@ def run_all_regions_theme(theme: str, strict: bool = False):
             community_gate = (
                 has_theme_communities if strict else (has_theme_communities | has_any_communities)
             )
-            # Регион допускается в волну, если у него есть строка RegionConfig
-            # **ИЛИ** он community-mode (config.digest_mode='communities'). Второе —
-            # для областей/стран, переведённых на собственный пул (kirov_obl, 2026-05):
-            # им строка RegionConfig не нужна (parse_and_publish_theme сам подставляет
-            # safe-defaults, заголовки/хэштеги имеют fallback по теме+имени региона).
-            # Без этого community-mode oblast молча выпадает из каждой волны.
+            # Регион допускается в волну, если выполнено ЛЮБОЕ из:
+            #   1. есть строка RegionConfig (легаси-путь, мигрировано из Mongo);
+            #   2. он community-mode (config.digest_mode='communities') — области/
+            #      страны на собственном пуле (kirov_obl/tatarstan_obl, 2026-05);
+            #   3. есть хотя бы одно активное community (``has_any_communities``).
+            # Пункт 3 (2026-06) чинит онбординг районов: новый РАЙОН из визарда
+            # `/regions/new` не получает строку region_configs (её создавала только
+            # Mongo-миграция) и без digest_mode молча выпадал из ВСЕХ волн, хотя пул
+            # источников у него есть (Тужа: 49 communities, 0 публикаций). Теперь
+            # регион публикует сразу после засева пула. ``parse_and_publish_theme``
+            # при отсутствии RegionConfig подставляет safe-defaults; заголовки/хэштеги
+            # имеют fallback по теме+имени региона.
             # ``Region.config`` — generic JSON-колонка (без .astext), поэтому
             # достаём digest_mode PG-оператором ``->>`` (возвращает text).
-            config_gate = exists().where(RegionConfig.region_code == Region.code) | (
-                Region.config.op("->>")("digest_mode") == "communities"
+            config_gate = (
+                exists().where(RegionConfig.region_code == Region.code)
+                | (Region.config.op("->>")("digest_mode") == "communities")
+                | has_any_communities
             )
             result = await session.execute(
                 select(Region.code).where(
