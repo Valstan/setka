@@ -134,6 +134,27 @@ async def load_community_tokens(session: AsyncSession) -> Dict[int, str]:
     return {t.community_id: t.token for t in q.scalars()}
 
 
+async def load_vk_routing() -> "tuple[Optional[str], Dict[int, str]]":
+    """Вернуть ``(user_token, {abs(group_id): community_token})`` для community-write.
+
+    Единая точка маршрутизации токенов для notifications + ad_cabinet (антидрейф —
+    см. предупреждение в шапке ``web/api/notifications._load_vk_routing``).
+    Открывает собственную сессию. ``user_token`` — первый живой user-кандидат из
+    ``TokenPolicy.pick(COMMUNITY_WRITE)`` (whitelist минус deny-list); ``None``
+    если живых нет.
+    """
+    from database.connection import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        policy = TokenPolicy(session)
+        candidates = await policy.pick(TokenOp.COMMUNITY_WRITE)
+        user_token = next((c.token for c in candidates if c.source == "user"), None)
+        if not user_token:
+            return None, {}
+        community_tokens = await load_community_tokens(session)
+    return user_token, community_tokens
+
+
 def pick_token(
     community_tokens: Dict[int, str],
     group_id: int,

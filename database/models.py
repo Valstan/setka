@@ -6,6 +6,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -452,6 +453,128 @@ class MessageTemplate(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class AdRequest(Base):
+    """Заявка рекламного кабинета — реклама, пойманная в предложке сообщества.
+
+    scanner (`modules/ad_cabinet/scanner.py`) детектит рекламу в предложенных
+    постах главных групп регионов (`AdvertisementFilter` + предложка-сигналы) и
+    складывает сюда. UI `/ad-cabinet` готовит персонализированный ответ
+    (`modules/ad_cabinet/message_builder.py`) для отправки автору в 1 клик.
+
+    Жизненный цикл (`status`) переживает рескан, когда предложенный пост уже
+    опубликован/удалён — поэтому Postgres, а не Redis-снимки notifications.
+    Forward-compatible с CRM фазы 3 (клиенты/оплаты по `author_vk_id`).
+    Миграция 021.
+    """
+
+    __tablename__ = "ad_requests"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    region_id = Column(Integer, ForeignKey("regions.id", ondelete="SET NULL"), nullable=True)
+
+    # VK source
+    community_vk_id = Column(BigInteger, nullable=False)  # owner_id группы (отрицательный)
+    community_name = Column(String(300), nullable=True)  # снимок для подстановки/устойчивости
+    vk_post_id = Column(
+        BigInteger, nullable=False
+    )  # id предложенного поста (стабилен, пока pending)
+
+    # Author / messaging target
+    author_vk_id = Column(BigInteger, nullable=True)  # from_id (signed; neg=группа)
+    signer_id = Column(BigInteger, nullable=True)  # человек-автор (если подписан)
+    peer_id = Column(BigInteger, nullable=True)  # цель для ЛС (обычно user)
+    author_name = Column(
+        String(300), nullable=True
+    )  # "Имя Фамилия"/имя группы; NULL если не резолвится
+    author_is_group = Column(Boolean, nullable=False, default=False)
+
+    # Post snapshot
+    text_snapshot = Column(Text, nullable=True)
+    attachments_json = Column(JSON, nullable=True)
+    photo_urls_json = Column(JSON, nullable=True)  # прямые CDN-ссылки картинок поста (показ)
+
+    # Classification
+    score = Column(Integer, nullable=False, default=0)
+    reasons_json = Column(JSON, nullable=True)  # list[str] причины
+
+    # Lifecycle
+    status = Column(
+        String(20), nullable=False, default="new", index=True
+    )  # new|contacted|skipped|published
+
+    # Messaging permission cache (isMessagesFromGroupAllowed)
+    can_message = Column(Boolean, nullable=True)
+    can_message_checked_at = Column(DateTime, nullable=True)
+
+    # Prepared reply
+    template_id = Column(Integer, nullable=True)
+    prepared_message = Column(Text, nullable=True)
+    message_attachments = Column(Text, nullable=True)  # "photo<o>_<id>,..." кэш после загрузки
+
+    # Send audit
+    via = Column(String(30), nullable=True)  # community-token|user-token|personal
+    vk_message_id = Column(BigInteger, nullable=True)
+
+    detected_at = Column(DateTime, default=datetime.utcnow)
+    contacted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return (
+            f"<AdRequest {self.id} comm={self.community_vk_id} "
+            f"post={self.vk_post_id} {self.status}>"
+        )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "region_id": self.region_id,
+            "community_vk_id": self.community_vk_id,
+            "community_name": self.community_name,
+            "vk_post_id": self.vk_post_id,
+            "author_vk_id": self.author_vk_id,
+            "signer_id": self.signer_id,
+            "peer_id": self.peer_id,
+            "author_name": self.author_name,
+            "author_is_group": self.author_is_group,
+            "text_snapshot": self.text_snapshot,
+            "attachments_json": self.attachments_json,
+            "photo_urls_json": self.photo_urls_json,
+            "score": self.score,
+            "reasons_json": self.reasons_json,
+            "status": self.status,
+            "can_message": self.can_message,
+            "can_message_checked_at": (
+                self.can_message_checked_at.isoformat() if self.can_message_checked_at else None
+            ),
+            "template_id": self.template_id,
+            "prepared_message": self.prepared_message,
+            "message_attachments": self.message_attachments,
+            "via": self.via,
+            "vk_message_id": self.vk_message_id,
+            "detected_at": self.detected_at.isoformat() if self.detected_at else None,
+            "contacted_at": (self.contacted_at.isoformat() if self.contacted_at else None),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            # Производные для UI:
+            "vk_post_url": (
+                f"https://vk.com/wall{self.community_vk_id}_{self.vk_post_id}"
+                if self.community_vk_id and self.vk_post_id
+                else None
+            ),
+            "author_url": self._author_url(),
+        }
+
+    def _author_url(self):
+        if self.author_is_group and self.author_vk_id:
+            return f"https://vk.com/club{abs(int(self.author_vk_id))}"
+        target = self.peer_id or self.author_vk_id
+        if target and int(target) > 0:
+            return f"https://vk.com/id{int(target)}"
+        return None
 
 
 class PublishSchedule(Base):

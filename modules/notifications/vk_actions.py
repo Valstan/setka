@@ -216,27 +216,37 @@ def send_message(
     user_token: str,
     community_tokens: Optional[Dict[int, str]] = None,
     random_id: Optional[int] = None,
+    attachment: Optional[str] = None,
 ) -> Dict:
     """Send a Direct Message to a conversation, from the group account.
 
-    VK API: `messages.send(peer_id, message, random_id, group_id=)`.
+    VK API: `messages.send(peer_id, message, random_id, group_id=, attachment=)`.
 
     `group_id` is the **positive** id of the community. Required for both
     token paths so VK knows which group is sending.
 
     `random_id` deduplicates retries on the VK side. Caller may pass a stable
-    value (e.g. hash of (peer_id, message)) for idempotent retries; default is
-    a one-shot random int.
+    value (e.g. the ad_request id) for idempotent retries; default is a
+    one-shot random int.
+
+    `attachment` is an optional comma-separated VK attachment string
+    (e.g. "photo123_456,photo123_457"); offer images must already be uploaded
+    to VK (see `modules/ad_cabinet/vk_photo_upload`).
 
     Returns:
         {success: True, message_id, via} on success.
-        {success: False, error_code, error} on failure.
+        {success: False, error_code, error} on failure. For VK errors
+        900/901/902 (can't message this user) also adds
+        {allowed: False, personal_deeplink} so the UI can switch to the
+        "send from a personal account" fallback (the community simply can't
+        DM a user who hasn't allowed messages — error 901).
     """
     import random
 
     community_tokens = community_tokens or {}
     message = (message or "").strip()
-    if not message:
+    attachment = (attachment or "").strip() or None
+    if not message and not attachment:
         return {
             "success": False,
             "error_code": 0,
@@ -247,12 +257,15 @@ def send_message(
         random_id = random.randint(1, 2**31 - 1)
 
     def call(api):
-        return api.messages.send(
+        params = dict(
             peer_id=int(peer_id),
             message=message,
             random_id=int(random_id),
             group_id=positive_group_id,
         )
+        if attachment:
+            params["attachment"] = attachment
+        return api.messages.send(**params)
 
     try:
         # _call_with_fallback expects a signed owner_id to look up the
@@ -282,7 +295,61 @@ def send_message(
             e.code,
             e,
         )
-        return {"success": False, "error_code": e.code, "error": str(e)}
+        resp = {"success": False, "error_code": e.code, "error": str(e)}
+        # 900 blacklist / 901 no permission / 902 privacy: сообщество не может
+        # написать этому юзеру → UI переключается на личный аккаунт.
+        if e.code in (900, 901, 902):
+            resp["allowed"] = False
+            resp["personal_deeplink"] = f"https://vk.com/im?sel={int(peer_id)}"
+        return resp
     except Exception as e:
         logger.error("Unexpected error sending message: %s", e)
         return {"success": False, "error_code": 0, "error": str(e)}
+
+
+def messages_allowed(
+    *,
+    group_id: int,
+    user_id: int,
+    user_token: str,
+    community_tokens: Optional[Dict[int, str]] = None,
+) -> Optional[bool]:
+    """Может ли сообщество писать этому юзеру (precheck перед отправкой оффера).
+
+    VK API: ``messages.isMessagesFromGroupAllowed(group_id, user_id)`` →
+    ``{is_allowed: 1|0}``. Маршрутизация — community-токен группы первым (даёт
+    осмысленный ответ в контексте группы), fallback на admin user-token.
+
+    Returns:
+        ``True``/``False`` по ответу VK; ``None`` если вызов упал (UI тогда
+        просто пробует отправить, а ``send_message`` отработает 901).
+    """
+    community_tokens = community_tokens or {}
+    positive_group_id = abs(int(group_id))
+
+    def call(api):
+        return api.messages.isMessagesFromGroupAllowed(
+            group_id=positive_group_id, user_id=int(user_id)
+        )
+
+    try:
+        resp, _via = _call_with_fallback(
+            owner_id=-positive_group_id,
+            op_name="messages.isMessagesFromGroupAllowed",
+            fn=call,
+            user_token=user_token,
+            community_tokens=community_tokens,
+        )
+        return bool(int((resp or {}).get("is_allowed", 0)))
+    except ApiError as e:
+        logger.warning(
+            "isMessagesFromGroupAllowed failed group %s user %s: [%s] %s",
+            positive_group_id,
+            user_id,
+            e.code,
+            e,
+        )
+        return None
+    except Exception as e:
+        logger.warning("isMessagesFromGroupAllowed error: %s", e)
+        return None

@@ -36,7 +36,40 @@ const apiClient = {
     async getFullHealth() {
         return this.request('/health/full');
     },
-    
+
+    // Ad cabinet endpoints
+    async getAdRequests(params = {}) {
+        const q = new URLSearchParams();
+        if (params.status) q.set('status', params.status);
+        if (params.community_vk_id) q.set('community_vk_id', params.community_vk_id);
+        if (params.date_from) q.set('date_from', params.date_from);
+        if (params.date_to) q.set('date_to', params.date_to);
+        const qs = q.toString();
+        return this.request(`/ad-cabinet/requests${qs ? '?' + qs : ''}`);
+    },
+
+    async prepareAdReply(id, templateId) {
+        return this.request(`/ad-cabinet/requests/${id}/prepare`, {
+            method: 'POST',
+            body: JSON.stringify({ template_id: templateId })
+        });
+    },
+
+    async sendAdReply(id) {
+        return this.request(`/ad-cabinet/requests/${id}/send`, { method: 'POST' });
+    },
+
+    async setAdStatus(id, status) {
+        return this.request(`/ad-cabinet/requests/${id}/status`, {
+            method: 'POST',
+            body: JSON.stringify({ status })
+        });
+    },
+
+    async getAdTemplates() {
+        return this.request('/templates/?include_inactive=0');
+    },
+
     // Regions endpoints
     async getRegions() {
         return this.request('/regions/');

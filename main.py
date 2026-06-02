@@ -20,6 +20,7 @@ from middleware.metrics_middleware import MetricsMiddleware
 from middleware.rate_limiter import RateLimitMiddleware
 from modules.module_activity_notifier import notify_system_startup
 from web.api import (
+    ad_cabinet,
     communities,
     discovery,
     filtration,
@@ -136,6 +137,7 @@ app.include_router(parsing.router, tags=["Parsing"])
 app.include_router(parsing_stats.router, tags=["Parsing Stats"])  # Postopus migration
 app.include_router(filtration.router, prefix="/api/filtration", tags=["Filtration"])
 app.include_router(templates_api.router, prefix="/api/templates", tags=["Message Templates"])
+app.include_router(ad_cabinet.router, prefix="/api/ad-cabinet", tags=["Ad Cabinet"])
 app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Discovery"])
 
 
@@ -173,6 +175,12 @@ async def notifications_page(request: Request):
 async def templates_page(request: Request):
     """Message templates CRUD page (etap 4b)"""
     return templates.TemplateResponse("templates.html", {"request": request})
+
+
+@app.get("/ad-cabinet")
+async def ad_cabinet_page(request: Request):
+    """Рекламный кабинет — инбокс рекламных заявок из предложки."""
+    return templates.TemplateResponse("ad_cabinet.html", {"request": request})
 
 
 @app.get("/regions/new")
