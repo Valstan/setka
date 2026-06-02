@@ -15,10 +15,85 @@ const STATUS_BADGE = {
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadAdTemplates();
+    await loadOfferImages();
     await loadAdRequests();
     const sel = document.getElementById('filter-status');
     if (sel) sel.addEventListener('change', loadAdRequests);
+    // Делегированное удаление картинок (имена могут содержать пробелы/кириллицу).
+    const box = document.getElementById('offer-images');
+    if (box) box.addEventListener('click', (e) => {
+        const btn = e.target.closest('.btn-del-offer');
+        if (btn) deleteOfferImage(btn.dataset.name);
+    });
 });
+
+// --------------------------------------------------- библиотека картинок
+
+async function loadOfferImages() {
+    const box = document.getElementById('offer-images');
+    if (!box) return;
+    try {
+        const data = await apiClient.getOfferImages();
+        const images = data.images || [];
+        if (!images.length) {
+            box.innerHTML = '<div class="text-muted small">Картинок пока нет. ' +
+                'Загрузите прайс / условия / портфолио (JPG или PNG).</div>';
+            return;
+        }
+        box.innerHTML = images.map((img, i) => `
+            <div class="text-center me-2 mb-2" style="width:108px;">
+                <label class="d-block" style="cursor:pointer;" title="${escapeHtml(img.name)}">
+                    <img src="${escapeHtml(img.url)}" loading="lazy"
+                         style="width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid #dee2e6;">
+                    <div class="form-check d-flex justify-content-center mt-1 mb-0">
+                        <input class="form-check-input offer-img-check" type="checkbox"
+                               value="${escapeHtml(img.name)}" id="oi-${i}">
+                    </div>
+                </label>
+                <button class="btn btn-sm btn-outline-danger py-0 px-1 btn-del-offer"
+                        data-name="${escapeHtml(img.name)}" title="Удалить">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </div>
+        `).join('');
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">Ошибка загрузки картинок: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function selectedOfferImages() {
+    return Array.from(document.querySelectorAll('.offer-img-check:checked')).map(c => c.value);
+}
+
+async function uploadOfferImages(input) {
+    const files = Array.from(input.files || []);
+    const status = document.getElementById('offer-upload-status');
+    for (const f of files) {
+        try {
+            if (status) status.textContent = `Загрузка «${f.name}»…`;
+            await apiClient.uploadOfferImage(f);
+        } catch (e) {
+            if (status) status.textContent = `Ошибка «${f.name}»: ${e.message}`;
+            input.value = '';
+            await loadOfferImages();
+            return;
+        }
+    }
+    input.value = '';
+    if (status) status.textContent = files.length ? 'Загружено ✓' : '';
+    await loadOfferImages();
+}
+
+async function deleteOfferImage(name) {
+    if (!name || !confirm(`Удалить картинку «${name}»?`)) return;
+    try {
+        await apiClient.deleteOfferImage(name);
+        await loadOfferImages();
+    } catch (e) {
+        const status = document.getElementById('offer-upload-status');
+        if (status) status.textContent = `Не удалось удалить: ${e.message}`;
+    }
+}
 
 async function loadAdTemplates() {
     const select = document.getElementById('ad-template');
@@ -149,12 +224,11 @@ async function copyCard(id) {
 async function sendCard(id) {
     const ta = document.getElementById(`prep-${id}`);
     if (!ta || !ta.value.trim()) { _res(id, 'Сначала подготовьте текст ответа.', 'danger'); return; }
-    // Сохраняем правки оператора как prepared_message нельзя (нет endpoint),
-    // поэтому отправляем то, что уже в БД (prepare). Если оператор правил вручную —
-    // пусть нажмёт «Подготовить» или скопирует и отправит с личного аккаунта.
+    // Шлём именно то, что в поле (правки оператора), + выбранные картинки.
+    const images = selectedOfferImages();
     _res(id, 'Отправляем…', 'muted');
     try {
-        const res = await apiClient.sendAdReply(id);
+        const res = await apiClient.sendAdReply(id, { message: ta.value, images });
         if (res.success) {
             _res(id, res.already_sent ? 'Уже было отправлено ранее.' : 'Отправлено от сообщества ✓', 'success');
             setTimeout(loadAdRequests, 800);

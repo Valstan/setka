@@ -19,8 +19,9 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,10 @@ router = APIRouter()
 
 _VALID_STATUSES = {"new", "contacted", "skipped", "published"}
 
+# Офферные картинки: что принимаем и сколько максимум весит загружаемый файл.
+_ALLOWED_IMG_EXT = (".jpg", ".jpeg", ".png")
+_MAX_IMG_BYTES = 12 * 1024 * 1024  # 12 МБ — с запасом под прайс-PNG
+
 
 class PrepareIn(BaseModel):
     template_id: int
@@ -41,6 +46,18 @@ class PrepareIn(BaseModel):
 
 class StatusIn(BaseModel):
     status: str
+
+
+class SendIn(BaseModel):
+    """Тело запроса отправки: правки оператора + выбранные картинки.
+
+    ``message`` — отредактированный текст ответа (приоритет над сохранённым
+    ``prepared_message``); ``images`` — имена выбранных офферных картинок
+    (``None`` = поведение по умолчанию/кэш; ``[]`` = без картинок).
+    """
+
+    message: Optional[str] = None
+    images: Optional[List[str]] = None
 
 
 def _parse_date(value: str) -> Optional[datetime]:
@@ -103,20 +120,32 @@ async def prepare_reply(
 
 
 @router.post("/requests/{request_id}/send")
-async def send_reply(request_id: int, db: AsyncSession = Depends(get_db_session)):
-    """Полу-авто отправка: от сообщества (если VK разрешает) либо deeplink."""
+async def send_reply(
+    request_id: int,
+    payload: Optional[SendIn] = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Полу-авто отправка: от сообщества (если VK разрешает) либо deeplink.
+
+    Тело письма — правки оператора из ``payload.message`` (если переданы),
+    вложения — выбранные офферные картинки из ``payload.images``.
+    """
     from modules.notifications.vk_actions import messages_allowed, send_message
     from modules.vk_token_router import load_vk_routing
 
     ar = await db.get(AdRequest, request_id)
     if not ar:
         raise HTTPException(status_code=404, detail="ad request not found")
-    if not (ar.prepared_message or "").strip():
-        raise HTTPException(status_code=400, detail="Сначала подготовьте сообщение")
 
-    # Идемпотентность: уже отправлено.
+    # Идемпотентность: уже отправлено — не трогаем текст, не шлём повторно.
     if ar.status == "contacted" and ar.vk_message_id:
         return {"success": True, "already_sent": True, "vk_message_id": ar.vk_message_id}
+
+    # Правки оператора имеют приоритет над сохранённым prepared_message.
+    if payload and payload.message is not None and payload.message.strip():
+        ar.prepared_message = payload.message.strip()
+    if not (ar.prepared_message or "").strip():
+        raise HTTPException(status_code=400, detail="Сначала подготовьте сообщение")
 
     # Автор-группа или нерезолвимый peer — ЛС невозможно.
     if ar.author_is_group or not ar.peer_id or int(ar.peer_id) <= 0:
@@ -151,9 +180,17 @@ async def send_reply(request_id: int, db: AsyncSession = Depends(get_db_session)
         }
 
     # allowed True или None (неизвестно) — пробуем отправить; 901 отработает send_message.
-    attachment = ar.message_attachments or _build_offer_attachment(
-        group_id, peer_id, community_tokens
-    )
+    # Картинки: если оператор передал выбор — грузим именно его (пустой список =
+    # без картинок); если выбор не передан — используем кэш или все офферные (legacy).
+    selected = payload.images if payload else None
+    if selected is not None:
+        attachment = _build_offer_attachment(
+            group_id, peer_id, community_tokens, filenames=selected
+        )
+    else:
+        attachment = ar.message_attachments or _build_offer_attachment(
+            group_id, peer_id, community_tokens
+        )
     res = send_message(
         group_id=group_id,
         peer_id=peer_id,
@@ -223,23 +260,51 @@ async def set_status(
 # ----------------------------------------------------------------------
 
 
-def _offer_image_paths() -> List[Path]:
-    """Файлы офферных картинок из web/static/ad_offers/ (jpg/png), отсортированы."""
+def _offer_dir() -> Path:
+    """Каталог офферных картинок (создаётся при первом обращении)."""
     d = Path(__file__).resolve().parents[1] / "static" / "ad_offers"
-    if not d.is_dir():
-        return []
-    return sorted(
-        p for p in d.iterdir() if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png")
-    )
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
-def _build_offer_attachment(group_id: int, peer_id: int, community_tokens) -> str:
+def _offer_image_paths() -> List[Path]:
+    """Файлы офферных картинок (jpg/png), отсортированы по имени."""
+    d = _offer_dir()
+    return sorted(p for p in d.iterdir() if p.is_file() and p.suffix.lower() in _ALLOWED_IMG_EXT)
+
+
+def _safe_offer_name(name: str) -> str:
+    """Базовое имя без путей. Отсекает path-traversal и скрытые файлы."""
+    base = Path(str(name or "")).name.strip()
+    if not base or base.startswith("."):
+        raise HTTPException(status_code=400, detail="Некорректное имя файла")
+    return base
+
+
+def _offer_image_dto(p: Path) -> dict:
+    return {
+        "name": p.name,
+        "url": "/static/ad_offers/" + quote(p.name),
+        "size": p.stat().st_size,
+    }
+
+
+def _build_offer_attachment(
+    group_id: int,
+    peer_id: int,
+    community_tokens,
+    filenames: Optional[List[str]] = None,
+) -> str:
     """Залить офферные картинки и вернуть attachment-строку (best-effort).
 
-    Картинки в ЛС нужно слать community-токеном группы (R4); если его нет или
-    картинок нет — возвращаем '' (оффер уйдёт текстом).
+    ``filenames`` — какие именно картинки слать (имена файлов). ``None`` =
+    все офферные (legacy). Картинки в ЛС нужно слать community-токеном группы
+    (R4); если его нет или картинок нет — возвращаем '' (оффер уйдёт текстом).
     """
     paths = _offer_image_paths()
+    if filenames is not None:
+        wanted = {Path(f).name for f in filenames}
+        paths = [p for p in paths if p.name in wanted]
     if not paths:
         return ""
     tok = (community_tokens or {}).get(abs(int(group_id)))
@@ -256,3 +321,42 @@ def _build_offer_attachment(group_id: int, peer_id: int, community_tokens) -> st
     except Exception as e:
         logger.warning("offer image upload failed: %s", e)
         return ""
+
+
+# ----------------------------------------------------------------------
+# Библиотека офферных картинок (CRUD): список / загрузка / удаление
+# ----------------------------------------------------------------------
+
+
+@router.get("/offer-images")
+async def list_offer_images():
+    """Список офферных картинок с превью-URL (для галереи в /ad-cabinet)."""
+    return {"images": [_offer_image_dto(p) for p in _offer_image_paths()]}
+
+
+@router.post("/offer-images")
+async def upload_offer_image(file: UploadFile = File(...)):
+    """Загрузить картинку в библиотеку офферов (JPG/PNG, до 12 МБ)."""
+    name = _safe_offer_name(file.filename or "offer.png")
+    if Path(name).suffix.lower() not in _ALLOWED_IMG_EXT:
+        raise HTTPException(status_code=400, detail="Только JPG или PNG")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Пустой файл")
+    if len(data) > _MAX_IMG_BYTES:
+        raise HTTPException(
+            status_code=400, detail=f"Файл больше {_MAX_IMG_BYTES // (1024 * 1024)} МБ"
+        )
+    dest = _offer_dir() / name
+    dest.write_bytes(data)
+    return _offer_image_dto(dest)
+
+
+@router.delete("/offer-images/{name}")
+async def delete_offer_image(name: str):
+    """Удалить картинку из библиотеки офферов."""
+    p = _offer_dir() / _safe_offer_name(name)
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    p.unlink()
+    return {"success": True}

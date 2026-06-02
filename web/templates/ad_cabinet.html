@@ -33,11 +33,41 @@
                     </select>
                 </div>
                 <div class="col-md-7">
-                    <label class="form-label">Шаблон ответа (для кнопки «Подготовить»)</label>
+                    <label class="form-label">Текст ответа из библиотеки (кнопка «Подготовить»)</label>
                     <select class="form-select" id="ad-template">
-                        <option value="">— нет шаблонов (создайте на «Шаблоны ответов», категория ad_offer) —</option>
+                        <option value="">— нет текстов (создайте на «Шаблоны ответов», категория ad_offer) —</option>
                     </select>
+                    <div class="form-text">
+                        Управление текстами — на странице
+                        <a href="/templates" target="_blank">«Шаблоны ответов»</a>
+                        (категория <code>ad_offer</code>). Плейсхолдеры
+                        <code>{author_name}</code> / <code>{community_name}</code>
+                        подставятся автоматически.
+                    </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <label class="form-label mb-0">
+                    <i class="bi bi-images"></i> Офферные картинки
+                    <span class="text-muted small">— отметьте, что прикрепить к ответу</span>
+                </label>
+                <label class="btn btn-sm btn-outline-primary mb-0">
+                    <i class="bi bi-upload"></i> Загрузить
+                    <input type="file" accept="image/png,image/jpeg" multiple
+                           class="d-none" onchange="uploadOfferImages(this)">
+                </label>
+            </div>
+            <div id="offer-images" class="d-flex flex-wrap align-items-start"></div>
+            <div id="offer-upload-status" class="small text-muted mt-1"></div>
+            <div class="form-text">
+                Картинки уходят в ЛС community-токеном отправляющего сообщества.
+                Если у группы нет community-токена в <a href="/tokens" target="_blank">«Токенах»</a>,
+                оффер уйдёт текстом без картинок.
             </div>
         </div>
     </div>
@@ -54,5 +84,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/js/ad_cabinet.js?v=20260602"></script>
+<script src="/static/js/ad_cabinet.js?v=20260602b"></script>
 {% endblock %}
