@@ -19,6 +19,7 @@
 | [`docs/START_HERE.md`](docs/START_HERE.md) | Быстрый старт, сервисы, команды на проде, чек-листы. |
 | [`docs/AI_DEV_GUIDE.md`](docs/AI_DEV_GUIDE.md) | Полный архитектурный гайд: модули, потоки данных, типизация, антипаттерны. |
 | [`docs/REGIONS_HIERARCHY.md`](docs/REGIONS_HIERARCHY.md) | Иерархия регионов `strana → oblast → raion`, словарь терминов, каскадный дайджест. |
+| [`docs/REGION_REFRESH_LOG.md`](docs/REGION_REFRESH_LOG.md) | **Журнал освежения регионов** — когда какой район/область освежался по канонам (добор/чистка доноров, новые фичи). Канон-чеклист + таблица приоритета + журнал событий. «Обновим следующий устаревший регион» → берём верх таблицы. |
 | [`docs/adr/`](docs/adr/) | Architectural Decision Records — «почему именно так» (см. [ADR-0001](docs/adr/0001-archive-dev-history.md) про минимализм AI-docs 2026). |
 | [`docs/PENDING_FOLLOWUPS.md`](docs/PENDING_FOLLOWUPS.md) | Открытые задачи и техдолги с приоритетами 🔴⏳🟡🟢. |
 | [`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md) | Прод-доступ — **только SSH** через `setka`. MCP не использовать. |

@@ -133,6 +133,7 @@ MVP: детект рекламы в предложке (`modules/ad_cabinet/clas
 
 ### Discovery
 
+- 🟡 **`regions.config.localities` загрязнены мусорными топонимами у части районов** (обнаружено 2026-06-02 при освежении `verhoshizhem`): в списке сёл встречаются «Москва», «Казань», «Свобода», «Песок», «Котельное», «Косино» и т.п. — это убивает locality-discovery (поиск тянет одноимённые города/коммерцию, ~98% шум). Нужен аудит `config.localities` по всем районам (особенно legacy Mongo-наследие) + чистка явных не-нп / городов-омонимов. Влияет и на `RegionalRelevanceFilter` (через `region_configs.localities`). См. журнал освежения (`docs/REGION_REFRESH_LOG.md`).
 - ~~**Relevance-фильтр пропускает омонимные стемы**~~ Закрыто 2026-05-25 ([PR #44](https://github.com/Valstan/setka/pull/44), `a7bec89`): `_passes_relevance` с center-stem requirement + ≥2 distinct stems fallback + `_LARGE_GROUP_MEMBERS_THRESHOLD=50000` для крупных пабликов. 278 ложно-релевантных групп в БД для tuzha удалены SQL'ом.
 - ~~**ChatGPT-prompt для localities — помечать омонимные нп**~~ Закрыто 2026-05-25 ([PR #47](https://github.com/Valstan/setka/pull/47), `d6249db`): prompt в `web/templates/region_prepare.html` теперь явно просит ChatGPT исключать топонимы, чьи названия совпадают с обычными русскими словами.
 - ~~**Перевести `/api/discovery/trigger` на Celery + UI polls**~~ Закрыто 2026-05-25 ([PR #49](https://github.com/Valstan/setka/pull/49), `0edf84b`): endpoint возвращает `task_id`, UI polls `/api/discovery/task/{id}/status`. Worker через `tasks/discovery_tasks.run_discovery_for_region_async`.
