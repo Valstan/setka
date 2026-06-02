@@ -102,6 +102,9 @@ const apiClient = {
         if (params.is_active !== undefined) {
             filtered = filtered.filter(c => c.is_active === params.is_active);
         }
+        if (params.health_status) {
+            filtered = filtered.filter(c => (c.health_status || 'active') === params.health_status);
+        }
 
         // Apply pagination
         const skip = parseInt(params.skip) || 0;
@@ -134,6 +137,12 @@ const apiClient = {
     async deleteCommunity(id) {
         return this.request(`/communities/${id}`, {
             method: 'DELETE'
+        });
+    },
+
+    async applySuggestedCategory(id) {
+        return this.request(`/communities/${id}/apply-suggested-category`, {
+            method: 'POST'
         });
     },
     

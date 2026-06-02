@@ -27,25 +27,35 @@
         <div class="card">
             <div class="card-body">
                 <div class="row g-3">
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label">Регион</label>
                         <select class="form-select" id="filter-region">
                             <option value="">Все регионы</option>
                         </select>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label">Категория</label>
                         <select class="form-select" id="filter-category">
                             <option value="">Все категории</option>
                             <!-- опции заполняются из window.communityCategories -->
                         </select>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label">Статус</label>
                         <select class="form-select" id="filter-active">
                             <option value="">Все</option>
                             <option value="true">Активные</option>
                             <option value="false">Неактивные</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Здоровье</label>
+                        <select class="form-select" id="filter-health">
+                            <option value="">Все</option>
+                            <option value="active">Активно</option>
+                            <option value="changed_category">Сменили тематику</option>
+                            <option value="dormant">Спящие</option>
+                            <option value="dead">Мёртвые</option>
                         </select>
                     </div>
                 </div>
@@ -244,7 +254,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadCommunities();
     
     // Filter changes
-    ['filter-region', 'filter-category', 'filter-active'].forEach(id => {
+    ['filter-region', 'filter-category', 'filter-active', 'filter-health'].forEach(id => {
         const element = document.getElementById(id);
         if (element) {
             element.addEventListener('change', () => loadCommunities());
@@ -280,7 +290,10 @@ async function loadCommunities() {
         
         const activeFilter = document.getElementById('filter-active').value;
         if (activeFilter) params.is_active = activeFilter === 'true';
-        
+
+        const healthFilter = document.getElementById('filter-health').value;
+        if (healthFilter) params.health_status = healthFilter;
+
         const communities = await apiClient.getCommunities(params);
         
         if (communities.length === 0) {
@@ -322,6 +335,11 @@ async function loadCommunities() {
                                 </option>
                             `).join('')}
                         </select>
+                        ${community.health_status === 'changed_category' && community.suggested_category ? `
+                            <div class="small text-warning mt-1" title="AI считает, что тематика сместилась">
+                                <i class="bi bi-magic"></i> AI: ${getCategoryLabel(community.suggested_category)}
+                            </div>
+                        ` : ''}
                     </td>
                     <td>
                         <span class="badge ${community.is_active ? 'bg-success' : 'bg-secondary'}">
@@ -337,6 +355,11 @@ async function loadCommunities() {
                             <button class="btn btn-outline-secondary" onclick="toggleActive(${community.id}, ${!community.is_active})" title="${community.is_active ? 'Деактивировать' : 'Активировать'}">
                                 <i class="bi ${community.is_active ? 'bi-pause' : 'bi-play'}"></i>
                             </button>
+                            ${community.health_status === 'changed_category' && community.suggested_category ? `
+                                <button class="btn btn-outline-warning" onclick="applySuggestedCategory(${community.id})" title="Применить AI-категорию «${getCategoryLabel(community.suggested_category)}»">
+                                    <i class="bi bi-magic"></i>
+                                </button>
+                            ` : ''}
                             <button class="btn btn-outline-danger" onclick="deleteCommunity(${community.id})" title="Удалить сообщество">
                                 <i class="bi bi-trash"></i>
                             </button>
@@ -477,6 +500,21 @@ async function deleteCommunity(communityId) {
         await loadCommunities();
     } catch (err) {
         alert('Ошибка удаления сообщества: ' + err.message);
+    }
+}
+
+async function applySuggestedCategory(communityId) {
+    if (!communityId) {
+        return;
+    }
+    try {
+        const updated = await apiClient.applySuggestedCategory(communityId);
+        await loadCommunities();
+        if (updated && updated.category) {
+            console.log(`Категория применена: ${getCategoryLabel(updated.category)}`);
+        }
+    } catch (err) {
+        alert('Не удалось применить AI-категорию: ' + err.message);
     }
 }
 
