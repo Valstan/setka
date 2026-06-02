@@ -424,6 +424,74 @@ def check_suggested_posts():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.scan_suggested_ads")
+def scan_suggested_ads():
+    """Скан предложки на рекламу → заявки в ad_requests (рекламный кабинет).
+
+    Каждые 30 минут 8:00-22:00 (на 25-й минуте — офсет от notification-задач).
+    Детект через AdvertisementFilter + предложка-сигналы, дедуп по
+    (community_vk_id, vk_post_id). Telegram-алерт только при НОВЫХ заявках
+    (new_total>0 — дедуп уже на уровне БД, повторных алертов не будет).
+    """
+    logger.info("=" * 80)
+    logger.info("Scanning предложка for advertisements (ad cabinet)...")
+    logger.info("=" * 80)
+
+    try:
+        from modules.ad_cabinet.scanner import run_scan
+
+        result = run_coro(run_scan())
+        new_total = int(result.get("new_total", 0))
+        if new_total > 0:
+            _maybe_alert_new_ads(new_total, result.get("regions", []))
+
+        logger.info("ad cabinet scan done: %d new ad requests", new_total)
+        return {
+            "success": result.get("success", False),
+            "timestamp": datetime.now().isoformat(),
+            "new_total": new_total,
+            "regions": result.get("regions", []),
+        }
+    except Exception as e:
+        logger.error(f"scan_suggested_ads failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
+def _maybe_alert_new_ads(new_total: int, regions: list) -> None:
+    """Telegram-алерт о новых рекламных заявках в предложке (best-effort)."""
+    try:
+        import requests as _requests
+
+        from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+
+        token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
+        chat_id = TELEGRAM_ALERT_CHAT_ID
+        if not token or not chat_id:
+            return
+        domain = (
+            SERVER.get("domain") or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+        )
+        url = f"https://{domain}/ad-cabinet"
+        by_region = ", ".join(
+            f"{r.get('region_code')}:{r.get('new')}" for r in (regions or []) if r.get("new")
+        )
+        text = (
+            f"📢 Новых рекламных заявок в предложке: <b>{new_total}</b>\n" f"{by_region}\n\n{url}"
+        )
+        _requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=15,
+        )
+    except Exception as e:
+        logger.warning(f"ad cabinet telegram alert failed: {e}")
+
+
 @app.task(name="tasks.celery_app.check_unread_messages")
 def check_unread_messages():
     """Проверка непрочитанных сообщений в главных группах регионов.
@@ -749,6 +817,15 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=15, hour="8-22"),  # Каждый час 8-22 на 15-й минуте
         "options": {
             "expires": 3000,
+            "catchup": False,
+        },
+    },
+    # Скан предложки на рекламу (рекламный кабинет) каждые 30 мин 8:00-22:00 в X:25/55
+    "scan-suggested-ads": {
+        "task": "tasks.celery_app.scan_suggested_ads",
+        "schedule": crontab(minute="25,55", hour="8-22"),
+        "options": {
+            "expires": 1500,
             "catchup": False,
         },
     },
