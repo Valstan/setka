@@ -5,48 +5,48 @@
 **Status:** IDLE
 **Updated:** 2026-06-02
 **Branch:** main
-**Last release in prod:** прод на `6e5973b` ([PR #102](https://github.com/Valstan/setka/pull/102) + [PR #103](https://github.com/Valstan/setka/pull/103) задеплоены), миграция 020 применена, 3/3 active, health 200.
+**Last release in prod:** прод на `795a64e` ([PR #105](https://github.com/Valstan/setka/pull/105) + [PR #106](https://github.com/Valstan/setka/pull/106) задеплоены, миграция 021 применена, 3/3 active, health 200). Рекламный кабинет live + наполнен контентом.
 
 ---
 
 ## Текущая нитка
 
-_Нет — нитка «восстановление Telegram-репостов» полностью закрыта и задеплоена. Открытая стартовая позиция._
+_Нет — рекламный кабинет (детект рекламы в предложке → полу-авто персонализированный ответ + библиотека текстов/картинок) доведён до рабочего состояния, задеплоен и наполнен контентом. Открытая стартовая позиция._
 
-Сессия 2026-06-02 (owner-request от brain `2026-06-01-restore-telegram-reposts.md`):
-- **Telegram-репосты восстановлены, оба потока live** ([PR #102](https://github.com/Valstan/setka/pull/102) + fix [PR #103](https://github.com/Valstan/setka/pull/103), merged+deployed):
-  - **Поток A (Малмыж):** дайджесты района `mi` (все темы) → `@malmyzh_info` ботом AFONYA. Хук в `parse_and_publish_theme` (data-driven по `region.telegram_channel`+`config.telegram_bot`, в `try/except` — сбой TG не ломает VK-публикацию). Сработает в ближайшей тематической волне `mi`.
-  - **Поток B (Гоньба):** стена ВК `-218688001` пост-за-постом → `@gonba_life` ботом VALSTANBOT. Задача `mirror_community_to_telegram` + beat `telegram-gonba-mirror` (мин. 10/40, 7–23), lip-дедуп в Postgres, ad-фильтр, cap/run. **Live-подтверждён: 3 поста ушли в `@gonba_life`.**
-  - Медиа: фото + видео (только прямые `*.mp4`), docs; текст чистится от VK-хэштегов/ссылок. Секреты только в env (pool #008): в БД канал + имя бота.
-  - Новые модули: `modules/publisher/telegram_repost.py` (+`_config.py`), `modules/telegram_gonba_mirror.py`. Миграция 020. +20 тестов (709→ зелёные).
-- **Отчёт brain'у:** `mailbox/to-brain/2026-06-02-telegram-reposts-restored.md` (kind=report, owner-request — ответ отправлен).
+Сессия 2026-06-02 (запрос владельца: автоматизировать обработку рекламы из предложки):
+- **Рекламный кабинет MVP** ([PR #105](https://github.com/Valstan/setka/pull/105), `ea305e0`, merged+deployed): детект рекламы в предложке (`modules/ad_cabinet/classifier.py` — обёртка над `AdvertisementFilter` инверсно + предложка-сигналы: контакты/внешние ссылки/оффер-слова, порог 3), инбокс `/ad-cabinet` (таблица `ad_requests`, **миграция 021**), персонализированный ответ в 1 клик (подстановка `{author_name}`/`{community_name}`), полу-авто отправка от сообщества с фолбэком на личный диалог при VK error 901. Beat `scan-suggested-ads` (:25/:55, 8–22). **Live smoke на проде:** поймал 1 рекламу в `pizhanka` (заявка #1), автор+паблик резолвлены, оффер отрендерен.
+- **Библиотека офферов** ([PR #106](https://github.com/Valstan/setka/pull/106), `795a64e`, merged+deployed, restart только setka): `GET/POST(upload)/DELETE /api/ad-cabinet/offer-images` (загрузка/удаление/выбор картинок чекбоксами + path-traversal-санитайз); `send` теперь шлёт **отредактированное оператором тело** письма + **только выбранные** картинки (фикс: раньше слался сохранённый `prepared_message`, картинки цеплялись все подряд). Библиотека текстов = `message_templates` (CRUD на `/templates`, категория `ad_offer`). +9 тестов (759 зелёных).
+- **Контент на проде:** текст-оффер «САРАФАН» залит в шаблон `message_templates` id=2; 3 картинки (тёмный/светлый/яркий) в `web/static/ad_offers/` (видны в галерее, статика отдаётся).
 
 ## Следующий шаг
 
 Активной нитки нет. Кандидатные стартовые точки (по убыванию ценности):
 
-1. **Проверить Поток A живьём:** после ближайшей тематической волны `mi` глянуть канал `@malmyzh_info` — пришёл ли дайджест Малмыжа (рендер, медиа). Если нет — `/logs --grep "Telegram mirror (Flow A)"` на worker.
-2. **Ревью + merge [PR #99](https://github.com/Valstan/setka/pull/99)** (changed_category quick-action) — давний открытый deliverable, код готов, CI зелёный, ждёт OK на diff → `gh pr merge 99 --squash --delete-branch` → `/reliz` (restart setka, миграции нет).
-3. **Добрать `promyshlennost`** в пул `tatarstan_obl` (опц., см. PENDING).
+1. **Проверить отправку оффера живьём** в `/ad-cabinet` на заявке #1 (`pizhanka`): выбрать текст → выбрать стиль картинки → «Подготовить» → «Отправить». Скорее всего VK вернёт 901 (сообщество не пишет первым) → UI даст deeplink на личный диалог + «Копировать», отправить со своего аккаунта. Реальная доставка ЛS ещё ни разу не тестировалась (smoke был только на детекте+рендере).
+2. **Покрытие community-токенов сети:** картинки уходят в ЛС community-токеном группы (R4). Проверить, у каких главных ИНФО-групп есть `COMM_<gid>` в `/tokens` — там картинки прикрепятся, у остальных оффер уйдёт текстом. Список групп со скан-предложкой: см. вывод `scan_suggested_ads` (17 регионов).
+3. **Follow-up «пустые reasons»** (🟡 в PENDING): `modules/ad_cabinet/classifier.py` — прокинуть причины/score базового `AdvertisementFilter` в `reasons` при `score >= SCORE_THRESHOLD` (сейчас при балле только от унаследованного фильтра карточка не показывает «почему реклама», как у заявки #1: score 3, reasons `[]`).
+4. **Фаза 2/3 кабинета** (🟢 в PENDING): наборы офферных картинок по регионам, bulk-действия в инбоксе, авто-send где `is_allowed=1`; CRM-учёт оплат/публикаций по клиентам (`ad_clients`/`ad_payments`/`ad_publications`).
 
 ## Контекст
 
-- **План:** [`C:\Users\valstan\.claude\plans\keen-exploring-kettle.md`](file:///C:/Users/valstan/.claude/plans/keen-exploring-kettle.md) (Telegram-репосты — выполнен).
+- **План:** нет активного файла плана (фича доведена и закрыта в рамках сессии).
 - **Связанные коммиты сессии:**
-  - `8bd1f8e` ([PR #102](https://github.com/Valstan/setka/pull/102)) — feat(telegram): оба потока репостов + миграция 020.
-  - `6e5973b` ([PR #103](https://github.com/Valstan/setka/pull/103)) — fix(telegram): test_mode dry-run не мутирует курсор.
-- **Прод:** HEAD `6e5973b`, 3/3 active, health 200. Миграция 020 применена. Гоньба зеркалится (beat), Малмыж — со следующей волны.
-- **Открытых PR:** [#99](https://github.com/Valstan/setka/pull/99) (код, ждёт ревью, не из этой сессии) + doc-only handoff-PR этого `/close_session`.
+  - `ea305e0` ([PR #105](https://github.com/Valstan/setka/pull/105)) — feat(ad-cabinet): MVP кабинета + миграция 021.
+  - `795a64e` ([PR #106](https://github.com/Valstan/setka/pull/106)) — feat(ad-cabinet): библиотека картинок + сборка письма из выбора.
+  - (вне нитки кабинета: `3161145` [PR #99] changed_category quick-action — смержен и задеплоен ранее в этой сессии.)
+- **Прод:** HEAD `795a64e`, setka/worker/beat active, health 200. Миграция 021 применена (записана в `applied_migrations`). Контент: шаблон id=2 + 3 картинки в `ad_offers/`.
+- **Открытых PR:** doc-only handoff-PR этого `/close_session` (авто-merge). Кодовых открытых PR нет.
 
 ## Открытые вопросы для пользователя
 
-- **[PR #99](https://github.com/Valstan/setka/pull/99)** по-прежнему ждёт ревью/merge (давний deliverable, не из этой сессии).
+- Проверить покрытие community-токенов по сети (для каких групп картинки реально прикрепятся) — предлагалось, ждёт решения.
+- Живая проверка реальной отправки оффера (через личный диалог / 901-фолбэк) ещё не делалась.
 
 ## Не забыть (low-priority)
 
-- ℹ️ **Поток A** не виден в `@malmyzh_info`, пока `mi` не опубликует ближайший тематический дайджест (зеркало висит на successful VK-публикации). Проверить после первой волны.
-- 🟢 TG-заточенные хэштеги для каналов — off by default; включаются env `TELEGRAM_EXTRA_HASHTAGS_<CHAN>` (см. `telegram_repost_config.py`). По желанию владельца.
-- 🟢 Видео >50 MB / только-player VK-ролики в TG не уходят (best-effort, дропаются с `degraded`). См. PENDING.
+- ℹ️ **Картинки в ЛС** уходят community-токеном группы; без `COMM_<gid>` в `/tokens` оффер уйдёт текстом (текст работает всегда).
+- 🟡 **Пустые `reasons_json`** при score из унаследованного фильтра — см. PENDING (Рекламный кабинет).
+- ℹ️ **Поток A Telegram (Малмыж)** из прошлой нитки: дайджест `mi` → `@malmyzh_info` зеркалится на successful VK-публикации; если ещё не проверяли вживую — глянуть канал после ближайшей волны `mi`.
 
 ---
 
