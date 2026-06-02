@@ -147,7 +147,7 @@ async def execute_gonba_telegram_mirror(
             break
 
     if not fresh:
-        if known != set(wt.lip or []):
+        if not test_mode and known != set(wt.lip or []):
             wt.lip = list(known)[-GONBA_LIP_HISTORY_MAX:]
             await session.commit()
         return {"success": True, "message": "nothing new to mirror", "stats": stats}
@@ -183,9 +183,10 @@ async def execute_gonba_telegram_mirror(
                 errors.append(f"{lip}: {e}")
 
     # Persist progress: ad-skips (added to `known`) + successfully sent posts.
-    # In test_mode repost_to_telegram returns success without posting — we still
-    # advance the cursor so a dry-run doesn't loop on the same posts.
-    if sent_lips or known != set(wt.lip or []):
+    # test_mode is a side-effect-free dry-run: never touch the persistent cursor
+    # (otherwise a dry-run on prod would mark posts as seen and the live beat run
+    # would skip them).
+    if not test_mode and (sent_lips or known != set(wt.lip or [])):
         prev = list(wt.lip or [])
         for lip in sent_lips:
             known.add(lip)

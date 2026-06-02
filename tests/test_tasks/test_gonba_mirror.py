@@ -124,6 +124,25 @@ async def test_gonba_mirrors_only_fresh_non_ad(monkeypatch):
     assert session.commits >= 1
 
 
+async def test_gonba_test_mode_does_not_mutate_cursor(monkeypatch):
+    now = int(time.time())
+    posts = [
+        {"id": 4, "owner_id": VK_ID, "date": now - 300, "text": "Свежая новость одна"},
+        {"id": 5, "owner_id": VK_ID, "date": now - 50, "text": "Свежая новость два"},
+    ]
+    wt = SimpleNamespace(lip=[], hash=[])
+    sent = []
+    _patch_common(monkeypatch, posts, wt, sent)
+    session = _FakeSession([_Result(_community()), _Result(wt)])
+
+    res = await execute_gonba_telegram_mirror(session, test_mode=True)
+
+    # Dry-run reports what it WOULD send but leaves the persistent cursor intact.
+    assert res["stats"]["sent"] == 2
+    assert wt.lip == []  # cursor untouched
+    assert session.commits == 0
+
+
 async def test_gonba_respects_cap(monkeypatch):
     now = int(time.time())
     posts = [
