@@ -1146,6 +1146,13 @@ app.conf.beat_schedule = {
         "kwargs": {"region_code": "copy", "theme": "setka"},
         "options": {"expires": 1800},
     },
+    # Flow B: зеркало стены ВК-сообщества «Гоньба» → Telegram @gonba_life.
+    # Каждые ~20 мин в активные часы; cap постов/run в самой задаче (анти-флуд).
+    "telegram-gonba-mirror": {
+        "task": "tasks.parsing_scheduler_tasks.mirror_community_to_telegram",
+        "schedule": crontab(minute="10,40", hour="7-23"),
+        "options": {"expires": 1200, "catchup": False},
+    },
 }
 
 

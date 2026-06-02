@@ -3,49 +3,50 @@
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
 **Status:** IDLE
-**Updated:** 2026-05-31
+**Updated:** 2026-06-02
 **Branch:** main
-**Last release in prod:** прод на `8aa3f28` (#95+#96+#97 задеплоены), миграция 018 применена, 3/3 active, health 200.
+**Last release in prod:** прод на `6e5973b` ([PR #102](https://github.com/Valstan/setka/pull/102) + [PR #103](https://github.com/Valstan/setka/pull/103) задеплоены), миграция 020 применена, 3/3 active, health 200.
 
 ---
 
 ## Текущая нитка
 
-_Нет — нитка `kirov_obl` (community-mode область) полностью закрыта и задеплоена в этой сессии, публикация подтверждена живьём. Открытая стартовая позиция._
+_Нет — нитка «восстановление Telegram-репостов» полностью закрыта и задеплоена. Открытая стартовая позиция._
 
-Сессия 2026-05-31 закрыла 5 хвостов (3 кодовых PR + 2 прохода добора пула):
-- **Баг `kirov_obl`** ([#95](https://github.com/Valstan/setka/pull/95)): community-mode oblast выпадала из всех тематических волн (гейт `run_all_regions_theme` требовал строку `region_configs`, которой у области не было) → с 30.05 не публиковала ничего. Фикс гейта (пускает community-mode без `region_configs`) + миграция 018 (брендированные заголовки). Подтверждено публикацией `wall-168170001_3005`.
-- **UI-дропдаун** `Community.category` ([#96](https://github.com/Valstan/setka/pull/96)): 8 новых тем + устранена 4-кратная дупликация (канон `window.communityCategories`).
-- **Discovery `info_links`** ([#97](https://github.com/Valstan/setka/pull/97)): перенос источника «блок Ссылки главной» из скила в `vk_search.py` (`get_groups_by_refs`).
-- **Тонкие пулы `kirov_obl`**: добор через `/discover_communities` — sport 1→4, selhoz 2→5, zdorovie 2→3 (пул 53→60).
+Сессия 2026-06-02 (owner-request от brain `2026-06-01-restore-telegram-reposts.md`):
+- **Telegram-репосты восстановлены, оба потока live** ([PR #102](https://github.com/Valstan/setka/pull/102) + fix [PR #103](https://github.com/Valstan/setka/pull/103), merged+deployed):
+  - **Поток A (Малмыж):** дайджесты района `mi` (все темы) → `@malmyzh_info` ботом AFONYA. Хук в `parse_and_publish_theme` (data-driven по `region.telegram_channel`+`config.telegram_bot`, в `try/except` — сбой TG не ломает VK-публикацию). Сработает в ближайшей тематической волне `mi`.
+  - **Поток B (Гоньба):** стена ВК `-218688001` пост-за-постом → `@gonba_life` ботом VALSTANBOT. Задача `mirror_community_to_telegram` + beat `telegram-gonba-mirror` (мин. 10/40, 7–23), lip-дедуп в Postgres, ad-фильтр, cap/run. **Live-подтверждён: 3 поста ушли в `@gonba_life`.**
+  - Медиа: фото + видео (только прямые `*.mp4`), docs; текст чистится от VK-хэштегов/ссылок. Секреты только в env (pool #008): в БД канал + имя бота.
+  - Новые модули: `modules/publisher/telegram_repost.py` (+`_config.py`), `modules/telegram_gonba_mirror.py`. Миграция 020. +20 тестов (709→ зелёные).
+- **Отчёт brain'у:** `mailbox/to-brain/2026-06-02-telegram-reposts-restored.md` (kind=report, owner-request — ответ отправлен).
 
 ## Следующий шаг
 
-Активной нитки нет. Кандидатные стартовые точки (из PENDING_FOLLOWUPS, по убыванию ценности):
+Активной нитки нет. Кандидатные стартовые точки (по убыванию ценности):
 
-1. **`tatarstan_obl` → community-mode** — по образцу kirov_obl: `regions.config->>'digest_mode'='communities'` + засев пула через `/discover_communities`. **Сначала** добавить community-токен `COMM_239149826` (vk.com/tatar_stan_info) через `/tokens` — без него `wall.post` падает.
-2. **Точечно добрать ВятГАТУ** в `selhoz` пул kirov_obl (флагман-агроуниверситет не всплыл в 2 проходах скила) — резолвить хэндл напрямую через `groups.getById screen_name`.
-3. Мелкие 🟢 из PENDING: стоп-словарь омонимов locality-стема; UI `changed_category` quick-action; тёмная тема UI.
+1. **Проверить Поток A живьём:** после ближайшей тематической волны `mi` глянуть канал `@malmyzh_info` — пришёл ли дайджест Малмыжа (рендер, медиа). Если нет — `/logs --grep "Telegram mirror (Flow A)"` на worker.
+2. **Ревью + merge [PR #99](https://github.com/Valstan/setka/pull/99)** (changed_category quick-action) — давний открытый deliverable, код готов, CI зелёный, ждёт OK на diff → `gh pr merge 99 --squash --delete-branch` → `/reliz` (restart setka, миграции нет).
+3. **Добрать `promyshlennost`** в пул `tatarstan_obl` (опц., см. PENDING).
 
 ## Контекст
 
-- **План:** нет активного плана.
+- **План:** [`C:\Users\valstan\.claude\plans\keen-exploring-kettle.md`](file:///C:/Users/valstan/.claude/plans/keen-exploring-kettle.md) (Telegram-репосты — выполнен).
 - **Связанные коммиты сессии:**
-  - `3495dea` ([#95](https://github.com/Valstan/setka/pull/95)) — fix(scheduler): гейт `run_all_regions_theme` пускает community-mode регионы без `region_configs` + миграция 018 (брендированные заголовки kirov_obl) + тест на реальный SQL гейта.
-  - `f52e187` ([#96](https://github.com/Valstan/setka/pull/96)) — feat(ui): полный список тем в дропдауне `Community.category` (канон `window.communityCategories`).
-  - `8aa3f28` ([#97](https://github.com/Valstan/setka/pull/97)) — feat(discovery): источник `info_links` (блок «Ссылки» главной) в `vk_search.py` + `VKClient.get_groups_by_refs`.
-- **Прод:** HEAD `8aa3f28`, 3/3 active, health 200. main = прод (всё задеплоено). Миграция 018 применена. Пул `kirov_obl` в БД: 60 источников.
-- **Открытых PR:** нет (этот handoff — отдельный doc-only PR).
+  - `8bd1f8e` ([PR #102](https://github.com/Valstan/setka/pull/102)) — feat(telegram): оба потока репостов + миграция 020.
+  - `6e5973b` ([PR #103](https://github.com/Valstan/setka/pull/103)) — fix(telegram): test_mode dry-run не мутирует курсор.
+- **Прод:** HEAD `6e5973b`, 3/3 active, health 200. Миграция 020 применена. Гоньба зеркалится (beat), Малмыж — со следующей волны.
+- **Открытых PR:** [#99](https://github.com/Valstan/setka/pull/99) (код, ждёт ревью, не из этой сессии) + doc-only handoff-PR этого `/close_session`.
 
 ## Открытые вопросы для пользователя
 
-_Нет._
+- **[PR #99](https://github.com/Valstan/setka/pull/99)** по-прежнему ждёт ревью/merge (давний deliverable, не из этой сессии).
 
 ## Не забыть (low-priority)
 
-- 🟢 `tatarstan_obl` community-mode ждёт токен `COMM_239149826`.
-- 🟢 ВятГАТУ в selhoz пул kirov_obl (точечный резолв хэндла).
-- ℹ️ discovery: newsfeed.search / crawl-subscriptions намеренно НЕ перенесены в `vk_search.py` (троттл / нужен админ-токен) — остаются скил-онли (`discover_scan.py`).
+- ℹ️ **Поток A** не виден в `@malmyzh_info`, пока `mi` не опубликует ближайший тематический дайджест (зеркало висит на successful VK-публикации). Проверить после первой волны.
+- 🟢 TG-заточенные хэштеги для каналов — off by default; включаются env `TELEGRAM_EXTRA_HASHTAGS_<CHAN>` (см. `telegram_repost_config.py`). По желанию владельца.
+- 🟢 Видео >50 MB / только-player VK-ролики в TG не уходят (best-effort, дропаются с `degraded`). См. PENDING.
 
 ---
 
