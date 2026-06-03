@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import quote
@@ -27,13 +27,16 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
-from database.models import AdRequest, MessageTemplate
+from database.models import AdRequest, AdScheduledPost, MessageTemplate
 from modules.ad_cabinet.message_builder import render
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _VALID_STATUSES = {"new", "contacted", "skipped", "published"}
+
+# Время оператор вводит по Москве; VK ждёт unix (UTC). МСК = UTC+3, без DST.
+MSK = timezone(timedelta(hours=3))
 
 # Офферные картинки: что принимаем и сколько максимум весит загружаемый файл.
 _ALLOWED_IMG_EXT = (".jpg", ".jpeg", ".png")
@@ -70,6 +73,26 @@ class SendIn(BaseModel):
 
     message: Optional[str] = None
     images: Optional[List[str]] = None
+
+
+class ScheduleCreateIn(BaseModel):
+    """Создать N отложенных постов: один текст+картинки на каждую из ``dates``.
+
+    ``dates`` — список ISO-datetime по МСК (на каждую — отдельный пост в
+    VK-отложке). ``images`` — имена выбранных офферных картинок (заливаются на
+    стену один раз и переиспользуются для всех дат). Тумблеры
+    ``from_group``/``signed``/``comments_enabled`` применяются ко всем постам.
+    """
+
+    community_vk_id: int
+    region_id: Optional[int] = None
+    text: str = ""
+    images: Optional[List[str]] = None
+    dates: List[str]
+    from_group: bool = True
+    signed: bool = False
+    comments_enabled: bool = True
+    source_ad_request_id: Optional[int] = None
 
 
 def _parse_date(value: str) -> Optional[datetime]:
@@ -419,3 +442,205 @@ async def delete_offer_image(name: str):
         raise HTTPException(status_code=404, detail="Файл не найден")
     p.unlink()
     return {"success": True}
+
+
+# ----------------------------------------------------------------------
+# Планировщик отложенных постов (B1)
+# ----------------------------------------------------------------------
+
+_VALID_SCHEDULED_STATUSES = {"draft", "scheduled", "published", "failed", "cancelled"}
+
+
+def _msk_to_unix(naive_msk: datetime) -> int:
+    """Naive datetime, трактуемый как МСК wall-clock → unix-секунды (UTC)."""
+    return int(naive_msk.replace(tzinfo=MSK).timestamp())
+
+
+def _build_wall_attachment(
+    group_id: int,
+    community_tokens,
+    filenames: Optional[List[str]] = None,
+) -> List[str]:
+    """Залить выбранные офферные картинки на стену группы (best-effort).
+
+    Возвращает список attachment-строк ``["photo<o>_<id>", …]`` (пустой, если
+    картинок нет или у группы нет community-токена — тогда пост уйдёт текстом).
+    Грузить надо community-токеном целевой группы (владелец фото = группа).
+    """
+    paths = _offer_image_paths()
+    if filenames is not None:
+        wanted = {Path(f).name for f in filenames}
+        paths = [p for p in paths if p.name in wanted]
+    if not paths:
+        return []
+    tok = (community_tokens or {}).get(abs(int(group_id)))
+    if not tok:
+        return []
+    try:
+        import vk_api
+
+        from modules.publisher.vk_wall_photo_upload import upload_wall_images
+
+        api = vk_api.VkApi(token=tok).get_api()
+        images = [p.read_bytes() for p in paths[:10]]
+        return upload_wall_images(api, images, group_id=group_id)
+    except Exception as e:
+        logger.warning("wall image upload failed: %s", e)
+        return []
+
+
+@router.post("/scheduled")
+async def create_scheduled(
+    payload: ScheduleCreateIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Создать отложенные посты по выбранным датам (VK-«Отложенные записи»).
+
+    На каждую дату — отдельный ``wall.post(publish_date=…)`` целевым community-
+    токеном. Картинки заливаются на стену один раз и переиспользуются. Частичный
+    успех допустим: каждая строка несёт свой ``status`` (scheduled|failed).
+    """
+    from modules.publisher.vk_publisher_extended import VKPublisher
+    from modules.vk_token_router import load_vk_routing
+
+    if not payload.dates:
+        raise HTTPException(status_code=400, detail="Нужна хотя бы одна дата публикации")
+    if not (payload.text or "").strip() and not payload.images:
+        raise HTTPException(status_code=400, detail="Пустой пост: нужен текст или картинки")
+
+    # Парсим даты (МСК) → (naive_dt, unix). Всё должно быть в будущем (VK требует).
+    now_unix = int(datetime.now(tz=MSK).timestamp())
+    parsed: List[tuple] = []
+    for s in payload.dates:
+        dt = _parse_date(s)
+        if dt is None:
+            raise HTTPException(status_code=400, detail=f"Некорректная дата: {s}")
+        dt = dt.replace(tzinfo=None)
+        unix = _msk_to_unix(dt)
+        if unix <= now_unix + 60:
+            raise HTTPException(status_code=400, detail=f"Дата в прошлом или слишком близко: {s}")
+        parsed.append((dt, unix))
+
+    gid = int(payload.community_vk_id)
+    _user_token, community_tokens = await load_vk_routing()
+
+    # Картинки на стену — один раз, переиспользуем attachment'ы для всех дат.
+    attachment_list = _build_wall_attachment(gid, community_tokens, payload.images)
+    attachments_str = ",".join(attachment_list) if attachment_list else None
+
+    try:
+        publisher = await VKPublisher.create_with_policy(db, target_group_id=gid)
+    except Exception as e:
+        logger.exception("scheduler: failed to build publisher")
+        raise HTTPException(status_code=500, detail=f"Нет токена для публикации: {e}")
+
+    created: List[AdScheduledPost] = []
+    for naive_dt, unix in parsed:
+        row = AdScheduledPost(
+            community_vk_id=gid,
+            region_id=payload.region_id,
+            text=payload.text or "",
+            image_names=payload.images or [],
+            attachments=attachments_str,
+            publish_date=naive_dt,
+            from_group=payload.from_group,
+            signed=payload.signed,
+            comments_enabled=payload.comments_enabled,
+            source_ad_request_id=payload.source_ad_request_id,
+            status="draft",
+        )
+        db.add(row)
+        try:
+            res = await publisher.publish_digest(
+                group_id=gid,
+                text=payload.text or "",
+                attachments=attachment_list or None,
+                from_group=payload.from_group,
+                publish_date=unix,
+                signed=payload.signed,
+            )
+            if res.get("success"):
+                row.status = "scheduled"
+                row.vk_postponed_post_id = res.get("post_id")
+                # VK по умолчанию оставляет комментарии включёнными — закрываем
+                # только если оператор явно выключил.
+                if not payload.comments_enabled and row.vk_postponed_post_id:
+                    await publisher.set_post_comments(
+                        gid, int(row.vk_postponed_post_id), enabled=False
+                    )
+            else:
+                row.status = "failed"
+                row.error_message = str(res.get("error"))[:500]
+        except Exception as e:
+            logger.exception("scheduler: publish failed for %s @ %s", gid, naive_dt)
+            row.status = "failed"
+            row.error_message = str(e)[:500]
+        created.append(row)
+
+    await db.commit()
+    for r in created:
+        await db.refresh(r)
+    scheduled_n = sum(1 for r in created if r.status == "scheduled")
+    return {
+        "created": [r.to_dict() for r in created],
+        "scheduled": scheduled_n,
+        "failed": len(created) - scheduled_n,
+    }
+
+
+@router.get("/scheduled")
+async def list_scheduled(
+    community_vk_id: Optional[int] = None,
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    limit: int = 200,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Запланированные посты (календарь): ближайшие сверху."""
+    stmt = select(AdScheduledPost)
+    if community_vk_id is not None:
+        stmt = stmt.where(AdScheduledPost.community_vk_id == community_vk_id)
+    if status:
+        stmt = stmt.where(AdScheduledPost.status == status)
+    df = _parse_date(date_from) if date_from else None
+    dt = _parse_date(date_to) if date_to else None
+    if df:
+        stmt = stmt.where(AdScheduledPost.publish_date >= df)
+    if dt:
+        stmt = stmt.where(AdScheduledPost.publish_date <= dt)
+    stmt = stmt.order_by(AdScheduledPost.publish_date.asc()).limit(limit)
+    rows = (await db.execute(stmt)).scalars().all()
+    return {"scheduled": [r.to_dict() for r in rows]}
+
+
+@router.post("/scheduled/{post_id}/cancel")
+async def cancel_scheduled(
+    post_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Отменить запланированный пост: убрать из VK-отложки (wall.delete) + статус.
+
+    Если VK-удаление не удалось (пост уже опубликован/недоступен) — статус НЕ
+    меняем и возвращаем ``cancel_error``, чтобы оператор видел реальное состояние.
+    """
+    from modules.publisher.vk_publisher_extended import VKPublisher
+
+    row = await db.get(AdScheduledPost, post_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="scheduled post not found")
+    if row.status == "cancelled":
+        return row.to_dict()
+
+    if row.vk_postponed_post_id:
+        publisher = await VKPublisher.create_with_policy(
+            db, target_group_id=int(row.community_vk_id)
+        )
+        res = await publisher.delete_post(int(row.community_vk_id), int(row.vk_postponed_post_id))
+        if not res.get("success"):
+            return {**row.to_dict(), "cancel_error": res.get("error")}
+
+    row.status = "cancelled"
+    await db.commit()
+    await db.refresh(row)
+    return row.to_dict()

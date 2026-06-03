@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
 )
@@ -585,6 +586,84 @@ class AdRequest(Base):
         if target and int(target) > 0:
             return f"https://vk.com/id{int(target)}"
         return None
+
+
+class AdScheduledPost(Base):
+    """Запланированный пост рекламного кабинета (VK-«Отложенные записи»).
+
+    Оператор формирует график постов по датам в `/ad-cabinet` и отправляет их в
+    VK-отложку целевого сообщества: VK сам публикует в назначенное время.
+    Публикация — через ``VKPublisher.publish_digest(publish_date=…)`` (seam B1-a).
+
+    ВАЖНО про время: ``publish_date`` хранится как МСК wall-clock (то, что ввёл
+    оператор). В unix для VK конвертит API-слой (МСК = UTC+3, без DST).
+
+    Forward-compatible с учётом (фаза C): ``client_id``/``price`` пока без FK.
+    Миграция 025.
+    """
+
+    __tablename__ = "ad_scheduled_posts"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    community_vk_id = Column(BigInteger, nullable=False)  # owner_id группы (отрицательный)
+    region_id = Column(Integer, ForeignKey("regions.id", ondelete="SET NULL"), nullable=True)
+
+    text = Column(Text, nullable=True)
+    image_names = Column(JSON, nullable=True)  # выбранные офферные картинки (имена файлов)
+    attachments = Column(Text, nullable=True)  # "photo<o>_<id>,…" после заливки на стену (кэш)
+
+    publish_date = Column(DateTime, nullable=False)  # МСК wall-clock
+    from_group = Column(Boolean, nullable=False, default=True)
+    signed = Column(Boolean, nullable=False, default=False)
+    comments_enabled = Column(Boolean, nullable=False, default=True)
+
+    status = Column(
+        String(20), nullable=False, default="draft", index=True
+    )  # draft|scheduled|published|failed|cancelled
+    vk_postponed_post_id = Column(BigInteger, nullable=True)  # id в VK-отложке (отмена/трекинг)
+    source_ad_request_id = Column(BigInteger, nullable=True)  # из какой заявки/предложки
+
+    # Задел под учёт (фаза C) — пока без FK.
+    client_id = Column(BigInteger, nullable=True)
+    price = Column(Numeric(12, 2), nullable=True)
+
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return (
+            f"<AdScheduledPost {self.id} comm={self.community_vk_id} "
+            f"@{self.publish_date} {self.status}>"
+        )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "community_vk_id": self.community_vk_id,
+            "region_id": self.region_id,
+            "text": self.text,
+            "image_names": self.image_names or [],
+            "attachments": self.attachments,
+            "publish_date": self.publish_date.isoformat() if self.publish_date else None,
+            "from_group": self.from_group,
+            "signed": self.signed,
+            "comments_enabled": self.comments_enabled,
+            "status": self.status,
+            "vk_postponed_post_id": self.vk_postponed_post_id,
+            "source_ad_request_id": self.source_ad_request_id,
+            "client_id": self.client_id,
+            "price": float(self.price) if self.price is not None else None,
+            "error_message": self.error_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            # Производное для UI: ссылка на пост в VK-отложке (видна после публикации).
+            "vk_post_url": (
+                f"https://vk.com/wall{self.community_vk_id}_{self.vk_postponed_post_id}"
+                if self.community_vk_id and self.vk_postponed_post_id
+                else None
+            ),
+        }
 
 
 class PublishSchedule(Base):
