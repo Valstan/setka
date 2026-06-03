@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -39,6 +40,13 @@ _TG_API = "https://api.telegram.org/bot{token}/{method}"
 TG_TEXT_LIMIT = 4096
 TG_CAPTION_LIMIT = 1024
 TG_MEDIA_GROUP_MAX = 10
+
+# Bot API hard cap for uploading a file via multipart (50 MB). Larger videos
+# cannot be delivered by a bot at all and are dropped (degraded).
+MAX_TG_BOT_UPLOAD_BYTES = 50 * 1024 * 1024
+# Telegram downloads media-by-URL only up to ~20 MB; above that the URL-send
+# fails and we fall back to downloading + multipart upload (up to 50 MB).
+_DOWNLOAD_CHUNK = 256 * 1024
 
 # [url|label] VK wiki-link -> keep label only
 _WIKI_LINK_RE = re.compile(r"\[(https?://[^\]|]+)\|([^\]]+)\]")
@@ -189,6 +197,123 @@ async def _call(token: str, method: str, payload: Dict[str, Any]) -> bool:
     return False
 
 
+async def _send_text(token: str, channel: str, text: str) -> bool:
+    """Send a plain text message (no link preview)."""
+    return await _call(
+        token,
+        "sendMessage",
+        {"chat_id": channel, "text": text, "disable_web_page_preview": True},
+    )
+
+
+def _download_to_temp(url: str, max_bytes: int) -> Optional[str]:
+    """Stream ``url`` to a temp ``.mp4`` file, aborting if it exceeds ``max_bytes``.
+
+    Returns the temp file path, or ``None`` on HTTP error, oversize, or any
+    exception. Caller is responsible for removing the file. Sync — call via
+    ``asyncio.to_thread``.
+    """
+    import tempfile
+
+    import requests
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    path = tmp.name
+    try:
+        with requests.get(url, stream=True, timeout=120) as r:
+            if r.status_code != 200:
+                logger.warning("Video download HTTP %s for %s", r.status_code, url)
+                tmp.close()
+                os.remove(path)
+                return None
+            total = 0
+            for chunk in r.iter_content(_DOWNLOAD_CHUNK):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > max_bytes:
+                    logger.info("Video exceeds %d bytes, aborting download: %s", max_bytes, url)
+                    tmp.close()
+                    os.remove(path)
+                    return None
+                tmp.write(chunk)
+        tmp.close()
+        return path
+    except Exception as e:
+        logger.warning("Video download failed for %s: %s", url, e)
+        try:
+            tmp.close()
+            os.remove(path)
+        except OSError:
+            pass
+        return None
+
+
+async def _send_video_multipart(
+    token: str, channel: str, file_path: str, caption: Optional[str]
+) -> bool:
+    """Upload a local video file via multipart ``sendVideo`` (single 429 retry)."""
+    import requests
+
+    url = _TG_API.format(token=token, method="sendVideo")
+    data: Dict[str, Any] = {"chat_id": channel}
+    if caption:
+        data["caption"] = caption
+
+    def _do():
+        with open(file_path, "rb") as fh:
+            return requests.post(url, data=data, files={"video": fh}, timeout=180)
+
+    for attempt in range(2):
+        try:
+            resp = await asyncio.to_thread(_do)
+        except Exception as e:
+            logger.warning("Telegram sendVideo (file) request error: %s", e)
+            return False
+        if resp.status_code == 200:
+            return True
+        try:
+            body = resp.json()
+        except Exception:
+            body = {}
+        if resp.status_code == 429 and attempt == 0:
+            retry_after = int((body.get("parameters") or {}).get("retry_after", 2))
+            logger.warning("Telegram sendVideo (file) flood control, retry after %ss", retry_after)
+            await asyncio.sleep(retry_after + 1)
+            continue
+        logger.warning("Telegram sendVideo (file) failed: %s %s", resp.status_code, str(body)[:300])
+        return False
+    return False
+
+
+async def _send_video(token: str, channel: str, video_url: str, caption: Optional[str]) -> bool:
+    """Send a video: try by URL first, then fall back to download + multipart.
+
+    Telegram only fetches media-by-URL up to ~20 MB. When the URL-send fails
+    (typically oversize), download the direct ``.mp4`` (capped at 50 MB — the
+    Bot API upload limit) and send it as a multipart file. Returns ``False`` if
+    the video can't be delivered at all (player-only, >50 MB, or upload error),
+    so the caller can degrade gracefully.
+    """
+    payload: Dict[str, Any] = {"chat_id": channel, "video": video_url}
+    if caption:
+        payload["caption"] = caption
+    if await _call(token, "sendVideo", payload):
+        return True
+
+    logger.info("sendVideo by URL failed for %s; trying file upload", channel)
+    path = await asyncio.to_thread(_download_to_temp, video_url, MAX_TG_BOT_UPLOAD_BYTES)
+    if not path:
+        return False
+    try:
+        return await _send_video_multipart(token, channel, path, caption)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 async def repost_to_telegram(
     bot_name: str,
     channel: str,
@@ -238,35 +363,36 @@ async def repost_to_telegram(
         ok = await _call(token, "sendMediaGroup", {"chat_id": channel, "media": items})
         success = success and ok
         if text and caption is None:
-            ok = await _call(
-                token,
-                "sendMessage",
-                {"chat_id": channel, "text": text, "disable_web_page_preview": True},
-            )
+            ok = await _send_text(token, channel, text)
             success = success and ok
     elif len(group) == 1:
         item = group[0]
-        method = "sendPhoto" if item["type"] == "photo" else "sendVideo"
-        key = "photo" if item["type"] == "photo" else "video"
-        payload: Dict[str, Any] = {"chat_id": channel, key: item["media"]}
         caption = text if (text and len(text) <= TG_CAPTION_LIMIT) else None
-        if caption:
-            payload["caption"] = caption
-        ok = await _call(token, method, payload)
-        success = success and ok
-        if text and caption is None:
-            ok = await _call(
-                token,
-                "sendMessage",
-                {"chat_id": channel, "text": text, "disable_web_page_preview": True},
-            )
+        if item["type"] == "photo":
+            payload: Dict[str, Any] = {"chat_id": channel, "photo": item["media"]}
+            if caption:
+                payload["caption"] = caption
+            ok = await _call(token, "sendPhoto", payload)
             success = success and ok
+            if text and caption is None:
+                ok = await _send_text(token, channel, text)
+                success = success and ok
+        else:  # video — try URL, then file upload (≤50MB); degrade to text if both fail
+            ok = await _send_video(token, channel, item["media"], caption)
+            if ok:
+                if text and caption is None:
+                    ok = await _send_text(token, channel, text)
+                    success = success and ok
+            else:
+                # Video unsendable (player-only / >50MB / upload error). Keep the
+                # post: deliver its text so nothing is silently lost; flag degraded.
+                media.degraded = True
+                if text:
+                    success = success and await _send_text(token, channel, text)
+                else:
+                    success = False
     elif text:
-        ok = await _call(
-            token,
-            "sendMessage",
-            {"chat_id": channel, "text": text, "disable_web_page_preview": True},
-        )
+        ok = await _send_text(token, channel, text)
         success = success and ok
 
     # Documents cannot share a photo/video media group — send separately.
