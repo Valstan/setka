@@ -364,6 +364,14 @@ def track_digest_published(region: str, topic: str, result: str = "success") -> 
     digest_published_total.labels(region=region, topic=topic, result=result).inc()
     if result == "success":
         digest_last_published_timestamp.labels(region=region, topic=topic).set(time.time())
+        # Надёжный Redis-heartbeat для watchdog «давно нет дайджестов» — на проде
+        # Prometheus-gauge ненадёжен (multiproc-mmap). Best-effort, не падать.
+        try:
+            from modules.digest_heartbeat import mark_published
+
+            mark_published(topic)
+        except Exception:  # pragma: no cover
+            pass
 
 
 def track_error(component: str, error_type: str):

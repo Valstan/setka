@@ -762,6 +762,37 @@ def check_recent_comments():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.check_digest_heartbeat")
+def check_digest_heartbeat():
+    """Watchdog «давно нет дайджестов»: алёрт, если novost давно не публиковался.
+
+    Читает Redis-heartbeat (пишется из ``track_digest_published`` на всех путях
+    публикации). Если тема ``novost`` протухла дольше порога — Telegram-алёрт
+    с собственным cooldown (см. ``modules.digest_heartbeat``). Beat гоняет днём
+    (10:00–22:00); ночью простой 20:40→6:40 легитимен и не проверяется.
+    """
+    try:
+        from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from modules.digest_heartbeat import maybe_alert_stale_digest
+
+        token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
+        chat_id = TELEGRAM_ALERT_CHAT_ID
+        domain = (
+            SERVER.get("domain") or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+        )
+        status = maybe_alert_stale_digest(
+            topic="novost",
+            telegram_token=token,
+            chat_id=chat_id,
+            dashboard_url=f"https://{domain}/",
+        )
+        logger.info("digest heartbeat watchdog: %s", status)
+        return {"success": True, "status": status, "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        logger.error(f"check_digest_heartbeat failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.cleanup_old_posts")
 def cleanup_old_posts():
     """
@@ -862,6 +893,18 @@ app.conf.beat_schedule = {
         "schedule": crontab(hour=3, minute=0),  # 03:00 каждый день
         "options": {
             "expires": 3000,
+            "catchup": False,
+        },
+    },
+    # Watchdog «давно нет дайджестов»: раз в час 10:00–22:00 на :05. Если тема
+    # novost не публиковалась дольше порога (6ч в самой задаче) — Telegram-алёрт
+    # (с 6ч-cooldown). novost-волны идут 6×/сутки (макс дневной зазор ~5ч), порог
+    # 6ч с запасом. Ночью не гоняем — простой 20:40→6:40 легитимен.
+    "digest-heartbeat-watchdog": {
+        "task": "tasks.celery_app.check_digest_heartbeat",
+        "schedule": crontab(minute=5, hour="10-22"),
+        "options": {
+            "expires": 1800,
             "catchup": False,
         },
     },
