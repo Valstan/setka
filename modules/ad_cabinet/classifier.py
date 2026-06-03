@@ -100,6 +100,14 @@ async def classify(post: dict, context: Optional[dict] = None) -> Tuple[bool, in
 
     is_ad = base_is_ad or score >= SCORE_THRESHOLD
 
+    # Если пометили рекламой только по накопленному score (базовый фильтр
+    # дайджеста ПРОПУСТИЛ пост — его порог 4 выше нашего 3 — и предложка-сигналы
+    # не сработали), причин в карточке не было бы. Прокидываем score базового
+    # фильтра как причину, чтобы оператор видел «почему». (PENDING: пустые
+    # reasons_json при score из унаследованного AdvertisementFilter.)
+    if is_ad and not reasons:
+        reasons.append(f"коммерческие признаки (score {score})")
+
     # Уникализируем причины, сохраняя порядок.
     seen: set = set()
     reasons = [r for r in reasons if not (r in seen or seen.add(r))]
