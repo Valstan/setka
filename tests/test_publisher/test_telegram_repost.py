@@ -1,5 +1,7 @@
 """Unit tests for Telegram repost (Flow A renderer/transport/media resolution)."""
 
+import os
+
 import config.runtime as runtime
 import modules.publisher.telegram_repost as tr
 from modules.publisher.telegram_repost import (
@@ -244,3 +246,123 @@ async def test_mirror_digest_builds_clean_message(monkeypatch):
     assert "Новости Малмыжа:" in cap
     assert "Первая новость" in cap and "Вторая новость" in cap
     assert "#" not in cap and "vk.com" not in cap
+
+
+# --------------------------------------------------------------------------- #
+# Video >50 MB → file upload fallback (feat/tg-video-file)
+# --------------------------------------------------------------------------- #
+async def test_send_video_url_success_no_download(monkeypatch):
+    poster = _RecordingPost()
+    monkeypatch.setattr("requests.post", poster)
+    downloaded = {"called": False}
+    monkeypatch.setattr(
+        tr, "_download_to_temp", lambda *a, **k: downloaded.__setitem__("called", True)
+    )
+    ok = await tr._send_video("tok", "@c", "https://cdn/v.mp4", "cap")
+    assert ok is True
+    assert poster.methods() == ["sendVideo"]
+    assert downloaded["called"] is False
+
+
+async def test_send_video_falls_back_to_multipart(monkeypatch):
+    # URL sendVideo fails (HTTP 400) → download + multipart upload.
+    poster = _RecordingPost(status_code=400, body={"ok": False})
+    monkeypatch.setattr("requests.post", poster)
+    monkeypatch.setattr(tr, "_download_to_temp", lambda url, mx: "/tmp/does-not-exist.mp4")
+    sent = {}
+
+    async def fake_multipart(token, channel, path, caption):
+        sent.update(path=path, caption=caption)
+        return True
+
+    monkeypatch.setattr(tr, "_send_video_multipart", fake_multipart)
+    ok = await tr._send_video("tok", "@c", "https://cdn/big.mp4", "cap")
+    assert ok is True
+    assert sent == {"path": "/tmp/does-not-exist.mp4", "caption": "cap"}
+
+
+async def test_send_video_oversize_returns_false(monkeypatch):
+    poster = _RecordingPost(status_code=400, body={"ok": False})
+    monkeypatch.setattr("requests.post", poster)
+    monkeypatch.setattr(tr, "_download_to_temp", lambda url, mx: None)  # too big / failed
+    mp = {"called": False}
+
+    async def fake_multipart(*a, **k):
+        mp["called"] = True
+        return True
+
+    monkeypatch.setattr(tr, "_send_video_multipart", fake_multipart)
+    ok = await tr._send_video("tok", "@c", "https://cdn/huge.mp4", "cap")
+    assert ok is False
+    assert mp["called"] is False
+
+
+async def test_repost_single_video_url_success(monkeypatch):
+    monkeypatch.setattr(runtime, "TELEGRAM_TOKENS", {"AFONYA": "tok"})
+    poster = _RecordingPost()
+    monkeypatch.setattr("requests.post", poster)
+    res = await repost_to_telegram("AFONYA", "@c", "cap", ResolvedMedia(videos=["v.mp4"]))
+    assert res["success"] is True
+    assert poster.methods() == ["sendVideo"]
+    assert poster.calls[0][1]["video"] == "v.mp4"
+    assert poster.calls[0][1]["caption"] == "cap"
+
+
+async def test_repost_single_video_oversize_degrades_to_text(monkeypatch):
+    monkeypatch.setattr(runtime, "TELEGRAM_TOKENS", {"AFONYA": "tok"})
+
+    async def fake_send_video(token, channel, url, caption):
+        return False  # unsendable (player-only / >50MB / upload error)
+
+    monkeypatch.setattr(tr, "_send_video", fake_send_video)
+    poster = _RecordingPost()
+    monkeypatch.setattr("requests.post", poster)
+    res = await repost_to_telegram(
+        "AFONYA", "@c", "важный текст", ResolvedMedia(videos=["big.mp4"])
+    )
+    assert res["degraded"] is True
+    assert res["success"] is True
+    assert poster.methods() == ["sendMessage"]  # text delivered as fallback
+
+
+# --------------------------------------------------------------------------- #
+# _download_to_temp size guard
+# --------------------------------------------------------------------------- #
+class _StreamResp:
+    def __init__(self, chunks, status_code=200):
+        self._chunks = chunks
+        self.status_code = status_code
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def iter_content(self, n):
+        for c in self._chunks:
+            yield c
+
+
+def test_download_to_temp_aborts_oversize(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: _StreamResp([b"x" * 100, b"x" * 100]))
+    out = tr._download_to_temp("http://u/v.mp4", max_bytes=10)
+    assert out is None
+
+
+def test_download_to_temp_success(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: _StreamResp([b"abc", b"def"]))
+    out = tr._download_to_temp("http://u/v.mp4", max_bytes=1000)
+    try:
+        assert out is not None
+        assert os.path.exists(out)
+        with open(out, "rb") as fh:
+            assert fh.read() == b"abcdef"
+    finally:
+        if out:
+            os.remove(out)
+
+
+def test_download_to_temp_http_error(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: _StreamResp([], status_code=404))
+    assert tr._download_to_temp("http://u/v.mp4", max_bytes=1000) is None
