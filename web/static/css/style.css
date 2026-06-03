@@ -14,7 +14,8 @@ body {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    background-color: #f8f9fa;
+    /* Тема-зависимый фон (Bootstrap 5.3 data-bs-theme) вместо хардкода #f8f9fa. */
+    background-color: var(--bs-secondary-bg);
 }
 
 main {
@@ -84,8 +85,9 @@ html {
 }
 
 .card-header {
-    background-color: #fff;
-    border-bottom: 2px solid #f0f0f0;
+    /* transparent → наследует тема-зависимый фон карточки (свет/тьма). */
+    background-color: transparent;
+    border-bottom: 2px solid var(--bs-border-color);
     font-weight: 600;
 }
 
@@ -95,16 +97,16 @@ html {
 }
 
 .table thead th {
-    border-bottom: 2px solid #dee2e6;
+    border-bottom: 2px solid var(--bs-border-color);
     font-weight: 600;
-    color: #495057;
+    color: var(--bs-secondary-color);
     font-size: 0.875rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
 
 .table-hover tbody tr:hover {
-    background-color: #f8f9fa;
+    background-color: var(--bs-tertiary-bg);
     cursor: pointer;
 }
 
@@ -184,7 +186,7 @@ html {
 }
 
 ::-webkit-scrollbar-track {
-    background: #f1f1f1;
+    background: var(--bs-tertiary-bg);
 }
 
 ::-webkit-scrollbar-thumb {
