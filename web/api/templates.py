@@ -27,6 +27,8 @@ class TemplateIn(BaseModel):
     body: str = Field(..., min_length=1)
     category: Optional[str] = Field(default=None, max_length=50)
     is_active: bool = True
+    # region_id: None = общий шаблон (все регионы); иначе привязан к региону.
+    region_id: Optional[int] = None
 
 
 class TemplateOut(BaseModel):
@@ -35,20 +37,30 @@ class TemplateOut(BaseModel):
     body: str
     category: Optional[str]
     is_active: bool
+    region_id: Optional[int] = None
     created_at: Optional[str]
     updated_at: Optional[str]
 
 
 @router.get("/")
-async def list_templates(include_inactive: bool = False):
+async def list_templates(include_inactive: bool = False, region_id: Optional[int] = None):
     """List templates. By default only active ones are returned (UI dropdown
-    use-case); pass `?include_inactive=1` for the management page."""
+    use-case); pass `?include_inactive=1` for the management page.
+
+    `?region_id=<id>` фильтрует под конкретный регион — возвращает общие
+    (`region_id IS NULL`) **плюс** специфичные для этого региона. Без параметра
+    возвращаются все (страница управления)."""
     async with AsyncSessionLocal() as session:
         stmt = select(MessageTemplate).order_by(
             MessageTemplate.category.is_(None), MessageTemplate.category, MessageTemplate.title
         )
         if not include_inactive:
             stmt = stmt.where(MessageTemplate.is_active.is_(True))
+        if region_id is not None:
+            # Общие (NULL) + привязанные к этому региону.
+            stmt = stmt.where(
+                (MessageTemplate.region_id.is_(None)) | (MessageTemplate.region_id == region_id)
+            )
         rows = (await session.execute(stmt)).scalars().all()
         return {"templates": [r.to_dict() for r in rows]}
 
@@ -61,6 +73,7 @@ async def create_template(payload: TemplateIn):
             body=payload.body.strip(),
             category=(payload.category or None),
             is_active=payload.is_active,
+            region_id=payload.region_id,
         )
         session.add(tpl)
         await session.commit()
@@ -78,6 +91,7 @@ async def update_template(template_id: int, payload: TemplateIn):
         tpl.body = payload.body.strip()
         tpl.category = payload.category or None
         tpl.is_active = payload.is_active
+        tpl.region_id = payload.region_id
         await session.commit()
         await session.refresh(tpl)
         return tpl.to_dict()

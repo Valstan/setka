@@ -133,6 +133,52 @@ async def test_create_template_persists_trimmed_payload():
     assert result["id"] == 42
 
 
+async def test_create_template_defaults_region_to_none():
+    """Без region_id шаблон создаётся общим (region_id=None)."""
+    session = _FakeSession()
+    payload = templates_api.TemplateIn(title="t", body="b")
+    with patch.object(templates_api, "AsyncSessionLocal", return_value=session):
+        result = await templates_api.create_template(payload)
+    assert session.added[0].region_id is None
+    assert result["region_id"] is None
+
+
+async def test_create_template_persists_region_id():
+    """region_id из payload сохраняется (региональный шаблон)."""
+    session = _FakeSession()
+    payload = templates_api.TemplateIn(title="t", body="b", region_id=7)
+    with patch.object(templates_api, "AsyncSessionLocal", return_value=session):
+        result = await templates_api.create_template(payload)
+    assert session.added[0].region_id == 7
+    assert result["region_id"] == 7
+
+
+async def test_update_template_sets_region_id():
+    from database.models import MessageTemplate
+
+    tpl = MessageTemplate(id=1, title="t", body="b", is_active=True, region_id=None)
+    session = _FakeSession(get_result=tpl)
+    payload = templates_api.TemplateIn(title="t2", body="b2", region_id=3)
+    with patch.object(templates_api, "AsyncSessionLocal", return_value=session):
+        result = await templates_api.update_template(1, payload)
+    assert tpl.region_id == 3
+    assert result["region_id"] == 3
+
+
+async def test_list_templates_region_filter_applies_where():
+    """`region_id` параметр добавляет where-условие (общие + региональные)."""
+    session = _FakeSession(scalars_all=[])
+    with patch.object(templates_api, "AsyncSessionLocal", return_value=session):
+        with patch("web.api.templates.select") as sel:
+            stmt = MagicMock()
+            stmt.order_by.return_value = stmt
+            stmt.where.return_value = stmt
+            sel.return_value = stmt
+            # include_inactive=True → пропускаем is_active-фильтр, остаётся только region.
+            await templates_api.list_templates(include_inactive=True, region_id=5)
+    stmt.where.assert_called_once()
+
+
 async def test_update_template_404_when_missing():
     """PUT on unknown id raises 404."""
     from fastapi import HTTPException
