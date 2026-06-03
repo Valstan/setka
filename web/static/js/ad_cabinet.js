@@ -25,7 +25,73 @@ document.addEventListener('DOMContentLoaded', async () => {
         const btn = e.target.closest('.btn-del-offer');
         if (btn) deleteOfferImage(btn.dataset.name);
     });
+
+    // Массовые действия: отслеживаем чекбоксы карточек (делегирование).
+    const list = document.getElementById('ad-list');
+    if (list) list.addEventListener('change', (e) => {
+        if (e.target.classList.contains('ad-check')) updateBulkBar();
+    });
+    const selAll = document.getElementById('bulk-select-all');
+    if (selAll) selAll.addEventListener('click', () => {
+        document.querySelectorAll('.ad-check').forEach(c => { c.checked = true; });
+        updateBulkBar();
+    });
+    const clr = document.getElementById('bulk-clear');
+    if (clr) clr.addEventListener('click', () => {
+        document.querySelectorAll('.ad-check').forEach(c => { c.checked = false; });
+        updateBulkBar();
+    });
 });
+
+// --------------------------------------------------- массовые действия
+
+function getSelectedIds() {
+    return Array.from(document.querySelectorAll('.ad-check:checked'))
+        .map(c => parseInt(c.value, 10))
+        .filter(n => !isNaN(n));
+}
+
+function updateBulkBar() {
+    const ids = getSelectedIds();
+    const bar = document.getElementById('bulk-bar');
+    const cnt = document.getElementById('bulk-count');
+    if (cnt) cnt.textContent = ids.length;
+    if (bar) bar.style.display = ids.length ? '' : 'none';
+}
+
+function _bulkRes(html, cls) {
+    const el = document.getElementById('bulk-res');
+    if (el) el.innerHTML = `<span class="text-${cls || 'muted'}">${html}</span>`;
+}
+
+async function bulkSet(status) {
+    const ids = getSelectedIds();
+    if (!ids.length) return;
+    _bulkRes('Применяю…');
+    try {
+        const res = await apiClient.bulkAdAction(ids, 'status', status);
+        _bulkRes(`Обновлено: ${res.affected}`, 'success');
+        await loadAdRequests();
+        updateBulkBar();
+    } catch (e) {
+        _bulkRes(`Ошибка: ${escapeHtml(e.message)}`, 'danger');
+    }
+}
+
+async function bulkDelete() {
+    const ids = getSelectedIds();
+    if (!ids.length) return;
+    if (!confirm(`Удалить выбранные заявки (${ids.length})? Действие необратимо.`)) return;
+    _bulkRes('Удаляю…');
+    try {
+        const res = await apiClient.bulkAdAction(ids, 'delete');
+        _bulkRes(`Удалено: ${res.affected}`, 'success');
+        await loadAdRequests();
+        updateBulkBar();
+    } catch (e) {
+        _bulkRes(`Ошибка: ${escapeHtml(e.message)}`, 'danger');
+    }
+}
 
 // --------------------------------------------------- библиотека картинок
 
@@ -149,11 +215,15 @@ function renderCard(ar) {
     <div class="card mb-3" id="ad-card-${ar.id}">
         <div class="card-body">
             <div class="d-flex justify-content-between align-items-start mb-2">
-                <div>
-                    <div class="fw-bold">${authorLink}</div>
-                    <div class="text-muted small">
-                        в «${escapeHtml(ar.community_name || '')}» ·
-                        <a href="${escapeHtml(ar.vk_post_url || '#')}" target="_blank">пост в VK</a>
+                <div class="d-flex">
+                    <input type="checkbox" class="form-check-input ad-check me-2 mt-1"
+                           value="${ar.id}" title="Выбрать для массового действия">
+                    <div>
+                        <div class="fw-bold">${authorLink}</div>
+                        <div class="text-muted small">
+                            в «${escapeHtml(ar.community_name || '')}» ·
+                            <a href="${escapeHtml(ar.vk_post_url || '#')}" target="_blank">пост в VK</a>
+                        </div>
                     </div>
                 </div>
                 <div class="text-end">

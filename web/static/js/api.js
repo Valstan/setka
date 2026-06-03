@@ -72,6 +72,13 @@ const apiClient = {
         });
     },
 
+    async bulkAdAction(ids, action, status = null) {
+        return this.request('/ad-cabinet/requests/bulk-action', {
+            method: 'POST',
+            body: JSON.stringify({ ids, action, status })
+        });
+    },
+
     async getAdTemplates() {
         return this.request('/templates/?include_inactive=0');
     },

@@ -23,7 +23,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
@@ -46,6 +46,18 @@ class PrepareIn(BaseModel):
 
 class StatusIn(BaseModel):
     status: str
+
+
+class BulkActionIn(BaseModel):
+    """Массовое действие над заявками инбокса.
+
+    ``action='status'`` — сменить статус всем ``ids`` (нужен ``status``);
+    ``action='delete'`` — удалить заявки.
+    """
+
+    ids: List[int]
+    action: str
+    status: Optional[str] = None
 
 
 class SendIn(BaseModel):
@@ -262,6 +274,44 @@ async def set_status(
         ar.contacted_at = datetime.utcnow()
     await db.commit()
     return ar.to_dict()
+
+
+@router.post("/requests/bulk-action")
+async def bulk_action(
+    payload: BulkActionIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Массовое действие над выбранными заявками: смена статуса или удаление.
+
+    Один batch-запрос вместо построчных вызовов из UI. Возвращает число
+    затронутых строк.
+    """
+    ids = [int(i) for i in (payload.ids or [])]
+    if not ids:
+        raise HTTPException(status_code=400, detail="no ids")
+
+    if payload.action == "delete":
+        result = await db.execute(delete(AdRequest).where(AdRequest.id.in_(ids)))
+        await db.commit()
+        return {"action": "delete", "affected": int(result.rowcount or 0)}
+
+    if payload.action == "status":
+        if payload.status not in _VALID_STATUSES:
+            raise HTTPException(status_code=400, detail="invalid status")
+        result = await db.execute(
+            update(AdRequest).where(AdRequest.id.in_(ids)).values(status=payload.status)
+        )
+        # Проставляем contacted_at тем, у кого его ещё нет (для отметки «связались»).
+        if payload.status == "contacted":
+            await db.execute(
+                update(AdRequest)
+                .where(AdRequest.id.in_(ids), AdRequest.contacted_at.is_(None))
+                .values(contacted_at=datetime.utcnow())
+            )
+        await db.commit()
+        return {"action": "status", "status": payload.status, "affected": int(result.rowcount or 0)}
+
+    raise HTTPException(status_code=400, detail="invalid action")
 
 
 # ----------------------------------------------------------------------
