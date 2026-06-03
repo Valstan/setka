@@ -265,6 +265,17 @@ class TokenPolicy:
         publish_whitelist = set(get_publish_token_names())
         active_db = await self._load_active()
 
+        # UI-override (миграция 023): user-токены с ``role='publish'`` в БД
+        # добавляются к env-whitelist'у АДДИТИВНО — роль только РАСШИРЯЕТ набор
+        # публикаторов, существующее env-поведение не меняется (нулевая
+        # регрессия). Hard deny-list ниже по-прежнему имеет приоритет.
+        db_publish = {
+            name
+            for name, row in active_db.items()
+            if (getattr(row, "role", None) or "").lower() == "publish"
+        }
+        publish_whitelist = publish_whitelist | db_publish
+
         # Имена токенов из env, которые сейчас не помечены disabled в БД.
         # Если в БД записи о токене нет — считаем его «живым» (env — source of
         # truth для существования, БД — для статуса).

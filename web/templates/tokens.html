@@ -494,6 +494,12 @@ function displayTokens(tokens) {
                     ${token.user_info && (token.user_info.first_name || token.user_info.last_name) ? `<div><strong>Пользователь:</strong> ${escapeHtml((token.user_info.first_name || '') + ' ' + (token.user_info.last_name || ''))}</div>` : ''}
                 </div>
 
+                ${!token.community_id ? `
+                <div class="form-check form-switch mt-2" title="Разрешить этому user-токену публиковать (доп. к env VK_PUBLISH_TOKEN_NAMES, без рестарта)">
+                    <input class="form-check-input" type="checkbox" id="pub-${escapeHtml(token.name)}" ${token.role === 'publish' ? 'checked' : ''} onchange="setPublishRole('${token.name}', this.checked)">
+                    <label class="form-check-label" for="pub-${escapeHtml(token.name)}"><i class="bi bi-megaphone"></i> Использовать для публикаций</label>
+                </div>` : ''}
+
                 <div class="token-actions">
                     <button class="btn btn-sm btn-outline-primary" onclick="editToken('${token.name}')">
                         <i class="bi bi-pencil"></i> Редактировать
@@ -510,6 +516,24 @@ function displayTokens(tokens) {
         </div>
     `;
     }).join('');
+}
+
+async function setPublishRole(tokenName, enabled) {
+    try {
+        const response = await fetch(`/api/tokens/${encodeURIComponent(tokenName)}/publish-role`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled }),
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || response.statusText);
+        }
+        loadTokens();
+    } catch (error) {
+        showError('Ошибка роли публикации: ' + error.message);
+        loadTokens();
+    }
 }
 
 async function disableTokenManual(tokenName) {
