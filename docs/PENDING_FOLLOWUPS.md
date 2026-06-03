@@ -200,7 +200,7 @@ MVP: детект рекламы в предложке (`modules/ad_cabinet/clas
 - **`/logs`** — параметризованный просмотр прод-логов. _(Сделано — см. [`.claude/commands/logs.md`](../.claude/commands/logs.md).)_
 - **`/sql`** — psql на проде с подтверждением. _(Сделано — см. [`.claude/commands/sql.md`](../.claude/commands/sql.md).)_
 - ~~**Скрипт `scripts/dev-doctor.sh`** проверяет окружение~~ Закрыто 2026-06-03 (ветка `chore/dev-doctor`): read-only доктор — Python 3.11/3.12/3, venv + версия, импорт fastapi/celery/sqlalchemy/pytest, editable-install (`import modules`), pre-commit git-хук, psql, git-sync (делегирует `git_sync_check.sh`), best-effort SSH-probe прода (`--no-prod` чтобы пропустить). Exit 1 при FAIL, 0 при WARN.
-- **Hook на `git commit`**, который проверяет качество commit message (Conventional Commits префикс + наличие тела для `feat`/`fix`/`refactor`) — теперь когда DEV_HISTORY упразднена, commit message несёт всю историю. Через `.git/hooks/commit-msg` или husky-аналог для Python.
+- ~~**Hook на `git commit`**, который проверяет качество commit message~~ Закрыто 2026-06-03 (ветка `chore/commit-msg-hook`): `scripts/check_commit_msg.py` (stdlib-only) подключён `commit-msg`-стейджем в `.pre-commit-config.yaml` (+ `default_install_hook_types: [pre-commit, commit-msg]`, чтобы `pre-commit install` ставил оба типа). Проверяет Conventional Commits subject + обязательное тело для `feat`/`fix`/`refactor`; пропускает Merge/Revert/fixup/squash. +15 тестов. **Существующим dev-машинам** нужен разовый `pre-commit install` для активации commit-msg-хука.
 - **Smoke-test после деплоя** — отдельный шаг в `/reliz`: парс одного тестового региона/темы в test-режиме без публикации (`scripts/test_parse_run.py`) и сравнение вывода с baseline.
 
 ### Наблюдаемость

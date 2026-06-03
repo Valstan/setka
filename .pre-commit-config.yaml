@@ -7,6 +7,10 @@
 # CI прибит к 3.12 через
 # .github/workflows/ci.yml `python-version: ["3.12"]`.
 
+# `pre-commit install` теперь ставит оба типа хуков (pre-commit + commit-msg),
+# чтобы заработал гейт качества commit message (scripts/check_commit_msg.py).
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: https://github.com/psf/black
     rev: 24.10.0
@@ -38,3 +42,13 @@ repos:
           - "--max-line-length=100"
           - "--extend-ignore=E203,W503"
         exclude: ^(venv|build|dist)/
+
+  # Локальный гейт качества commit message (Conventional Commits + тело для
+  # feat/fix/refactor). stdlib-only скрипт, без внешних зависимостей.
+  - repo: local
+    hooks:
+      - id: conventional-commit-msg
+        name: conventional commit message
+        entry: python scripts/check_commit_msg.py
+        language: system
+        stages: [commit-msg]
