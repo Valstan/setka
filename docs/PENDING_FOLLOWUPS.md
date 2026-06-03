@@ -267,7 +267,7 @@ MVP: детект рекламы в предложке (`modules/ad_cabinet/clas
 - **«Тёмный режим» для UI** — `/regions`, `/posts`, `/filtration` — длинные таблицы, ночью глаза вытекают.
 - **`/regions/<code>/diagnostics`** — кнопка «прогнать пайплайн без публикации» в UI: видно, что отфильтровалось, что собрал aggregator, что попало бы в дайджест.
 - **Полноценный Telegram-бот с webhook** — `bot.set_webhook` + `wall.createComment`/`messages.send` прямо из bot-handler без перехода в браузер. Сейчас (этап 4b) — URL-кнопки на `/notifications#section=...`, требуют один лишний клик. Это «фича роскоши», не блокер.
-- **Per-region шаблоны ответов** — `message_templates.region_id NULL = all` + UI-фильтр. Пока шаблоны общие на все регионы (моде­ратор один).
+- ~~**Per-region шаблоны ответов**~~ Закрыто 2026-06-03 (ветка `feat/per-region-templates`): миграция 024 (`message_templates.region_id` NULL=общий, FK `ON DELETE SET NULL`). `/templates` — колонка «Регион», select в модалке («Общий» / регион), фильтр по региону. `GET /api/templates/?region_id=X` отдаёт общие + специфичные для X (для dropdown ответа). +5 тестов.
 
 ---
 

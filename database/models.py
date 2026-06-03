@@ -441,6 +441,11 @@ class MessageTemplate(Base):
         String(50), nullable=True, index=True
     )  # 'greeting', 'thanks', 'redirect', ...
     is_active = Column(Boolean, default=True, index=True)
+    # region_id (миграция 024): NULL = общий шаблон (все регионы); иначе —
+    # привязан к региону. ON DELETE SET NULL: удаление региона делает шаблон общим.
+    region_id = Column(
+        Integer, ForeignKey("regions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -454,6 +459,7 @@ class MessageTemplate(Base):
             "body": self.body,
             "category": self.category,
             "is_active": self.is_active,
+            "region_id": self.region_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

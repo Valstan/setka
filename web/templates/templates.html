@@ -21,6 +21,13 @@
             (страница <a href="/notifications">Уведомления</a> → раздел
             «Непрочитанные сообщения» → кнопка «Ответить»).
         </p>
+        <div class="mb-3" style="max-width: 320px;">
+            <label class="form-label small text-muted mb-1">Фильтр по региону</label>
+            <select class="form-select form-select-sm" id="tpl-region-filter" onchange="loadTemplates()">
+                <option value="">Все шаблоны</option>
+                <!-- опции заполняются из /api/regions -->
+            </select>
+        </div>
     </div>
 </div>
 
@@ -39,7 +46,8 @@
                     <thead>
                         <tr>
                             <th style="width:12%;">Категория</th>
-                            <th style="width:25%;">Название</th>
+                            <th style="width:12%;">Регион</th>
+                            <th style="width:22%;">Название</th>
                             <th>Текст</th>
                             <th style="width:10%;">Статус</th>
                             <th style="width:130px;"></th>
@@ -72,6 +80,14 @@
                         <label class="form-label">Категория</label>
                         <input type="text" class="form-control" id="tpl-category" maxlength="50"
                                placeholder="thanks / redirect / greeting…">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Регион</label>
+                        <select class="form-select" id="tpl-region">
+                            <option value="">Общий (все регионы)</option>
+                            <!-- опции заполняются из /api/regions -->
+                        </select>
+                        <div class="form-text">Общий шаблон виден во всех регионах; региональный — только в своём.</div>
                     </div>
                     <div class="col-12">
                         <label class="form-label">Текст</label>

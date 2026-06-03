@@ -1,7 +1,36 @@
 // Message templates CRUD page (etap 4b)
 // Browser-side controller for /templates.
 
-document.addEventListener('DOMContentLoaded', () => loadTemplates());
+// id региона → имя; для рендера столбца «Регион» и dropdown'ов.
+window.tplRegions = [];
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadRegions();
+    loadTemplates();
+});
+
+async function loadRegions() {
+    try {
+        const resp = await fetch('/api/regions/');
+        if (!resp.ok) return;
+        window.tplRegions = await resp.json();
+    } catch (e) {
+        window.tplRegions = [];
+    }
+    const opts = window.tplRegions
+        .map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`)
+        .join('');
+    const modalSel = document.getElementById('tpl-region');
+    if (modalSel) modalSel.insertAdjacentHTML('beforeend', opts);
+    const filterSel = document.getElementById('tpl-region-filter');
+    if (filterSel) filterSel.insertAdjacentHTML('beforeend', opts);
+}
+
+function regionName(regionId) {
+    if (!regionId) return '<span class="text-muted">общий</span>';
+    const r = (window.tplRegions || []).find(x => x.id === regionId);
+    return r ? escapeHtml(r.name) : `#${regionId}`;
+}
 
 async function loadTemplates() {
     const loading = document.getElementById('templates-loading');
@@ -14,7 +43,9 @@ async function loadTemplates() {
     table.style.display = 'none';
 
     try {
-        const resp = await fetch('/api/templates/?include_inactive=1');
+        const filterSel = document.getElementById('tpl-region-filter');
+        const regionFilter = filterSel && filterSel.value ? `&region_id=${filterSel.value}` : '';
+        const resp = await fetch(`/api/templates/?include_inactive=1${regionFilter}`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         const items = data.templates || [];
@@ -28,6 +59,7 @@ async function loadTemplates() {
         tbody.innerHTML = items.map(t => `
             <tr>
                 <td><span class="badge bg-light text-dark">${escapeHtml(t.category || '—')}</span></td>
+                <td class="small">${regionName(t.region_id)}</td>
                 <td><strong>${escapeHtml(t.title)}</strong></td>
                 <td class="small text-muted" style="white-space: pre-wrap;">${escapeHtml((t.body || '').slice(0, 200))}${t.body && t.body.length > 200 ? '…' : ''}</td>
                 <td>${t.is_active
@@ -58,6 +90,7 @@ function openTemplateEditor() {
     document.getElementById('tpl-title').value = '';
     document.getElementById('tpl-category').value = '';
     document.getElementById('tpl-body').value = '';
+    document.getElementById('tpl-region').value = '';
     document.getElementById('tpl-is-active').checked = true;
     document.getElementById('tpl-status').textContent = '';
     bootstrap.Modal.getOrCreateInstance(document.getElementById('template-modal')).show();
@@ -69,6 +102,7 @@ function editTemplate(tpl) {
     document.getElementById('tpl-title').value = tpl.title || '';
     document.getElementById('tpl-category').value = tpl.category || '';
     document.getElementById('tpl-body').value = tpl.body || '';
+    document.getElementById('tpl-region').value = tpl.region_id ? String(tpl.region_id) : '';
     document.getElementById('tpl-is-active').checked = !!tpl.is_active;
     document.getElementById('tpl-status').textContent = '';
     bootstrap.Modal.getOrCreateInstance(document.getElementById('template-modal')).show();
@@ -79,6 +113,8 @@ async function saveTemplate() {
     const title = document.getElementById('tpl-title').value.trim();
     const body = document.getElementById('tpl-body').value.trim();
     const category = document.getElementById('tpl-category').value.trim() || null;
+    const regionRaw = document.getElementById('tpl-region').value;
+    const region_id = regionRaw ? parseInt(regionRaw, 10) : null;
     const is_active = document.getElementById('tpl-is-active').checked;
     const status = document.getElementById('tpl-status');
 
@@ -95,7 +131,7 @@ async function saveTemplate() {
         const resp = await fetch(url, {
             method,
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({title, body, category, is_active}),
+            body: JSON.stringify({title, body, category, is_active, region_id}),
         });
         if (!resp.ok) {
             const txt = await resp.text();
