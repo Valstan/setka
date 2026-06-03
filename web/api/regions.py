@@ -518,6 +518,82 @@ async def reset_region_digest_template_topic(
     return await get_region_digest_template(region_code=region_code, db=db)
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Diagnostics — «прогон пайплайна без публикации» (dry_run).
+# Парсит/фильтрует/собирает дайджест региона+темы, НИЧЕГО не публикуя и не
+# записывая в БД (см. parse_and_publish_theme(dry_run=True)). Длинная операция
+# (реальный VK-парсинг), поэтому ставится в Celery и опрашивается по task_id —
+# как discovery (/api/discovery/trigger-async + /task/{id}).
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@router.post("/diagnostics/task/{task_id}/status", include_in_schema=False)
+@router.get("/diagnostics/task/{task_id}/status")
+async def get_diagnostics_task_status(task_id: str):
+    """Статус diagnostics-задачи (polling из UI). См. discovery /task/{id}."""
+    try:
+        from celery.result import AsyncResult
+
+        from tasks.celery_app import app as celery_app
+    except ImportError as e:  # pragma: no cover
+        raise HTTPException(status_code=503, detail=f"Celery не доступен: {e}")
+
+    ar = AsyncResult(task_id, app=celery_app)
+    state = ar.state
+    ready = ar.ready()
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "state": state,
+        "ready": ready,
+        "result": None,
+        "error": None,
+    }
+    if state == "SUCCESS":
+        try:
+            payload["result"] = ar.result
+        except Exception as e:  # pragma: no cover
+            payload["error"] = f"не удалось получить result: {e}"
+    elif state == "FAILURE":
+        try:
+            payload["error"] = str(ar.result)
+        except Exception:  # pragma: no cover
+            payload["error"] = "задача завершилась с ошибкой"
+    return payload
+
+
+@router.post("/{region_code}/diagnostics")
+async def run_region_diagnostics(
+    region_code: str,
+    theme: str = "novost",
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Поставить dry-run прогон пайплайна региона+темы (без публикации).
+
+    Возвращает ``{task_id, state}``; UI опрашивает
+    ``/diagnostics/task/{task_id}/status`` до ``ready``. Результат содержит
+    ``would_publish`` (что попало бы в дайджест) + статистику фильтрации.
+    """
+    # Проверяем, что регион существует — ранний 404 вместо «висящей» задачи.
+    exists = await db.execute(select(Region.id).where(Region.code == region_code))
+    if exists.first() is None:
+        raise HTTPException(status_code=404, detail=f"Region '{region_code}' not found")
+
+    try:
+        from tasks.celery_app import app as celery_app
+    except ImportError as e:  # pragma: no cover
+        raise HTTPException(status_code=503, detail=f"Celery не доступен: {e}")
+
+    try:
+        task = celery_app.send_task(
+            "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+            kwargs={"region_code": region_code, "theme": theme, "dry_run": True},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось поставить задачу: {e}")
+
+    return {"task_id": task.id, "state": task.state, "region_code": region_code, "theme": theme}
+
+
 @router.get("/", response_model=List[RegionResponse])
 @cache(ttl=600, key_prefix="regions")  # Cache for 10 minutes
 async def get_regions(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db_session)):

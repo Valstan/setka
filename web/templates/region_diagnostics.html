@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Диагностика — {{ region_code }} — SETKA{% endblock %}
+{% block nav_section_content %}active{% endblock %}
+
+{% block content %}
+<div class="container my-4" style="max-width: 900px;">
+    <nav aria-label="breadcrumb" class="small">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/regions">Регионы</a></li>
+            <li class="breadcrumb-item"><code>{{ region_code }}</code></li>
+            <li class="breadcrumb-item active" aria-current="page">Диагностика</li>
+        </ol>
+    </nav>
+
+    <h2 class="mb-2">
+        <i class="bi bi-clipboard-pulse"></i>
+        Диагностика — <code>{{ region_code }}</code>
+    </h2>
+
+    <div class="alert alert-info small">
+        <strong>Прогон без публикации.</strong>
+        Парсит сообщества региона по выбранной теме, прогоняет через фильтры и
+        собирает дайджест — но <strong>ничего не публикует</strong> в VK/Telegram
+        и не пишет в БД. Видно, сколько постов отфильтровалось и что попало бы в
+        выпуск. Реальный VK-парсинг — может занять до минуты.
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-6">
+                    <label class="form-label small mb-1">Тема</label>
+                    <select id="theme-select" class="form-select">
+                        <option value="novost">novost — Новости</option>
+                        <option value="reklama">reklama — Объявления</option>
+                        <option value="kultura">kultura — Культура</option>
+                        <option value="sport">sport — Спорт</option>
+                        <option value="admin">admin — Администрация</option>
+                        <option value="union">union — Сообщества</option>
+                        <option value="detsad">detsad — Детсады/школы</option>
+                        <option value="sosed">sosed — Соседи</option>
+                        <option value="proisshestviya">proisshestviya — Происшествия</option>
+                        <option value="zhkh">zhkh — ЖКХ</option>
+                        <option value="selhoz">selhoz — Сельское хозяйство</option>
+                        <option value="nauka">nauka — Наука</option>
+                        <option value="promyshlennost">promyshlennost — Промышленность</option>
+                        <option value="molodezh">molodezh — Молодёжь</option>
+                        <option value="zdorovie">zdorovie — Здоровье</option>
+                        <option value="priroda">priroda — Природа</option>
+                        <option value="oblast">oblast — Областной каскад</option>
+                    </select>
+                </div>
+                <div class="col-md-6 d-flex align-items-end">
+                    <button id="run-btn" type="button" class="btn btn-primary w-100">
+                        <i class="bi bi-play-circle"></i> Прогнать без публикации
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="status-line" class="text-muted small mb-3" style="display:none;"></div>
+
+    <div id="result" style="display:none;">
+        <div class="row g-2 mb-3" id="stats-row"></div>
+        <h5 class="mb-2">Попало бы в дайджест</h5>
+        <div id="previews"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const REGION_CODE = {{ region_code | tojson }};
+
+const runBtn = document.getElementById("run-btn");
+const statusLine = document.getElementById("status-line");
+const resultBox = document.getElementById("result");
+const statsRow = document.getElementById("stats-row");
+const previews = document.getElementById("previews");
+
+function statCard(label, value, color) {
+    return `<div class="col-6 col-md-3">
+        <div class="card text-center">
+            <div class="card-body py-2">
+                <div class="fs-4 fw-bold text-${color}">${value}</div>
+                <div class="small text-muted">${label}</div>
+            </div>
+        </div>
+    </div>`;
+}
+
+function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+}
+
+function renderResult(res) {
+    statsRow.innerHTML = "";
+    previews.innerHTML = "";
+    if (!res || res.success === false) {
+        statusLine.textContent = "⚠️ " + ((res && (res.error || res.message)) || "ошибка прогона");
+        statusLine.style.display = "";
+        resultBox.style.display = "none";
+        return;
+    }
+    statsRow.innerHTML =
+        statCard("спарсено", res.posts_parsed ?? "—", "secondary") +
+        statCard("обычных", res.regular_posts ?? 0, "primary") +
+        statCard("траурных", res.mourning_posts ?? 0, "dark") +
+        statCard("сообществ", res.communities_count ?? "—", "info");
+
+    const wp = res.would_publish || [];
+    if (!wp.length) {
+        previews.innerHTML = `<div class="alert alert-warning small">
+            Дайджест пуст — после фильтров ничего бы не опубликовалось.</div>`;
+    } else {
+        wp.forEach((p) => {
+            const card = document.createElement("div");
+            card.className = "card mb-2";
+            card.innerHTML = `
+                <div class="card-header py-1 small">
+                    <strong>${escapeHtml(p.kind)}</strong> ·
+                    постов: ${p.post_count} ·
+                    символов: ${p.char_count} ·
+                    вложений: ${p.attachments_count}
+                </div>
+                <div class="card-body py-2">
+                    <pre class="small mb-0" style="white-space:pre-wrap;">${escapeHtml(p.text_preview)}</pre>
+                </div>`;
+            previews.appendChild(card);
+        });
+    }
+    resultBox.style.display = "";
+}
+
+async function poll(taskId) {
+    for (let i = 0; i < 120; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        let resp;
+        try {
+            resp = await fetch(`/api/regions/diagnostics/task/${taskId}/status`);
+        } catch (e) {
+            continue;
+        }
+        const data = await resp.json();
+        if (data.ready) {
+            if (data.state === "SUCCESS") {
+                statusLine.style.display = "none";
+                renderResult(data.result);
+            } else {
+                statusLine.textContent = "⚠️ Задача упала: " + (data.error || data.state);
+            }
+            return;
+        }
+        statusLine.textContent = `⏳ Выполняется… (${data.state})`;
+    }
+    statusLine.textContent = "⚠️ Таймаут ожидания результата.";
+}
+
+runBtn.addEventListener("click", async () => {
+    const theme = document.getElementById("theme-select").value;
+    runBtn.disabled = true;
+    resultBox.style.display = "none";
+    statusLine.style.display = "";
+    statusLine.textContent = "⏳ Ставлю задачу…";
+    try {
+        const resp = await fetch(
+            `/api/regions/${encodeURIComponent(REGION_CODE)}/diagnostics?theme=${encodeURIComponent(theme)}`,
+            { method: "POST" }
+        );
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            statusLine.textContent = "⚠️ " + (err.detail || resp.statusText);
+            return;
+        }
+        const data = await resp.json();
+        statusLine.textContent = "⏳ Выполняется…";
+        await poll(data.task_id);
+    } catch (e) {
+        statusLine.textContent = "⚠️ " + e;
+    } finally {
+        runBtn.disabled = false;
+    }
+});
+</script>
+{% endblock %}

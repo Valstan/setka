@@ -431,6 +431,9 @@ function renderRegionCard(region) {
                                 <li><a class="dropdown-item" href="#" onclick="openDigestTemplateEditor('${region.code}', '${region.name}')">
                                     <i class="bi bi-layout-text-window-reverse"></i> Внешний вид дайджестов
                                 </a></li>
+                                <li><a class="dropdown-item" href="/regions/${region.code}/diagnostics">
+                                    <i class="bi bi-clipboard-pulse"></i> Диагностика (без публикации)
+                                </a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item text-danger" href="#"
                                        onclick="deleteRegion(${region.id}, '${region.name}')">

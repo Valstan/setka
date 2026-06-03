@@ -207,6 +207,15 @@ async def region_prepare_page(request: Request, region_code: str):
     )
 
 
+@app.get("/regions/{region_code}/diagnostics")
+async def region_diagnostics_page(request: Request, region_code: str):
+    """Прогон пайплайна без публикации (dry-run): что отфильтровалось / собралось."""
+    return templates.TemplateResponse(
+        "region_diagnostics.html",
+        {"request": request, "region_code": region_code},
+    )
+
+
 @app.get("/regions/{region_code}/discovery/ai-batch")
 async def region_ai_batch_page(request: Request, region_code: str):
     """Human-in-the-loop AI categorisation через clipboard."""
