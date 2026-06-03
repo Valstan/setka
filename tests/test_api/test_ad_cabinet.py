@@ -165,6 +165,47 @@ async def test_send_requires_prepared_message():
     assert exc.value.status_code == 400
 
 
+# ------------------------------------------------ send: reuse fresh precheck
+
+
+async def test_send_reuses_fresh_precheck_skips_vk(monkeypatch):
+    """Свежий can_message со скана → messages_allowed не дёргаем повторно."""
+    from datetime import datetime
+
+    ar = _ad_request(can_message=True, can_message_checked_at=datetime.utcnow())
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=ar)
+    monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
+    ma = MagicMock(return_value=True)
+    monkeypatch.setattr(vk_actions, "messages_allowed", ma)
+    monkeypatch.setattr(
+        vk_actions,
+        "send_message",
+        MagicMock(return_value={"success": True, "message_id": 9, "via": "community-token"}),
+    )
+    out = await api.send_reply(1, db=db)
+    assert out["success"] is True
+    ma.assert_not_called()  # использован кэш precheck
+
+
+async def test_send_reuses_fresh_precheck_denied(monkeypatch):
+    """Свежий can_message=False → сразу deeplink, без VK-вызова и отправки."""
+    from datetime import datetime
+
+    ar = _ad_request(can_message=False, can_message_checked_at=datetime.utcnow())
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=ar)
+    monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
+    ma = MagicMock(return_value=True)
+    monkeypatch.setattr(vk_actions, "messages_allowed", ma)
+    monkeypatch.setattr(vk_actions, "send_message", MagicMock())
+    out = await api.send_reply(1, db=db)
+    assert out["allowed"] is False
+    assert out["personal_deeplink"] == "https://vk.com/im?sel=42"
+    ma.assert_not_called()
+    vk_actions.send_message.assert_not_called()
+
+
 # ---------------------------------------------------------------- status
 
 
