@@ -72,6 +72,82 @@
         </div>
     </div>
 
+    <!-- Планировщик отложенных постов (B1) -->
+    <div class="card mb-3 border-primary">
+        <div class="card-header bg-primary bg-opacity-10 d-flex justify-content-between align-items-center"
+             style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#scheduler-body"
+             aria-expanded="false" aria-controls="scheduler-body">
+            <span><i class="bi bi-calendar-plus"></i> <strong>Планировщик отложенных постов</strong></span>
+            <i class="bi bi-chevron-down"></i>
+        </div>
+        <div id="scheduler-body" class="collapse">
+            <div class="card-body">
+                <p class="text-muted small">
+                    Соберите пост (текст + картинки выше) и набейте даты публикации —
+                    программа разложит их в «Отложенные записи» VK выбранного сообщества,
+                    и VK сам опубликует в назначенное время. Картинки берутся из
+                    отмеченных <em>чекбоксами</em> в галерее выше.
+                </p>
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Сообщество</label>
+                        <select class="form-select" id="sch-community">
+                            <option value="">— загрузка… —</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                        <div class="d-flex flex-wrap gap-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="sch-from-group" checked>
+                                <label class="form-check-label" for="sch-from-group">От имени сообщества</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="sch-signed">
+                                <label class="form-check-label" for="sch-signed">Подпись автора</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="sch-comments" checked>
+                                <label class="form-check-label" for="sch-comments">Комментарии</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-3">
+                    <label class="form-label">Текст поста</label>
+                    <textarea class="form-control" id="sch-text" rows="4"
+                              placeholder="Текст поста (можно пустой, если только картинки)…"></textarea>
+                </div>
+
+                <div class="mt-3">
+                    <label class="form-label mb-1">Даты публикации <span class="text-muted small">(по Москве)</span></label>
+                    <div id="sch-dates"></div>
+                    <button type="button" class="btn btn-sm btn-outline-primary mt-1" id="sch-add-date">
+                        <i class="bi bi-plus-lg"></i> Добавить дату публикации
+                    </button>
+                </div>
+
+                <div class="mt-3 d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-primary" id="sch-submit">
+                        <i class="bi bi-send-plus"></i> Отправить в сообщество
+                    </button>
+                    <span id="sch-res" class="small"></span>
+                </div>
+
+                <hr>
+
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <strong><i class="bi bi-calendar-week"></i> Запланировано</strong>
+                    <button class="btn btn-sm btn-outline-secondary" id="sch-refresh">
+                        <i class="bi bi-arrow-clockwise"></i> Обновить
+                    </button>
+                </div>
+                <div id="sch-list" class="small"></div>
+            </div>
+        </div>
+    </div>
+
     <div id="ad-loading" class="text-center py-4">
         <div class="spinner-border spinner-border-sm text-secondary"></div>
         <p class="mt-2 text-muted mb-0">Загрузка…</p>
@@ -102,5 +178,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/js/ad_cabinet.js?v=20260603a"></script>
+<script src="/static/js/ad_cabinet.js?v=20260604a"></script>
 {% endblock %}

@@ -329,3 +329,187 @@ async function markCard(id, status) {
         _res(id, 'Ошибка смены статуса: ' + escapeHtml(e.message), 'danger');
     }
 }
+
+// =================================================== планировщик отложки
+
+const _schCommunityNames = {};  // vk_group_id -> name (для подписи в таблице)
+let _schInited = false;
+
+document.addEventListener('DOMContentLoaded', () => {
+    const addBtn = document.getElementById('sch-add-date');
+    if (addBtn) addBtn.addEventListener('click', () => addDateRow());
+    const submitBtn = document.getElementById('sch-submit');
+    if (submitBtn) submitBtn.addEventListener('click', submitSchedule);
+    const refreshBtn = document.getElementById('sch-refresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', loadSchedule);
+    // Удаление строки-даты (делегирование).
+    const datesBox = document.getElementById('sch-dates');
+    if (datesBox) datesBox.addEventListener('click', (e) => {
+        const btn = e.target.closest('.btn-del-date');
+        if (btn) btn.closest('.sch-date-row').remove();
+    });
+    // Ленивая инициализация при первом раскрытии секции (не грузим регионы зря).
+    const body = document.getElementById('scheduler-body');
+    if (body) body.addEventListener('shown.bs.collapse', initScheduler, { once: true });
+});
+
+async function initScheduler() {
+    if (_schInited) return;
+    _schInited = true;
+    await loadTargetCommunities();
+    if (!document.querySelector('#sch-dates .sch-date-row')) addDateRow();
+    await loadSchedule();
+}
+
+async function loadTargetCommunities() {
+    const sel = document.getElementById('sch-community');
+    if (!sel) return;
+    try {
+        const regions = await apiClient.getRegions();
+        const withGroup = (regions || []).filter(r => r.vk_group_id);
+        if (!withGroup.length) {
+            sel.innerHTML = '<option value="">— нет сообществ с VK-группой —</option>';
+            return;
+        }
+        withGroup.forEach(r => { _schCommunityNames[r.vk_group_id] = r.name || r.code; });
+        sel.innerHTML = withGroup.map(r =>
+            `<option value="${r.vk_group_id}" data-region-id="${r.id}">${escapeHtml(r.name || r.code)}</option>`
+        ).join('');
+    } catch (e) {
+        sel.innerHTML = `<option value="">Ошибка: ${escapeHtml(e.message)}</option>`;
+    }
+}
+
+function addDateRow(value) {
+    const box = document.getElementById('sch-dates');
+    if (!box) return;
+    const row = document.createElement('div');
+    row.className = 'sch-date-row input-group input-group-sm mb-1';
+    row.style.maxWidth = '320px';
+    row.innerHTML =
+        `<input type="datetime-local" class="form-control sch-date" value="${value || ''}">` +
+        `<button type="button" class="btn btn-outline-danger btn-del-date" title="Убрать дату">` +
+        `<i class="bi bi-x"></i></button>`;
+    box.appendChild(row);
+}
+
+function collectScheduleDates() {
+    return Array.from(document.querySelectorAll('#sch-dates .sch-date'))
+        .map(i => i.value)
+        .filter(v => v);
+}
+
+function _schRes(html, cls) {
+    const el = document.getElementById('sch-res');
+    if (el) el.innerHTML = `<span class="text-${cls || 'muted'}">${html}</span>`;
+}
+
+async function submitSchedule() {
+    const sel = document.getElementById('sch-community');
+    const opt = sel && sel.selectedOptions[0];
+    const communityVkId = opt ? parseInt(opt.value, 10) : NaN;
+    if (!communityVkId) { _schRes('Выберите сообщество.', 'danger'); return; }
+    const dates = collectScheduleDates();
+    if (!dates.length) { _schRes('Добавьте хотя бы одну дату публикации.', 'danger'); return; }
+    const text = (document.getElementById('sch-text').value || '').trim();
+    const images = selectedOfferImages();
+    if (!text && !images.length) {
+        _schRes('Пустой пост: нужен текст или отмеченные картинки.', 'danger');
+        return;
+    }
+
+    const payload = {
+        community_vk_id: communityVkId,
+        region_id: opt.dataset.regionId ? parseInt(opt.dataset.regionId, 10) : null,
+        text,
+        images,
+        dates,
+        from_group: document.getElementById('sch-from-group').checked,
+        signed: document.getElementById('sch-signed').checked,
+        comments_enabled: document.getElementById('sch-comments').checked,
+    };
+    _schRes('Планирую…');
+    const btn = document.getElementById('sch-submit');
+    if (btn) btn.disabled = true;
+    try {
+        const res = await apiClient.createScheduledPosts(payload);
+        const msg = `Запланировано: ${res.scheduled}` + (res.failed ? `, с ошибкой: ${res.failed}` : '');
+        _schRes(msg + ' ✓', res.failed ? 'warning' : 'success');
+        // Очищаем только даты — текст/картинки оставляем для следующей раскладки.
+        document.getElementById('sch-dates').innerHTML = '';
+        addDateRow();
+        await loadSchedule();
+    } catch (e) {
+        _schRes('Ошибка: ' + escapeHtml(e.message), 'danger');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+const SCH_STATUS_BADGE = {
+    draft: '<span class="badge bg-secondary">черновик</span>',
+    scheduled: '<span class="badge bg-primary">в отложке</span>',
+    published: '<span class="badge bg-success">опубликовано</span>',
+    failed: '<span class="badge bg-danger">ошибка</span>',
+    cancelled: '<span class="badge bg-dark">отменено</span>',
+};
+
+function _fmtSchedDate(iso) {
+    // publish_date — МСК wall-clock; показываем как есть (без TZ-сдвига).
+    return iso ? String(iso).replace('T', ' ').slice(0, 16) : '';
+}
+
+async function loadSchedule() {
+    const box = document.getElementById('sch-list');
+    if (!box) return;
+    box.innerHTML = '<span class="text-muted">Загрузка…</span>';
+    try {
+        const data = await apiClient.getScheduledPosts({});
+        const rows = data.scheduled || [];
+        if (!rows.length) {
+            box.innerHTML = '<span class="text-muted">Пока ничего не запланировано.</span>';
+            return;
+        }
+        box.innerHTML =
+            '<table class="table table-sm align-middle"><thead><tr>' +
+            '<th>Дата (МСК)</th><th>Сообщество</th><th>Текст</th><th>Статус</th><th></th>' +
+            '</tr></thead><tbody>' + rows.map(renderScheduledRow).join('') + '</tbody></table>';
+    } catch (e) {
+        box.innerHTML = `<span class="text-danger">Ошибка: ${escapeHtml(e.message)}</span>`;
+    }
+}
+
+function renderScheduledRow(r) {
+    const full = r.text || '';
+    const preview = escapeHtml(full.slice(0, 60)) + (full.length > 60 ? '…' : '');
+    const name = _schCommunityNames[r.community_vk_id] || String(r.community_vk_id);
+    const community = r.vk_post_url
+        ? `<a href="${escapeHtml(r.vk_post_url)}" target="_blank">${escapeHtml(name)}</a>`
+        : escapeHtml(name);
+    const canCancel = r.status === 'scheduled' || r.status === 'draft';
+    const cancelBtn = canCancel
+        ? `<button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="cancelSchedule(${r.id})" title="Отменить"><i class="bi bi-x"></i></button>`
+        : '';
+    const err = r.error_message
+        ? `<div class="text-danger" style="font-size:.8em;">${escapeHtml(r.error_message)}</div>` : '';
+    return `<tr>
+        <td class="text-nowrap">${_fmtSchedDate(r.publish_date)}</td>
+        <td>${community}</td>
+        <td>${preview}${err}</td>
+        <td>${SCH_STATUS_BADGE[r.status] || escapeHtml(r.status)}</td>
+        <td>${cancelBtn}</td>
+    </tr>`;
+}
+
+async function cancelSchedule(id) {
+    if (!confirm('Отменить запланированный пост (убрать из VK-отложки)?')) return;
+    try {
+        const res = await apiClient.cancelScheduledPost(id);
+        if (res.cancel_error) {
+            alert('VK не дал удалить пост: ' + res.cancel_error);
+        }
+        await loadSchedule();
+    } catch (e) {
+        alert('Ошибка отмены: ' + escapeHtml(e.message));
+    }
+}
