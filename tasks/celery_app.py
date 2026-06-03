@@ -28,9 +28,15 @@ from celery import Celery, signals
 from celery.schedules import crontab
 
 from utils.celery_asyncio import run_coro
+from utils.json_logging import configure_json_logging
 
 # Setup logging
+# Plain-text по умолчанию (формат как раньше). При env LOG_FORMAT=json форматтер
+# переустанавливается на структурированный JSON (см. utils/json_logging.py) —
+# удобно грепать/парсить логи worker'а на инцидентах. Повторно дёргаем из
+# worker_ready-хука ниже, т.к. Celery переинициализирует логгеры при старте.
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
+configure_json_logging()
 logger = logging.getLogger(__name__)
 
 # --- Telegram alerts for Notifications ---
@@ -188,6 +194,19 @@ def _setka_mark_prom_process_dead(**_kwargs) -> None:
         multiprocess.mark_process_dead(os.getpid())
     except Exception:
         logger.debug("prometheus mark_process_dead failed", exc_info=True)
+
+
+# Celery переинициализирует логирование при старте worker'а (хватает root-логгер
+# через свой ``setup_logging`` / ``--loglevel``), затирая форматтер, выставленный
+# на import-е модуля. Переустанавливаем JSON-форматтер уже после готовности
+# worker'а, чтобы LOG_FORMAT=json реально действовал на его выводе.
+@signals.worker_ready.connect  # type: ignore[has-type]
+def _setka_apply_json_logging(**_kwargs) -> None:
+    try:
+        if configure_json_logging():
+            logger.info("JSON logging enabled for Celery worker (LOG_FORMAT=json)")
+    except Exception:
+        logger.debug("configure_json_logging failed", exc_info=True)
 
 
 @app.task(name="tasks.celery_app.run_vk_monitoring")
