@@ -72,3 +72,65 @@ async def test_dedup_existing_row():
     stats = await scanner.scan_region_group(session, checker, _REGION, classify_fn=_classify_ad)
     assert stats["ads"] == 1
     assert stats["new"] == 0
+
+
+# ---------------------------------------------------------------- can_message precheck
+
+
+async def test_precheck_updates_can_message_for_new_ad(monkeypatch):
+    checker = MagicMock()
+    checker.fetch_suggested_posts.return_value = [_post()]
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(rowcount=1))  # новая строка
+    monkeypatch.setattr(
+        "modules.notifications.vk_actions.messages_allowed", MagicMock(return_value=True)
+    )
+
+    stats = await scanner.scan_region_group(
+        session, checker, _REGION, classify_fn=_classify_ad, user_token="tok", community_tokens={}
+    )
+    assert stats["new"] == 1
+    # INSERT + UPDATE(can_message) → два execute.
+    assert session.execute.await_count == 2
+
+
+async def test_precheck_skipped_when_no_token():
+    checker = MagicMock()
+    checker.fetch_suggested_posts.return_value = [_post()]
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(rowcount=1))
+
+    await scanner.scan_region_group(session, checker, _REGION, classify_fn=_classify_ad)
+    # Без токена precheck не делается → только INSERT.
+    assert session.execute.await_count == 1
+
+
+async def test_precheck_skipped_for_group_author(monkeypatch):
+    checker = MagicMock()
+    checker.fetch_suggested_posts.return_value = [_post() | {"author_is_group": True}]
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(rowcount=1))
+    ma = MagicMock(return_value=True)
+    monkeypatch.setattr("modules.notifications.vk_actions.messages_allowed", ma)
+
+    await scanner.scan_region_group(
+        session, checker, _REGION, classify_fn=_classify_ad, user_token="tok"
+    )
+    ma.assert_not_called()
+    assert session.execute.await_count == 1  # только INSERT, без UPDATE
+
+
+async def test_precheck_none_result_no_update(monkeypatch):
+    checker = MagicMock()
+    checker.fetch_suggested_posts.return_value = [_post()]
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(rowcount=1))
+    monkeypatch.setattr(
+        "modules.notifications.vk_actions.messages_allowed", MagicMock(return_value=None)
+    )
+
+    await scanner.scan_region_group(
+        session, checker, _REGION, classify_fn=_classify_ad, user_token="tok"
+    )
+    # messages_allowed=None → не пишем can_message → только INSERT.
+    assert session.execute.await_count == 1

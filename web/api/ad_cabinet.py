@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import quote
@@ -163,12 +163,21 @@ async def send_reply(
     group_id = int(ar.community_vk_id)
     peer_id = int(ar.peer_id)
 
-    allowed = messages_allowed(
-        group_id=group_id,
-        user_id=peer_id,
-        user_token=user_token,
-        community_tokens=community_tokens,
-    )
+    # Свежий precheck со скана (modules.ad_cabinet.scanner) — не дёргаем VK
+    # повторно. Messageability меняется редко; окно 7 дней с запасом.
+    if (
+        ar.can_message is not None
+        and ar.can_message_checked_at
+        and (datetime.utcnow() - ar.can_message_checked_at) < timedelta(days=7)
+    ):
+        allowed = ar.can_message
+    else:
+        allowed = messages_allowed(
+            group_id=group_id,
+            user_id=peer_id,
+            user_token=user_token,
+            community_tokens=community_tokens,
+        )
     if allowed is False:
         ar.can_message = False
         ar.can_message_checked_at = datetime.utcnow()
