@@ -454,6 +454,25 @@ class VKPublisher:
             )
             return {"success": False, "error": str(e)}
 
+    async def delete_post(self, owner_id: int, post_id: int) -> Dict[str, Any]:
+        """Удалить пост сообщества (в т.ч. отложенный) — VK ``wall.delete``.
+
+        Используется для отмены запланированного поста из рекламного кабинета.
+        Идёт через тот же токен-роутинг, что и публикация.
+
+        Returns ``{"success": bool, "via"?: str, "error"?: str}``.
+        """
+        target = self._normalize_group_owner_id(owner_id)
+        params = {"owner_id": target, "post_id": int(post_id)}
+        client, _via_community = self._client_for_group(target)
+        try:
+            _response, via = await self._call_wall_post(params, method="wall.delete", client=client)
+            logger.info("🗑️ Deleted wall%s_%s (via %s)", target, post_id, via)
+            return {"success": True, "via": via}
+        except Exception as e:
+            logger.error("❌ Failed to delete wall%s_%s: %s", target, post_id, e)
+            return {"success": False, "error": str(e)}
+
     async def _call_wall_post(
         self,
         params: Dict[str, Any],
