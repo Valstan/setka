@@ -5,57 +5,53 @@
 **Status:** ACTIVE
 **Updated:** 2026-06-03
 **Branch:** main
-**Last release in prod:** прод на `07bfe9b` — задеплоен весь пакет «хвостов» (PR #111–#119), миграции 023+024 применены, setka/worker/beat active, health 200.
+**Last release in prod:** прод на `953380c` — задеплоен весь batch «хвостов-2» (PR #121–#128), миграций нет, deps не менялись, setka/worker/beat active, health 200.
 
 ---
 
 ## Текущая нитка
 
-**Две параллельные нитки, обе на паузе по решению владельца:**
-
-1. **Освежение районов (journal-driven)** — стоит с прошлой сессии (#110). Владелец сказал «освежевание регионов пока отложим». Журнал и очередь — в [`docs/REGION_REFRESH_LOG.md`](REGION_REFRESH_LOG.md). Следующий в очереди — `pizhanka`.
-2. **Сессия «позакрываем хвосты» (2026-06-03) — закрыта.** За проход реализовано и **задеплоено** 7 фич + 2 ранее (всего PR #111–#119). Осталось 2 отложенных follow-up'а (#13, #10) + конфликтные #11/#12 — см. ниже.
+**Batch «обработать все трактабельные хвосты/техдолги/планы, кроме регионов» — закрыт и задеплоен.** За проход реализовано и влито 7 фич + doc-bookkeeping (PR #121–#128), задеплоено через `/reliz` на `953380c`. Кода в работе нет — остались только owner-шаги (браузер-верификация) и осознанно отложенные нитки.
 
 ## Следующий шаг
 
 Открытая стартовая позиция — на выбор владельца (приоритет сверху вниз):
 
-1. **`/regions/<code>/diagnostics`** (PENDING 🟢, отложено этой сессией как крупное) — кнопка «прогнать пайплайн без публикации»: видно, что отфильтровалось / собрал aggregator / попало бы в дайджест. **Заслуживает отдельной сфокусированной сессии:** это dry-run критического `tasks/parsing_scheduler_tasks.parse_and_publish_theme` (~500 строк, есть `test_mode`, но он публикует в test-полигон, а нужен truly-dry без публикации) + UI, который агент не может проверить в браузере. Начать с поиска чистого seam'а «parse+filter+aggregate без publish».
-2. **Возобновить освежение `pizhanka`** (пул 41) — процедура в [`docs/REGION_REFRESH_LOG.md`](REGION_REFRESH_LOG.md): срез категорий+localities → чистка → `/discover_communities pizhanka` → засев → журнал.
-3. **TG-видео >50 MB файлом** (PENDING 🟢, low-value) — `sendVideo` multipart вместо URL в `modules/publisher/telegram_repost.py`. Редкий кейс.
+1. **Браузер-верификация трёх новых UI** (owner-шаг, агент не открывает браузер): `/publications` (фильтры регион/тема/дни, ссылки на VK), `/regions/<code>/diagnostics` (тема → «Прогнать без публикации» → счётчики + превью), `/ad-cabinet` (чекбоксы → панель массовых действий).
+2. **Возобновить освежение регионов** (journal-driven, на паузе по решению владельца) — `pizhanka` (пул 41), процедура в [`docs/REGION_REFRESH_LOG.md`](REGION_REFRESH_LOG.md).
+3. **Любой отложенный пункт из [`PENDING_FOLLOWUPS.md`](PENDING_FOLLOWUPS.md)** — см. секцию «Не забыть» ниже.
 
 ## Контекст
 
-- **План:** активного файла плана нет.
-- **Связанные коммиты сессии (PR #111–#119):**
-  - `10f3819`/#111 — fix(ad-cabinet): score базового фильтра как причина при пустых reasons.
-  - `d4a8dff`/#112 — docs(brain): рефлекс #014 (consult-library) в CLAUDE.md + ack.
-  - `52090ad`/#113 — chore(scripts): `dev-doctor.sh` (локально).
-  - `a1485f9`/#114 — chore(hooks): commit-msg Conventional Commits gate (нужен разовый `pre-commit install` на dev-машинах).
-  - `f745940`/#115 — feat(monitoring): watchdog «давно нет дайджестов» (Redis-heartbeat + beat `digest-heartbeat-watchdog`).
-  - `e3a65fb`/#116 — feat(communities): inline TG-зеркало в `/communities`.
-  - `dd0d80e`/#117 — feat(tokens): роль публикации (миграция 023, аддитивно к env-whitelist).
-  - `b959714`/#118 — feat(templates): per-region шаблоны (миграция 024).
-  - `07bfe9b`/#119 — feat(ui): тёмный режим (Bootstrap 5.3 `data-bs-theme`).
-- **Прод:** HEAD `07bfe9b`, 3/3 сервиса active, health 200. Миграции 023+024 применены (колонки `vk_tokens.role`, `message_templates.region_id` подтверждены). beat зарегистрировал `digest-heartbeat-watchdog`.
+- **План:** [`unified-tickling-puppy.md`](../../../../Users/valstan/.claude/plans/unified-tickling-puppy.md) (batch-план этой сессии; локальный, не в репо).
+- **Связанные коммиты сессии (PR #121–#128, все на проде):**
+  - `11e24c0`/#121 — chore(logs): JSON-логи Celery (опт-ин env `LOG_FORMAT=json`, stdlib, без новых deps).
+  - `22786d4`/#122 — feat(tasks): `dry_run` seam в `parse_and_publish_theme` + каскад (truly-dry, без публикации/записи).
+  - `8a5aba9`/#123 — feat(publisher): TG-видео файлом (`sendVideo` multipart ≤50 MB, degrade на текст).
+  - `676cc71`/#124 — feat(ui): `/regions/<code>/diagnostics` (Celery + polling).
+  - `b31d22f`/#125 — feat(ui): «История публикаций» `/publications` (переиспользует `parsing_stats`, без новой таблицы).
+  - `56eadfa`/#126 — feat(ad-cabinet): precheck `can_message` на скане + reuse кэша в `/send`.
+  - `5eedab3`/#127 — feat(ad-cabinet): массовые действия в инбоксе (мультивыбор + батч статус/удаление).
+  - `953380c`/#128 — docs(pending): закрытие хвостов + отметка 3 уже-сделанных.
+- **Прод:** HEAD `953380c`, 3/3 сервиса active, health 200. Миграций не применяли (не было). 846 тестов зелёные на main.
 - **Открытых PR:** doc-only handoff-PR этого `/close_session` (авто-merge). Кодовых открытых PR нет.
 
 ## Failed approaches (этой нитки)
 
-- **Prometheus-gauge `setka_digest_last_published_timestamp` как источник для watchdog'а** — на проде multiproc-mmap пуст несмотря на реальные публикации (давняя хрупкость вокруг PR #75). Не использовать для liveness-алёртов; завели надёжный Redis-heartbeat (`modules/digest_heartbeat.py`). Находка отправлена в мозг: `mailbox/to-brain/2026-06-03-liveness-watchdog-dedicated-heartbeat.md`.
-- **Авто-discovery beat-таски (#11 watcher info-репостов, #12 monthly re-discover)** — НЕ реализовывать: конфликтуют с намеренным отключением `discovery-rolling-daily` в PR #108 («вручную через `/discover_communities`, пока нет нейро-фильтра»). Реинтродьюс = откат свежего решения. Помечено ⏸ в PENDING (секция Discovery 🟢).
+- **`gh pr merge --auto`** на этом репо не работает: «Auto merge is not allowed for this repository». Мержить надо после зелёного CI обычным `gh pr merge --squash --delete-branch` (CI ~1.5 мин).
+- **Параллельные PR от одной базы + strict branch protection:** второй PR блокируется как «behind base» — нужно `git merge origin/main` в его ветку и переждать новый CI. Вывод на будущее: в batch-сессии ветвить каждый следующий PR от свежесмерженного `main` (или merge-then-branch), а не пачкой от одной базы.
 
 ## Открытые вопросы для пользователя
 
-- За #13 (диагностика-dry-run) браться сейчас (отдельная сессия) или позже?
-- #11/#12 (авто-discovery) — оставить отложенными до нейро-фильтра, или есть кейс вернуть раньше?
+- Включать ли JSON-логи на проде (`LOG_FORMAT=json` в `/etc/setka/setka.env` + restart worker)? Сейчас спят — дефолт plain-text.
+- За какой из отложенных пунктов берёмся следующим (регионы / ad-cabinet эпики / smoke-step в `/reliz`)?
 
 ## Не забыть (low-priority)
 
-- ℹ️ **commit-msg хук** (#114) активируется на dev-машине только после разового `pre-commit install` (новый hook-type commit-msg).
-- ℹ️ **Тёмный режим** (#119) — браузер-верификация за владельцем (агент UI не открывает). Риск минимален (нативный Bootstrap 5.3).
-- ℹ️ **Watchdog дайджестов** (#115) — первый алёрт возможен только после того, как появится heartbeat (первая novost-волна после деплоя) и затем протухнет >6ч. Ложных при свежем деплое не даёт (None не алёртит).
-- 🟡 **Groq 403** — заблокирован бюджетом (владелец исключил из работы).
+- ℹ️ **История публикаций** (`/publications`) наполняется естественно: `published_url` пишется со следующих прогонов дайджестов; старые выпуски — без ссылки.
+- 🟢 **Smoke-test после деплоя** — seam готов (#122, `dry_run=True` + `/api/regions/{code}/diagnostics`); осталось добавить шаг в `/reliz`, дёргающий dry-run эталонного региона/темы и сверяющий `posts_parsed`/`would_publish`.
+- ⏸ **Отложено осознанно (не делать без решения владельца):** авто-discovery #11/#12 (реверс PR #108), Groq-зависимые фичи (бюджет), ad-cabinet эпики (авто-send `is_allowed`, per-region офферные картинки, CRM фаза 3, ML фаза 4), webhook-бот, wall.repost SPOF (нужен 2-й publish-токен), чистка `config.localities` + stop-stem (региональная DATA-работа).
+- ℹ️ **Освежение регионов** на паузе по решению владельца (журнал — `docs/REGION_REFRESH_LOG.md`, верх очереди `pizhanka`).
 
 ---
 
