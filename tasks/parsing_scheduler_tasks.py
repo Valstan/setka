@@ -21,6 +21,17 @@ WORK_TABLE_LIP_LIMIT = 1000
 WORK_TABLE_HASH_LIMIT = 5000
 
 
+def _parse_vk_post_id(url: str | None) -> int | None:
+    """Достать post_id из VK-ссылки ``…/wall-123_456`` → ``456`` (для истории
+    публикаций). Возвращает None, если url пуст / не распознан."""
+    if not url:
+        return None
+    import re
+
+    m = re.search(r"wall-?\d+_(\d+)", str(url))
+    return int(m.group(1)) if m else None
+
+
 def _use_cascade_digest(region_kind: str | None, region_config: Any) -> bool:
     """Решает, собирать ли дайджест каскадом (из главных групп детей/соседей)
     или обычным путём (из собственных ``communities`` региона).
@@ -592,6 +603,8 @@ def parse_and_publish_theme(
                         ),
                         posts_final_count=result.get("stats", {}).get("posts_final_count", 0),
                         published_to_test_polygon=test_mode,
+                        published_url=result.get("published_url"),
+                        published_post_id=_parse_vk_post_id(result.get("published_url")),
                     )
                     session.add(record)
                     await session.commit()
