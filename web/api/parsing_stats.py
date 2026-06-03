@@ -201,6 +201,58 @@ async def get_recent_parsing_stats(
     }
 
 
+@router.get("/publications")
+async def get_publications(
+    region_code: Optional[str] = Query(None, description="Filter by region code"),
+    theme: Optional[str] = Query(None, description="Filter by theme"),
+    days: int = Query(30, ge=1, le=90, description="Number of days to look back"),
+    limit: int = Query(200, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """История публикаций дайджестов по регионам/темам.
+
+    Возвращает фактические выпуски (успешные прогоны с непустым дайджестом) с
+    ссылкой на VK-пост — удобный просмотр «что и когда вышло», без хождения по
+    VK-стенам (PENDING 🟢). Источник — ``parsing_stats`` (каждый прогон
+    ``parse_and_publish_theme`` пишет строку; ``published_url`` заполняется при
+    реальной публикации). Тест-полигонные прогоны и пустые выпуски исключены.
+    """
+    query = select(ParsingStats).where(
+        ParsingStats.success.is_(True),
+        ParsingStats.published_to_test_polygon.is_(False),
+        ParsingStats.posts_final_count > 0,
+    )
+    if region_code:
+        query = query.where(ParsingStats.region_code == region_code)
+    if theme:
+        query = query.where(ParsingStats.theme == theme)
+
+    cutoff_date = datetime.now() - timedelta(days=days)
+    query = query.where(ParsingStats.run_date >= cutoff_date)
+    query = query.order_by(ParsingStats.run_date.desc()).limit(limit)
+
+    result = await db.execute(query)
+    records = result.scalars().all()
+
+    publications = [
+        {
+            "id": r.id,
+            "region_code": r.region_code,
+            "theme": r.theme,
+            "run_date": r.run_date.isoformat() if r.run_date else None,
+            "posts_final_count": r.posts_final_count,
+            "published_url": r.published_url,
+            "published_post_id": r.published_post_id,
+        }
+        for r in records
+    ]
+    return {
+        "publications": publications,
+        "total_records": len(publications),
+        "period_days": days,
+    }
+
+
 def calculate_aggregates(stats_records: List[ParsingStats]) -> dict:
     """Calculate aggregate statistics."""
     if not stats_records:
