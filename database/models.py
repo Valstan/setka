@@ -376,6 +376,9 @@ class VKToken(Base):
     last_error_at = Column(DateTime, nullable=True)
     consecutive_errors = Column(Integer, nullable=False, default=0)
 
+    # --- Роль (миграция 023): 'publish' = разрешено публиковать (доп. к env). ---
+    role = Column(String(20), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -409,6 +412,7 @@ class VKToken(Base):
             "last_error_code": self.last_error_code,
             "last_error_at": (self.last_error_at.isoformat() if self.last_error_at else None),
             "consecutive_errors": int(self.consecutive_errors or 0),
+            "role": self.role,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

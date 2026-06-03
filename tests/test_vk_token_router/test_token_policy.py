@@ -36,6 +36,7 @@ def _vk_token_row(
     disabled_until=None,
     consecutive_errors=0,
     validation_status=None,
+    role=None,
 ):
     """Лёгкий builder реальной модели VKToken (не Mock — модель ловит атрибуты).
 
@@ -51,6 +52,7 @@ def _vk_token_row(
         disabled_until=disabled_until,
         consecutive_errors=consecutive_errors,
         validation_status=validation_status,
+        role=role,
     )
 
 
@@ -190,6 +192,69 @@ async def test_pick_community_write_prefers_community_token():
     assert out[0].community_id == 158
     assert out[1].name == "VALSTAN"
     assert out[1].source == "user"
+
+
+@pytest.mark.asyncio
+async def test_db_role_publish_augments_env_whitelist():
+    """role='publish' в БД добавляет токен к env-whitelist'у (аддитивно)."""
+    rows_active = [
+        _vk_token_row("VALSTAN", "tok_v"),
+        _vk_token_row("OLGA", "tok_o", role="publish"),  # не в env-whitelist
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+            "VK_TOKEN_VALSTAN": "tok_v",
+            "VK_TOKEN_OLGA": "tok_o",
+            "VK_PUBLISH_TOKEN_NAMES": "VALSTAN",  # env знает только VALSTAN
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        policy = TokenPolicy(session)
+        out = await policy.pick(TokenOp.USER_WRITE)
+    names = [c.name for c in out]
+    assert "VALSTAN" in names
+    assert "OLGA" in names  # добавлена через role='publish'
+
+
+@pytest.mark.asyncio
+async def test_db_role_publish_still_excluded_by_deny_list():
+    """Deny-list (VK_NEVER_PUBLISH_TOKEN_NAMES) имеет приоритет над role='publish'."""
+    rows_active = [
+        _vk_token_row("VALSTAN", "tok_v"),
+        _vk_token_row("VITA", "tok_vita", role="publish"),  # роль не спасёт от deny
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+            "VK_TOKEN_VALSTAN": "tok_v",
+            "VK_TOKEN_VITA": "tok_vita",
+            "VK_PUBLISH_TOKEN_NAMES": "VALSTAN",
+            "VK_NEVER_PUBLISH_TOKEN_NAMES": "VITA",
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        policy = TokenPolicy(session)
+        out = await policy.pick(TokenOp.USER_WRITE)
+    names = [c.name for c in out]
+    assert "VALSTAN" in names
+    assert "VITA" not in names  # deny-list побеждает роль
 
 
 @pytest.mark.asyncio
