@@ -206,6 +206,61 @@ async def test_send_reuses_fresh_precheck_denied(monkeypatch):
     vk_actions.send_message.assert_not_called()
 
 
+# ---------------------------------------------------------------- bulk action
+
+
+async def test_bulk_status_updates_many():
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=MagicMock(rowcount=2))
+    out = await api.bulk_action(
+        api.BulkActionIn(ids=[1, 2], action="status", status="skipped"), db=db
+    )
+    assert out["action"] == "status"
+    assert out["status"] == "skipped"
+    assert out["affected"] == 2
+    db.commit.assert_awaited()
+
+
+async def test_bulk_status_contacted_stamps_time():
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=MagicMock(rowcount=3))
+    out = await api.bulk_action(
+        api.BulkActionIn(ids=[1, 2, 3], action="status", status="contacted"), db=db
+    )
+    assert out["affected"] == 3
+    # status update + contacted_at update = два execute.
+    assert db.execute.await_count == 2
+
+
+async def test_bulk_delete():
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=MagicMock(rowcount=5))
+    out = await api.bulk_action(api.BulkActionIn(ids=[1, 2, 3, 4, 5], action="delete"), db=db)
+    assert out["action"] == "delete"
+    assert out["affected"] == 5
+
+
+async def test_bulk_invalid_action():
+    db = AsyncMock()
+    with pytest.raises(HTTPException) as exc:
+        await api.bulk_action(api.BulkActionIn(ids=[1], action="frobnicate"), db=db)
+    assert exc.value.status_code == 400
+
+
+async def test_bulk_invalid_status():
+    db = AsyncMock()
+    with pytest.raises(HTTPException) as exc:
+        await api.bulk_action(api.BulkActionIn(ids=[1], action="status", status="bogus"), db=db)
+    assert exc.value.status_code == 400
+
+
+async def test_bulk_empty_ids():
+    db = AsyncMock()
+    with pytest.raises(HTTPException) as exc:
+        await api.bulk_action(api.BulkActionIn(ids=[], action="delete"), db=db)
+    assert exc.value.status_code == 400
+
+
 # ---------------------------------------------------------------- status
 
 

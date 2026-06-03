@@ -79,10 +79,28 @@
     <div id="ad-empty" class="alert alert-info" style="display:none;">
         Рекламных заявок в этом фильтре нет.
     </div>
+
+    <!-- Панель массовых действий (появляется, когда что-то отмечено) -->
+    <div id="bulk-bar" class="card mb-3 border-primary" style="display:none;">
+        <div class="card-body py-2 d-flex flex-wrap align-items-center gap-2">
+            <span class="me-2"><strong id="bulk-count">0</strong> выбрано</span>
+            <button class="btn btn-sm btn-outline-secondary" id="bulk-select-all">Выбрать все</button>
+            <button class="btn btn-sm btn-outline-secondary" id="bulk-clear">Снять</button>
+            <span class="vr d-none d-md-inline"></span>
+            <button class="btn btn-sm btn-outline-info" onclick="bulkSet('contacted')">Связались</button>
+            <button class="btn btn-sm btn-outline-success" onclick="bulkSet('published')">Опубликовано</button>
+            <button class="btn btn-sm btn-outline-dark" onclick="bulkSet('skipped')">Пропустить</button>
+            <button class="btn btn-sm btn-outline-danger ms-auto" onclick="bulkDelete()">
+                <i class="bi bi-trash"></i> Удалить
+            </button>
+            <span class="small ms-2" id="bulk-res"></span>
+        </div>
+    </div>
+
     <div id="ad-list"></div>
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/js/ad_cabinet.js?v=20260602b"></script>
+<script src="/static/js/ad_cabinet.js?v=20260603a"></script>
 {% endblock %}
