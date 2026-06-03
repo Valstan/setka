@@ -109,6 +109,30 @@ const apiClient = {
         });
     },
 
+    // Ad cabinet — планировщик отложенных постов
+    async getScheduledPosts(params = {}) {
+        const q = new URLSearchParams();
+        if (params.community_vk_id) q.set('community_vk_id', params.community_vk_id);
+        if (params.status) q.set('status', params.status);
+        if (params.date_from) q.set('date_from', params.date_from);
+        if (params.date_to) q.set('date_to', params.date_to);
+        const qs = q.toString();
+        return this.request(`/ad-cabinet/scheduled${qs ? '?' + qs : ''}`);
+    },
+
+    async createScheduledPosts(payload) {
+        return this.request('/ad-cabinet/scheduled', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async cancelScheduledPost(id) {
+        return this.request(`/ad-cabinet/scheduled/${id}/cancel`, {
+            method: 'POST'
+        });
+    },
+
     // Regions endpoints
     async getRegions() {
         return this.request('/regions/');
