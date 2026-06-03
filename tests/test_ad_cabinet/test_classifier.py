@@ -43,3 +43,15 @@ async def test_external_link_adds_signal():
     )
     assert is_ad is True
     assert any("ссылка" in r for r in reasons)
+
+
+async def test_base_score_only_ad_has_reason():
+    # Базовый фильтр дайджеста ПРОПУСКАЕТ пост (его порог 4): "скидка" (2) +
+    # "подробности" (1) = score 3, без предложка-сигналов (нет контактов/ссылок/
+    # оффер-слов). Наш порог 3 → is_ad, но раньше reasons оставались []. Регрессия
+    # на «пустые reasons_json» — карточка обязана показывать причину.
+    is_ad, score, reasons = await classify({"text": "Большая скидка на товар, подробности у нас"})
+    assert is_ad is True
+    assert score >= 3
+    assert reasons  # причина не пуста
+    assert any("score" in r.lower() or "коммерческ" in r.lower() for r in reasons)
