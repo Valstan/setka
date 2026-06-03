@@ -168,9 +168,7 @@ class VKPublisher:
         from modules.vk_token_router import TokenOp, TokenPolicy
 
         policy = TokenPolicy(session)
-        comm_map = (
-            await policy._load_communities()
-        )  # noqa: SLF001 — intended internal use
+        comm_map = await policy._load_communities()  # noqa: SLF001 — intended internal use
         community_tokens = {cid: vt.token for cid, vt in comm_map.items()}
 
         candidates = await policy.pick(
@@ -229,6 +227,8 @@ class VKPublisher:
         attachments: List[str] = None,
         copyright_url: str = None,
         from_group: bool = True,
+        publish_date: Optional[int] = None,
+        signed: bool = False,
     ) -> Dict[str, Any]:
         """
         Publish digest post to VK group.
@@ -239,18 +239,23 @@ class VKPublisher:
             attachments: List of VK attachment strings
             copyright_url: Copyright URL for attribution
             from_group: True = post as group, False = as user
+            publish_date: Unix timestamp (seconds). When set (>0), VK schedules
+                the post into the community's "Отложенные записи" (postponed) and
+                publishes it automatically at that time. ``None`` → publish now
+                (default; digests are unaffected — zero regression).
+            signed: True → add "подпись автора" (VK ``signed=1``); only meaningful
+                together with ``from_group``.
 
         Returns:
-            VK API response dict with post_id, url, etc.
+            VK API response dict with post_id, url, etc. When ``publish_date`` is
+            set, ``postponed=True`` and ``post_id`` is the postponed post id.
         """
         normalized_group_id = self._normalize_group_owner_id(group_id)
 
         # Determine target group
         if self.test_polygon_mode:
             target_group_id = self._normalize_group_owner_id(self.test_polygon_group_id)
-            logger.info(
-                f"🧪 TEST POLYGON MODE: Posting to test group {target_group_id}"
-            )
+            logger.info(f"🧪 TEST POLYGON MODE: Posting to test group {target_group_id}")
         else:
             target_group_id = normalized_group_id
 
@@ -273,6 +278,15 @@ class VKPublisher:
         if copyright_url:
             params["copyright"] = copyright_url
 
+        if signed:
+            params["signed"] = 1
+
+        # publish_date — отложенный пост (VK «Отложенные записи»). Передаём только
+        # положительный unix-timestamp; 0/None → публикация сразу (дайджесты).
+        is_postponed = bool(publish_date and int(publish_date) > 0)
+        if is_postponed:
+            params["publish_date"] = int(publish_date)
+
         # Execute wall.post под правильным клиентом (community-токен, если есть).
         client, _via_community = self._client_for_group(target_group_id)
         try:
@@ -282,7 +296,8 @@ class VKPublisher:
             post_url = f"https://vk.com/wall{target_group_id}_{post_id}"
 
             logger.info(
-                "✅ Published post %s to group %s (via %s)",
+                "✅ %s post %s to group %s (via %s)",
+                "Scheduled" if is_postponed else "Published",
                 post_id,
                 target_group_id,
                 via,
@@ -299,6 +314,7 @@ class VKPublisher:
                 "url": post_url,
                 "text_length": len(text),
                 "attachments_count": len(attachments) if attachments else 0,
+                "postponed": is_postponed,
             }
 
         except Exception as e:
@@ -400,6 +416,44 @@ class VKPublisher:
                 "error": str(e),
             }
 
+    async def set_post_comments(
+        self,
+        owner_id: int,
+        post_id: int,
+        *,
+        enabled: bool,
+    ) -> Dict[str, Any]:
+        """Включить/выключить комментарии у конкретного поста сообщества.
+
+        VK: ``wall.openComments`` / ``wall.closeComments`` (отдельные методы — у
+        ``wall.post`` нет параметра для этого). Идёт через тот же токен-роутинг,
+        что и публикация (community-token, с fallback на publish-token при 15/27).
+
+        Returns ``{"success": bool, "via"?: str, "error"?: str}``.
+        """
+        target = self._normalize_group_owner_id(owner_id)
+        method = "wall.openComments" if enabled else "wall.closeComments"
+        params = {"owner_id": target, "post_id": int(post_id)}
+        client, _via_community = self._client_for_group(target)
+        try:
+            _response, via = await self._call_wall_post(params, method=method, client=client)
+            logger.info(
+                "💬 Comments %s for wall%s_%s (via %s)",
+                "opened" if enabled else "closed",
+                target,
+                post_id,
+                via,
+            )
+            return {"success": True, "via": via}
+        except Exception as e:
+            logger.error(
+                "❌ Failed to toggle comments for wall%s_%s: %s",
+                target,
+                post_id,
+                e,
+            )
+            return {"success": False, "error": str(e)}
+
     async def _call_wall_post(
         self,
         params: Dict[str, Any],
@@ -448,9 +502,7 @@ class VKPublisher:
             return response, "publish-token"
 
         primary_client = client if client is not None else self.vk_client
-        is_publish_token = (
-            primary_client is self.vk_client and primary_client is not None
-        )
+        is_publish_token = primary_client is self.vk_client and primary_client is not None
 
         try:
             if is_publish_token:
@@ -663,9 +715,7 @@ class VKPublisher:
             elapsed = (datetime.now() - last_post_time).total_seconds()
             if elapsed < self.POST_INTERVAL_SECONDS:
                 wait_time = self.POST_INTERVAL_SECONDS - elapsed
-                logger.info(
-                    f"⏳ Rate limiting: waiting {wait_time:.1f}s before next post"
-                )
+                logger.info(f"⏳ Rate limiting: waiting {wait_time:.1f}s before next post")
                 await asyncio.sleep(wait_time)
 
     def is_test_mode(self) -> bool:
