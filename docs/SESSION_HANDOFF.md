@@ -5,49 +5,57 @@
 **Status:** ACTIVE
 **Updated:** 2026-06-03
 **Branch:** main
-**Last release in prod:** прод на `bad18bf` ([PR #108](https://github.com/Valstan/setka/pull/108) задеплоен: gate-фикс + миграция 022 применена, beat+worker+web перезапущены, 3/3 active, health 200).
+**Last release in prod:** прод на `07bfe9b` — задеплоен весь пакет «хвостов» (PR #111–#119), миграции 023+024 применены, setka/worker/beat active, health 200.
 
 ---
 
 ## Текущая нитка
 
-**Сквозное освежение районов по канонам проекта (journal-driven).** Заведён журнал учёта [`docs/REGION_REFRESH_LOG.md`](REGION_REFRESH_LOG.md): канон-чеклист C1-C7 + таблица всех 16 регионов по приоритету + журнал событий. Идём по бэклогу (12 районов Mongo-наследия, скилом не освежались). Закрыто в этой сессии: онбординг-баг районов (Тужа), журнал заведён, освежены `verhoshizhem` и `leb`.
+**Две параллельные нитки, обе на паузе по решению владельца:**
+
+1. **Освежение районов (journal-driven)** — стоит с прошлой сессии (#110). Владелец сказал «освежевание регионов пока отложим». Журнал и очередь — в [`docs/REGION_REFRESH_LOG.md`](REGION_REFRESH_LOG.md). Следующий в очереди — `pizhanka`.
+2. **Сессия «позакрываем хвосты» (2026-06-03) — закрыта.** За проход реализовано и **задеплоено** 7 фич + 2 ранее (всего PR #111–#119). Осталось 2 отложенных follow-up'а (#13, #10) + конфликтные #11/#12 — см. ниже.
 
 ## Следующий шаг
 
-**Обновить `pizhanka`** (пул 41) — следующий в очереди журнала. Процедура (как для verhoshizhem/leb):
-1. Срез: `SELECT category,count(*) FROM communities WHERE region_id=(SELECT id FROM regions WHERE code='pizhanka') AND is_active GROUP BY category;` + проверить `config.localities` (есть ли) + неканонные категории (`other`).
-2. Почистить (recat `other`/дрейф, мёртвые).
-3. Район-скан скилом [`/discover_communities pizhanka`](../.claude/commands/discover_communities.md): главная-группа («Ссылки»/mentions) + ручные запросы (+ `--localities` если есть). Классификация по постам в чате.
-4. Засев годного (`seed_region_communities.py`, dry-run → write) + пост-чек на живость.
-5. Обновить `docs/REGION_REFRESH_LOG.md` (строку + журнал событий) и пометить следующий 🔴.
+Открытая стартовая позиция — на выбор владельца (приоритет сверху вниз):
 
-Альтернатива: любой другой регион из очереди по запросу владельца.
+1. **`/regions/<code>/diagnostics`** (PENDING 🟢, отложено этой сессией как крупное) — кнопка «прогнать пайплайн без публикации»: видно, что отфильтровалось / собрал aggregator / попало бы в дайджест. **Заслуживает отдельной сфокусированной сессии:** это dry-run критического `tasks/parsing_scheduler_tasks.parse_and_publish_theme` (~500 строк, есть `test_mode`, но он публикует в test-полигон, а нужен truly-dry без публикации) + UI, который агент не может проверить в браузере. Начать с поиска чистого seam'а «parse+filter+aggregate без publish».
+2. **Возобновить освежение `pizhanka`** (пул 41) — процедура в [`docs/REGION_REFRESH_LOG.md`](REGION_REFRESH_LOG.md): срез категорий+localities → чистка → `/discover_communities pizhanka` → засев → журнал.
+3. **TG-видео >50 MB файлом** (PENDING 🟢, low-value) — `sendVideo` multipart вместо URL в `modules/publisher/telegram_repost.py`. Редкий кейс.
 
 ## Контекст
 
-- **План:** активного файла плана нет; очередь и канон — в `docs/REGION_REFRESH_LOG.md`.
-- **Связанные коммиты сессии:**
-  - `bad18bf` ([PR #108](https://github.com/Valstan/setka/pull/108)) — fix(scheduler): район с пулом communities входит в волны (gate-фикс онбординга) + отключён beat `discovery-rolling-daily` + миграция 022 (Тужа: region_configs брендинг + recat). Задеплоено.
-  - `bf8fbef` ([PR #109](https://github.com/Valstan/setka/pull/109)) — docs: журнал освежения + verhoshizhem refresh.
-  - (этот close) — журнал: leb refresh + handoff.
-- **Прод:** HEAD `bad18bf`, setka/worker/beat active, health 200. Пул-правки Тужи/Верхошижемья/Лебяжья применены напрямую в БД (живут сразу, рестарт не нужен). Прод на doc-коммитах (#109, этот) намеренно не обновлялся — рантайма не касаются.
+- **План:** активного файла плана нет.
+- **Связанные коммиты сессии (PR #111–#119):**
+  - `10f3819`/#111 — fix(ad-cabinet): score базового фильтра как причина при пустых reasons.
+  - `d4a8dff`/#112 — docs(brain): рефлекс #014 (consult-library) в CLAUDE.md + ack.
+  - `52090ad`/#113 — chore(scripts): `dev-doctor.sh` (локально).
+  - `a1485f9`/#114 — chore(hooks): commit-msg Conventional Commits gate (нужен разовый `pre-commit install` на dev-машинах).
+  - `f745940`/#115 — feat(monitoring): watchdog «давно нет дайджестов» (Redis-heartbeat + beat `digest-heartbeat-watchdog`).
+  - `e3a65fb`/#116 — feat(communities): inline TG-зеркало в `/communities`.
+  - `dd0d80e`/#117 — feat(tokens): роль публикации (миграция 023, аддитивно к env-whitelist).
+  - `b959714`/#118 — feat(templates): per-region шаблоны (миграция 024).
+  - `07bfe9b`/#119 — feat(ui): тёмный режим (Bootstrap 5.3 `data-bs-theme`).
+- **Прод:** HEAD `07bfe9b`, 3/3 сервиса active, health 200. Миграции 023+024 применены (колонки `vk_tokens.role`, `message_templates.region_id` подтверждены). beat зарегистрировал `digest-heartbeat-watchdog`.
 - **Открытых PR:** doc-only handoff-PR этого `/close_session` (авто-merge). Кодовых открытых PR нет.
 
 ## Failed approaches (этой нитки)
 
-- **Авто-discovery `discovery-rolling-daily` без нейро-фильтра** — отключён в [PR #108](https://github.com/Valstan/setka/pull/108). Давал ~98% мусора (на Туже из 136 авто-кандидатов годных ≈0): омонимы названий («Тужа»↔«не тужи(ть)»), чужие сёла. **Не возвращать**, пока к discovery не подключат нейро-классификацию.
-- **Locality-скан на homonym-районах** — на Туже/Верхошижемье локалити дают почти чистый шум (Верхошижемье даже имеет «Москва»/«Казань» в `config.localities` — баг данных, см. PENDING 🟡). Главная ценность скана района — **блок «Ссылки» главной ИНФО-группы + mentions** (курируемые партнёры) + ручная классификация постов. Локалити-поиск полезен только при чистом списке нп.
+- **Prometheus-gauge `setka_digest_last_published_timestamp` как источник для watchdog'а** — на проде multiproc-mmap пуст несмотря на реальные публикации (давняя хрупкость вокруг PR #75). Не использовать для liveness-алёртов; завели надёжный Redis-heartbeat (`modules/digest_heartbeat.py`). Находка отправлена в мозг: `mailbox/to-brain/2026-06-03-liveness-watchdog-dedicated-heartbeat.md`.
+- **Авто-discovery beat-таски (#11 watcher info-репостов, #12 monthly re-discover)** — НЕ реализовывать: конфликтуют с намеренным отключением `discovery-rolling-daily` в PR #108 («вручную через `/discover_communities`, пока нет нейро-фильтра»). Реинтродьюс = откат свежего решения. Помечено ⏸ в PENDING (секция Discovery 🟢).
 
 ## Открытые вопросы для пользователя
 
-- _Нет._
+- За #13 (диагностика-dry-run) браться сейчас (отдельная сессия) или позже?
+- #11/#12 (авто-discovery) — оставить отложенными до нейро-фильтра, или есть кейс вернуть раньше?
 
 ## Не забыть (low-priority)
 
-- ℹ️ **Браузер-верификация первой публикации Тужи** на стене `vk.com/public239050321` после ближайшей волны (novost 06:40 / дневные kultura/sport/admin/union/reklama). Гейт/токен/пул подтверждены, но живой дайджест ещё не выходил.
-- 🟡 **Аудит `config.localities` по сети** — у части районов список замусорен городами-омонимами (Верхошижемье: Москва/Казань/Котельное), у leb был пуст (заполнен 8 нп). См. PENDING (Discovery).
-- 🟢 Очередь освежения: `pizhanka` → `kukmor`/`klz`/`nema` → `bal`/`arbazh`/`vp`/`nolinsk`/`sovetsk`/`ur`. Полная — в `docs/REGION_REFRESH_LOG.md`.
+- ℹ️ **commit-msg хук** (#114) активируется на dev-машине только после разового `pre-commit install` (новый hook-type commit-msg).
+- ℹ️ **Тёмный режим** (#119) — браузер-верификация за владельцем (агент UI не открывает). Риск минимален (нативный Bootstrap 5.3).
+- ℹ️ **Watchdog дайджестов** (#115) — первый алёрт возможен только после того, как появится heartbeat (первая novost-волна после деплоя) и затем протухнет >6ч. Ложных при свежем деплое не даёт (None не алёртит).
+- 🟡 **Groq 403** — заблокирован бюджетом (владелец исключил из работы).
 
 ---
 
