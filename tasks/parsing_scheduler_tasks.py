@@ -44,10 +44,18 @@ def parse_and_publish_theme(
     region_code: str,
     theme: str,
     test_mode: bool = False,
+    dry_run: bool = False,
 ) -> Dict[str, Any]:
     """
     Main parsing and publishing task for a region/theme.
     Celery-compatible: uses run_coro (one event loop per worker process).
+
+    ``dry_run=True`` — «прогон без публикации»: парсинг → фильтр → сборка
+    дайджеста выполняются как обычно, но публикация в VK/Telegram, инкремент
+    метрик и запись work-table/ParsingStats ПРОПУСКАЮТСЯ. Возвращает что было
+    бы опубликовано (counts + превью текста). Используется страницей
+    ``/regions/<code>/diagnostics``. В отличие от ``test_mode`` (публикует на
+    тест-полигон) — это полностью read-only прогон.
     """
     from sqlalchemy import select
 
@@ -118,6 +126,7 @@ def parse_and_publish_theme(
                     region_code=region_code,
                     theme=theme,
                     test_mode=test_mode,
+                    dry_run=dry_run,
                 )
 
             # Сюда дошла либо обычный район, либо community-mode область/страна
@@ -156,8 +165,9 @@ def parse_and_publish_theme(
             work_table = result.scalars().first()
             if not work_table:
                 work_table = WorkTable(region_code=region_code, theme=theme, lip=[], hash=[])
-                session.add(work_table)
-                await session.commit()
+                if not dry_run:
+                    session.add(work_table)
+                    await session.commit()
 
             global_wt_result = await session.execute(
                 select(WorkTable).where(
@@ -173,8 +183,9 @@ def parse_and_publish_theme(
                     lip=[],
                     hash=[],
                 )
-                session.add(global_work_table)
-                await session.commit()
+                if not dry_run:
+                    session.add(global_work_table)
+                    await session.commit()
 
             # 3. Get region
             region_result = await session.execute(select(Region).where(Region.code == region_code))
@@ -276,8 +287,19 @@ def parse_and_publish_theme(
             # Community access tokens + publish-кандидаты подбираются внутри
             # ``VKPublisher.create_with_policy`` (см. modules.vk_token_router.TokenPolicy).
             results = []
+            dry_previews: List[Dict[str, Any]] = []  # что было бы опубликовано (dry_run)
             selected_by_lip: Dict[str, Dict[str, Any]] = {}
             mourning_header = ""  # captured for Telegram mirror (Flow A)
+
+            def _preview(kind: str, d) -> Dict[str, Any]:
+                txt = d.text or ""
+                return {
+                    "kind": kind,
+                    "post_count": d.post_count,
+                    "char_count": len(txt),
+                    "attachments_count": len(d.attachments_list or []),
+                    "text_preview": txt[:1500],
+                }
 
             # Regular digest
             if regular_posts:
@@ -309,29 +331,32 @@ def parse_and_publish_theme(
                         }
                     )
 
-                    vk_publisher = await VKPublisher.create_with_policy(
-                        session,
-                        target_group_id=region.vk_group_id,
-                        test_polygon_mode=test_mode,
-                    )
-                    publish_result = await vk_publisher.publish_digest(
-                        group_id=region.vk_group_id,
-                        text=digest.text,
-                        attachments=digest.attachments_list,
-                    )
-                    results.append(("regular", digest, publish_result))
-                    try:
-                        from monitoring.metrics import track_digest_published
-
-                        track_digest_published(
-                            region=region.code,
-                            topic=theme,
-                            result="success" if publish_result.success else "failed",
+                    if dry_run:
+                        dry_previews.append(_preview("regular", digest))
+                    else:
+                        vk_publisher = await VKPublisher.create_with_policy(
+                            session,
+                            target_group_id=region.vk_group_id,
+                            test_polygon_mode=test_mode,
                         )
-                    except (
-                        Exception
-                    ):  # pragma: no cover - metrics никогда не должны валить публикацию
-                        logger.debug("track_digest_published failed", exc_info=True)
+                        publish_result = await vk_publisher.publish_digest(
+                            group_id=region.vk_group_id,
+                            text=digest.text,
+                            attachments=digest.attachments_list,
+                        )
+                        results.append(("regular", digest, publish_result))
+                        try:
+                            from monitoring.metrics import track_digest_published
+
+                            track_digest_published(
+                                region=region.code,
+                                topic=theme,
+                                result="success" if publish_result.success else "failed",
+                            )
+                        except (
+                            Exception
+                        ):  # pragma: no cover - metrics никогда не должны валить публикацию
+                            logger.debug("track_digest_published failed", exc_info=True)
 
             # Mourning digest
             if mourning_posts:
@@ -367,27 +392,47 @@ def parse_and_publish_theme(
                         }
                     )
 
-                    vk_pub = await VKPublisher.create_with_policy(
-                        session,
-                        target_group_id=region.vk_group_id,
-                        test_polygon_mode=test_mode,
-                    )
-                    mourning_pub = await vk_pub.publish_digest(
-                        group_id=region.vk_group_id,
-                        text=mourning_digest.text,
-                        attachments=mourning_digest.attachments_list,
-                    )
-                    results.append(("mourning", mourning_digest, mourning_pub))
-                    try:
-                        from monitoring.metrics import track_digest_published
-
-                        track_digest_published(
-                            region=region.code,
-                            topic="mourning",
-                            result="success" if mourning_pub.success else "failed",
+                    if dry_run:
+                        dry_previews.append(_preview("mourning", mourning_digest))
+                    else:
+                        vk_pub = await VKPublisher.create_with_policy(
+                            session,
+                            target_group_id=region.vk_group_id,
+                            test_polygon_mode=test_mode,
                         )
-                    except Exception:  # pragma: no cover
-                        logger.debug("track_digest_published failed", exc_info=True)
+                        mourning_pub = await vk_pub.publish_digest(
+                            group_id=region.vk_group_id,
+                            text=mourning_digest.text,
+                            attachments=mourning_digest.attachments_list,
+                        )
+                        results.append(("mourning", mourning_digest, mourning_pub))
+                        try:
+                            from monitoring.metrics import track_digest_published
+
+                            track_digest_published(
+                                region=region.code,
+                                topic="mourning",
+                                result="success" if mourning_pub.success else "failed",
+                            )
+                        except Exception:  # pragma: no cover
+                            logger.debug("track_digest_published failed", exc_info=True)
+
+            # dry_run: read-only прогон — ничего не публикуем и не пишем в БД.
+            # Возвращаем что было бы опубликовано (см. /regions/<code>/diagnostics).
+            if dry_run:
+                return {
+                    "success": True,
+                    "dry_run": True,
+                    "region_code": region_code,
+                    "theme": theme,
+                    "communities_count": len(community_ids),
+                    "posts_parsed": len(posts),
+                    "regular_posts": len(regular_posts),
+                    "mourning_posts": len(mourning_posts),
+                    "would_publish": dry_previews,
+                    "digests_count": len(dry_previews),
+                    "stats": parser_stats,
+                }
 
             # 8. Update work table
             all_included = []
@@ -504,6 +549,10 @@ def parse_and_publish_theme(
     try:
         # Same persistent loop as other Celery tasks (see utils/celery_asyncio).
         result = run_coro(_execute())
+
+        # dry_run — полностью read-only: не пишем ParsingStats в БД.
+        if dry_run:
+            return result
 
         # Save stats (sync-friendly)
         try:

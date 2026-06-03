@@ -212,6 +212,7 @@ async def run_cascaded_digest(
     test_mode: bool = False,
     source_mode: str = "children",
     require_hashtag: Optional[str] = None,
+    dry_run: bool = False,
 ) -> Dict[str, Any]:
     """Собрать и опубликовать каскадный дайджест для региона.
 
@@ -308,9 +309,10 @@ async def run_cascaded_digest(
     work_table = wt_result.scalars().first()
     if not work_table:
         work_table = WorkTable(region_code=region_code, theme=theme, lip=[], hash=[])
-        session.add(work_table)
-        await session.commit()
-        await session.refresh(work_table)
+        if not dry_run:
+            session.add(work_table)
+            await session.commit()
+            await session.refresh(work_table)
 
     global_wt_result = await session.execute(
         select(WorkTable).where(
@@ -326,9 +328,10 @@ async def run_cascaded_digest(
             lip=[],
             hash=[],
         )
-        session.add(global_work_table)
-        await session.commit()
-        await session.refresh(global_work_table)
+        if not dry_run:
+            session.add(global_work_table)
+            await session.commit()
+            await session.refresh(global_work_table)
 
     ddef = _defaults_dict(region_config)
     posts_per_child = int(ddef.get("cascade_posts_per_child", DEFAULT_POSTS_PER_CHILD))
@@ -527,6 +530,30 @@ async def run_cascaded_digest(
                     for p in regular_posts
                 }
             )
+            if dry_run:
+                # read-only прогон: ничего не публикуем, отдаём превью.
+                return {
+                    "success": True,
+                    "dry_run": True,
+                    "region_code": region_code,
+                    "theme": theme,
+                    "regular_posts": len(regular_posts),
+                    "mourning_posts": len(mourning_posts),
+                    "would_publish": [
+                        {
+                            "kind": "regular",
+                            "post_count": digest.post_count,
+                            "char_count": len(digest.text or ""),
+                            "attachments_count": len(digest.attachments_list or []),
+                            "text_preview": (digest.text or "")[:1500],
+                        }
+                    ],
+                    "digests_count": 1,
+                    "stats": parser_stats,
+                    "children_scanned": debug_counters["children_scanned"],
+                    "candidate_posts": len(candidate_posts),
+                    "debug": debug_counters,
+                }
             vk_pub = await VKPublisher.create_with_policy(
                 session,
                 target_group_id=region.vk_group_id,
