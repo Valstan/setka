@@ -46,6 +46,8 @@ def _community(
     category="novost",
     health_status="changed_category",
     suggested_category="reklama",
+    telegram_channel=None,
+    telegram_bot=None,
     region=SimpleNamespace(code="mi", name="Малмыж"),
 ):
     return SimpleNamespace(
@@ -63,6 +65,8 @@ def _community(
         posts_count=42,
         created_at=datetime(2026, 5, 1, 9, 0, 0),
         updated_at=datetime(2026, 5, 1, 9, 0, 0),
+        telegram_channel=telegram_channel,
+        telegram_bot=telegram_bot,
     )
 
 
@@ -98,6 +102,68 @@ def test_to_dict_defaults_health_status_to_active():
     d = communities_api._community_to_dict(_community(health_status=None, suggested_category=None))
     assert d["health_status"] == "active"
     assert d["suggested_category"] is None
+
+
+def test_to_dict_includes_telegram_fields():
+    d = communities_api._community_to_dict(
+        _community(telegram_channel="@gonba_life", telegram_bot="VALSTANBOT")
+    )
+    assert d["telegram_channel"] == "@gonba_life"
+    assert d["telegram_bot"] == "VALSTANBOT"
+
+
+def test_to_dict_telegram_fields_none_by_default():
+    d = communities_api._community_to_dict(_community())
+    assert d["telegram_channel"] is None
+    assert d["telegram_bot"] is None
+
+
+# ---------------------------------------------------------------------------
+# update_community — Telegram-зеркало
+# ---------------------------------------------------------------------------
+
+
+async def test_update_sets_telegram_mirror():
+    community = _community(telegram_channel=None, telegram_bot=None)
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_result_scalar_one(community))
+
+    payload = communities_api.CommunityUpdate(
+        telegram_channel="@gonba_life", telegram_bot="VALSTANBOT"
+    )
+    resp = await communities_api.update_community(
+        community_id=1, community_data=payload, db=session
+    )
+
+    assert community.telegram_channel == "@gonba_life"
+    assert community.telegram_bot == "VALSTANBOT"
+    assert resp["telegram_channel"] == "@gonba_life"
+    session.commit.assert_awaited_once()
+
+
+async def test_update_clears_telegram_mirror_with_empty_string():
+    community = _community(telegram_channel="@gonba_life", telegram_bot="VALSTANBOT")
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_result_scalar_one(community))
+
+    # Пустая строка снимает зеркало → NULL (не игнорируется как None в общем цикле).
+    payload = communities_api.CommunityUpdate(telegram_channel="  ", telegram_bot="")
+    await communities_api.update_community(community_id=1, community_data=payload, db=session)
+
+    assert community.telegram_channel is None
+    assert community.telegram_bot is None
+
+
+async def test_update_telegram_does_not_touch_other_fields():
+    community = _community(category="novost", telegram_channel=None)
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_result_scalar_one(community))
+
+    payload = communities_api.CommunityUpdate(telegram_channel="@x")
+    await communities_api.update_community(community_id=1, community_data=payload, db=session)
+
+    assert community.telegram_channel == "@x"
+    assert community.category == "novost"  # не затронуто (exclude_unset)
 
 
 # ---------------------------------------------------------------------------

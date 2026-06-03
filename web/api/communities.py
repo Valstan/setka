@@ -141,6 +141,9 @@ class CommunityUpdate(BaseModel):
     name: Optional[str] = None
     category: Optional[str] = None
     is_active: Optional[bool] = None
+    # Telegram-зеркало (per-community). Пустая строка = снять зеркало (NULL).
+    telegram_channel: Optional[str] = None
+    telegram_bot: Optional[str] = None
 
 
 class CommunityResponse(BaseModel):
@@ -160,6 +163,8 @@ class CommunityResponse(BaseModel):
     last_checked: str | None
     posts_count: int
     created_at: str
+    telegram_channel: str | None = None
+    telegram_bot: str | None = None
 
     class Config:
         from_attributes = True
@@ -186,6 +191,8 @@ def _community_to_dict(c: Community) -> dict:
         "last_checked": c.last_checked.isoformat() if c.last_checked else None,
         "posts_count": c.posts_count,
         "created_at": c.created_at.isoformat() if c.created_at else "",
+        "telegram_channel": c.telegram_channel,
+        "telegram_bot": c.telegram_bot,
     }
 
 
@@ -341,6 +348,8 @@ async def add_community(
             "last_checked": None,
             "posts_count": 0,
             "created_at": new_community.created_at.isoformat(),
+            "telegram_channel": new_community.telegram_channel,
+            "telegram_bot": new_community.telegram_bot,
         }
 
     except vk_api.exceptions.ApiError as e:
@@ -380,6 +389,13 @@ async def update_community(
                 raise HTTPException(status_code=404, detail="Region not found")
             community.region = new_region
             community.region_id = new_region.id
+
+    # Telegram-зеркало: пустая строка = снять зеркало (NULL). Обрабатываем до
+    # общего цикла, т.к. тот пропускает None и не дал бы очистить поле.
+    for tg_field in ("telegram_channel", "telegram_bot"):
+        if tg_field in update_data:
+            raw = update_data.pop(tg_field)
+            setattr(community, tg_field, (raw.strip() or None) if isinstance(raw, str) else raw)
 
     for field, value in update_data.items():
         if value is None:
