@@ -3,55 +3,51 @@
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
 **Status:** ACTIVE
-**Updated:** 2026-06-03
+**Updated:** 2026-06-04
 **Branch:** main
-**Last release in prod:** прод на `953380c` — задеплоен весь batch «хвостов-2» (PR #121–#128), миграций нет, deps не менялись, setka/worker/beat active, health 200.
+**Last release in prod:** прод на `3f7e085` — задеплоен **блок B1 рекламного кабинета** (планировщик отложки, PR #131–#133) + doc-bookkeeping (#130, #134). Миграция 025 применена, setka/worker/beat active, health 200.
 
 ---
 
 ## Текущая нитка
 
-**Batch «обработать все трактабельные хвосты/техдолги/планы, кроме регионов» — закрыт и задеплоен.** За проход реализовано и влито 7 фич + doc-bookkeeping (PR #121–#128), задеплоено через `/reliz` на `953380c`. Кода в работе нет — остались только owner-шаги (браузер-верификация) и осознанно отложенные нитки.
+**Рекламный кабинет 2.0** — расширение в три блока (дизайн 2026-06-04, roadmap в [`PENDING_FOLLOWUPS.md`](PENDING_FOLLOWUPS.md) §«Кабинет 2.0»). **Блок B1 (планировщик отложенных постов) — построен и задеплоен** за эту сессию: из `/ad-cabinet` формируется график постов по датам → нативная VK-отложка (`wall.post publish_date`), VK сам публикует; есть отмена (`wall.delete`), тумблеры from_group/signed/комментарии, залив картинок на стену. Осталось owner-верифицировать в браузере, дальше — блоки B2/A/C.
 
 ## Следующий шаг
 
-Открытая стартовая позиция — на выбор владельца (приоритет сверху вниз):
+Приоритет сверху вниз (на выбор владельца):
 
-1. **Браузер-верификация трёх новых UI** (owner-шаг, агент не открывает браузер): `/publications` (фильтры регион/тема/дни, ссылки на VK), `/regions/<code>/diagnostics` (тема → «Прогнать без публикации» → счётчики + превью), `/ad-cabinet` (чекбоксы → панель массовых действий).
-2. **Возобновить освежение регионов** (journal-driven, на паузе по решению владельца) — `pizhanka` (пул 41), процедура в [`docs/REGION_REFRESH_LOG.md`](REGION_REFRESH_LOG.md).
-3. **Любой отложенный пункт из [`PENDING_FOLLOWUPS.md`](PENDING_FOLLOWUPS.md)** — см. секцию «Не забыть» ниже.
+1. **Браузер-верификация B1** (owner-шаг, агент UI не открывает): `/ad-cabinet` → «Планировщик» → выбрать сообщество, текст + отметить картинки → «+Добавить дату публикации» (на 10-15 мин вперёд) → «Отправить» → проверить, что пост появился в VK-«Отложенных записях» сообщества с картинками; «Отменить» убирает из отложки. Если картинки не прикрепились / VK ругается — `ssh setka "tail -100 /home/valstan/SETKA/logs/celery-worker.log"` (но composer публикует синхронно через web — смотри `journalctl -u setka`).
+2. **Блок B2 — предложка→отложка in-place** (зависит от B1). Кнопка «Запланировать» на заявке инбокса: `wall.edit(owner_id, post_id, publish_date=…)` редактирует предложенный пост на месте, сохраняя «Предложил(а): автор» + подпись. ⚠️ **Сначала живой VK-probe**: подтвердить, что `wall.edit`+`publish_date` на suggested-посте сохраняет атрибуцию и планирует (а не публикует сразу) — VK тут капризен.
+3. **Блок A — реклама во входящих ЛС** + диалог из кабинета (`messages.getConversations` детект → `ad_requests.origin='inbound_dm'`; `messages.getHistory` тред-вью).
+4. **Блок C — учёт оплат/публикаций** (CRM; задел в `ad_scheduled_posts.client_id`/`price`).
 
 ## Контекст
 
-- **План:** [`unified-tickling-puppy.md`](../../../../Users/valstan/.claude/plans/unified-tickling-puppy.md) (batch-план этой сессии; локальный, не в репо).
-- **Связанные коммиты сессии (PR #121–#128, все на проде):**
-  - `11e24c0`/#121 — chore(logs): JSON-логи Celery (опт-ин env `LOG_FORMAT=json`, stdlib, без новых deps).
-  - `22786d4`/#122 — feat(tasks): `dry_run` seam в `parse_and_publish_theme` + каскад (truly-dry, без публикации/записи).
-  - `8a5aba9`/#123 — feat(publisher): TG-видео файлом (`sendVideo` multipart ≤50 MB, degrade на текст).
-  - `676cc71`/#124 — feat(ui): `/regions/<code>/diagnostics` (Celery + polling).
-  - `b31d22f`/#125 — feat(ui): «История публикаций» `/publications` (переиспользует `parsing_stats`, без новой таблицы).
-  - `56eadfa`/#126 — feat(ad-cabinet): precheck `can_message` на скане + reuse кэша в `/send`.
-  - `5eedab3`/#127 — feat(ad-cabinet): массовые действия в инбоксе (мультивыбор + батч статус/удаление).
-  - `953380c`/#128 — docs(pending): закрытие хвостов + отметка 3 уже-сделанных.
-- **Прод:** HEAD `953380c`, 3/3 сервиса active, health 200. Миграций не применяли (не было). 846 тестов зелёные на main.
+- **План:** нет отдельного файла-плана; roadmap Кабинета 2.0 — в `PENDING_FOLLOWUPS.md` §«Кабинет 2.0 — roadmap».
+- **Связанные коммиты сессии (все на проде):**
+  - `010a6b8`/#130 — docs: убрал из напоминаний нечинимые/ручные хвосты (TG video >50 MB, чистка localities, data-seed) + понизил wall.repost SPOF до 🟢 (путь 2-го токена закрыт — нет 2-го user-аккаунта).
+  - `3f38ab4`/#131 — feat(publisher): seam — `publish_date` (отложка) + `signed` + `set_post_comments` (wall.open/closeComments) + `vk_wall_photo_upload.py`. Аддитивно, дайджесты не затронуты.
+  - `dc7e9ca`/#132 — feat(ad-cabinet): таблица `ad_scheduled_posts` (миграция 025) + API `POST/GET /scheduled`, `POST /scheduled/{id}/cancel`, `VKPublisher.delete_post`.
+  - `74d749c`/#133 — feat(ad-cabinet): UI composer (мультидата + тумблеры + календарь).
+  - `3f7e085`/#134 — docs: roadmap Кабинета 2.0.
+- **Прод:** HEAD `3f7e085`, 3/3 сервиса active, health 200, миграция 025 применена (`migrate.py up`). 869 тестов зелёные на main.
 - **Открытых PR:** doc-only handoff-PR этого `/close_session` (авто-merge). Кодовых открытых PR нет.
 
 ## Failed approaches (этой нитки)
 
-- **`gh pr merge --auto`** на этом репо не работает: «Auto merge is not allowed for this repository». Мержить надо после зелёного CI обычным `gh pr merge --squash --delete-branch` (CI ~1.5 мин).
-- **Параллельные PR от одной базы + strict branch protection:** второй PR блокируется как «behind base» — нужно `git merge origin/main` в его ветку и переждать новый CI. Вывод на будущее: в batch-сессии ветвить каждый следующий PR от свежесмерженного `main` (или merge-then-branch), а не пачкой от одной базы.
+- **Прямой коммит B1-b на `main`** вместо feature-ветки (забыл ветвить после merge B1-a) — поймал на `git push` («src refspec does not match»). Починка: `git checkout -b <branch>` от HEAD с коммитом + `git branch -f main origin/main` для отката указателя main. **Урок:** после каждого merge+checkout main для следующего PR — сразу `git checkout -b` перед правками.
 
 ## Открытые вопросы для пользователя
 
-- Включать ли JSON-логи на проде (`LOG_FORMAT=json` в `/etc/setka/setka.env` + restart worker)? Сейчас спят — дефолт plain-text.
-- За какой из отложенных пунктов берёмся следующим (регионы / ad-cabinet эпики / smoke-step в `/reliz`)?
+- B1 проверен в браузере? (отложка реально создаётся, картинки прикрепляются)
+- За какой блок берёмся следующим: B2 (предложка→отложка, нужен VK-probe) / A (входящие ЛС) / C (учёт)?
 
 ## Не забыть (low-priority)
 
-- ℹ️ **История публикаций** (`/publications`) наполняется естественно: `published_url` пишется со следующих прогонов дайджестов; старые выпуски — без ссылки.
-- 🟢 **Smoke-test после деплоя** — seam готов (#122, `dry_run=True` + `/api/regions/{code}/diagnostics`); осталось добавить шаг в `/reliz`, дёргающий dry-run эталонного региона/темы и сверяющий `posts_parsed`/`would_publish`.
-- ⏸ **Отложено осознанно (не делать без решения владельца):** авто-discovery #11/#12 (реверс PR #108), Groq-зависимые фичи (бюджет), ad-cabinet эпики (авто-send `is_allowed`, per-region офферные картинки, CRM фаза 3, ML фаза 4), webhook-бот, wall.repost SPOF (нужен 2-й publish-токен), чистка `config.localities` + stop-stem (региональная DATA-работа).
-- ℹ️ **Освежение регионов** на паузе по решению владельца (журнал — `docs/REGION_REFRESH_LOG.md`, верх очереди `pizhanka`).
+- ⚠️ **B2 требует VK-probe** перед релизом: `wall.edit`+`publish_date` на suggested-посте — сохраняет ли «предложено автором» и планирует ли (а не публикует сразу).
+- ℹ️ **B1 rate-limit:** N отложенных постов в одну группу подряд → `POST_INTERVAL_SECONDS=5` между ними (5 дат ≈20с синхронно в web-запросе). Приемлемо для MVP; при жалобах — вынести в Celery-фон.
+- ℹ️ **Картинки планировщика** заливаются community-токеном целевой группы (как и оффер-картинки ЛС). Нет токена → пост уйдёт текстом.
 
 ---
 
