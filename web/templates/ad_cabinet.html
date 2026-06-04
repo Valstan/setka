@@ -120,6 +120,28 @@
                               placeholder="Текст поста (можно пустой, если только картинки)…"></textarea>
                 </div>
 
+                <!-- B2: контекст «из заявки предложки» (показывается при клике
+                     «Запланировать» на карточке заявки). -->
+                <div id="sch-source" class="alert alert-secondary py-2 px-3 mt-3 mb-0"
+                     style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="small">
+                            <i class="bi bi-link-45deg"></i>
+                            Планируется из заявки предложки <span id="sch-source-label"></span>.
+                            VK не даёт публиковать предложку «как есть» — создаём пост
+                            заново; родная подпись «Предложил(а): …» не сохраняется.
+                        </span>
+                        <button type="button" class="btn-close btn-sm" aria-label="Отвязать"
+                                onclick="clearScheduleSource()"></button>
+                    </div>
+                    <div class="form-check form-switch mt-1">
+                        <input class="form-check-input" type="checkbox" id="sch-remove-original" checked>
+                        <label class="form-check-label small" for="sch-remove-original">
+                            Убрать оригинал из предложки и пометить заявку опубликованной
+                        </label>
+                    </div>
+                </div>
+
                 <div class="mt-3">
                     <label class="form-label mb-1">Даты публикации <span class="text-muted small">(по Москве)</span></label>
                     <div id="sch-dates"></div>
@@ -178,5 +200,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/js/ad_cabinet.js?v=20260604a"></script>
+<script src="/static/js/ad_cabinet.js?v=20260604b"></script>
 {% endblock %}

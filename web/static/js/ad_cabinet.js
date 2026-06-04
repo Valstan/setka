@@ -13,6 +13,9 @@ const STATUS_BADGE = {
     skipped: '<span class="badge bg-secondary">Пропущено</span>',
 };
 
+// Кэш заявок текущего фильтра (для «Запланировать» — нужен текст/сообщество).
+let _adRequestsById = {};
+
 document.addEventListener('DOMContentLoaded', async () => {
     await loadAdTemplates();
     await loadOfferImages();
@@ -193,6 +196,8 @@ async function loadAdRequests() {
             empty.style.display = '';
             return;
         }
+        _adRequestsById = {};
+        requests.forEach(r => { _adRequestsById[r.id] = r; });
         list.innerHTML = requests.map(renderCard).join('');
     } catch (e) {
         loading.style.display = 'none';
@@ -248,6 +253,9 @@ function renderCard(ar) {
                 </button>
                 <button class="btn btn-sm btn-outline-secondary" onclick="copyCard(${ar.id})">
                     <i class="bi bi-clipboard"></i> Копировать
+                </button>
+                <button class="btn btn-sm btn-outline-primary" onclick="scheduleFromRequest(${ar.id})">
+                    <i class="bi bi-calendar-plus"></i> Запланировать
                 </button>
                 <button class="btn btn-sm btn-outline-success" onclick="markCard(${ar.id}, 'published')">
                     <i class="bi bi-check2"></i> Опубликовано
@@ -334,6 +342,52 @@ async function markCard(id, status) {
 
 const _schCommunityNames = {};  // vk_group_id -> name (для подписи в таблице)
 let _schInited = false;
+let _schSourceRequestId = null;  // B2: из какой заявки предложки планируем
+
+// B2: «Запланировать» на карточке заявки — открыть планировщик с префиллом.
+// VK не даёт править предложку in-place (wall.edit 15/27), поэтому создаём
+// новый отложенный пост, а оригинал убираем (опц.) на сабмите.
+async function scheduleFromRequest(id) {
+    const ar = _adRequestsById[id];
+    if (!ar) return;
+    const body = document.getElementById('scheduler-body');
+    await initScheduler();  // идемпотентно; грузит список сообществ
+
+    // Выбрать сообщество заявки (если его нет в списке — добавить опцию).
+    const sel = document.getElementById('sch-community');
+    if (sel) {
+        const val = String(ar.community_vk_id);
+        if (!Array.from(sel.options).some(o => o.value === val)) {
+            const opt = document.createElement('option');
+            opt.value = val;
+            opt.textContent = ar.community_name || val;
+            if (ar.region_id) opt.dataset.regionId = ar.region_id;
+            sel.appendChild(opt);
+        }
+        sel.value = val;
+    }
+    const ta = document.getElementById('sch-text');
+    if (ta) ta.value = ar.text_snapshot || '';
+
+    _schSourceRequestId = id;
+    const src = document.getElementById('sch-source');
+    if (src) src.style.display = '';
+    const lbl = document.getElementById('sch-source-label');
+    if (lbl) lbl.innerHTML = ar.vk_post_url
+        ? `<a href="${escapeHtml(ar.vk_post_url)}" target="_blank">#${id}</a>` : `#${id}`;
+    const rm = document.getElementById('sch-remove-original');
+    if (rm) rm.checked = true;
+
+    if (body && window.bootstrap) bootstrap.Collapse.getOrCreateInstance(body).show();
+    if (body) body.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    _schRes('Заявка перенесена в планировщик — задайте даты и отправьте.', 'muted');
+}
+
+function clearScheduleSource() {
+    _schSourceRequestId = null;
+    const src = document.getElementById('sch-source');
+    if (src) src.style.display = 'none';
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     const addBtn = document.getElementById('sch-add-date');
@@ -418,6 +472,9 @@ async function submitSchedule() {
         return;
     }
 
+    const removeOriginal = _schSourceRequestId
+        && document.getElementById('sch-remove-original')
+        && document.getElementById('sch-remove-original').checked;
     const payload = {
         community_vk_id: communityVkId,
         region_id: opt.dataset.regionId ? parseInt(opt.dataset.regionId, 10) : null,
@@ -427,17 +484,28 @@ async function submitSchedule() {
         from_group: document.getElementById('sch-from-group').checked,
         signed: document.getElementById('sch-signed').checked,
         comments_enabled: document.getElementById('sch-comments').checked,
+        source_ad_request_id: _schSourceRequestId || null,
+        remove_original: !!removeOriginal,
     };
     _schRes('Планирую…');
     const btn = document.getElementById('sch-submit');
     if (btn) btn.disabled = true;
     try {
         const res = await apiClient.createScheduledPosts(payload);
-        const msg = `Запланировано: ${res.scheduled}` + (res.failed ? `, с ошибкой: ${res.failed}` : '');
+        let msg = `Запланировано: ${res.scheduled}` + (res.failed ? `, с ошибкой: ${res.failed}` : '');
+        if (payload.remove_original) {
+            msg += res.original_removed
+                ? '; оригинал убран из предложки, заявка → опубликовано'
+                : (res.original_remove_error
+                    ? `; оригинал убрать не удалось (${escapeHtml(res.original_remove_error)})`
+                    : '');
+        }
         _schRes(msg + ' ✓', res.failed ? 'warning' : 'success');
         // Очищаем только даты — текст/картинки оставляем для следующей раскладки.
         document.getElementById('sch-dates').innerHTML = '';
         addDateRow();
+        // Заявка отработана — отвязываем источник и обновляем инбокс.
+        if (_schSourceRequestId) { clearScheduleSource(); await loadAdRequests(); }
         await loadSchedule();
     } catch (e) {
         _schRes('Ошибка: ' + escapeHtml(e.message), 'danger');
