@@ -138,6 +138,70 @@ const apiClient = {
         });
     },
 
+    // Ad cabinet — CRM (блок C): клиенты / оплаты / публикации
+    async getCrmFunnel() {
+        return this.request('/ad-crm/funnel');
+    },
+
+    async getCrmClients(params = {}) {
+        const q = new URLSearchParams();
+        if (params.stage) q.set('stage', params.stage);
+        if (params.region_id) q.set('region_id', params.region_id);
+        if (params.q) q.set('q', params.q);
+        const qs = q.toString();
+        return this.request(`/ad-crm/clients${qs ? '?' + qs : ''}`);
+    },
+
+    async getCrmClient(id) {
+        return this.request(`/ad-crm/clients/${id}`);
+    },
+
+    async createCrmClient(payload) {
+        return this.request('/ad-crm/clients', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async updateCrmClient(id, payload) {
+        return this.request(`/ad-crm/clients/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async deleteCrmClient(id) {
+        return this.request(`/ad-crm/clients/${id}`, { method: 'DELETE' });
+    },
+
+    async upsertCrmFromRequest(requestId) {
+        return this.request(`/ad-crm/clients/upsert-from-request/${requestId}`, {
+            method: 'POST'
+        });
+    },
+
+    async createCrmPayment(payload) {
+        return this.request('/ad-crm/payments', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async deleteCrmPayment(id) {
+        return this.request(`/ad-crm/payments/${id}`, { method: 'DELETE' });
+    },
+
+    async createCrmPublication(payload) {
+        return this.request('/ad-crm/publications', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async deleteCrmPublication(id) {
+        return this.request(`/ad-crm/publications/${id}`, { method: 'DELETE' });
+    },
+
     // Regions endpoints
     async getRegions() {
         return this.request('/regions/');

@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}CRM рекламы - SETKA{% endblock %}
+{% block nav_ad_crm %}active{% endblock %}
+{% block nav_section_system %}active{% endblock %}
+
+{% block content %}
+<div class="ad-crm-page mx-auto" style="max-width: 1100px;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1><i class="bi bi-people-fill"></i> CRM рекламы</h1>
+        <div class="d-flex gap-2">
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#client-modal">
+                <i class="bi bi-person-plus"></i> Завести клиента
+            </button>
+            <button class="btn btn-outline-secondary" onclick="loadCrm()">
+                <i class="bi bi-arrow-clockwise"></i> Обновить
+            </button>
+        </div>
+    </div>
+    <p class="text-muted">
+        Учёт заказчиков рекламы: кто, сколько заплатил, что и когда вышло. Клиенты
+        сводятся из заявок предложки и лички по VK-id автора — заводите карточку
+        кнопкой «В CRM» на карточке заявки в
+        <a href="/ad-cabinet">рекламном кабинете</a> или вручную здесь.
+    </p>
+
+    <!-- Воронка -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <div id="crm-funnel" class="d-flex flex-wrap gap-2 align-items-stretch">
+                <div class="text-muted small">Загрузка воронки…</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Фильтры -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label">Стадия воронки</label>
+                    <select class="form-select" id="filter-stage">
+                        <option value="">Все стадии</option>
+                        <option value="detected">Обнаружен</option>
+                        <option value="contacted">Связались</option>
+                        <option value="scheduled">Запланировано</option>
+                        <option value="published">Опубликовано</option>
+                        <option value="paid">Оплачено</option>
+                        <option value="lost">Слив</option>
+                    </select>
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label">Поиск по имени / контактам</label>
+                    <input type="text" class="form-control" id="filter-q"
+                           placeholder="Имя клиента или телефон/почта…">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="crm-loading" class="text-center py-4">
+        <div class="spinner-border spinner-border-sm text-secondary"></div>
+        <p class="mt-2 text-muted mb-0">Загрузка…</p>
+    </div>
+    <div id="crm-empty" class="alert alert-info" style="display:none;">
+        Клиентов в этом фильтре нет. Заведите вручную или из заявки в рекламном кабинете.
+    </div>
+
+    <div id="crm-list"></div>
+</div>
+
+<!-- Модалка «Завести клиента» -->
+<div class="modal fade" id="client-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-person-plus"></i> Новый клиент</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2">
+                    <label class="form-label">VK id заказчика <span class="text-danger">*</span></label>
+                    <input type="number" class="form-control" id="nc-vk-id"
+                           placeholder="напр. 12345678 (или -100… для группы)">
+                    <div class="form-text">Положительный — человек, отрицательный — сообщество.</div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Имя / название</label>
+                    <input type="text" class="form-control" id="nc-name">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Контакты</label>
+                    <textarea class="form-control" id="nc-contact" rows="2"
+                              placeholder="Телефон, почта, как связаться…"></textarea>
+                </div>
+                <div class="row g-2">
+                    <div class="col-6">
+                        <label class="form-label">Стадия</label>
+                        <select class="form-select" id="nc-stage">
+                            <option value="detected">Обнаружен</option>
+                            <option value="contacted">Связались</option>
+                            <option value="scheduled">Запланировано</option>
+                            <option value="published">Опубликовано</option>
+                            <option value="paid">Оплачено</option>
+                            <option value="lost">Слив</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">Группа?</label>
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="nc-is-group">
+                            <label class="form-check-label" for="nc-is-group">Автор — сообщество</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-2 mt-2">
+                    <label class="form-label">Заметки</label>
+                    <textarea class="form-control" id="nc-notes" rows="2"></textarea>
+                </div>
+                <div class="small" id="nc-res"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="nc-submit">
+                    <i class="bi bi-check2"></i> Создать
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/ad_crm.js?v=20260604a"></script>
+{% endblock %}

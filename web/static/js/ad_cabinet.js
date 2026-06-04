@@ -284,6 +284,10 @@ function renderCard(ar) {
                 <button class="btn btn-sm btn-outline-dark" onclick="markCard(${ar.id}, 'skipped')">
                     <i class="bi bi-x"></i> Пропустить
                 </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="addToCrm(${ar.id})"
+                        title="Завести/привязать клиента в CRM по автору заявки">
+                    <i class="bi bi-person-plus"></i> В CRM
+                </button>
             </div>
             ${isDm ? `<div class="mt-2" id="thread-${ar.id}" style="display:none;"></div>` : ''}
             <div class="small mt-2" id="res-${ar.id}"></div>
@@ -357,6 +361,21 @@ async function markCard(id, status) {
         setTimeout(loadAdRequests, 300);
     } catch (e) {
         _res(id, 'Ошибка смены статуса: ' + escapeHtml(e.message), 'danger');
+    }
+}
+
+// Завести/привязать клиента CRM (блок C) по автору заявки (author_vk_id).
+async function addToCrm(id) {
+    _res(id, 'Заношу в CRM…', 'muted');
+    try {
+        const res = await apiClient.upsertCrmFromRequest(id);
+        const name = (res.client && res.client.name) || 'клиент';
+        _res(id,
+            (res.created ? 'Клиент заведён' : 'Привязано к существующему клиенту') +
+            ` «${escapeHtml(name)}» — <a href="/ad-crm" target="_blank">открыть CRM</a>.`,
+            'success');
+    } catch (e) {
+        _res(id, 'Не удалось завести клиента: ' + escapeHtml(e.message), 'danger');
     }
 }
 

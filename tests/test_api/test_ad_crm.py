@@ -301,3 +301,16 @@ async def test_funnel_aggregates():
     assert out["total_clients"] == 6
     assert out["total_paid"] == 12000.0
     assert out["publications_count"] == 6
+
+
+# ----------------------------------------------------------------- wiring (UI PR)
+
+
+def test_routes_registered():
+    """Страница /ad-crm и роутер /api/ad-crm подключены в приложении (блок C UI)."""
+    import main
+
+    paths = {getattr(r, "path", None) for r in main.app.routes}
+    assert "/ad-crm" in paths
+    assert "/api/ad-crm/funnel" in paths
+    assert "/api/ad-crm/clients" in paths
