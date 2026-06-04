@@ -13,16 +13,25 @@
         </button>
     </div>
     <p class="text-muted">
-        Реклама, пойманная в предложке сообществ. Подготовьте ответ из шаблона
-        (имя автора и название паблика подставятся автоматически) и отправьте
-        в один клик. VK часто не даёт сообществу писать первым — тогда кнопка
-        предложит скопировать текст и открыть личный диалог.
+        Реклама, пойманная в <strong>предложке</strong> и во <strong>входящих ЛС</strong>
+        сообществ. Подготовьте ответ из шаблона (имя автора и название паблика
+        подставятся автоматически) и отправьте в один клик. Для заявок из лички
+        ответ уходит прямо в диалог; для предложки VK часто не даёт сообществу
+        писать первым — тогда кнопка предложит скопировать текст и открыть диалог.
     </p>
 
     <div class="card mb-3">
         <div class="card-body">
             <div class="row g-3 align-items-end">
-                <div class="col-md-5">
+                <div class="col-md-3">
+                    <label class="form-label">Источник</label>
+                    <select class="form-select" id="filter-origin">
+                        <option value="">Все источники</option>
+                        <option value="suggested">Предложка</option>
+                        <option value="inbound_dm">Личка</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
                     <label class="form-label">Статус</label>
                     <select class="form-select" id="filter-status">
                         <option value="new">Новые</option>
@@ -200,5 +209,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/js/ad_cabinet.js?v=20260604b"></script>
+<script src="/static/js/ad_cabinet.js?v=20260604c"></script>
 {% endblock %}

@@ -390,3 +390,69 @@ async def test_delete_offer_image_404(monkeypatch, tmp_path):
     with pytest.raises(HTTPException) as exc:
         await api.delete_offer_image("nope.png")
     assert exc.value.status_code == 404
+
+
+# ---------------------------------------------------------------- thread (block A)
+
+
+async def test_thread_non_dm_returns_reason():
+    """Для предложки переписки нет → пустой список + reason='not_dm'."""
+    ar = _ad_request(origin="suggested")
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=ar)
+    out = await api.get_thread(1, db=db)
+    assert out == {"messages": [], "reason": "not_dm"}
+
+
+async def test_thread_returns_messages(monkeypatch):
+    """ЛС-заявка → история из VKDialogsChecker.fetch_history."""
+    import modules.notifications.vk_dialogs_checker as dc
+
+    ar = _ad_request(origin="inbound_dm", vk_post_id=None, peer_id=42)
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=ar)
+    monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
+    fake_checker = MagicMock()
+    fake_checker.fetch_history.return_value = [
+        {
+            "out": False,
+            "from_id": 42,
+            "from_name": "Иван",
+            "text": "hi",
+            "date": 100,
+            "attachments": 0,
+        }
+    ]
+    monkeypatch.setattr(dc, "VKDialogsChecker", MagicMock(return_value=fake_checker))
+
+    out = await api.get_thread(1, db=db)
+    assert len(out["messages"]) == 1
+    assert out["messages"][0]["text"] == "hi"
+    fake_checker.fetch_history.assert_called_once()
+
+
+async def test_thread_no_token(monkeypatch):
+    ar = _ad_request(origin="inbound_dm", vk_post_id=None, peer_id=42)
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=ar)
+    monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=(None, {})))
+    out = await api.get_thread(1, db=db)
+    assert out == {"messages": [], "reason": "no_token"}
+
+
+async def test_thread_404_unknown():
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.get_thread(999, db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_list_requests_origin_filter():
+    """origin прокидывается в WHERE (smoke: вызов не падает, сериализует)."""
+    ar = _ad_request(origin="inbound_dm", vk_post_id=None)
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalars_all([ar]))
+    out = await api.list_requests(origin="inbound_dm", db=db)
+    assert len(out["requests"]) == 1
+    assert out["requests"][0]["origin"] == "inbound_dm"

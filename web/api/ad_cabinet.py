@@ -312,6 +312,45 @@ async def set_status(
     return ar.to_dict()
 
 
+@router.get("/requests/{request_id}/thread")
+async def get_thread(
+    request_id: int,
+    count: int = 30,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """История переписки для заявки из входящих ЛС (блок A, тред-вью).
+
+    Только для ``origin='inbound_dm'`` — у предложки переписки нет. Возвращает
+    сообщения от старых к новым через ``messages.getHistory`` (community-токен
+    приоритетно, user-токен fallback). Никогда не 500-ит на флапе VK — пустой
+    список и ``reason``.
+    """
+    import asyncio
+
+    from modules.notifications.vk_dialogs_checker import VKDialogsChecker
+    from modules.vk_token_router import load_vk_routing
+
+    ar = await db.get(AdRequest, request_id)
+    if not ar:
+        raise HTTPException(status_code=404, detail="ad request not found")
+    if ar.origin != "inbound_dm" or not ar.peer_id:
+        return {"messages": [], "reason": "not_dm"}
+
+    user_token, community_tokens = await load_vk_routing()
+    if not user_token:
+        return {"messages": [], "reason": "no_token"}
+
+    try:
+        checker = VKDialogsChecker(user_token, community_tokens=community_tokens)
+        messages = await asyncio.to_thread(
+            checker.fetch_history, int(ar.community_vk_id), int(ar.peer_id), count
+        )
+    except Exception as e:  # pragma: no cover - защита от неожиданного
+        logger.warning("thread fetch failed for request %s: %s", request_id, e)
+        return {"messages": [], "reason": "error", "error": str(e)}
+    return {"messages": messages}
+
+
 @router.post("/requests/bulk-action")
 async def bulk_action(
     payload: BulkActionIn,
