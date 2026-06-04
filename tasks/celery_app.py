@@ -476,8 +476,11 @@ def scan_suggested_ads():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
-def _maybe_alert_new_ads(new_total: int, regions: list) -> None:
-    """Telegram-алерт о новых рекламных заявках в предложке (best-effort)."""
+def _maybe_alert_new_ads(new_total: int, regions: list, source_label: str = "предложке") -> None:
+    """Telegram-алерт о новых рекламных заявках (best-effort).
+
+    ``source_label`` — откуда заявки (``"предложке"`` / ``"личке"``), для текста.
+    """
     try:
         import requests as _requests
 
@@ -495,7 +498,8 @@ def _maybe_alert_new_ads(new_total: int, regions: list) -> None:
             f"{r.get('region_code')}:{r.get('new')}" for r in (regions or []) if r.get("new")
         )
         text = (
-            f"📢 Новых рекламных заявок в предложке: <b>{new_total}</b>\n" f"{by_region}\n\n{url}"
+            f"📢 Новых рекламных заявок в {source_label}: <b>{new_total}</b>\n"
+            f"{by_region}\n\n{url}"
         )
         _requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
@@ -509,6 +513,39 @@ def _maybe_alert_new_ads(new_total: int, regions: list) -> None:
         )
     except Exception as e:
         logger.warning(f"ad cabinet telegram alert failed: {e}")
+
+
+@app.task(name="tasks.celery_app.scan_inbound_dm_ads")
+def scan_inbound_dm_ads():
+    """Скан входящих ЛС сообществ на рекламу → заявки в ad_requests (блок A).
+
+    Каждые 30 минут 8:00-22:00 (на 35-й/05-й минуте — офсет от скана предложки
+    в X:25/55). Источник — ``messages.getConversations`` главных групп; детект
+    тем же AdvertisementFilter + предложка-сигналы; дедуп по (community_vk_id,
+    peer_id) при origin='inbound_dm'. Telegram-алерт только при НОВЫХ заявках.
+    """
+    logger.info("=" * 80)
+    logger.info("Scanning inbound DM for advertisements (ad cabinet, block A)...")
+    logger.info("=" * 80)
+
+    try:
+        from modules.ad_cabinet.dm_scanner import run_dm_scan
+
+        result = run_coro(run_dm_scan())
+        new_total = int(result.get("new_total", 0))
+        if new_total > 0:
+            _maybe_alert_new_ads(new_total, result.get("regions", []), source_label="личке")
+
+        logger.info("ad cabinet DM scan done: %d new ad requests", new_total)
+        return {
+            "success": result.get("success", False),
+            "timestamp": datetime.now().isoformat(),
+            "new_total": new_total,
+            "regions": result.get("regions", []),
+        }
+    except Exception as e:
+        logger.error(f"scan_inbound_dm_ads failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
 @app.task(name="tasks.celery_app.check_unread_messages")
@@ -874,6 +911,15 @@ app.conf.beat_schedule = {
     "scan-suggested-ads": {
         "task": "tasks.celery_app.scan_suggested_ads",
         "schedule": crontab(minute="25,55", hour="8-22"),
+        "options": {
+            "expires": 1500,
+            "catchup": False,
+        },
+    },
+    # Скан входящих ЛС на рекламу (рекламный кабинет, блок A) каждые 30 мин в X:05/35
+    "scan-inbound-dm-ads": {
+        "task": "tasks.celery_app.scan_inbound_dm_ads",
+        "schedule": crontab(minute="5,35", hour="8-22"),
         "options": {
             "expires": 1500,
             "catchup": False,

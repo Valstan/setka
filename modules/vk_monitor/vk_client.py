@@ -522,6 +522,39 @@ class VKClient:
             logger.error(f"Error getting messages: {e}")
             return None
 
+    async def get_message_history(
+        self,
+        peer_id: int,
+        count: int = 50,
+        group_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a conversation thread via `messages.getHistory` (ad cabinet, block A).
+
+        Used by the thread-view of an inbound-DM ad request: show the recent
+        back-and-forth before the operator replies. `group_id` is required when
+        the token is a user-token acting on behalf of a community (positive id);
+        community access tokens imply the group and ignore it.
+
+        Returns the raw VK response (`items` newest-last, `profiles`/`groups`
+        via `extended=1`) or None on error — the caller decides how to degrade.
+        """
+        try:
+            await asyncio.to_thread(self._enforce_rate_limit)
+            params: Dict[str, Any] = {
+                "peer_id": int(peer_id),
+                "count": min(int(count), 200),
+                "extended": 1,
+            }
+            if group_id:
+                params["group_id"] = abs(int(group_id))
+            return self.vk.messages.getHistory(**params)
+        except vk_api.exceptions.ApiError as e:
+            _log_vk_api_error("Error getting message history", e)
+            return None
+        except Exception as e:
+            logger.error(f"Error getting message history for peer {peer_id}: {e}")
+            return None
+
     async def check_token_validity(self) -> bool:
         """
         Check if token is still valid

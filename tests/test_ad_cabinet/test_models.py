@@ -44,3 +44,34 @@ def test_author_url_for_group():
         author_is_group=True,
     )
     assert ar.to_dict()["author_url"] == "https://vk.com/club100"
+
+
+def test_inbound_dm_to_dict_origin_and_dialog_url():
+    """ЛС-заявка (блок A): origin, last_message_id, dialog_url; vk_post_url=None."""
+    ar = AdRequest(
+        id=9,
+        origin="inbound_dm",
+        community_vk_id=-158787639,
+        community_name="Малмыж Инфо",
+        vk_post_id=None,
+        last_message_id=777,
+        author_vk_id=42,
+        peer_id=42,
+        author_name="Иван",
+        author_is_group=False,
+        text_snapshot="прайс на рекламу",
+        status="new",
+    )
+    d = ar.to_dict()
+    assert d["origin"] == "inbound_dm"
+    assert d["last_message_id"] == 777
+    assert d["vk_post_url"] is None
+    assert d["dialog_url"] == "https://vk.com/gim158787639?sel=42"
+    assert d["author_url"] == "https://vk.com/id42"
+
+
+def test_suggested_to_dict_has_no_dialog_url():
+    ar = AdRequest(id=1, community_vk_id=-1, vk_post_id=2, peer_id=5)
+    # origin не задан явно → дефолт колонки применяется в БД, в py-объекте None.
+    d = ar.to_dict()
+    assert d["dialog_url"] is None
