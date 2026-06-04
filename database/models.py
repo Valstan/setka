@@ -519,6 +519,9 @@ class AdRequest(Base):
         String(20), nullable=False, default="new", index=True
     )  # new|contacted|skipped|published
 
+    # CRM (блок C): к какому клиенту привязана заявка (миграция 027). FK SET NULL.
+    client_id = Column(BigInteger, ForeignKey("ad_clients.id", ondelete="SET NULL"), nullable=True)
+
     # Messaging permission cache (isMessagesFromGroupAllowed)
     can_message = Column(Boolean, nullable=True)
     can_message_checked_at = Column(DateTime, nullable=True)
@@ -563,6 +566,7 @@ class AdRequest(Base):
             "score": self.score,
             "reasons_json": self.reasons_json,
             "status": self.status,
+            "client_id": self.client_id,
             "can_message": self.can_message,
             "can_message_checked_at": (
                 self.can_message_checked_at.isoformat() if self.can_message_checked_at else None
@@ -678,6 +682,140 @@ class AdScheduledPost(Base):
             "vk_post_url": (
                 f"https://vk.com/wall{self.community_vk_id}_{self.vk_postponed_post_id}"
                 if self.community_vk_id and self.vk_postponed_post_id
+                else None
+            ),
+        }
+
+
+class AdClient(Base):
+    """Клиент-рекламодатель рекламного кабинета (блок C, CRM).
+
+    Карточка заказчика, сводящая его заявки из предложки и ЛС в одну сущность по
+    ключу ``author_vk_id``. Несёт воронку сделки (``stage``) и контактные данные.
+    Оплаты и публикации висят на ней отдельными таблицами (``ad_payments`` /
+    ``ad_publications``). Миграция 027.
+    """
+
+    __tablename__ = "ad_clients"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    author_vk_id = Column(BigInteger, nullable=False)  # VK id заказчика (neg=группа); ключ сведения
+    author_is_group = Column(Boolean, nullable=False, default=False)
+    name = Column(String(300), nullable=True)
+    vk_url = Column(String(300), nullable=True)
+    contact = Column(Text, nullable=True)  # телефон/почта/как связаться (заметки оператора)
+    region_id = Column(Integer, ForeignKey("regions.id", ondelete="SET NULL"), nullable=True)
+    # Воронка: detected|contacted|scheduled|published|paid|lost
+    stage = Column(String(20), nullable=False, default="detected", index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<AdClient {self.id} vk={self.author_vk_id} {self.stage}>"
+
+    def _vk_url(self):
+        if self.vk_url:
+            return self.vk_url
+        if not self.author_vk_id:
+            return None
+        if self.author_is_group or int(self.author_vk_id) < 0:
+            return f"https://vk.com/club{abs(int(self.author_vk_id))}"
+        return f"https://vk.com/id{int(self.author_vk_id)}"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "author_vk_id": self.author_vk_id,
+            "author_is_group": self.author_is_group,
+            "name": self.name,
+            "vk_url": self._vk_url(),
+            "contact": self.contact,
+            "region_id": self.region_id,
+            "stage": self.stage,
+            "notes": self.notes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class AdPayment(Base):
+    """Оплата от клиента-рекламодателя (блок C, CRM). Миграция 027."""
+
+    __tablename__ = "ad_payments"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    client_id = Column(
+        BigInteger, ForeignKey("ad_clients.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    amount = Column(Numeric(12, 2), nullable=False)
+    method = Column(String(40), nullable=True)  # нал | карта | перевод | …
+    ad_request_id = Column(BigInteger, nullable=True)  # опц. за какую заявку
+    scheduled_post_id = Column(BigInteger, nullable=True)  # опц. за какой отложенный пост
+    note = Column(Text, nullable=True)
+    paid_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<AdPayment {self.id} client={self.client_id} {self.amount}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "amount": float(self.amount) if self.amount is not None else None,
+            "method": self.method,
+            "ad_request_id": self.ad_request_id,
+            "scheduled_post_id": self.scheduled_post_id,
+            "note": self.note,
+            "paid_at": self.paid_at.isoformat() if self.paid_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AdPublication(Base):
+    """Реально вышедшая рекламная публикация (блок C, CRM). Миграция 027."""
+
+    __tablename__ = "ad_publications"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    client_id = Column(
+        BigInteger, ForeignKey("ad_clients.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    community_vk_id = Column(BigInteger, nullable=False)  # owner_id группы (отрицательный)
+    vk_post_id = Column(BigInteger, nullable=True)  # id опубликованного поста (если известен)
+    region_id = Column(Integer, ForeignKey("regions.id", ondelete="SET NULL"), nullable=True)
+    ad_request_id = Column(BigInteger, nullable=True)  # опц. из какой заявки
+    scheduled_post_id = Column(BigInteger, nullable=True)  # опц. из какого отложенного поста
+    price = Column(Numeric(12, 2), nullable=True)  # согласованная цена размещения
+    status = Column(String(20), nullable=False, default="published")  # published | removed
+    note = Column(Text, nullable=True)
+    published_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<AdPublication {self.id} client={self.client_id} comm={self.community_vk_id}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "community_vk_id": self.community_vk_id,
+            "vk_post_id": self.vk_post_id,
+            "region_id": self.region_id,
+            "ad_request_id": self.ad_request_id,
+            "scheduled_post_id": self.scheduled_post_id,
+            "price": float(self.price) if self.price is not None else None,
+            "status": self.status,
+            "note": self.note,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            # Производное для UI: ссылка на пост в VK.
+            "vk_post_url": (
+                f"https://vk.com/wall{self.community_vk_id}_{self.vk_post_id}"
+                if self.community_vk_id and self.vk_post_id
                 else None
             ),
         }

@@ -21,6 +21,7 @@ from middleware.rate_limiter import RateLimitMiddleware
 from modules.module_activity_notifier import notify_system_startup
 from web.api import (
     ad_cabinet,
+    ad_crm,
     communities,
     discovery,
     filtration,
@@ -138,6 +139,7 @@ app.include_router(parsing_stats.router, tags=["Parsing Stats"])  # Postopus mig
 app.include_router(filtration.router, prefix="/api/filtration", tags=["Filtration"])
 app.include_router(templates_api.router, prefix="/api/templates", tags=["Message Templates"])
 app.include_router(ad_cabinet.router, prefix="/api/ad-cabinet", tags=["Ad Cabinet"])
+app.include_router(ad_crm.router, prefix="/api/ad-crm", tags=["Ad CRM"])
 app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Discovery"])
 
 
