@@ -90,6 +90,63 @@ class VKDialogsChecker(BaseVKChecker):
         )
         return parsed
 
+    def fetch_history(self, group_id: int, peer_id: int, count: int = 30) -> List[Dict[str, Any]]:
+        """История диалога ``peer_id`` в сообществе ``group_id`` (тред-вью, блок A).
+
+        Нормализует ``messages.getHistory`` в список сообщений, **от старых к
+        новым** (VK отдаёт от новых к старым — разворачиваем для показа). Двух-
+        токенная маршрутизация как у ``fetch_inbound_dialogs``. Не бросает наружу
+        — при ошибке VK возвращает ``[]``.
+        """
+        positive_id = abs(int(group_id))
+        api, via_community = self._api_for(group_id)
+        try:
+            params: Dict[str, Any] = {
+                "peer_id": int(peer_id),
+                "count": min(int(count), 100),
+                "extended": 1,
+            }
+            if not via_community:
+                params["group_id"] = positive_id
+            result = api.messages.getHistory(**params)
+        except ApiError as e:
+            logger.warning(
+                "fetch_history group %s peer %s: %s (code %s)", group_id, peer_id, e, e.code
+            )
+            return []
+        except Exception as e:  # pragma: no cover - сетевые флапы
+            logger.error("fetch_history group %s peer %s: %s", group_id, peer_id, e)
+            return []
+
+        items = result.get("items", []) or []
+        profiles = {p["id"]: p for p in (result.get("profiles") or [])}
+
+        msgs: List[Dict[str, Any]] = []
+        for m in reversed(items):  # VK: новые→старые; показываем старые→новые
+            out = int(m.get("out", 0) or 0)
+            from_id = m.get("from_id")
+            from_name = None
+            if from_id is not None and int(from_id) > 0:
+                prof = profiles.get(int(from_id))
+                if prof:
+                    from_name = (
+                        " ".join(
+                            x for x in [prof.get("first_name"), prof.get("last_name")] if x
+                        ).strip()
+                        or None
+                    )
+            msgs.append(
+                {
+                    "out": bool(out),  # True — это мы (сообщество) написали
+                    "from_id": from_id,
+                    "from_name": from_name,
+                    "text": m.get("text", "") or "",
+                    "date": m.get("date"),
+                    "attachments": len(m.get("attachments") or []),
+                }
+            )
+        return msgs
+
     @staticmethod
     def parse_dialog_item(
         item: Dict[str, Any],

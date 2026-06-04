@@ -13,6 +13,11 @@ const STATUS_BADGE = {
     skipped: '<span class="badge bg-secondary">Пропущено</span>',
 };
 
+const ORIGIN_BADGE = {
+    suggested: '<span class="badge bg-light text-dark border"><i class="bi bi-inbox"></i> предложка</span>',
+    inbound_dm: '<span class="badge bg-primary"><i class="bi bi-chat-dots"></i> личка</span>',
+};
+
 // Кэш заявок текущего фильтра (для «Запланировать» — нужен текст/сообщество).
 let _adRequestsById = {};
 
@@ -22,6 +27,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadAdRequests();
     const sel = document.getElementById('filter-status');
     if (sel) sel.addEventListener('change', loadAdRequests);
+    const selOrigin = document.getElementById('filter-origin');
+    if (selOrigin) selOrigin.addEventListener('change', loadAdRequests);
     // Делегированное удаление картинок (имена могут содержать пробелы/кириллицу).
     const box = document.getElementById('offer-images');
     if (box) box.addEventListener('click', (e) => {
@@ -189,7 +196,9 @@ async function loadAdRequests() {
 
     try {
         const status = document.getElementById('filter-status').value;
-        const data = await apiClient.getAdRequests({ status });
+        const originEl = document.getElementById('filter-origin');
+        const origin = originEl ? originEl.value : '';
+        const data = await apiClient.getAdRequests({ status, origin });
         const requests = data.requests || [];
         loading.style.display = 'none';
         if (!requests.length) {
@@ -216,6 +225,15 @@ function renderCard(ar) {
     const authorLink = ar.author_url
         ? `<a href="${escapeHtml(ar.author_url)}" target="_blank">${authorLabel}</a>` : authorLabel;
 
+    const isDm = ar.origin === 'inbound_dm';
+    const originBadge = ORIGIN_BADGE[ar.origin] || '';
+    // Источник: для предложки — ссылка на пост; для лички — ссылка на диалог.
+    const sourceLink = isDm
+        ? (ar.dialog_url
+            ? `<a href="${escapeHtml(ar.dialog_url)}" target="_blank"><i class="bi bi-box-arrow-up-right"></i> диалог в VK</a>`
+            : 'входящее ЛС')
+        : `<a href="${escapeHtml(ar.vk_post_url || '#')}" target="_blank">пост в VK</a>`;
+
     return `
     <div class="card mb-3" id="ad-card-${ar.id}">
         <div class="card-body">
@@ -226,13 +244,12 @@ function renderCard(ar) {
                     <div>
                         <div class="fw-bold">${authorLink}</div>
                         <div class="text-muted small">
-                            в «${escapeHtml(ar.community_name || '')}» ·
-                            <a href="${escapeHtml(ar.vk_post_url || '#')}" target="_blank">пост в VK</a>
+                            в «${escapeHtml(ar.community_name || '')}» · ${sourceLink}
                         </div>
                     </div>
                 </div>
                 <div class="text-end">
-                    ${STATUS_BADGE[ar.status] || escapeHtml(ar.status)}
+                    ${originBadge} ${STATUS_BADGE[ar.status] || escapeHtml(ar.status)}
                     <div class="text-muted small mt-1">score: ${ar.score}</div>
                 </div>
             </div>
@@ -249,14 +266,18 @@ function renderCard(ar) {
                     <i class="bi bi-magic"></i> Подготовить из шаблона
                 </button>
                 <button class="btn btn-sm btn-primary" onclick="sendCard(${ar.id})">
-                    <i class="bi bi-send"></i> Отправить от сообщества
+                    <i class="bi bi-send"></i> ${isDm ? 'Ответить в диалог' : 'Отправить от сообщества'}
                 </button>
                 <button class="btn btn-sm btn-outline-secondary" onclick="copyCard(${ar.id})">
                     <i class="bi bi-clipboard"></i> Копировать
                 </button>
-                <button class="btn btn-sm btn-outline-primary" onclick="scheduleFromRequest(${ar.id})">
-                    <i class="bi bi-calendar-plus"></i> Запланировать
-                </button>
+                ${isDm
+                    ? `<button class="btn btn-sm btn-outline-info" onclick="toggleThread(${ar.id})">
+                           <i class="bi bi-chat-left-text"></i> Показать переписку
+                       </button>`
+                    : `<button class="btn btn-sm btn-outline-primary" onclick="scheduleFromRequest(${ar.id})">
+                           <i class="bi bi-calendar-plus"></i> Запланировать
+                       </button>`}
                 <button class="btn btn-sm btn-outline-success" onclick="markCard(${ar.id}, 'published')">
                     <i class="bi bi-check2"></i> Опубликовано
                 </button>
@@ -264,6 +285,7 @@ function renderCard(ar) {
                     <i class="bi bi-x"></i> Пропустить
                 </button>
             </div>
+            ${isDm ? `<div class="mt-2" id="thread-${ar.id}" style="display:none;"></div>` : ''}
             <div class="small mt-2" id="res-${ar.id}"></div>
         </div>
     </div>`;
@@ -336,6 +358,66 @@ async function markCard(id, status) {
     } catch (e) {
         _res(id, 'Ошибка смены статуса: ' + escapeHtml(e.message), 'danger');
     }
+}
+
+// --------------------------------------------------- тред-вью переписки (блок A)
+
+async function toggleThread(id) {
+    const box = document.getElementById(`thread-${id}`);
+    if (!box) return;
+    // Повторный клик — свернуть.
+    if (box.style.display !== 'none' && box.dataset.loaded === '1') {
+        box.style.display = 'none';
+        box.dataset.loaded = '0';
+        return;
+    }
+    box.style.display = '';
+    box.innerHTML = '<div class="text-muted small">Загрузка переписки…</div>';
+    try {
+        const data = await apiClient.getAdThread(id);
+        const msgs = data.messages || [];
+        if (!msgs.length) {
+            const why = data.reason === 'no_token' ? 'нет VK-токена'
+                : data.reason === 'error' ? 'ошибка VK'
+                : 'переписка пуста или недоступна';
+            box.innerHTML = `<div class="text-muted small">История недоступна (${why}).</div>`;
+            box.dataset.loaded = '1';
+            return;
+        }
+        box.innerHTML = renderThread(msgs);
+        box.dataset.loaded = '1';
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">Ошибка загрузки переписки: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function _fmtMsgDate(unix) {
+    if (!unix) return '';
+    try {
+        return new Date(unix * 1000).toLocaleString('ru-RU', {
+            day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+        });
+    } catch (e) { return ''; }
+}
+
+function renderThread(msgs) {
+    const rows = msgs.map(m => {
+        const mine = m.out;  // true — написали мы (сообщество)
+        const who = mine
+            ? '<i class="bi bi-building"></i> мы'
+            : `<i class="bi bi-person"></i> ${escapeHtml(m.from_name || 'автор')}`;
+        const att = m.attachments
+            ? ` <span class="badge bg-light text-dark border">+${m.attachments} вложений</span>` : '';
+        const align = mine ? 'text-end' : '';
+        const bg = mine ? 'bg-primary bg-opacity-10' : 'bg-light';
+        return `<div class="${align} mb-1">
+            <div class="d-inline-block border rounded p-2 ${bg}" style="max-width:85%;text-align:left;white-space:pre-wrap;">
+                <div class="text-muted" style="font-size:.75em;">${who} · ${_fmtMsgDate(m.date)}</div>
+                ${escapeHtml(m.text || '')}${att}
+            </div>
+        </div>`;
+    }).join('');
+    return `<div class="border rounded p-2 bg-white" style="max-height:280px;overflow:auto;">${rows}</div>`;
 }
 
 // =================================================== планировщик отложки
