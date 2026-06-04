@@ -185,6 +185,12 @@ async def ad_cabinet_page(request: Request):
     return templates.TemplateResponse("ad_cabinet.html", {"request": request})
 
 
+@app.get("/ad-crm")
+async def ad_crm_page(request: Request):
+    """CRM рекламного кабинета — клиенты, воронка, оплаты и публикации (блок C)."""
+    return templates.TemplateResponse("ad_crm.html", {"request": request})
+
+
 @app.get("/regions/new")
 async def region_new_page(request: Request):
     """Wizard для добавления нового региона (big idea 2026-05-22)."""

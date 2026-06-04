@@ -1,0 +1,391 @@
+// CRM рекламного кабинета (блок C): клиенты, воронка, оплаты, публикации.
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+const STAGE_LABEL = {
+    detected: 'Обнаружен',
+    contacted: 'Связались',
+    scheduled: 'Запланировано',
+    published: 'Опубликовано',
+    paid: 'Оплачено',
+    lost: 'Слив',
+};
+
+const STAGE_BADGE_CLASS = {
+    detected: 'bg-warning text-dark',
+    contacted: 'bg-info text-dark',
+    scheduled: 'bg-primary',
+    published: 'bg-success',
+    paid: 'bg-success',
+    lost: 'bg-secondary',
+};
+
+const STAGE_ORDER = ['detected', 'contacted', 'scheduled', 'published', 'paid', 'lost'];
+
+function fmtMoney(n) {
+    const v = Number(n || 0);
+    return v.toLocaleString('ru-RU') + ' ₽';
+}
+
+function fmtDate(iso) {
+    return iso ? String(iso).replace('T', ' ').slice(0, 16) : '';
+}
+
+let _filterTimer = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadCrm();
+    const stageSel = document.getElementById('filter-stage');
+    if (stageSel) stageSel.addEventListener('change', loadClients);
+    const q = document.getElementById('filter-q');
+    if (q) q.addEventListener('input', () => {
+        clearTimeout(_filterTimer);
+        _filterTimer = setTimeout(loadClients, 350);
+    });
+    const submit = document.getElementById('nc-submit');
+    if (submit) submit.addEventListener('click', createClientFromModal);
+});
+
+async function loadCrm() {
+    await Promise.all([loadFunnel(), loadClients()]);
+}
+
+// --------------------------------------------------- воронка
+
+async function loadFunnel() {
+    const box = document.getElementById('crm-funnel');
+    if (!box) return;
+    try {
+        const f = await apiClient.getCrmFunnel();
+        const chips = STAGE_ORDER.map(st => {
+            const n = (f.by_stage && f.by_stage[st]) || 0;
+            const cls = STAGE_BADGE_CLASS[st] || 'bg-light text-dark';
+            return `<div class="text-center px-3 py-2 rounded border">
+                <div class="h4 mb-0">${n}</div>
+                <span class="badge ${cls}">${STAGE_LABEL[st]}</span>
+            </div>`;
+        }).join('');
+        const totals = `<div class="text-center px-3 py-2 rounded border bg-body-tertiary ms-auto">
+                <div class="h4 mb-0 text-success">${fmtMoney(f.total_paid)}</div>
+                <div class="small text-muted">оплачено всего</div>
+            </div>
+            <div class="text-center px-3 py-2 rounded border bg-body-tertiary">
+                <div class="h4 mb-0">${f.publications_count || 0}</div>
+                <div class="small text-muted">публикаций</div>
+            </div>`;
+        box.innerHTML = chips + totals;
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">Ошибка воронки: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+// --------------------------------------------------- список клиентов
+
+async function loadClients() {
+    const loading = document.getElementById('crm-loading');
+    const empty = document.getElementById('crm-empty');
+    const list = document.getElementById('crm-list');
+    loading.style.display = '';
+    empty.style.display = 'none';
+    list.innerHTML = '';
+    try {
+        const stage = document.getElementById('filter-stage').value;
+        const q = document.getElementById('filter-q').value.trim();
+        const data = await apiClient.getCrmClients({ stage, q });
+        const clients = data.clients || [];
+        loading.style.display = 'none';
+        if (!clients.length) {
+            empty.style.display = '';
+            return;
+        }
+        list.innerHTML = clients.map(renderClientCard).join('');
+    } catch (e) {
+        loading.style.display = 'none';
+        list.innerHTML = `<div class="alert alert-danger">Ошибка загрузки: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function stageSelectHtml(id, current) {
+    const opts = STAGE_ORDER.map(st =>
+        `<option value="${st}"${st === current ? ' selected' : ''}>${STAGE_LABEL[st]}</option>`
+    ).join('');
+    return `<select class="form-select form-select-sm" style="width:auto;display:inline-block;"
+                    onchange="changeStage(${id}, this.value)">${opts}</select>`;
+}
+
+function renderClientCard(c) {
+    const nameLabel = c.author_is_group
+        ? `<i class="bi bi-people"></i> ${escapeHtml(c.name || 'сообщество')}`
+        : `<i class="bi bi-person"></i> ${escapeHtml(c.name || 'без имени')}`;
+    const nameLink = c.vk_url
+        ? `<a href="${escapeHtml(c.vk_url)}" target="_blank">${nameLabel}</a>` : nameLabel;
+    const contact = c.contact
+        ? `<div class="text-muted small"><i class="bi bi-telephone"></i> ${escapeHtml(c.contact)}</div>` : '';
+
+    return `
+    <div class="card mb-2" id="crm-card-${c.id}">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <div class="fw-bold">${nameLink}</div>
+                    ${contact}
+                    <div class="small mt-1">
+                        <span class="text-success fw-bold">${fmtMoney(c.total_paid)}</span>
+                        <span class="text-muted">· ${c.payments_count || 0} оплат · ${c.publications_count || 0} публикаций</span>
+                    </div>
+                </div>
+                <div class="text-end">
+                    ${stageSelectHtml(c.id, c.stage)}
+                </div>
+            </div>
+            <div class="mt-2">
+                <button class="btn btn-sm btn-outline-secondary" onclick="toggleClientDetails(${c.id})">
+                    <i class="bi bi-chevron-down"></i> Подробнее
+                </button>
+            </div>
+            <div id="crm-details-${c.id}" class="mt-3" style="display:none;"></div>
+        </div>
+    </div>`;
+}
+
+async function changeStage(id, stage) {
+    try {
+        await apiClient.updateCrmClient(id, { stage });
+        await loadFunnel();
+    } catch (e) {
+        alert('Не удалось сменить стадию: ' + e.message);
+    }
+}
+
+// --------------------------------------------------- карточка: детали
+
+async function toggleClientDetails(id) {
+    const box = document.getElementById(`crm-details-${id}`);
+    if (!box) return;
+    if (box.style.display !== 'none' && box.dataset.loaded === '1') {
+        box.style.display = 'none';
+        box.dataset.loaded = '0';
+        return;
+    }
+    box.style.display = '';
+    box.innerHTML = '<div class="text-muted small">Загрузка…</div>';
+    try {
+        const d = await apiClient.getCrmClient(id);
+        box.innerHTML = renderClientDetails(d);
+        box.dataset.loaded = '1';
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">Ошибка: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderClientDetails(d) {
+    const c = d.client;
+    const payments = d.payments || [];
+    const publications = d.publications || [];
+
+    const payRows = payments.length ? payments.map(p => `
+        <tr>
+            <td class="text-nowrap fw-bold text-success">${fmtMoney(p.amount)}</td>
+            <td>${escapeHtml(p.method || '')}</td>
+            <td class="text-nowrap small">${fmtDate(p.paid_at)}</td>
+            <td class="small">${escapeHtml(p.note || '')}</td>
+            <td><button class="btn btn-sm btn-outline-danger py-0 px-1"
+                        onclick="deletePayment(${p.id}, ${c.id})" title="Удалить"><i class="bi bi-x"></i></button></td>
+        </tr>`).join('') : '<tr><td colspan="5" class="text-muted small">Оплат пока нет.</td></tr>';
+
+    const pubRows = publications.length ? publications.map(p => {
+        const link = p.vk_post_url
+            ? `<a href="${escapeHtml(p.vk_post_url)}" target="_blank">${escapeHtml(String(p.community_vk_id))}</a>`
+            : escapeHtml(String(p.community_vk_id));
+        return `<tr>
+            <td class="text-nowrap">${link}</td>
+            <td class="text-nowrap">${p.price != null ? fmtMoney(p.price) : ''}</td>
+            <td class="text-nowrap small">${fmtDate(p.published_at)}</td>
+            <td class="small">${escapeHtml(p.status || '')} ${escapeHtml(p.note || '')}</td>
+            <td><button class="btn btn-sm btn-outline-danger py-0 px-1"
+                        onclick="deletePublication(${p.id}, ${c.id})" title="Удалить"><i class="bi bi-x"></i></button></td>
+        </tr>`;
+    }).join('') : '<tr><td colspan="5" class="text-muted small">Публикаций пока нет.</td></tr>';
+
+    return `
+    <div class="row g-3">
+        <div class="col-md-5">
+            <label class="form-label small mb-1">Имя / название</label>
+            <input type="text" class="form-control form-control-sm mb-2" id="cf-name-${c.id}" value="${escapeHtml(c.name || '')}">
+            <label class="form-label small mb-1">Контакты</label>
+            <textarea class="form-control form-control-sm mb-2" id="cf-contact-${c.id}" rows="2">${escapeHtml(c.contact || '')}</textarea>
+            <label class="form-label small mb-1">Заметки</label>
+            <textarea class="form-control form-control-sm mb-2" id="cf-notes-${c.id}" rows="2">${escapeHtml(c.notes || '')}</textarea>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-primary" onclick="saveClientFields(${c.id})">
+                    <i class="bi bi-save"></i> Сохранить
+                </button>
+                <button class="btn btn-sm btn-outline-danger ms-auto" onclick="deleteClient(${c.id})">
+                    <i class="bi bi-trash"></i> Удалить клиента
+                </button>
+            </div>
+            <div class="small mt-1" id="cf-res-${c.id}"></div>
+        </div>
+
+        <div class="col-md-7">
+            <div class="fw-bold small mb-1"><i class="bi bi-cash-coin"></i> Оплаты</div>
+            <table class="table table-sm align-middle mb-2">
+                <tbody>${payRows}</tbody>
+            </table>
+            <div class="input-group input-group-sm mb-3">
+                <input type="number" class="form-control" id="pay-amount-${c.id}" placeholder="Сумма ₽" style="max-width:110px;">
+                <input type="text" class="form-control" id="pay-method-${c.id}" placeholder="Способ" style="max-width:110px;">
+                <input type="text" class="form-control" id="pay-note-${c.id}" placeholder="Заметка">
+                <button class="btn btn-outline-success" onclick="addPayment(${c.id})"><i class="bi bi-plus-lg"></i> Оплата</button>
+            </div>
+
+            <div class="fw-bold small mb-1"><i class="bi bi-megaphone"></i> Публикации</div>
+            <table class="table table-sm align-middle mb-2">
+                <tbody>${pubRows}</tbody>
+            </table>
+            <div class="input-group input-group-sm">
+                <input type="number" class="form-control" id="pub-comm-${c.id}" placeholder="VK id группы (-100…)" style="max-width:150px;">
+                <input type="number" class="form-control" id="pub-post-${c.id}" placeholder="post id" style="max-width:90px;">
+                <input type="number" class="form-control" id="pub-price-${c.id}" placeholder="Цена ₽" style="max-width:100px;">
+                <button class="btn btn-outline-primary" onclick="addPublication(${c.id})"><i class="bi bi-plus-lg"></i> Публикация</button>
+            </div>
+        </div>
+    </div>`;
+}
+
+function _cfRes(id, html, cls) {
+    const el = document.getElementById(`cf-res-${id}`);
+    if (el) el.innerHTML = `<span class="text-${cls || 'muted'}">${html}</span>`;
+}
+
+async function saveClientFields(id) {
+    const name = document.getElementById(`cf-name-${id}`).value;
+    const contact = document.getElementById(`cf-contact-${id}`).value;
+    const notes = document.getElementById(`cf-notes-${id}`).value;
+    _cfRes(id, 'Сохраняю…');
+    try {
+        await apiClient.updateCrmClient(id, { name, contact, notes });
+        _cfRes(id, 'Сохранено ✓', 'success');
+        await loadClients();
+    } catch (e) {
+        _cfRes(id, 'Ошибка: ' + escapeHtml(e.message), 'danger');
+    }
+}
+
+async function deleteClient(id) {
+    if (!confirm('Удалить клиента вместе с его оплатами? Публикации останутся без привязки. Действие необратимо.')) return;
+    try {
+        await apiClient.deleteCrmClient(id);
+        await loadCrm();
+    } catch (e) {
+        alert('Не удалось удалить: ' + e.message);
+    }
+}
+
+// --------------------------------------------------- оплаты / публикации
+
+async function addPayment(id) {
+    const amount = parseFloat(document.getElementById(`pay-amount-${id}`).value);
+    if (!amount || amount <= 0) { _detailReload(id, 'Введите сумму больше нуля.'); return; }
+    const method = document.getElementById(`pay-method-${id}`).value.trim() || null;
+    const note = document.getElementById(`pay-note-${id}`).value.trim() || null;
+    try {
+        await apiClient.createCrmPayment({ client_id: id, amount, method, note });
+        await _detailReload(id);
+        await loadFunnel();
+    } catch (e) {
+        alert('Не удалось добавить оплату: ' + e.message);
+    }
+}
+
+async function deletePayment(paymentId, clientId) {
+    if (!confirm('Удалить оплату?')) return;
+    try {
+        await apiClient.deleteCrmPayment(paymentId);
+        await _detailReload(clientId);
+        await loadFunnel();
+    } catch (e) {
+        alert('Не удалось удалить оплату: ' + e.message);
+    }
+}
+
+async function addPublication(id) {
+    const community = parseInt(document.getElementById(`pub-comm-${id}`).value, 10);
+    if (!community) { alert('Укажите VK id группы (отрицательный).'); return; }
+    const postRaw = document.getElementById(`pub-post-${id}`).value;
+    const priceRaw = document.getElementById(`pub-price-${id}`).value;
+    const payload = {
+        client_id: id,
+        community_vk_id: community,
+        vk_post_id: postRaw ? parseInt(postRaw, 10) : null,
+        price: priceRaw ? parseFloat(priceRaw) : null,
+    };
+    try {
+        await apiClient.createCrmPublication(payload);
+        await _detailReload(id);
+        await loadFunnel();
+    } catch (e) {
+        alert('Не удалось добавить публикацию: ' + e.message);
+    }
+}
+
+async function deletePublication(pubId, clientId) {
+    if (!confirm('Удалить запись о публикации?')) return;
+    try {
+        await apiClient.deleteCrmPublication(pubId);
+        await _detailReload(clientId);
+        await loadFunnel();
+    } catch (e) {
+        alert('Не удалось удалить публикацию: ' + e.message);
+    }
+}
+
+// Перерисовать раскрытые детали клиента (после добавления/удаления записи).
+async function _detailReload(id, errMsg) {
+    const box = document.getElementById(`crm-details-${id}`);
+    if (!box) return;
+    try {
+        const d = await apiClient.getCrmClient(id);
+        box.innerHTML = renderClientDetails(d);
+        box.dataset.loaded = '1';
+        box.style.display = '';
+        if (errMsg) _cfRes(id, escapeHtml(errMsg), 'danger');
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">Ошибка: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+// --------------------------------------------------- модалка «Завести клиента»
+
+async function createClientFromModal() {
+    const vk = parseInt(document.getElementById('nc-vk-id').value, 10);
+    const res = document.getElementById('nc-res');
+    if (!vk) { res.innerHTML = '<span class="text-danger">Укажите VK id заказчика.</span>'; return; }
+    const payload = {
+        author_vk_id: vk,
+        author_is_group: document.getElementById('nc-is-group').checked,
+        name: document.getElementById('nc-name').value.trim() || null,
+        contact: document.getElementById('nc-contact').value.trim() || null,
+        stage: document.getElementById('nc-stage').value,
+        notes: document.getElementById('nc-notes').value.trim() || null,
+    };
+    res.innerHTML = '<span class="text-muted">Создаю…</span>';
+    try {
+        await apiClient.createCrmClient(payload);
+        res.innerHTML = '<span class="text-success">Создан ✓</span>';
+        // Сброс полей + закрыть модалку.
+        ['nc-vk-id', 'nc-name', 'nc-contact', 'nc-notes'].forEach(i => { document.getElementById(i).value = ''; });
+        document.getElementById('nc-is-group').checked = false;
+        const modalEl = document.getElementById('client-modal');
+        if (window.bootstrap && modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        await loadCrm();
+    } catch (e) {
+        const msg = e.message && e.message.includes('exists')
+            ? 'Клиент с таким VK id уже есть.' : escapeHtml(e.message);
+        res.innerHTML = `<span class="text-danger">Ошибка: ${msg}</span>`;
+    }
+}
