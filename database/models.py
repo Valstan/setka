@@ -485,12 +485,16 @@ class AdRequest(Base):
     id = Column(BigInteger, primary_key=True, index=True)
     region_id = Column(Integer, ForeignKey("regions.id", ondelete="SET NULL"), nullable=True)
 
+    # Источник заявки: 'suggested' (предложка) | 'inbound_dm' (входящие ЛС). Блок A.
+    origin = Column(String(20), nullable=False, default="suggested", index=True)
+
     # VK source
     community_vk_id = Column(BigInteger, nullable=False)  # owner_id группы (отрицательный)
     community_name = Column(String(300), nullable=True)  # снимок для подстановки/устойчивости
     vk_post_id = Column(
-        BigInteger, nullable=False
-    )  # id предложенного поста (стабилен, пока pending)
+        BigInteger, nullable=True
+    )  # id предложенного поста (стабилен, пока pending); NULL для inbound_dm
+    last_message_id = Column(BigInteger, nullable=True)  # id последнего входящего ЛС (inbound_dm)
 
     # Author / messaging target
     author_vk_id = Column(BigInteger, nullable=True)  # from_id (signed; neg=группа)
@@ -543,9 +547,11 @@ class AdRequest(Base):
         return {
             "id": self.id,
             "region_id": self.region_id,
+            "origin": self.origin,
             "community_vk_id": self.community_vk_id,
             "community_name": self.community_name,
             "vk_post_id": self.vk_post_id,
+            "last_message_id": self.last_message_id,
             "author_vk_id": self.author_vk_id,
             "signer_id": self.signer_id,
             "peer_id": self.peer_id,
@@ -577,7 +583,18 @@ class AdRequest(Base):
                 else None
             ),
             "author_url": self._author_url(),
+            "dialog_url": self._dialog_url(),
         }
+
+    def _dialog_url(self):
+        """Ссылка на диалог автора в менеджере сообщений сообщества (inbound_dm).
+
+        ``vk.com/gim{group}?sel={peer}`` открывает входящие сообщества с фокусом
+        на нужном диалоге — оператор отвечает в VK, если кабинет не смог.
+        """
+        if self.origin != "inbound_dm" or not self.community_vk_id or not self.peer_id:
+            return None
+        return f"https://vk.com/gim{abs(int(self.community_vk_id))}?sel={int(self.peer_id)}"
 
     def _author_url(self):
         if self.author_is_group and self.author_vk_id:

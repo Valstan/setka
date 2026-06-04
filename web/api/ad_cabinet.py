@@ -111,16 +111,23 @@ def _parse_date(value: str) -> Optional[datetime]:
 @router.get("/requests")
 async def list_requests(
     status: Optional[str] = None,
+    origin: Optional[str] = None,
     community_vk_id: Optional[int] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     limit: int = 200,
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Список заявок с серверной фильтрацией, свежие сверху."""
+    """Список заявок с серверной фильтрацией, свежие сверху.
+
+    ``origin`` — источник заявки (``suggested`` / ``inbound_dm``); без него —
+    все источники.
+    """
     stmt = select(AdRequest)
     if status:
         stmt = stmt.where(AdRequest.status == status)
+    if origin:
+        stmt = stmt.where(AdRequest.origin == origin)
     if community_vk_id is not None:
         stmt = stmt.where(AdRequest.community_vk_id == community_vk_id)
     df = _parse_date(date_from) if date_from else None
