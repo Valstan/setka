@@ -93,6 +93,12 @@ class ScheduleCreateIn(BaseModel):
     signed: bool = False
     comments_enabled: bool = True
     source_ad_request_id: Optional[int] = None
+    # Блок B2: запланировать заявку из предложки «пересозданием». VK API не даёт
+    # править предложенный пост in-place (wall.edit → 15/27), поэтому планируем
+    # новый пост (wall.post publish_date), а оригинал убираем из предложки
+    # (wall.delete) и помечаем заявку опубликованной. Только при
+    # ``source_ad_request_id`` и хотя бы одной успешно запланированной дате.
+    remove_original: bool = False
 
 
 def _parse_date(value: str) -> Optional[datetime]:
@@ -581,10 +587,35 @@ async def create_scheduled(
     for r in created:
         await db.refresh(r)
     scheduled_n = sum(1 for r in created if r.status == "scheduled")
+
+    # Блок B2: заявка из предложки запланирована пересозданием — убираем оригинал
+    # из предложки (wall.delete, проходит через user-token fallback на коде 27) и
+    # помечаем заявку опубликованной. Только если что-то реально запланировано —
+    # иначе не теряем заявку при полном провале планирования.
+    original_removed = False
+    original_remove_error: Optional[str] = None
+    if payload.remove_original and payload.source_ad_request_id and scheduled_n > 0:
+        ar = await db.get(AdRequest, int(payload.source_ad_request_id))
+        if ar and ar.community_vk_id and ar.vk_post_id:
+            res = await publisher.delete_post(int(ar.community_vk_id), int(ar.vk_post_id))
+            if res.get("success"):
+                original_removed = True
+            else:
+                original_remove_error = str(res.get("error"))[:300]
+        if ar:
+            # Заявка обработана: статус published независимо от удаления оригинала
+            # (пост уже запланирован; оригинал оператор при сбое уберёт вручную).
+            ar.status = "published"
+            if not ar.contacted_at:
+                ar.contacted_at = datetime.utcnow()
+            await db.commit()
+
     return {
         "created": [r.to_dict() for r in created],
         "scheduled": scheduled_n,
         "failed": len(created) - scheduled_n,
+        "original_removed": original_removed,
+        "original_remove_error": original_remove_error,
     }
 
 
