@@ -13,7 +13,7 @@ from fastapi import HTTPException
 
 import modules.publisher.vk_publisher_extended as vpe
 import modules.vk_token_router as token_router
-from database.models import AdRequest, AdScheduledPost
+from database.models import AdClient, AdRequest, AdScheduledPost
 from web.api import ad_cabinet as api
 
 # Дата заведомо в будущем (МСК) — устойчиво к запуску тестов в любой год.
@@ -284,6 +284,83 @@ async def test_no_source_request_no_removal(monkeypatch):
     )
     assert out["original_removed"] is False
     pub.delete_post.assert_not_awaited()
+    db.get.assert_not_awaited()
+
+
+# ------------------------------------------------- C: привязка client_id/price
+
+
+async def test_create_binds_explicit_client_and_price(monkeypatch):
+    """Явные client_id+price пишутся в отложку; клиент продвигается в scheduled."""
+    pub = _fake_publisher()
+    _patch_publish(monkeypatch, pub)
+    client = AdClient(author_vk_id=77, stage="contacted")
+    db = _create_db()
+    db.get = AsyncMock(return_value=client)
+
+    out = await api.create_scheduled(
+        api.ScheduleCreateIn(
+            community_vk_id=-100, text="реклама", dates=[_FUTURE], client_id=77, price=1500
+        ),
+        db=db,
+    )
+
+    assert out["scheduled"] == 1
+    assert out["client_id"] == 77
+    assert out["created"][0]["client_id"] == 77
+    assert out["created"][0]["price"] == 1500.0
+    assert client.stage == "scheduled"  # contacted → scheduled
+
+
+async def test_create_resolves_client_from_source_request(monkeypatch):
+    """Без явного client_id — резолвим из заявки (ar.client_id) + бэкфилл строк."""
+    pub = _fake_publisher()
+    _patch_publish(monkeypatch, pub)
+    ar = AdRequest(community_vk_id=-100, vk_post_id=5, status="new", client_id=55)
+    client = AdClient(author_vk_id=55, stage="detected")
+    db = _create_db()
+    db.get = AsyncMock(side_effect=lambda model, pk: ar if model is AdRequest else client)
+
+    out = await api.create_scheduled(
+        api.ScheduleCreateIn(
+            community_vk_id=-100, text="x", dates=[_FUTURE], source_ad_request_id=9
+        ),
+        db=db,
+    )
+
+    assert out["client_id"] == 55
+    assert out["created"][0]["client_id"] == 55  # бэкфилл на запланированную строку
+    assert client.stage == "scheduled"  # detected → scheduled
+
+
+async def test_create_does_not_downgrade_paid_client(monkeypatch):
+    """Уже оплаченного клиента раскладка не понижает обратно в scheduled."""
+    pub = _fake_publisher()
+    _patch_publish(monkeypatch, pub)
+    client = AdClient(author_vk_id=77, stage="paid")
+    db = _create_db()
+    db.get = AsyncMock(return_value=client)
+
+    out = await api.create_scheduled(
+        api.ScheduleCreateIn(community_vk_id=-100, text="x", dates=[_FUTURE], client_id=77),
+        db=db,
+    )
+    assert out["client_id"] == 77
+    assert client.stage == "paid"  # не тронут
+
+
+async def test_create_no_client_keeps_null(monkeypatch):
+    """Без клиента и заявки — client_id в ответе None, лишних db.get нет."""
+    pub = _fake_publisher()
+    _patch_publish(monkeypatch, pub)
+    db = _create_db()
+    db.get = AsyncMock()
+
+    out = await api.create_scheduled(
+        api.ScheduleCreateIn(community_vk_id=-100, text="x", dates=[_FUTURE]),
+        db=db,
+    )
+    assert out["client_id"] is None
     db.get.assert_not_awaited()
 
 

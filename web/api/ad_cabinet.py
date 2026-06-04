@@ -27,7 +27,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
-from database.models import AdRequest, AdScheduledPost, MessageTemplate
+from database.models import AdClient, AdRequest, AdScheduledPost, MessageTemplate
 from modules.ad_cabinet.message_builder import render
 
 logger = logging.getLogger(__name__)
@@ -99,6 +99,12 @@ class ScheduleCreateIn(BaseModel):
     # (wall.delete) и помечаем заявку опубликованной. Только при
     # ``source_ad_request_id`` и хотя бы одной успешно запланированной дате.
     remove_original: bool = False
+    # Блок C (CRM): привязка отложенного поста к клиенту-рекламодателю и цена
+    # размещения. ``client_id`` оператор передаёт явно (из заявки), либо бэкенд
+    # сам резолвит из ``source_ad_request_id``. При успешной раскладке клиент
+    # продвигается в стадию ``scheduled`` (мягко — не понижает paid/published).
+    client_id: Optional[int] = None
+    price: Optional[float] = None
 
 
 def _parse_date(value: str) -> Optional[datetime]:
@@ -599,6 +605,8 @@ async def create_scheduled(
             signed=payload.signed,
             comments_enabled=payload.comments_enabled,
             source_ad_request_id=payload.source_ad_request_id,
+            client_id=payload.client_id,
+            price=payload.price,
             status="draft",
         )
         db.add(row)
@@ -634,6 +642,25 @@ async def create_scheduled(
         await db.refresh(r)
     scheduled_n = sum(1 for r in created if r.status == "scheduled")
 
+    # Блок C: привязать отложку к CRM-клиенту и продвинуть воронку в "scheduled".
+    # Клиента берём явный (payload.client_id) либо резолвим из исходной заявки.
+    # Делаем только при реально запланированных датах — пустую раскладку не
+    # считаем сделкой и лишний раз VK/БД не трогаем.
+    effective_client_id = payload.client_id
+    if effective_client_id is None and payload.source_ad_request_id and scheduled_n > 0:
+        src_ar = await db.get(AdRequest, int(payload.source_ad_request_id))
+        if src_ar and src_ar.client_id:
+            effective_client_id = src_ar.client_id
+            # Бэкфилл client_id на успешно запланированные строки (явного не было).
+            for r in created:
+                if r.status == "scheduled" and r.client_id is None:
+                    r.client_id = effective_client_id
+    if effective_client_id and scheduled_n > 0:
+        client = await db.get(AdClient, int(effective_client_id))
+        if client and client.stage in ("detected", "contacted"):
+            client.stage = "scheduled"
+        await db.commit()
+
     # Блок B2: заявка из предложки запланирована пересозданием — убираем оригинал
     # из предложки (wall.delete, проходит через user-token fallback на коде 27) и
     # помечаем заявку опубликованной. Только если что-то реально запланировано —
@@ -662,6 +689,7 @@ async def create_scheduled(
         "failed": len(created) - scheduled_n,
         "original_removed": original_removed,
         "original_remove_error": original_remove_error,
+        "client_id": effective_client_id,
     }
 
 

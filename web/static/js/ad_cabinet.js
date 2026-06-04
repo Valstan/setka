@@ -444,6 +444,7 @@ function renderThread(msgs) {
 const _schCommunityNames = {};  // vk_group_id -> name (для подписи в таблице)
 let _schInited = false;
 let _schSourceRequestId = null;  // B2: из какой заявки предложки планируем
+let _schSourceClientId = null;   // C: связанный CRM-клиент заявки (если заведён)
 
 // B2: «Запланировать» на карточке заявки — открыть планировщик с префиллом.
 // VK не даёт править предложку in-place (wall.edit 15/27), поэтому создаём
@@ -471,6 +472,7 @@ async function scheduleFromRequest(id) {
     if (ta) ta.value = ar.text_snapshot || '';
 
     _schSourceRequestId = id;
+    _schSourceClientId = ar.client_id || null;
     const src = document.getElementById('sch-source');
     if (src) src.style.display = '';
     const lbl = document.getElementById('sch-source-label');
@@ -478,6 +480,10 @@ async function scheduleFromRequest(id) {
         ? `<a href="${escapeHtml(ar.vk_post_url)}" target="_blank">#${id}</a>` : `#${id}`;
     const rm = document.getElementById('sch-remove-original');
     if (rm) rm.checked = true;
+    const note = document.getElementById('sch-client-note');
+    if (note) note.innerHTML = _schSourceClientId
+        ? '<span class="text-success"><i class="bi bi-person-check"></i> Заявка привязана к клиенту CRM — сделка двинется в «Запланировано».</span>'
+        : '<span class="text-muted"><i class="bi bi-info-circle"></i> Клиент в CRM не заведён. Нажмите «В CRM» на карточке заявки, чтобы привязать оплату/публикацию.</span>';
 
     if (body && window.bootstrap) bootstrap.Collapse.getOrCreateInstance(body).show();
     if (body) body.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -486,8 +492,11 @@ async function scheduleFromRequest(id) {
 
 function clearScheduleSource() {
     _schSourceRequestId = null;
+    _schSourceClientId = null;
     const src = document.getElementById('sch-source');
     if (src) src.style.display = 'none';
+    const note = document.getElementById('sch-client-note');
+    if (note) note.innerHTML = '';
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -576,6 +585,8 @@ async function submitSchedule() {
     const removeOriginal = _schSourceRequestId
         && document.getElementById('sch-remove-original')
         && document.getElementById('sch-remove-original').checked;
+    const priceEl = document.getElementById('sch-price');
+    const priceRaw = priceEl ? priceEl.value : '';
     const payload = {
         community_vk_id: communityVkId,
         region_id: opt.dataset.regionId ? parseInt(opt.dataset.regionId, 10) : null,
@@ -587,6 +598,8 @@ async function submitSchedule() {
         comments_enabled: document.getElementById('sch-comments').checked,
         source_ad_request_id: _schSourceRequestId || null,
         remove_original: !!removeOriginal,
+        client_id: _schSourceClientId || null,
+        price: priceRaw ? parseFloat(priceRaw) : null,
     };
     _schRes('Планирую…');
     const btn = document.getElementById('sch-submit');
@@ -601,10 +614,14 @@ async function submitSchedule() {
                     ? `; оригинал убрать не удалось (${escapeHtml(res.original_remove_error)})`
                     : '');
         }
+        if (res.client_id) msg += '; сделка двинута в «Запланировано»';
         _schRes(msg + ' ✓', res.failed ? 'warning' : 'success');
-        // Очищаем только даты — текст/картинки оставляем для следующей раскладки.
+        // Очищаем даты и цену — они привязаны к конкретной сделке; текст/картинки
+        // оставляем для следующей раскладки.
         document.getElementById('sch-dates').innerHTML = '';
         addDateRow();
+        const priceEl2 = document.getElementById('sch-price');
+        if (priceEl2) priceEl2.value = '';
         // Заявка отработана — отвязываем источник и обновляем инбокс.
         if (_schSourceRequestId) { clearScheduleSource(); await loadAdRequests(); }
         await loadSchedule();
