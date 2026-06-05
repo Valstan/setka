@@ -77,12 +77,14 @@ def _request(**kw):
 async def test_list_clients_serializes_aggregates():
     client = _client()
     db = _db()
-    db.execute = AsyncMock(return_value=_rows([(client, 1500, 2, 3)]))
+    # row: (client, total_paid, total_awaiting, payments_count, publications_count)
+    db.execute = AsyncMock(return_value=_rows([(client, 1500, 300, 2, 3)]))
     out = await api.list_clients(db=db)
     assert len(out["clients"]) == 1
     row = out["clients"][0]
     assert row["id"] == 1
     assert row["total_paid"] == 1500.0
+    assert row["total_awaiting"] == 300.0
     assert row["payments_count"] == 2
     assert row["publications_count"] == 3
     assert row["vk_url"] == "https://vk.com/id42"
@@ -90,9 +92,10 @@ async def test_list_clients_serializes_aggregates():
 
 async def test_list_clients_null_aggregates_default_zero():
     db = _db()
-    db.execute = AsyncMock(return_value=_rows([(_client(), None, None, None)]))
+    db.execute = AsyncMock(return_value=_rows([(_client(), None, None, None, None)]))
     out = await api.list_clients(db=db)
     assert out["clients"][0]["total_paid"] == 0.0
+    assert out["clients"][0]["total_awaiting"] == 0.0
     assert out["clients"][0]["payments_count"] == 0
 
 
@@ -291,8 +294,9 @@ async def test_funnel_aggregates():
     db.execute = AsyncMock(
         side_effect=[
             _rows([("detected", 4), ("paid", 2)]),
-            _scalar_one(12000),
-            _scalar_one(6),
+            _scalar_one(12000),  # total_paid
+            _scalar_one(1500),  # total_awaiting
+            _scalar_one(6),  # publications_count
         ]
     )
     out = await api.funnel(db=db)
@@ -301,6 +305,7 @@ async def test_funnel_aggregates():
     assert out["by_stage"]["contacted"] == 0  # незаполненная стадия → 0
     assert out["total_clients"] == 6
     assert out["total_paid"] == 12000.0
+    assert out["total_awaiting"] == 1500.0
     assert out["publications_count"] == 6
 
 
@@ -317,6 +322,8 @@ def test_routes_registered():
     assert "/api/ad-crm/clients" in paths
     assert "/api/ad-crm/clients/{client_id}/timeline" in paths
     assert "/api/ad-crm/interactions" in paths
+    assert "/api/ad-crm/banks" in paths
+    assert "/api/ad-crm/payments/{payment_id}" in paths
 
 
 # ----------------------------------------------------------------- interactions / timeline
@@ -470,3 +477,88 @@ async def test_delete_interaction_ok():
     out = await api.delete_interaction(1, db=db)
     assert out["success"] is True
     db.delete.assert_awaited()
+
+
+# ----------------------------------------------------------------- payments: bank / status (PR-3)
+
+
+async def test_create_payment_with_bank_and_status_paid():
+    client = _client(stage="contacted")
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    out = await api.create_payment(
+        api.PaymentCreateIn(client_id=1, amount=2000, bank="Сбербанк", status="paid"), db=db
+    )
+    assert out["bank"] == "Сбербанк"
+    assert out["status"] == "paid"
+    assert out["paid_confirmed_at"] is not None
+    assert client.stage == "paid"
+    logs = _added_interactions(db)
+    assert logs[0].kind == "payment_added"
+
+
+async def test_create_payment_awaiting_does_not_advance_stage():
+    client = _client(stage="contacted")
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    out = await api.create_payment(
+        api.PaymentCreateIn(client_id=1, amount=2000, status="awaiting", bank="Т-Банк"), db=db
+    )
+    assert out["status"] == "awaiting"
+    assert out["paid_confirmed_at"] is None
+    assert client.stage == "contacted"  # ожидание оплаты не двигает воронку
+    logs = _added_interactions(db)
+    assert logs[0].kind == "payment_awaiting"
+
+
+async def test_create_payment_invalid_status_400():
+    db = _db()
+    db.get = AsyncMock(return_value=_client())
+    with pytest.raises(HTTPException) as exc:
+        await api.create_payment(
+            api.PaymentCreateIn(client_id=1, amount=100, status="bogus"), db=db
+        )
+    assert exc.value.status_code == 400
+
+
+async def test_update_payment_awaiting_to_paid_advances_and_logs():
+    pay = AdPayment(id=5, client_id=3, amount=2000, status="awaiting")
+    client = _client(id=3, stage="published")
+    db = _db()
+    # первый get — оплата, второй — клиент (для продвижения стадии)
+    db.get = AsyncMock(side_effect=[pay, client])
+    out = await api.update_payment(5, api.PaymentUpdateIn(status="paid", bank="ВТБ"), db=db)
+    assert out["status"] == "paid"
+    assert out["bank"] == "ВТБ"
+    assert out["paid_confirmed_at"] is not None
+    assert client.stage == "paid"
+    logs = _added_interactions(db)
+    assert logs and logs[0].kind == "payment_paid"
+
+
+async def test_update_payment_edit_amount_no_status_change():
+    pay = AdPayment(id=5, client_id=3, amount=1000, status="paid")
+    db = _db()
+    db.get = AsyncMock(return_value=pay)
+    out = await api.update_payment(5, api.PaymentUpdateIn(amount=1500), db=db)
+    assert out["amount"] == 1500.0
+    # стадия не трогается (не переход в paid) → события payment_paid нет
+    assert _added_interactions(db) == []
+
+
+async def test_update_payment_404():
+    db = _db()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.update_payment(9, api.PaymentUpdateIn(amount=100), db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_list_banks_returns_fixed_list_and_stats():
+    db = _db()
+    db.execute = AsyncMock(return_value=_rows([("Сбербанк", 5, 10000), ("Т-Банк", 2, 4000)]))
+    out = await api.list_banks(db=db)
+    assert "Сбербанк" in out["banks"]
+    assert out["stats"][0]["bank"] == "Сбербанк"
+    assert out["stats"][0]["count"] == 5
+    assert out["stats"][0]["total"] == 10000.0

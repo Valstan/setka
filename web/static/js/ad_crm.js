@@ -36,8 +36,11 @@ function fmtDate(iso) {
 }
 
 let _filterTimer = null;
+let _banks = [];        // фикс-список банков (PR-3)
+let _bankStats = [];    // частоты «куда чаще платят»
 
 document.addEventListener('DOMContentLoaded', () => {
+    loadBanks();
     loadCrm();
     const stageSel = document.getElementById('filter-stage');
     if (stageSel) stageSel.addEventListener('change', loadClients);
@@ -52,6 +55,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function loadCrm() {
     await Promise.all([loadFunnel(), loadClients()]);
+}
+
+// Банки (PR-3): фикс-список + частоты. Грузим один раз для дропдаунов оплаты.
+async function loadBanks() {
+    try {
+        const d = await apiClient.getCrmBanks();
+        _banks = d.banks || [];
+        _bankStats = d.stats || [];
+    } catch (e) {
+        _banks = [];
+    }
+}
+
+function bankSelectHtml(id, current) {
+    const opts = ['<option value="">— банк —</option>'].concat(
+        _banks.map(b => `<option value="${escapeHtml(b)}"${b === current ? ' selected' : ''}>${escapeHtml(b)}</option>`)
+    ).join('');
+    return `<select class="form-select" id="${id}" style="max-width:130px;">${opts}</select>`;
 }
 
 // --------------------------------------------------- воронка
@@ -69,10 +90,16 @@ async function loadFunnel() {
                 <span class="badge ${cls}">${STAGE_LABEL[st]}</span>
             </div>`;
         }).join('');
+        const awaiting = Number(f.total_awaiting || 0);
+        const awaitingChip = awaiting > 0 ? `<div class="text-center px-3 py-2 rounded border bg-body-tertiary">
+                <div class="h4 mb-0 text-warning">${fmtMoney(awaiting)}</div>
+                <div class="small text-muted">ждём оплату</div>
+            </div>` : '';
         const totals = `<div class="text-center px-3 py-2 rounded border bg-body-tertiary ms-auto">
                 <div class="h4 mb-0 text-success">${fmtMoney(f.total_paid)}</div>
                 <div class="small text-muted">оплачено всего</div>
             </div>
+            ${awaitingChip}
             <div class="text-center px-3 py-2 rounded border bg-body-tertiary">
                 <div class="h4 mb-0">${f.publications_count || 0}</div>
                 <div class="small text-muted">публикаций</div>
@@ -135,6 +162,8 @@ function renderClientCard(c) {
                     ${contact}
                     <div class="small mt-1">
                         <span class="text-success fw-bold">${fmtMoney(c.total_paid)}</span>
+                        ${Number(c.total_awaiting || 0) > 0
+                            ? `<span class="badge bg-warning text-dark" title="Ожидает оплаты">⏳ ${fmtMoney(c.total_awaiting)}</span>` : ''}
                         <span class="text-muted">· ${c.payments_count || 0} оплат · ${c.publications_count || 0} публикаций</span>
                     </div>
                 </div>
@@ -188,15 +217,31 @@ function renderClientDetails(d) {
     const payments = d.payments || [];
     const publications = d.publications || [];
 
-    const payRows = payments.length ? payments.map(p => `
+    const payRows = payments.length ? payments.map(p => {
+        const awaiting = p.status === 'awaiting';
+        const amountCls = awaiting ? 'text-warning' : 'text-success';
+        const statusBadge = awaiting
+            ? '<span class="badge bg-warning text-dark">ждём</span>'
+            : '<span class="badge bg-success">оплачено</span>';
+        const markPaidBtn = awaiting
+            ? `<button class="btn btn-sm btn-outline-success py-0 px-1" title="Отметить оплаченной"
+                       onclick="markPaid(${p.id}, ${c.id})"><i class="bi bi-check2"></i></button>` : '';
+        return `
         <tr>
-            <td class="text-nowrap fw-bold text-success">${fmtMoney(p.amount)}</td>
-            <td>${escapeHtml(p.method || '')}</td>
+            <td class="text-nowrap fw-bold ${amountCls}">${fmtMoney(p.amount)}</td>
+            <td>${statusBadge}</td>
+            <td class="small text-nowrap">${escapeHtml(p.bank || '')}</td>
             <td class="text-nowrap small">${fmtDate(p.paid_at)}</td>
-            <td class="small">${escapeHtml(p.note || '')}</td>
-            <td><button class="btn btn-sm btn-outline-danger py-0 px-1"
-                        onclick="deletePayment(${p.id}, ${c.id})" title="Удалить"><i class="bi bi-x"></i></button></td>
-        </tr>`).join('') : '<tr><td colspan="5" class="text-muted small">Оплат пока нет.</td></tr>';
+            <td class="small">${escapeHtml(p.note || p.method || '')}</td>
+            <td class="text-nowrap">
+                ${markPaidBtn}
+                <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Правка"
+                        onclick="editPayment(${p.id}, ${c.id}, ${p.amount})"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                        onclick="deletePayment(${p.id}, ${c.id})" title="Удалить"><i class="bi bi-x"></i></button>
+            </td>
+        </tr>`;
+    }).join('') : '<tr><td colspan="6" class="text-muted small">Оплат пока нет.</td></tr>';
 
     const pubRows = publications.length ? publications.map(p => {
         const link = p.vk_post_url
@@ -237,11 +282,15 @@ function renderClientDetails(d) {
             <table class="table table-sm align-middle mb-2">
                 <tbody>${payRows}</tbody>
             </table>
-            <div class="input-group input-group-sm mb-3">
-                <input type="number" class="form-control" id="pay-amount-${c.id}" placeholder="Сумма ₽" style="max-width:110px;">
-                <input type="text" class="form-control" id="pay-method-${c.id}" placeholder="Способ" style="max-width:110px;">
+            <div class="input-group input-group-sm mb-1">
+                <input type="number" class="form-control" id="pay-amount-${c.id}" placeholder="Сумма ₽" style="max-width:100px;">
+                ${bankSelectHtml(`pay-bank-${c.id}`, '')}
                 <input type="text" class="form-control" id="pay-note-${c.id}" placeholder="Заметка">
                 <button class="btn btn-outline-success" onclick="addPayment(${c.id})"><i class="bi bi-plus-lg"></i> Оплата</button>
+            </div>
+            <div class="form-check form-check-inline small mb-3">
+                <input class="form-check-input" type="checkbox" id="pay-awaiting-${c.id}">
+                <label class="form-check-label text-muted" for="pay-awaiting-${c.id}">ожидание оплаты (деньги ещё не пришли)</label>
             </div>
 
             <div class="fw-bold small mb-1"><i class="bi bi-megaphone"></i> Публикации</div>
@@ -389,14 +438,41 @@ async function deleteClient(id) {
 async function addPayment(id) {
     const amount = parseFloat(document.getElementById(`pay-amount-${id}`).value);
     if (!amount || amount <= 0) { _detailReload(id, 'Введите сумму больше нуля.'); return; }
-    const method = document.getElementById(`pay-method-${id}`).value.trim() || null;
+    const bank = document.getElementById(`pay-bank-${id}`).value || null;
     const note = document.getElementById(`pay-note-${id}`).value.trim() || null;
+    const awaiting = document.getElementById(`pay-awaiting-${id}`).checked;
     try {
-        await apiClient.createCrmPayment({ client_id: id, amount, method, note });
+        await apiClient.createCrmPayment({
+            client_id: id, amount, bank, note, status: awaiting ? 'awaiting' : 'paid',
+        });
         await _detailReload(id);
         await loadFunnel();
     } catch (e) {
         alert('Не удалось добавить оплату: ' + e.message);
+    }
+}
+
+async function markPaid(paymentId, clientId) {
+    try {
+        await apiClient.updateCrmPayment(paymentId, { status: 'paid' });
+        await _detailReload(clientId);
+        await loadFunnel();
+    } catch (e) {
+        alert('Не удалось отметить оплаченной: ' + e.message);
+    }
+}
+
+async function editPayment(paymentId, clientId, currentAmount) {
+    const next = prompt('Новая сумма оплаты, ₽:', currentAmount != null ? currentAmount : '');
+    if (next === null) return;
+    const amount = parseFloat(next);
+    if (!amount || amount <= 0) { alert('Сумма должна быть больше нуля.'); return; }
+    try {
+        await apiClient.updateCrmPayment(paymentId, { amount });
+        await _detailReload(clientId);
+        await loadFunnel();
+    } catch (e) {
+        alert('Не удалось изменить оплату: ' + e.message);
     }
 }
 

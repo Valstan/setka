@@ -187,8 +187,19 @@ const apiClient = {
         });
     },
 
+    async updateCrmPayment(id, payload) {
+        return this.request(`/ad-crm/payments/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload)
+        });
+    },
+
     async deleteCrmPayment(id) {
         return this.request(`/ad-crm/payments/${id}`, { method: 'DELETE' });
+    },
+
+    async getCrmBanks() {
+        return this.request('/ad-crm/banks');
     },
 
     async createCrmPublication(payload) {
