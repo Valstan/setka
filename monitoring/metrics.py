@@ -350,6 +350,24 @@ def track_post_published(channel: str):
     posts_published_total.labels(channel=channel).inc()
 
 
+def publish_result_label(publish_result) -> str:
+    """Свести результат ``VKPublisher.publish_digest()`` к метке для метрик.
+
+    ``publish_digest`` возвращает **dict** ``{"success": bool, ...}``. Call-sites
+    исторически обращались к ``publish_result.success`` как к атрибуту объекта,
+    из-за чего на КАЖДОЙ успешной публикации падал ``AttributeError: 'dict'
+    object has no attribute 'success'`` — до вызова ``track_digest_published``.
+    Итог: heartbeat #018 не писался, watchdog был молча мёртв (инцидент
+    2026-06-05, вскрыт дашбордом + WARNING-логами). Хелпер терпим к обоим
+    форматам (dict и объект с ``.success``), чтобы такого не повторилось.
+
+    Возвращает ``"success"`` | ``"failed"``.
+    """
+    if isinstance(publish_result, dict):
+        return "success" if publish_result.get("success") else "failed"
+    return "success" if getattr(publish_result, "success", False) else "failed"
+
+
 def track_digest_published(region: str, topic: str, result: str = "success") -> None:
     """Зафиксировать факт публикации дайджеста.
 

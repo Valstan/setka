@@ -566,15 +566,15 @@ async def run_cascaded_digest(
             )
             results.append(("regular", digest, pub))
             try:
-                from monitoring.metrics import track_digest_published
+                from monitoring.metrics import publish_result_label, track_digest_published
 
                 track_digest_published(
                     region=region.code,
                     topic=theme,
-                    result="success" if pub.success else "failed",
+                    result=publish_result_label(pub),
                 )
             except Exception:  # pragma: no cover
-                logger.debug("track_digest_published failed", exc_info=True)
+                logger.warning("track_digest_published failed", exc_info=True)
 
     all_included: List[str] = []
     for _, d, _ in results:
