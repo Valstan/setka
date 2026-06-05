@@ -3,8 +3,9 @@ System Monitoring API - Real-time monitoring of SETKA system operations
 """
 
 import logging
+import time
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import psutil
 from fastapi import APIRouter, Depends, HTTPException
@@ -676,3 +677,156 @@ async def get_system_status():
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Heartbeat дайджестов (#018) + liveness воркеров/beat
+#
+# Heartbeat — Redis-ключи `setka:digest_last_published:<topic>` (см.
+# modules/digest_heartbeat). Watchdog шлёт Telegram-алёрт при протухании
+# `novost` (порог 6ч), но НИГДЕ не виден в UI — этот эндпоинт выводит его на
+# дашборд (idea brain #018: «дашборд показывает liveness»).
+# ──────────────────────────────────────────────────────────────────────────
+
+# Порог свежести для ДИСПЛЕЯ дашборда (часы). Намеренно щедрее watchdog-порога
+# novost (6ч): большинство тем публикуются ~раз в сутки, поэтому 26ч даёт
+# суточной волне запас и не зажигает ложный «stale» из-за разной частоты тем.
+# Строгий 6ч-порог применяется ОТДЕЛЬНО только к novost (как у beat-алёрта).
+_HEARTBEAT_FRESH_HOURS = 26
+
+
+def _classify_heartbeat_age(
+    age_seconds: Optional[float], fresh_hours: float = _HEARTBEAT_FRESH_HOURS
+) -> str:
+    """Классифицировать возраст heartbeat для дисплея: unknown/fresh/stale.
+
+    ``None`` (нет ключа в Redis) → ``unknown``: нельзя отличить «свежий деплой,
+    волны ещё не было» от «сломано» — не пугаем красным (та же логика, что у
+    watchdog'а #018, который на ``None`` не алёртит).
+    """
+    if age_seconds is None:
+        return "unknown"
+    if age_seconds < 0:
+        age_seconds = 0
+    return "fresh" if age_seconds < fresh_hours * 3600 else "stale"
+
+
+@router.get("/heartbeat", response_model=Dict)
+async def get_digest_heartbeat():
+    """Redis-heartbeat последних публикаций по темам (#018) + статус watchdog.
+
+    Возвращает по каждой теме время последней успешной публикации (из
+    ``digest_heartbeat``), возраст и статус (fresh/stale/unknown), плюс
+    отдельный блок ``watchdog`` — статус ``novost`` против строгого 6ч-порога,
+    ровно того, по которому beat шлёт Telegram-алёрт. Темы без heartbeat
+    показываются как ``unknown`` (никогда не публиковались / свежий деплой).
+    """
+    try:
+        from modules import digest_heartbeat as dh
+        from modules.digest_pipeline_settings import POSTOPUS_DIGEST_THEMES
+
+        now_ts = time.time()
+        hb = dh.all_heartbeats()  # topic -> unix-ts (best-effort)
+
+        # Объединяем канонический список тем с тем, что реально есть в Redis
+        # (на случай тем вне списка), сохраняя порядок и убирая дубли.
+        topics: List[str] = list(dict.fromkeys(list(POSTOPUS_DIGEST_THEMES) + sorted(hb.keys())))
+
+        rows = []
+        for topic in topics:
+            ts = hb.get(topic)
+            age = (now_ts - ts) if ts is not None else None
+            rows.append(
+                {
+                    "topic": topic,
+                    "last_published_ts": ts,
+                    "last_published_iso": (
+                        datetime.utcfromtimestamp(ts).isoformat() + "Z" if ts is not None else None
+                    ),
+                    "age_seconds": int(age) if age is not None else None,
+                    "status": _classify_heartbeat_age(age),
+                }
+            )
+
+        # Сортировка: проблемные (stale) сверху, затем fresh (новее — выше),
+        # unknown — в конце.
+        _status_order = {"stale": 0, "fresh": 1, "unknown": 2}
+
+        def _sort_key(r):
+            st = r["status"]
+            age = r["age_seconds"] or 0
+            # внутри stale/fresh — старее выше (больший возраст важнее)
+            return (_status_order.get(st, 3), -age if st != "unknown" else 0)
+
+        rows.sort(key=_sort_key)
+
+        # Watchdog novost — строгий 6ч-порог (как у beat-алёрта #018).
+        wd_ts = hb.get("novost")
+        wd_age = (now_ts - wd_ts) if wd_ts is not None else None
+        wd_status = _classify_heartbeat_age(wd_age, fresh_hours=dh.DEFAULT_MAX_AGE_HOURS)
+
+        return {
+            "success": True,
+            "data": {
+                "topics": rows,
+                "watchdog": {
+                    "topic": "novost",
+                    "max_age_hours": dh.DEFAULT_MAX_AGE_HOURS,
+                    "status": wd_status,
+                    "age_seconds": int(wd_age) if wd_age is not None else None,
+                },
+                "fresh_hours": _HEARTBEAT_FRESH_HOURS,
+                "timestamp": now_moscow().isoformat(),
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error getting digest heartbeat: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/liveness", response_model=Dict)
+async def get_celery_liveness():
+    """Liveness Celery: ping воркеров + инференс beat по ``novost``-heartbeat.
+
+    Воркеры отвечают на ``inspect.ping()`` напрямую. **Beat не пингуется**
+    (celery beat не отвечает на inspect), поэтому его живость выводим косвенно:
+    ``novost`` публикуется ≥6×/сутки, так что свежий heartbeat = beat ставит
+    задачи и worker их выполняет. Это инференс, помечен как таковой.
+    """
+    workers = []
+    error = None
+    try:
+        from celery_app import app
+
+        inspect = app.control.inspect(timeout=1.5)
+        pong = inspect.ping() or {}
+        for name, resp in pong.items():
+            ok = bool(isinstance(resp, dict) and resp.get("ok") == "pong")
+            workers.append({"name": name, "ok": ok})
+    except Exception as e:  # pragma: no cover - сетевой/брокерный сбой
+        error = str(e)
+        logger.warning(f"celery ping failed: {e}")
+
+    beat = {"status": "unknown", "note": "инференс по novost-heartbeat"}
+    try:
+        from modules import digest_heartbeat as dh
+
+        ts = dh.last_published_ts("novost")
+        if ts is not None:
+            age = time.time() - ts
+            beat["age_seconds"] = int(age)
+            beat["status"] = "alive" if age < dh.DEFAULT_MAX_AGE_HOURS * 3600 else "stale"
+    except Exception:  # pragma: no cover
+        logger.debug("beat inference failed", exc_info=True)
+
+    return {
+        "success": error is None,
+        "data": {
+            "workers": workers,
+            "worker_count": len(workers),
+            "any_alive": any(w["ok"] for w in workers),
+            "beat": beat,
+            "timestamp": now_moscow().isoformat(),
+        },
+        **({"error": error} if error else {}),
+    }
