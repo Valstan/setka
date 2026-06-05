@@ -37,6 +37,19 @@ router = APIRouter()
 # Воронка сделки. Порядок — для сортировки/прогресса в UI.
 _VALID_STAGES = ("detected", "contacted", "scheduled", "published", "paid", "lost")
 _PUBLICATION_STATUSES = {"published", "removed"}
+_PAYMENT_STATUSES = {"awaiting", "paid"}
+
+# Фикс-список банков для дропдауна оплаты. Правится здесь (owner: «фикс-список»).
+# Порядок — частые сверху; «Наличные»/«Перевод» как нефинансовые способы.
+AD_PAYMENT_BANKS = (
+    "Сбербанк",
+    "Т-Банк",
+    "Альфа-Банк",
+    "ВТБ",
+    "Озон Банк",
+    "Наличные",
+    "Перевод",
+)
 
 
 # ---------------------------------------------------------------- schemas
@@ -69,10 +82,23 @@ class PaymentCreateIn(BaseModel):
     client_id: int
     amount: float
     method: Optional[str] = None
+    status: str = "paid"  # awaiting | paid
+    bank: Optional[str] = None
     ad_request_id: Optional[int] = None
     scheduled_post_id: Optional[int] = None
     note: Optional[str] = None
     paid_at: Optional[str] = None  # ISO; по умолчанию — сейчас
+
+
+class PaymentUpdateIn(BaseModel):
+    """Частичная правка оплаты (применяются только переданные поля)."""
+
+    amount: Optional[float] = None
+    method: Optional[str] = None
+    status: Optional[str] = None
+    bank: Optional[str] = None
+    note: Optional[str] = None
+    paid_at: Optional[str] = None
 
 
 class InteractionCreateIn(BaseModel):
@@ -131,7 +157,12 @@ async def list_clients(
     """
     paid_sq = (
         select(func.coalesce(func.sum(AdPayment.amount), 0))
-        .where(AdPayment.client_id == AdClient.id)
+        .where(AdPayment.client_id == AdClient.id, AdPayment.status == "paid")
+        .scalar_subquery()
+    )
+    awaiting_sq = (
+        select(func.coalesce(func.sum(AdPayment.amount), 0))
+        .where(AdPayment.client_id == AdClient.id, AdPayment.status == "awaiting")
         .scalar_subquery()
     )
     pay_count_sq = (
@@ -146,6 +177,7 @@ async def list_clients(
     stmt = select(
         AdClient,
         paid_sq.label("total_paid"),
+        awaiting_sq.label("total_awaiting"),
         pay_count_sq.label("payments_count"),
         pub_count_sq.label("publications_count"),
     )
@@ -160,9 +192,10 @@ async def list_clients(
 
     rows = (await db.execute(stmt)).all()
     clients = []
-    for client, total_paid, payments_count, publications_count in rows:
+    for client, total_paid, total_awaiting, payments_count, publications_count in rows:
         d = client.to_dict()
         d["total_paid"] = float(total_paid or 0)
+        d["total_awaiting"] = float(total_awaiting or 0)
         d["payments_count"] = int(payments_count or 0)
         d["publications_count"] = int(publications_count or 0)
         clients.append(d)
@@ -233,12 +266,19 @@ async def get_client(
         .all()
     )
 
-    total_paid = sum(float(p.amount) for p in payments if p.amount is not None)
+    # paid = всё, что не «awaiting» (status в БД всегда задан default'ом 'paid').
+    total_paid = sum(
+        float(p.amount) for p in payments if p.amount is not None and p.status != "awaiting"
+    )
+    total_awaiting = sum(
+        float(p.amount) for p in payments if p.amount is not None and p.status == "awaiting"
+    )
     return {
         "client": client.to_dict(),
         "payments": [p.to_dict() for p in payments],
         "publications": [p.to_dict() for p in publications],
         "total_paid": total_paid,
+        "total_awaiting": total_awaiting,
         "publications_count": len(publications),
     }
 
@@ -358,36 +398,108 @@ async def create_payment(
     payload: PaymentCreateIn,
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Записать оплату. Клиента продвигаем в ``paid`` (если он не ``lost``)."""
+    """Записать оплату/ожидание. ``status='paid'`` продвигает клиента в ``paid``.
+
+    ``status='awaiting'`` — деньги ещё не пришли (согласованная ``amount``);
+    клиента в воронке не двигаем (это делает фактическая оплата).
+    """
     client = await db.get(AdClient, payload.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="client not found")
     if payload.amount is None or float(payload.amount) <= 0:
         raise HTTPException(status_code=400, detail="amount must be positive")
+    status = payload.status or "paid"
+    if status not in _PAYMENT_STATUSES:
+        raise HTTPException(status_code=400, detail="invalid payment status")
 
+    now = datetime.utcnow()
     pay = AdPayment(
         client_id=int(payload.client_id),
         amount=payload.amount,
         method=payload.method,
+        status=status,
+        bank=payload.bank,
         ad_request_id=payload.ad_request_id,
         scheduled_post_id=payload.scheduled_post_id,
         note=payload.note,
-        paid_at=_parse_dt(payload.paid_at) or datetime.utcnow(),
+        paid_at=_parse_dt(payload.paid_at) or now,
+        paid_confirmed_at=now if status == "paid" else None,
     )
     db.add(pay)
-    if client.stage != "lost":
+    # В воронку «оплачено» двигаем только при фактической оплате.
+    if status == "paid" and client.stage != "lost":
         client.stage = "paid"
     await db.flush()  # получить pay.id для ссылки в событии
+    bank_part = f", {pay.bank}" if pay.bank else ""
+    if status == "awaiting":
+        summary = f"Ожидание оплаты: {float(pay.amount):g} ₽{bank_part}"
+        kind = "payment_awaiting"
+    else:
+        summary = f"Оплата {float(pay.amount):g} ₽{bank_part}"
+        kind = "payment_added"
     log_interaction(
         db,
-        kind="payment_added",
+        kind=kind,
         client_id=client.id,
         payment_id=pay.id,
         ad_request_id=payload.ad_request_id,
         scheduled_post_id=payload.scheduled_post_id,
-        summary=f"Оплата {float(pay.amount):g} ₽" + (f" ({pay.method})" if pay.method else ""),
-        meta={"amount": float(pay.amount), "method": pay.method},
+        summary=summary,
+        meta={
+            "amount": float(pay.amount),
+            "method": pay.method,
+            "bank": pay.bank,
+            "status": status,
+        },
     )
+    await db.commit()
+    await db.refresh(pay)
+    return pay.to_dict()
+
+
+@router.patch("/payments/{payment_id}")
+async def update_payment(
+    payment_id: int,
+    payload: PaymentUpdateIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Правка оплаты (сумма/способ/банк/статус/дата/заметка) — всё редактируемо.
+
+    Переход ``awaiting → paid`` ставит ``paid_confirmed_at``, двигает клиента в
+    ``paid`` (если не ``lost``) и пишет событие ``payment_paid``.
+    """
+    pay = await db.get(AdPayment, payment_id)
+    if not pay:
+        raise HTTPException(status_code=404, detail="payment not found")
+    fields = payload.dict(exclude_unset=True)
+    if "status" in fields and fields["status"] not in _PAYMENT_STATUSES:
+        raise HTTPException(status_code=400, detail="invalid payment status")
+    if "amount" in fields and fields["amount"] is not None and float(fields["amount"]) <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+
+    became_paid = "status" in fields and fields["status"] == "paid" and pay.status != "paid"
+    for key, value in fields.items():
+        if key == "paid_at":
+            dt = _parse_dt(value)
+            if dt is not None:
+                pay.paid_at = dt
+        else:
+            setattr(pay, key, value)
+
+    if became_paid:
+        pay.paid_confirmed_at = datetime.utcnow()
+        client = await db.get(AdClient, pay.client_id)
+        if client and client.stage != "lost":
+            client.stage = "paid"
+        log_interaction(
+            db,
+            kind="payment_paid",
+            client_id=pay.client_id,
+            payment_id=pay.id,
+            summary=f"Оплата подтверждена: {float(pay.amount):g} ₽"
+            + (f", {pay.bank}" if pay.bank else ""),
+            meta={"amount": float(pay.amount), "bank": pay.bank},
+        )
     await db.commit()
     await db.refresh(pay)
     return pay.to_dict()
@@ -413,6 +525,32 @@ async def delete_payment(
     await db.delete(pay)
     await db.commit()
     return {"success": True}
+
+
+@router.get("/banks")
+async def list_banks(db: AsyncSession = Depends(get_db_session)):
+    """Банки для дропдауна оплаты + частоты использования (куда чаще платят).
+
+    Возвращает фикс-список ``AD_PAYMENT_BANKS`` и счётчики по фактическим оплатам
+    (status='paid'), отсортированные по убыванию — чтобы видеть предпочитаемый банк.
+    """
+    rows = (
+        await db.execute(
+            select(
+                AdPayment.bank,
+                func.count(AdPayment.id),
+                func.coalesce(func.sum(AdPayment.amount), 0),
+            )
+            .where(AdPayment.status == "paid", AdPayment.bank.isnot(None))
+            .group_by(AdPayment.bank)
+            .order_by(func.count(AdPayment.id).desc())
+        )
+    ).all()
+    stats = [
+        {"bank": bank, "count": int(cnt or 0), "total": float(total or 0)}
+        for bank, cnt, total in rows
+    ]
+    return {"banks": list(AD_PAYMENT_BANKS), "stats": stats}
 
 
 # ---------------------------------------------------------------- publications
@@ -596,7 +734,16 @@ async def funnel(db: AsyncSession = Depends(get_db_session)):
         total_clients += int(count or 0)
 
     total_paid = (
-        await db.execute(select(func.coalesce(func.sum(AdPayment.amount), 0)))
+        await db.execute(
+            select(func.coalesce(func.sum(AdPayment.amount), 0)).where(AdPayment.status == "paid")
+        )
+    ).scalar_one()
+    total_awaiting = (
+        await db.execute(
+            select(func.coalesce(func.sum(AdPayment.amount), 0)).where(
+                AdPayment.status == "awaiting"
+            )
+        )
     ).scalar_one()
     publications_count = (await db.execute(select(func.count(AdPublication.id)))).scalar_one()
 
@@ -605,5 +752,6 @@ async def funnel(db: AsyncSession = Depends(get_db_session)):
         "by_stage": by_stage,
         "total_clients": total_clients,
         "total_paid": float(total_paid or 0),
+        "total_awaiting": float(total_awaiting or 0),
         "publications_count": int(publications_count or 0),
     }

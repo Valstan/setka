@@ -750,14 +750,18 @@ class AdPayment(Base):
     )
     amount = Column(Numeric(12, 2), nullable=False)
     method = Column(String(40), nullable=True)  # нал | карта | перевод | …
+    # Статус оплаты (миграция 029): awaiting (ждём деньги) | paid (получено).
+    status = Column(String(20), nullable=False, default="paid")
+    bank = Column(String(40), nullable=True)  # банк зачисления (фикс-список AD_PAYMENT_BANKS)
     ad_request_id = Column(BigInteger, nullable=True)  # опц. за какую заявку
     scheduled_post_id = Column(BigInteger, nullable=True)  # опц. за какой отложенный пост
     note = Column(Text, nullable=True)
     paid_at = Column(DateTime, default=datetime.utcnow)
+    paid_confirmed_at = Column(DateTime, nullable=True)  # когда awaiting → paid
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):
-        return f"<AdPayment {self.id} client={self.client_id} {self.amount}>"
+        return f"<AdPayment {self.id} client={self.client_id} {self.amount} {self.status}>"
 
     def to_dict(self):
         return {
@@ -765,10 +769,15 @@ class AdPayment(Base):
             "client_id": self.client_id,
             "amount": float(self.amount) if self.amount is not None else None,
             "method": self.method,
+            "status": self.status,
+            "bank": self.bank,
             "ad_request_id": self.ad_request_id,
             "scheduled_post_id": self.scheduled_post_id,
             "note": self.note,
             "paid_at": self.paid_at.isoformat() if self.paid_at else None,
+            "paid_confirmed_at": (
+                self.paid_confirmed_at.isoformat() if self.paid_confirmed_at else None
+            ),
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
