@@ -166,6 +166,10 @@ class VKMessagesChecker(BaseVKChecker):
                         "unread_count": result["unread_count"],
                         "total_conversations": result["total_conversations"],
                         "url": result["url"],
+                        # Превью диалогов (с текстом последнего сообщения) — UI
+                        # показывает текст и кнопку «Ответить» на каждый. Без этого
+                        # поля карточки оставались «N непрочитанных» без текста.
+                        "conversations": result.get("conversations", []),
                         "checked_at": datetime.now().isoformat(),
                     }
                 )
