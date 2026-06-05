@@ -65,6 +65,14 @@ class VKSuggestedChecker(BaseVKChecker):
             return self._empty_result(group_id, str(e))
 
         count = result.get("count", 0)
+        # Даты предложенных постов (unix) — чтобы показать, как давно висит
+        # предложка (самый старый пост). wall.get отдаёт items уже в этом вызове,
+        # доп. запрос не нужен. items идут новыми→старыми; при count>100 видим
+        # только первую сотню — для «как давно висит» это с запасом.
+        items = result.get("items", []) or []
+        dates = sorted(int(i["date"]) for i in items if i.get("date"))
+        oldest_ts = dates[0] if dates else None
+        newest_ts = dates[-1] if dates else None
         logger.info(f"Group {group_id}: {count} suggested posts (via {via})")
         return {
             "has_suggested": count > 0,
@@ -72,6 +80,8 @@ class VKSuggestedChecker(BaseVKChecker):
             "group_id": group_id,
             "url": f"https://vk.com/club{positive_id}",
             "via": via,
+            "oldest_suggested_ts": oldest_ts,
+            "newest_suggested_ts": newest_ts,
         }
 
     def fetch_suggested_posts(self, group_id: int) -> List[Dict[str, Any]]:
@@ -222,6 +232,10 @@ class VKSuggestedChecker(BaseVKChecker):
                     "vk_group_id": result["group_id"],
                     "suggested_count": result["count"],
                     "url": result["url"],
+                    # Даты предложки (unix) — UI показывает «в предложке с …»
+                    # (самый старый пост) вместо времени проверки.
+                    "oldest_suggested_ts": result.get("oldest_suggested_ts"),
+                    "newest_suggested_ts": result.get("newest_suggested_ts"),
                     "checked_at": datetime.now().isoformat(),
                 }
                 notifications.append(notification)
