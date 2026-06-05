@@ -206,6 +206,7 @@ async function toggleClientDetails(id) {
         const d = await apiClient.getCrmClient(id);
         box.innerHTML = renderClientDetails(d);
         box.dataset.loaded = '1';
+        loadOrderItems(id);
         loadTimeline(id);
     } catch (e) {
         box.innerHTML = `<div class="text-danger small">Ошибка: ${escapeHtml(e.message)}</div>`;
@@ -307,6 +308,25 @@ function renderClientDetails(d) {
     </div>
 
     <hr class="my-3">
+    <div class="d-flex justify-content-between align-items-center mb-1">
+        <div class="fw-bold small"><i class="bi bi-card-checklist"></i> Заказ / размещения</div>
+        <span class="small text-muted" id="order-total-${c.id}"></span>
+    </div>
+    <div id="crm-orders-${c.id}"><div class="text-muted small">Загрузка…</div></div>
+    <div class="input-group input-group-sm mt-2">
+        <input type="text" class="form-control" id="oi-desc-${c.id}" placeholder="Что за реклама (описание)">
+        <input type="number" class="form-control" id="oi-qty-${c.id}" value="1" title="Количество" style="max-width:70px;">
+        <input type="date" class="form-control" id="oi-from-${c.id}" title="Период с" style="max-width:140px;">
+        <input type="date" class="form-control" id="oi-to-${c.id}" title="Период по" style="max-width:140px;">
+        <button class="btn btn-outline-primary" onclick="addOrderItem(${c.id})" title="Добавить позицию"><i class="bi bi-plus-lg"></i></button>
+    </div>
+    <div class="input-group input-group-sm mt-1 mb-1">
+        <span class="input-group-text">из заявки №</span>
+        <input type="number" class="form-control" id="oi-req-${c.id}" placeholder="id заявки" style="max-width:120px;">
+        <button class="btn btn-outline-secondary" onclick="addOrderItemFromRequest(${c.id})">Подтянуть</button>
+    </div>
+
+    <hr class="my-3">
     <div class="fw-bold small mb-1"><i class="bi bi-clock-history"></i> История взаимодействий</div>
     <div class="input-group input-group-sm mb-2">
         <input type="text" class="form-control" id="note-text-${c.id}"
@@ -401,6 +421,123 @@ async function deleteInteraction(id, clientId) {
         await loadTimeline(clientId);
     } catch (e) {
         alert('Не удалось удалить запись: ' + e.message);
+    }
+}
+
+// --------------------------------------------------- заказ / размещения (PR-4)
+
+const ORDER_STATUS = {
+    planned: { label: 'план', cls: 'bg-secondary' },
+    scheduled: { label: 'в отложке', cls: 'bg-primary' },
+    published: { label: 'вышло', cls: 'bg-success' },
+    cancelled: { label: 'отменено', cls: 'bg-light text-dark' },
+};
+
+async function loadOrderItems(id) {
+    const box = document.getElementById(`crm-orders-${id}`);
+    if (!box) return;
+    try {
+        const d = await apiClient.getCrmOrderItems(id);
+        box.innerHTML = renderOrderItems(d.order_items || [], id);
+        const total = document.getElementById(`order-total-${id}`);
+        if (total) total.textContent = (d.total_quantity || 0) ? `${d.total_quantity} размещений` : '';
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">Ошибка заказа: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function orderStatusSelect(id, clientId, current) {
+    const opts = Object.keys(ORDER_STATUS).map(st =>
+        `<option value="${st}"${st === current ? ' selected' : ''}>${ORDER_STATUS[st].label}</option>`
+    ).join('');
+    return `<select class="form-select form-select-sm" style="width:auto;"
+                    onchange="changeOrderStatus(${id}, ${clientId}, this.value)">${opts}</select>`;
+}
+
+function renderOrderItems(items, clientId) {
+    if (!items.length) return '<div class="text-muted small">Позиций пока нет.</div>';
+    const rows = items.map(it => {
+        const period = (it.period_start || it.period_end)
+            ? `${it.period_start || '…'} – ${it.period_end || '…'}` : '';
+        const source = it.ad_request_id ? `из заявки №${it.ad_request_id}` : 'вручную';
+        const meta = [period, source].filter(Boolean).join(' · ');
+        return `<div class="d-flex gap-2 align-items-start py-1 border-bottom">
+            <div class="flex-grow-1">
+                <div class="small">${escapeHtml(it.description || '—')} <span class="text-muted">×${it.quantity}</span></div>
+                <div class="text-muted" style="font-size:0.72rem;">${escapeHtml(meta)}</div>
+            </div>
+            ${orderStatusSelect(it.id, clientId, it.status)}
+            <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Правка"
+                    data-desc="${escapeHtml(it.description || '')}" data-qty="${it.quantity}"
+                    onclick="editOrderItem(${it.id}, ${clientId}, this)"><i class="bi bi-pencil"></i></button>
+            <button class="btn btn-sm btn-outline-danger py-0 px-1" title="Удалить"
+                    onclick="deleteOrderItem(${it.id}, ${clientId})"><i class="bi bi-x"></i></button>
+        </div>`;
+    }).join('');
+    return rows;
+}
+
+async function addOrderItem(id) {
+    const description = document.getElementById(`oi-desc-${id}`).value.trim();
+    const quantity = parseInt(document.getElementById(`oi-qty-${id}`).value, 10) || 1;
+    const period_start = document.getElementById(`oi-from-${id}`).value || null;
+    const period_end = document.getElementById(`oi-to-${id}`).value || null;
+    if (!description) { alert('Опишите, что за реклама.'); return; }
+    try {
+        await apiClient.createCrmOrderItem({ client_id: id, description, quantity, period_start, period_end });
+        document.getElementById(`oi-desc-${id}`).value = '';
+        await loadOrderItems(id);
+        await loadTimeline(id);
+    } catch (e) {
+        alert('Не удалось добавить позицию: ' + e.message);
+    }
+}
+
+async function addOrderItemFromRequest(id) {
+    const reqId = parseInt(document.getElementById(`oi-req-${id}`).value, 10);
+    if (!reqId) { alert('Укажите id заявки.'); return; }
+    try {
+        await apiClient.createCrmOrderItemFromRequest(reqId);
+        document.getElementById(`oi-req-${id}`).value = '';
+        await loadOrderItems(id);
+        await loadTimeline(id);
+    } catch (e) {
+        alert('Не удалось подтянуть из заявки: ' + e.message);
+    }
+}
+
+async function changeOrderStatus(itemId, clientId, status) {
+    try {
+        await apiClient.updateCrmOrderItem(itemId, { status });
+        await loadOrderItems(clientId);
+    } catch (e) {
+        alert('Не удалось сменить статус: ' + e.message);
+    }
+}
+
+async function editOrderItem(itemId, clientId, btn) {
+    const curDesc = btn ? (btn.dataset.desc || '') : '';
+    const curQty = btn ? (btn.dataset.qty || '1') : '1';
+    const description = prompt('Описание позиции:', curDesc);
+    if (description === null) return;
+    const qtyStr = prompt('Количество размещений:', curQty);
+    if (qtyStr === null) return;
+    const quantity = parseInt(qtyStr, 10) || 1;
+    try {
+        await apiClient.updateCrmOrderItem(itemId, { description, quantity });
+        await loadOrderItems(clientId);
+    } catch (e) {
+        alert('Не удалось изменить позицию: ' + e.message);
+    }
+}
+
+async function deleteOrderItem(itemId, clientId) {
+    if (!confirm('Удалить позицию заказа?')) return;
+    try {
+        await apiClient.deleteCrmOrderItem(itemId);
+        await loadOrderItems(clientId);
+    } catch (e) {
+        alert('Не удалось удалить позицию: ' + e.message);
     }
 }
 
@@ -527,6 +664,7 @@ async function _detailReload(id, errMsg) {
         box.innerHTML = renderClientDetails(d);
         box.dataset.loaded = '1';
         box.style.display = '';
+        loadOrderItems(id);
         loadTimeline(id);
         if (errMsg) _cfRes(id, escapeHtml(errMsg), 'danger');
     } catch (e) {

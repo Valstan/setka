@@ -9,6 +9,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -870,6 +871,55 @@ class AdInteraction(Base):
             "meta_json": self.meta_json,
             "actor": self.actor,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AdOrderItem(Base):
+    """Позиция заказа клиента рекламного кабинета. Миграция 030.
+
+    Что и сколько реклам клиент заказал на период — из предложки или вписано
+    вручную. Тонкий список поверх ``ad_clients``; ссылки на заявку/отложку/
+    публикацию опциональны (откуда позиция и чем реализована).
+    """
+
+    __tablename__ = "ad_order_items"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    client_id = Column(
+        BigInteger, ForeignKey("ad_clients.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ad_request_id = Column(BigInteger, nullable=True)
+    scheduled_post_id = Column(BigInteger, nullable=True)
+    publication_id = Column(BigInteger, nullable=True)
+    description = Column(Text, nullable=True)
+    quantity = Column(Integer, nullable=False, default=1)
+    period_start = Column(Date, nullable=True)
+    period_end = Column(Date, nullable=True)
+    status = Column(
+        String(20), nullable=False, default="planned"
+    )  # planned|scheduled|published|cancelled
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<AdOrderItem {self.id} client={self.client_id} x{self.quantity} {self.status}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "ad_request_id": self.ad_request_id,
+            "scheduled_post_id": self.scheduled_post_id,
+            "publication_id": self.publication_id,
+            "description": self.description,
+            "quantity": self.quantity,
+            "period_start": self.period_start.isoformat() if self.period_start else None,
+            "period_end": self.period_end.isoformat() if self.period_end else None,
+            "status": self.status,
+            "note": self.note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 

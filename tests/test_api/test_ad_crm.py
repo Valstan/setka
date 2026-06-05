@@ -12,7 +12,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
-from database.models import AdClient, AdInteraction, AdPayment, AdPublication, AdRequest
+from database.models import (
+    AdClient,
+    AdInteraction,
+    AdOrderItem,
+    AdPayment,
+    AdPublication,
+    AdRequest,
+)
 from web.api import ad_crm as api
 
 # ----------------------------------------------------------------- helpers
@@ -324,6 +331,130 @@ def test_routes_registered():
     assert "/api/ad-crm/interactions" in paths
     assert "/api/ad-crm/banks" in paths
     assert "/api/ad-crm/payments/{payment_id}" in paths
+    assert "/api/ad-crm/order-items" in paths
+    assert "/api/ad-crm/clients/{client_id}/order-items" in paths
+    assert "/api/ad-crm/order-items/from-request/{request_id}" in paths
+
+
+# ----------------------------------------------------------------- order items (PR-4)
+
+
+async def test_list_order_items_totals_quantity():
+    client = _client(id=3)
+    items = [
+        AdOrderItem(id=1, client_id=3, description="баннер", quantity=2, status="planned"),
+        AdOrderItem(id=2, client_id=3, description="репост", quantity=3, status="published"),
+    ]
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    db.execute = AsyncMock(return_value=_scalars(items))
+    out = await api.list_order_items(3, db=db)
+    assert out["total_quantity"] == 5
+    assert len(out["order_items"]) == 2
+
+
+async def test_list_order_items_client_404():
+    db = _db()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.list_order_items(9, db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_create_order_item_manual_logs():
+    client = _client(id=3)
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    out = await api.create_order_item(
+        api.OrderItemCreateIn(client_id=3, description="баннер на месяц", quantity=4), db=db
+    )
+    assert out["quantity"] == 4
+    assert out["description"] == "баннер на месяц"
+    logs = _added_interactions(db)
+    assert logs and logs[0].kind == "order_item"
+
+
+async def test_create_order_item_invalid_status_400():
+    db = _db()
+    db.get = AsyncMock(return_value=_client())
+    with pytest.raises(HTTPException) as exc:
+        await api.create_order_item(
+            api.OrderItemCreateIn(client_id=1, description="x", status="bogus"), db=db
+        )
+    assert exc.value.status_code == 400
+
+
+async def test_create_order_item_bad_quantity_400():
+    db = _db()
+    db.get = AsyncMock(return_value=_client())
+    with pytest.raises(HTTPException) as exc:
+        await api.create_order_item(
+            api.OrderItemCreateIn(client_id=1, description="x", quantity=0), db=db
+        )
+    assert exc.value.status_code == 400
+
+
+async def test_create_order_item_parses_period():
+    client = _client(id=3)
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    out = await api.create_order_item(
+        api.OrderItemCreateIn(
+            client_id=3, description="x", period_start="2026-06-01", period_end="2026-06-30"
+        ),
+        db=db,
+    )
+    assert out["period_start"] == "2026-06-01"
+    assert out["period_end"] == "2026-06-30"
+
+
+async def test_order_item_from_request_uses_text_snapshot():
+    ar = _request(client_id=3, text_snapshot="Продаю гараж недорого")
+    db = _db()
+    db.get = AsyncMock(return_value=ar)
+    out = await api.create_order_item_from_request(5, db=db)
+    assert out["ad_request_id"] == 5
+    assert "гараж" in out["description"]
+    logs = _added_interactions(db)
+    assert logs and logs[0].kind == "order_item"
+
+
+async def test_order_item_from_request_unlinked_400():
+    ar = _request(client_id=None)
+    db = _db()
+    db.get = AsyncMock(return_value=ar)
+    with pytest.raises(HTTPException) as exc:
+        await api.create_order_item_from_request(5, db=db)
+    assert exc.value.status_code == 400
+
+
+async def test_update_order_item_changes_status_and_qty():
+    item = AdOrderItem(id=1, client_id=3, description="x", quantity=1, status="planned")
+    db = _db()
+    db.get = AsyncMock(return_value=item)
+    out = await api.update_order_item(
+        1, api.OrderItemUpdateIn(status="published", quantity=2), db=db
+    )
+    assert out["status"] == "published"
+    assert out["quantity"] == 2
+
+
+async def test_update_order_item_invalid_status_400():
+    item = AdOrderItem(id=1, client_id=3, description="x", quantity=1, status="planned")
+    db = _db()
+    db.get = AsyncMock(return_value=item)
+    with pytest.raises(HTTPException) as exc:
+        await api.update_order_item(1, api.OrderItemUpdateIn(status="bogus"), db=db)
+    assert exc.value.status_code == 400
+
+
+async def test_delete_order_item_ok():
+    item = AdOrderItem(id=1, client_id=3, description="x", quantity=1)
+    db = _db()
+    db.get = AsyncMock(return_value=item)
+    out = await api.delete_order_item(1, db=db)
+    assert out["success"] is True
+    db.delete.assert_awaited()
 
 
 # ----------------------------------------------------------------- interactions / timeline
