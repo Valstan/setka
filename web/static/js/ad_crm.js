@@ -177,6 +177,7 @@ async function toggleClientDetails(id) {
         const d = await apiClient.getCrmClient(id);
         box.innerHTML = renderClientDetails(d);
         box.dataset.loaded = '1';
+        loadTimeline(id);
     } catch (e) {
         box.innerHTML = `<div class="text-danger small">Ошибка: ${escapeHtml(e.message)}</div>`;
     }
@@ -254,7 +255,104 @@ function renderClientDetails(d) {
                 <button class="btn btn-outline-primary" onclick="addPublication(${c.id})"><i class="bi bi-plus-lg"></i> Публикация</button>
             </div>
         </div>
-    </div>`;
+    </div>
+
+    <hr class="my-3">
+    <div class="fw-bold small mb-1"><i class="bi bi-clock-history"></i> История взаимодействий</div>
+    <div class="input-group input-group-sm mb-2">
+        <input type="text" class="form-control" id="note-text-${c.id}"
+               placeholder="Заметка: что обсудили / о чём договорились…"
+               onkeydown="if(event.key==='Enter'){addNote(${c.id});}">
+        <button class="btn btn-outline-secondary" onclick="addNote(${c.id})"><i class="bi bi-plus-lg"></i> Заметка</button>
+    </div>
+    <div id="crm-timeline-${c.id}"><div class="text-muted small">Загрузка истории…</div></div>`;
+}
+
+// --------------------------------------------------- таймлайн взаимодействий
+
+// Вид события → иконка + подпись по умолчанию (если summary пуст).
+const KIND_META = {
+    reply_sent: { icon: 'bi-reply', label: 'Ответ клиенту' },
+    status_changed: { icon: 'bi-flag', label: 'Смена статуса' },
+    scheduled: { icon: 'bi-calendar-plus', label: 'Запланировано' },
+    cancelled: { icon: 'bi-x-circle', label: 'Отмена отложки' },
+    published: { icon: 'bi-megaphone', label: 'Публикация' },
+    payment_added: { icon: 'bi-cash-coin', label: 'Оплата' },
+    payment_paid: { icon: 'bi-check2-circle', label: 'Оплачено' },
+    payment_deleted: { icon: 'bi-cash', label: 'Удалена оплата' },
+    publication_deleted: { icon: 'bi-trash', label: 'Удалена публикация' },
+    detected: { icon: 'bi-person-plus', label: 'Заведён клиент' },
+    linked: { icon: 'bi-link-45deg', label: 'Привязана заявка' },
+    contacted: { icon: 'bi-chat-dots', label: 'Контакт' },
+    note: { icon: 'bi-sticky', label: 'Заметка' },
+};
+
+async function loadTimeline(id) {
+    const box = document.getElementById(`crm-timeline-${id}`);
+    if (!box) return;
+    try {
+        const d = await apiClient.getCrmTimeline(id);
+        box.innerHTML = renderTimeline(d.timeline || [], id);
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">Ошибка истории: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderTimeline(events, clientId) {
+    if (!events.length) return '<div class="text-muted small">Событий пока нет.</div>';
+    const rows = events.map(ev => {
+        const m = KIND_META[ev.kind] || { icon: 'bi-dot', label: ev.kind };
+        const auto = ev.actor === 'system' ? ' · авто' : '';
+        return `<li class="d-flex gap-2 align-items-start py-1 border-bottom">
+            <i class="bi ${m.icon} text-secondary mt-1"></i>
+            <div class="flex-grow-1">
+                <div class="small">${escapeHtml(ev.summary || m.label)}</div>
+                <div class="text-muted" style="font-size:0.72rem;">${fmtDate(ev.created_at)}${auto}</div>
+            </div>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Правка"
+                    data-summary="${escapeHtml(ev.summary || '')}"
+                    onclick="editInteraction(${ev.id}, ${clientId}, this)"><i class="bi bi-pencil"></i></button>
+            <button class="btn btn-sm btn-outline-danger py-0 px-1" title="Удалить"
+                    onclick="deleteInteraction(${ev.id}, ${clientId})"><i class="bi bi-x"></i></button>
+        </li>`;
+    }).join('');
+    return `<ul class="list-unstyled mb-0">${rows}</ul>`;
+}
+
+async function addNote(id) {
+    const el = document.getElementById(`note-text-${id}`);
+    if (!el) return;
+    const summary = (el.value || '').trim();
+    if (!summary) return;
+    try {
+        await apiClient.createCrmInteraction({ client_id: id, summary });
+        el.value = '';
+        await loadTimeline(id);
+    } catch (e) {
+        alert('Не удалось добавить заметку: ' + e.message);
+    }
+}
+
+async function editInteraction(id, clientId, btn) {
+    const current = btn ? (btn.dataset.summary || '') : '';
+    const next = prompt('Правка записи истории:', current);
+    if (next === null) return;
+    try {
+        await apiClient.updateCrmInteraction(id, { summary: next });
+        await loadTimeline(clientId);
+    } catch (e) {
+        alert('Не удалось изменить запись: ' + e.message);
+    }
+}
+
+async function deleteInteraction(id, clientId) {
+    if (!confirm('Удалить запись истории?')) return;
+    try {
+        await apiClient.deleteCrmInteraction(id);
+        await loadTimeline(clientId);
+    } catch (e) {
+        alert('Не удалось удалить запись: ' + e.message);
+    }
 }
 
 function _cfRes(id, html, cls) {
@@ -353,6 +451,7 @@ async function _detailReload(id, errMsg) {
         box.innerHTML = renderClientDetails(d);
         box.dataset.loaded = '1';
         box.style.display = '';
+        loadTimeline(id);
         if (errMsg) _cfRes(id, escapeHtml(errMsg), 'danger');
     } catch (e) {
         box.innerHTML = `<div class="text-danger small">Ошибка: ${escapeHtml(e.message)}</div>`;

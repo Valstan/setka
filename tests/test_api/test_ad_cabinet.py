@@ -89,6 +89,7 @@ async def test_prepare_404_unknown_request():
 async def test_send_not_allowed_returns_deeplink(monkeypatch):
     ar = _ad_request()
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
     monkeypatch.setattr(vk_actions, "messages_allowed", MagicMock(return_value=False))
@@ -104,6 +105,7 @@ async def test_send_not_allowed_returns_deeplink(monkeypatch):
 async def test_send_allowed_sends_and_marks_contacted(monkeypatch):
     ar = _ad_request()
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
     monkeypatch.setattr(vk_actions, "messages_allowed", MagicMock(return_value=True))
@@ -124,6 +126,7 @@ async def test_send_allowed_sends_and_marks_contacted(monkeypatch):
 async def test_send_901_fallback(monkeypatch):
     ar = _ad_request()
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
     # precheck неизвестен → пробуем отправить, VK вернёт 901.
@@ -150,6 +153,7 @@ async def test_send_901_fallback(monkeypatch):
 async def test_send_author_group_blocked():
     ar = _ad_request(author_is_group=True, peer_id=-200)
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     out = await api.send_reply(1, db=db)
     assert out["allowed"] is False
@@ -159,6 +163,7 @@ async def test_send_author_group_blocked():
 async def test_send_requires_prepared_message():
     ar = _ad_request(prepared_message=None)
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     with pytest.raises(HTTPException) as exc:
         await api.send_reply(1, db=db)
@@ -174,6 +179,7 @@ async def test_send_reuses_fresh_precheck_skips_vk(monkeypatch):
 
     ar = _ad_request(can_message=True, can_message_checked_at=datetime.utcnow())
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
     ma = MagicMock(return_value=True)
@@ -194,6 +200,7 @@ async def test_send_reuses_fresh_precheck_denied(monkeypatch):
 
     ar = _ad_request(can_message=False, can_message_checked_at=datetime.utcnow())
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
     ma = MagicMock(return_value=True)
@@ -274,6 +281,7 @@ async def test_set_status_invalid():
 async def test_set_status_published():
     ar = _ad_request()
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     out = await api.set_status(1, api.StatusIn(status="published"), db=db)
     assert out["status"] == "published"
@@ -287,6 +295,7 @@ async def test_send_uses_edited_message_and_selected_images(monkeypatch):
     """Правки оператора и выбранные картинки доходят до send_message."""
     ar = _ad_request(prepared_message="старый текст")
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
     monkeypatch.setattr(vk_actions, "messages_allowed", MagicMock(return_value=True))
@@ -312,6 +321,7 @@ async def test_send_empty_images_attaches_nothing(monkeypatch, tmp_path):
     """Пустой список картинок = текст без вложений (выбор пуст, не legacy)."""
     ar = _ad_request(prepared_message="привет")
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     monkeypatch.setattr(api, "_offer_dir", lambda: tmp_path)
     monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
@@ -399,6 +409,7 @@ async def test_thread_non_dm_returns_reason():
     """Для предложки переписки нет → пустой список + reason='not_dm'."""
     ar = _ad_request(origin="suggested")
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     out = await api.get_thread(1, db=db)
     assert out == {"messages": [], "reason": "not_dm"}
@@ -410,6 +421,7 @@ async def test_thread_returns_messages(monkeypatch):
 
     ar = _ad_request(origin="inbound_dm", vk_post_id=None, peer_id=42)
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=("utok", {})))
     fake_checker = MagicMock()
@@ -434,6 +446,7 @@ async def test_thread_returns_messages(monkeypatch):
 async def test_thread_no_token(monkeypatch):
     ar = _ad_request(origin="inbound_dm", vk_post_id=None, peer_id=42)
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=ar)
     monkeypatch.setattr(token_router, "load_vk_routing", AsyncMock(return_value=(None, {})))
     out = await api.get_thread(1, db=db)

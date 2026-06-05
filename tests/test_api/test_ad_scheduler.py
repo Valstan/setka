@@ -388,6 +388,7 @@ async def test_cancel_deletes_and_marks(monkeypatch):
         community_vk_id=-100, publish_date=None, status="scheduled", vk_postponed_post_id=42
     )
     db = AsyncMock()
+    db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
     db.get = AsyncMock(return_value=row)
 
     out = await api.cancel_scheduled(1, db=db)
