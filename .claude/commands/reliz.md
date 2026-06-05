@@ -203,6 +203,30 @@ ssh setka "cd /home/valstan/SETKA && source venv/bin/activate && pip install -e 
 ssh setka "sudo systemctl restart <services> && sleep 4 && systemctl is-active <services>"
 ```
 
+## Шаг 8.5. Smoke-test пайплайна (dry-run)
+
+После рестарта — за один шаг проверить, что пайплайн **живой** (токены валидны, VK
+отвечает, парсинг → фильтр → сборка дайджеста проходят), **ничего не публикуя**.
+Использует `scripts/smoke_test.py` поверх seam'а `parse_and_publish_theme(dry_run=True)`
+(PR #122): ставит diagnostics-задачу эталонного региона и опрашивает по `task_id`.
+
+Пропускать, если деплой был **без рестарта worker/beat** (только docs / web-статика /
+тесты) — тогда пайплайн не затронут. `AskUserQuestion`: «Прогнать smoke-test пайплайна
+(dry-run, без публикации)?» — варианты «Да», «Пропустить (правка не трогает пайплайн)».
+
+При «да»:
+
+```bash
+ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py --region mi --theme novost"
+```
+
+Exit 0 — пайплайн жив (в stderr: `posts_parsed=…, would_publish=…`). Exit 1 — провал
+(не спарсилось постов / `success=False` / таймаут): **показать вывод, разобраться** —
+частые причины: все READ-токены в cooldown, VK error на токене, пустой пул региона.
+Exit 2 — сетевая ошибка/нет `task_id` (API не поднялся после рестарта → к Шагу 9 откат).
+Эталон по умолчанию — `mi`/`novost` (флагман с активным пулом); при желании задать
+другой регион/тему `--region <code> --theme <theme>` или ослабить порог `--min-posts 0`.
+
 ## Шаг 9. Проверки
 
 Параллельно:
@@ -229,6 +253,7 @@ curl -s -o /dev/null -w 'public /: %{http_code}\n' --max-time 20 http://3931b3fe
 - Что задеплоено (на проде новый коммит `<hash> <subject>`)
 - Какие миграции применены (если были)
 - Какие сервисы перезапущены
+- Результат smoke-test (Шаг 8.5), если прогоняли
 - Результаты health-проверок
 - Если в `PENDING_FOLLOWUPS.md` остались хвосты — напомнить какие
 
