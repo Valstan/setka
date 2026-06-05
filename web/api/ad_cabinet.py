@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
 from database.models import AdClient, AdRequest, AdScheduledPost, MessageTemplate
+from modules.ad_cabinet.interaction_log import log_interaction
 from modules.ad_cabinet.message_builder import render
 
 logger = logging.getLogger(__name__)
@@ -273,6 +274,14 @@ async def send_reply(
         ar.can_message_checked_at = datetime.utcnow()
         if attachment and not ar.message_attachments:
             ar.message_attachments = attachment
+        log_interaction(
+            db,
+            kind="reply_sent",
+            client_id=ar.client_id,
+            ad_request_id=ar.id,
+            summary="Отправлен ответ клиенту: " + (ar.prepared_message or "")[:120],
+            meta={"via": res.get("via")},
+        )
         await db.commit()
         return {
             "success": True,
@@ -314,6 +323,14 @@ async def set_status(
     ar.status = payload.status
     if payload.status == "contacted" and not ar.contacted_at:
         ar.contacted_at = datetime.utcnow()
+    log_interaction(
+        db,
+        kind="status_changed",
+        client_id=ar.client_id,
+        ad_request_id=ar.id,
+        summary=f"Статус заявки → {payload.status}",
+        meta={"status": payload.status},
+    )
     await db.commit()
     return ar.to_dict()
 
@@ -661,6 +678,20 @@ async def create_scheduled(
             client.stage = "scheduled"
         await db.commit()
 
+    # Журнал: фиксируем планирование в таймлайн (по клиенту и/или заявке).
+    if scheduled_n > 0 and (effective_client_id or payload.source_ad_request_id):
+        first_scheduled = next((r for r in created if r.status == "scheduled"), None)
+        log_interaction(
+            db,
+            kind="scheduled",
+            client_id=effective_client_id,
+            ad_request_id=payload.source_ad_request_id,
+            scheduled_post_id=first_scheduled.id if first_scheduled else None,
+            summary=f"Запланировано постов: {scheduled_n} (сообщество {gid})",
+            meta={"scheduled": scheduled_n, "community_vk_id": gid},
+        )
+        await db.commit()
+
     # Блок B2: заявка из предложки запланирована пересозданием — убираем оригинал
     # из предложки (wall.delete, проходит через user-token fallback на коде 27) и
     # помечаем заявку опубликованной. Только если что-то реально запланировано —
@@ -745,6 +776,13 @@ async def cancel_scheduled(
         if not res.get("success"):
             return {**row.to_dict(), "cancel_error": res.get("error")}
 
+    log_interaction(
+        db,
+        kind="cancelled",
+        client_id=row.client_id,
+        scheduled_post_id=row.id,
+        summary="Отменён запланированный пост",
+    )
     row.status = "cancelled"
     await db.commit()
     await db.refresh(row)

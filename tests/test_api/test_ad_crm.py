@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
-from database.models import AdClient, AdPayment, AdPublication, AdRequest
+from database.models import AdClient, AdInteraction, AdPayment, AdPublication, AdRequest
 from web.api import ad_crm as api
 
 # ----------------------------------------------------------------- helpers
@@ -213,7 +213,8 @@ async def test_create_payment_advances_stage_to_paid():
     out = await api.create_payment(api.PaymentCreateIn(client_id=1, amount=2000), db=db)
     assert out["amount"] == 2000.0
     assert client.stage == "paid"
-    db.add.assert_called_once()
+    # payment + interaction-событие → два add
+    assert db.add.call_count == 2
 
 
 async def test_create_payment_lost_client_stays_lost():
@@ -314,3 +315,158 @@ def test_routes_registered():
     assert "/ad-crm" in paths
     assert "/api/ad-crm/funnel" in paths
     assert "/api/ad-crm/clients" in paths
+    assert "/api/ad-crm/clients/{client_id}/timeline" in paths
+    assert "/api/ad-crm/interactions" in paths
+
+
+# ----------------------------------------------------------------- interactions / timeline
+
+
+def _added_interactions(db):
+    """Извлечь все AdInteraction, переданные в db.add (для проверки логирования)."""
+    return [
+        c.args[0] for c in db.add.call_args_list if c.args and isinstance(c.args[0], AdInteraction)
+    ]
+
+
+async def test_create_payment_logs_interaction():
+    client = _client(stage="contacted")
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    await api.create_payment(api.PaymentCreateIn(client_id=1, amount=2000, method="карта"), db=db)
+    logs = _added_interactions(db)
+    assert len(logs) == 1
+    assert logs[0].kind == "payment_added"
+    assert logs[0].client_id == 1
+    assert "2000" in logs[0].summary
+    db.flush.assert_awaited()
+
+
+async def test_delete_payment_logs_interaction():
+    pay = AdPayment(id=9, client_id=3, amount=500)
+    db = _db()
+    db.get = AsyncMock(return_value=pay)
+    out = await api.delete_payment(9, db=db)
+    assert out["success"] is True
+    logs = _added_interactions(db)
+    assert logs and logs[0].kind == "payment_deleted"
+    assert logs[0].client_id == 3
+    db.delete.assert_awaited()
+
+
+async def test_create_publication_logs_interaction():
+    client = _client(stage="scheduled")
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    await api.create_publication(
+        api.PublicationCreateIn(community_vk_id=-100, client_id=1, vk_post_id=7), db=db
+    )
+    logs = _added_interactions(db)
+    assert logs and logs[0].kind == "published"
+    assert logs[0].client_id == 1
+
+
+async def test_update_client_logs_stage_change_only():
+    client = _client(stage="detected")
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    await api.update_client(1, api.ClientUpdateIn(stage="contacted"), db=db)
+    logs = _added_interactions(db)
+    assert len(logs) == 1 and logs[0].kind == "status_changed"
+    assert "detected" in logs[0].summary and "contacted" in logs[0].summary
+
+
+async def test_update_client_no_log_when_stage_unchanged():
+    client = _client(stage="detected")
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    await api.update_client(1, api.ClientUpdateIn(contact="+7999"), db=db)
+    assert _added_interactions(db) == []
+
+
+async def test_upsert_from_request_backfills_and_logs():
+    ar = _request()
+    db = _db()
+    db.get = AsyncMock(return_value=ar)
+    db.execute = AsyncMock(return_value=_scalar_one_or_none(None))
+    await api.upsert_from_request(5, db=db)
+    # backfill update + (lookup) — db.execute вызывался; событие залогировано
+    logs = _added_interactions(db)
+    assert logs and logs[0].kind == "detected"
+    assert logs[0].ad_request_id == 5
+    assert db.execute.await_count >= 2  # lookup + backfill update
+
+
+async def test_client_timeline_returns_events_desc():
+    client = _client(id=3)
+    events = [
+        AdInteraction(id=2, client_id=3, kind="payment_added", summary="Оплата 1000 ₽"),
+        AdInteraction(id=1, client_id=3, kind="detected", summary="Заведён клиент"),
+    ]
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    db.execute = AsyncMock(return_value=_scalars(events))
+    out = await api.client_timeline(3, db=db)
+    assert [e["id"] for e in out["timeline"]] == [2, 1]
+    assert out["timeline"][0]["kind"] == "payment_added"
+
+
+async def test_client_timeline_404():
+    db = _db()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.client_timeline(999, db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_create_interaction_manual_note():
+    client = _client(id=3)
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    out = await api.create_interaction(
+        api.InteractionCreateIn(client_id=3, summary="Договорились на вторник"), db=db
+    )
+    assert out["kind"] == "note"
+    assert out["summary"] == "Договорились на вторник"
+    db.add.assert_called_once()
+
+
+async def test_create_interaction_empty_summary_400():
+    db = _db()
+    db.get = AsyncMock(return_value=_client())
+    with pytest.raises(HTTPException) as exc:
+        await api.create_interaction(api.InteractionCreateIn(client_id=1, summary="  "), db=db)
+    assert exc.value.status_code == 400
+
+
+async def test_create_interaction_client_404():
+    db = _db()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.create_interaction(api.InteractionCreateIn(client_id=9, summary="x"), db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_update_interaction_edits_summary():
+    rec = AdInteraction(id=1, client_id=3, kind="note", summary="old")
+    db = _db()
+    db.get = AsyncMock(return_value=rec)
+    out = await api.update_interaction(1, api.InteractionUpdateIn(summary="new"), db=db)
+    assert out["summary"] == "new"
+
+
+async def test_update_interaction_404():
+    db = _db()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.update_interaction(1, api.InteractionUpdateIn(summary="x"), db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_delete_interaction_ok():
+    rec = AdInteraction(id=1, client_id=3, kind="note", summary="x")
+    db = _db()
+    db.get = AsyncMock(return_value=rec)
+    out = await api.delete_interaction(1, db=db)
+    assert out["success"] is True
+    db.delete.assert_awaited()

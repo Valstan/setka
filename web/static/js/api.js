@@ -202,6 +202,29 @@ const apiClient = {
         return this.request(`/ad-crm/publications/${id}`, { method: 'DELETE' });
     },
 
+    // CRM — таймлайн взаимодействий (PR-2)
+    async getCrmTimeline(clientId) {
+        return this.request(`/ad-crm/clients/${clientId}/timeline`);
+    },
+
+    async createCrmInteraction(payload) {
+        return this.request('/ad-crm/interactions', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async updateCrmInteraction(id, payload) {
+        return this.request(`/ad-crm/interactions/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async deleteCrmInteraction(id) {
+        return this.request(`/ad-crm/interactions/${id}`, { method: 'DELETE' });
+    },
+
     // Regions endpoints
     async getRegions() {
         return this.request('/regions/');

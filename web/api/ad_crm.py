@@ -24,11 +24,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
-from database.models import AdClient, AdPayment, AdPublication, AdRequest
+from database.models import AdClient, AdInteraction, AdPayment, AdPublication, AdRequest
+from modules.ad_cabinet.interaction_log import log_interaction
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -72,6 +73,23 @@ class PaymentCreateIn(BaseModel):
     scheduled_post_id: Optional[int] = None
     note: Optional[str] = None
     paid_at: Optional[str] = None  # ISO; по умолчанию — сейчас
+
+
+class InteractionCreateIn(BaseModel):
+    """Ручная заметка/событие в таймлайн клиента."""
+
+    client_id: int
+    kind: str = "note"
+    summary: str
+    created_at: Optional[str] = None  # ISO; по умолчанию — сейчас
+
+
+class InteractionUpdateIn(BaseModel):
+    """Правка события таймлайна (только переданные поля)."""
+
+    summary: Optional[str] = None
+    kind: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 class PublicationCreateIn(BaseModel):
@@ -239,8 +257,17 @@ async def update_client(
     fields = payload.dict(exclude_unset=True)
     if "stage" in fields and fields["stage"] not in _VALID_STAGES:
         raise HTTPException(status_code=400, detail="invalid stage")
+    old_stage = client.stage
     for key, value in fields.items():
         setattr(client, key, value)
+    if "stage" in fields and fields["stage"] != old_stage:
+        log_interaction(
+            db,
+            kind="status_changed",
+            client_id=client.id,
+            summary=f"Стадия: {old_stage} → {fields['stage']}",
+            meta={"from": old_stage, "to": fields["stage"]},
+        )
     await db.commit()
     await db.refresh(client)
     return client.to_dict()
@@ -299,6 +326,25 @@ async def upsert_from_request(
         created = True
 
     ar.client_id = client.id
+    # Бэкфилл: события, записанные по этой заявке до появления клиента
+    # (client_id IS NULL), привязываем к клиенту — чтобы они попали в его таймлайн.
+    await db.execute(
+        update(AdInteraction)
+        .where(
+            AdInteraction.ad_request_id == request_id,
+            AdInteraction.client_id.is_(None),
+        )
+        .values(client_id=client.id)
+    )
+    log_interaction(
+        db,
+        kind="linked" if existing else "detected",
+        client_id=client.id,
+        ad_request_id=request_id,
+        summary=(
+            "Заявка привязана к существующему клиенту" if existing else "Заведён клиент из заявки"
+        ),
+    )
     await db.commit()
     await db.refresh(client)
     return {"client": client.to_dict(), "created": created, "linked_request_id": request_id}
@@ -331,6 +377,17 @@ async def create_payment(
     db.add(pay)
     if client.stage != "lost":
         client.stage = "paid"
+    await db.flush()  # получить pay.id для ссылки в событии
+    log_interaction(
+        db,
+        kind="payment_added",
+        client_id=client.id,
+        payment_id=pay.id,
+        ad_request_id=payload.ad_request_id,
+        scheduled_post_id=payload.scheduled_post_id,
+        summary=f"Оплата {float(pay.amount):g} ₽" + (f" ({pay.method})" if pay.method else ""),
+        meta={"amount": float(pay.amount), "method": pay.method},
+    )
     await db.commit()
     await db.refresh(pay)
     return pay.to_dict()
@@ -345,6 +402,14 @@ async def delete_payment(
     pay = await db.get(AdPayment, payment_id)
     if not pay:
         raise HTTPException(status_code=404, detail="payment not found")
+    amount = float(pay.amount) if pay.amount is not None else 0
+    log_interaction(
+        db,
+        kind="payment_deleted",
+        client_id=pay.client_id,
+        summary=f"Удалена оплата {amount:g} ₽",
+        meta={"amount": amount},
+    )
     await db.delete(pay)
     await db.commit()
     return {"success": True}
@@ -384,6 +449,18 @@ async def create_publication(
     # Не понижаем стадию уже оплаченного клиента — published только вперёд по воронке.
     if client is not None and client.stage in ("detected", "contacted", "scheduled"):
         client.stage = "published"
+    await db.flush()  # получить pub.id для ссылки в событии
+    log_interaction(
+        db,
+        kind="published",
+        client_id=payload.client_id,
+        publication_id=pub.id,
+        ad_request_id=payload.ad_request_id,
+        scheduled_post_id=payload.scheduled_post_id,
+        summary=f"Публикация в сообщество {payload.community_vk_id}"
+        + (f" ({payload.price:g} ₽)" if payload.price else ""),
+        meta={"community_vk_id": int(payload.community_vk_id), "price": payload.price},
+    )
     await db.commit()
     await db.refresh(pub)
     return pub.to_dict()
@@ -398,7 +475,107 @@ async def delete_publication(
     pub = await db.get(AdPublication, publication_id)
     if not pub:
         raise HTTPException(status_code=404, detail="publication not found")
+    log_interaction(
+        db,
+        kind="publication_deleted",
+        client_id=pub.client_id,
+        summary=f"Удалена запись о публикации в сообщество {pub.community_vk_id}",
+    )
     await db.delete(pub)
+    await db.commit()
+    return {"success": True}
+
+
+# ---------------------------------------------------------------- funnel
+
+
+# ---------------------------------------------------------------- timeline
+
+
+@router.get("/clients/{client_id}/timeline")
+async def client_timeline(
+    client_id: int,
+    limit: int = 200,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Хронология событий клиента (свежие сверху) — из ``ad_interactions``."""
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    rows = (
+        (
+            await db.execute(
+                select(AdInteraction)
+                .where(AdInteraction.client_id == client_id)
+                .order_by(AdInteraction.created_at.desc(), AdInteraction.id.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {"timeline": [r.to_dict() for r in rows]}
+
+
+@router.post("/interactions")
+async def create_interaction(
+    payload: InteractionCreateIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Добавить ручную заметку/событие в таймлайн клиента."""
+    client = await db.get(AdClient, payload.client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    if not (payload.summary or "").strip():
+        raise HTTPException(status_code=400, detail="summary required")
+    rec = log_interaction(
+        db,
+        kind=(payload.kind or "note").strip(),
+        client_id=payload.client_id,
+        summary=payload.summary.strip(),
+    )
+    dt = _parse_dt(payload.created_at)
+    if dt is not None:
+        rec.created_at = dt
+    await db.commit()
+    await db.refresh(rec)
+    return rec.to_dict()
+
+
+@router.patch("/interactions/{interaction_id}")
+async def update_interaction(
+    interaction_id: int,
+    payload: InteractionUpdateIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Правка события таймлайна (текст/вид/время) — для исправления опечаток."""
+    rec = await db.get(AdInteraction, interaction_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="interaction not found")
+    fields = payload.dict(exclude_unset=True)
+    if "summary" in fields and fields["summary"] is not None:
+        rec.summary = fields["summary"]
+    if "kind" in fields and fields["kind"]:
+        rec.kind = fields["kind"]
+    if "created_at" in fields:
+        dt = _parse_dt(fields["created_at"])
+        if dt is not None:
+            rec.created_at = dt
+    await db.commit()
+    await db.refresh(rec)
+    return rec.to_dict()
+
+
+@router.delete("/interactions/{interaction_id}")
+async def delete_interaction(
+    interaction_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Удалить ошибочное событие таймлайна."""
+    rec = await db.get(AdInteraction, interaction_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="interaction not found")
+    await db.delete(rec)
     await db.commit()
     return {"success": True}
 

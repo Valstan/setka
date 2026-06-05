@@ -821,6 +821,49 @@ class AdPublication(Base):
         }
 
 
+class AdInteraction(Base):
+    """Событие журнала взаимодействий рекламного кабинета (audit-log). Миграция 028.
+
+    Единая хронология действий поверх заявок/клиентов/отложек/публикаций/оплат:
+    ответ клиенту, смена статуса, планирование, публикация, оплата, ручная
+    заметка. Пишется через ``modules.ad_cabinet.interaction_log.log_interaction``
+    из существующих мутаций. Все ссылки nullable — событие может относиться к
+    нескольким сущностям сразу или ни к чему (ручная заметка).
+    """
+
+    __tablename__ = "ad_interactions"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    client_id = Column(BigInteger, ForeignKey("ad_clients.id", ondelete="SET NULL"), nullable=True)
+    ad_request_id = Column(BigInteger, nullable=True)
+    scheduled_post_id = Column(BigInteger, nullable=True)
+    publication_id = Column(BigInteger, nullable=True)
+    payment_id = Column(BigInteger, nullable=True)
+    kind = Column(String(40), nullable=False)
+    summary = Column(Text, nullable=True)
+    meta_json = Column(JSON, nullable=True)
+    actor = Column(String(40), nullable=False, default="operator")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<AdInteraction {self.id} client={self.client_id} {self.kind}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "ad_request_id": self.ad_request_id,
+            "scheduled_post_id": self.scheduled_post_id,
+            "publication_id": self.publication_id,
+            "payment_id": self.payment_id,
+            "kind": self.kind,
+            "summary": self.summary,
+            "meta_json": self.meta_json,
+            "actor": self.actor,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class PublishSchedule(Base):
     """Расписание публикаций"""
 
