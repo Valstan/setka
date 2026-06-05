@@ -215,3 +215,28 @@ def test_track_digest_published_failed_no_heartbeat(monkeypatch):
 
     metrics.track_digest_published(region="tuzha", topic="novost", result="failed")
     assert "topic" not in marked
+
+
+def test_prometheus_failure_does_not_block_heartbeat(monkeypatch):
+    """Регрессия 2026-06-05: сбой Prometheus-метрики НЕ должен глушить heartbeat.
+
+    Раньше ``mark_published`` стоял ПОСЛЕ ``gauge.set()`` в одной try-обёртке,
+    поэтому исключение Prometheus (multiproc-mmap, #229) пропускало запись
+    heartbeat — watchdog #018 молча не получал данных на проде. Теперь heartbeat
+    пишется первым и независимо.
+    """
+    marked = {}
+    monkeypatch.setattr(dh, "mark_published", lambda topic, **kw: marked.setdefault("topic", topic))
+
+    from monitoring import metrics
+
+    class _Boom:
+        def labels(self, **kwargs):
+            raise RuntimeError("prometheus mmap exploded")
+
+    monkeypatch.setattr(metrics, "digest_published_total", _Boom())
+    monkeypatch.setattr(metrics, "digest_last_published_timestamp", _Boom())
+
+    # Не должно бросить наружу и ОБЯЗАНО записать heartbeat несмотря на сбой метрик.
+    metrics.track_digest_published(region="tuzha", topic="novost", result="success")
+    assert marked.get("topic") == "novost"

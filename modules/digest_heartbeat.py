@@ -72,7 +72,9 @@ def mark_published(topic: str, *, ts: Optional[float] = None) -> None:
             str(int(ts if ts is not None else time.time())),
         )
     except Exception:  # pragma: no cover - наблюдаемость не должна ломать публикацию
-        logger.debug("digest heartbeat write failed (%s)", topic, exc_info=True)
+        # WARNING (не debug): на проде LOG_LEVEL=INFO глушил debug, из-за чего
+        # «heartbeat не пишется» оставалось незамеченным (инцидент 2026-06-05).
+        logger.warning("digest heartbeat write failed (%s)", topic, exc_info=True)
 
 
 def last_published_ts(topic: str) -> Optional[int]:
