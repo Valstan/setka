@@ -548,6 +548,29 @@ def scan_inbound_dm_ads():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.reconcile_scheduled_publications")
+def reconcile_scheduled_publications():
+    """Авто-фиксация публикаций отложки (рекламный кабинет, PR-6).
+
+    Каждые 30 минут 8:00-22:00 (X:45). Для отложек, чьё время прошло, проверяет
+    через VK факт публикации и фиксирует в CRM: статус→published, AdPublication,
+    awaiting-оплата (если есть client+price), событие в таймлайн. Идемпотентно.
+    """
+    logger.info("Reconciling scheduled ad publications (ad cabinet, PR-6)...")
+    try:
+        from modules.ad_cabinet.publish_reconciler import run_reconcile
+
+        result = run_coro(run_reconcile())
+        logger.info(
+            "reconcile scheduled publications done: %s",
+            result,
+        )
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"reconcile_scheduled_publications failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.check_unread_messages")
 def check_unread_messages():
     """Проверка непрочитанных сообщений в главных группах регионов.
@@ -920,6 +943,15 @@ app.conf.beat_schedule = {
     "scan-inbound-dm-ads": {
         "task": "tasks.celery_app.scan_inbound_dm_ads",
         "schedule": crontab(minute="5,35", hour="8-22"),
+        "options": {
+            "expires": 1500,
+            "catchup": False,
+        },
+    },
+    # Авто-фиксация публикаций отложки (рекламный кабинет, PR-6) каждые 30 мин в X:45
+    "reconcile-scheduled-publications": {
+        "task": "tasks.celery_app.reconcile_scheduled_publications",
+        "schedule": crontab(minute="45", hour="8-22"),
         "options": {
             "expires": 1500,
             "catchup": False,
