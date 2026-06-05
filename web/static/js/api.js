@@ -202,6 +202,35 @@ const apiClient = {
         return this.request('/ad-crm/banks');
     },
 
+    // CRM — позиции заказа (PR-4)
+    async getCrmOrderItems(clientId) {
+        return this.request(`/ad-crm/clients/${clientId}/order-items`);
+    },
+
+    async createCrmOrderItem(payload) {
+        return this.request('/ad-crm/order-items', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async createCrmOrderItemFromRequest(requestId) {
+        return this.request(`/ad-crm/order-items/from-request/${requestId}`, {
+            method: 'POST'
+        });
+    },
+
+    async updateCrmOrderItem(id, payload) {
+        return this.request(`/ad-crm/order-items/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async deleteCrmOrderItem(id) {
+        return this.request(`/ad-crm/order-items/${id}`, { method: 'DELETE' });
+    },
+
     async createCrmPublication(payload) {
         return this.request('/ad-crm/publications', {
             method: 'POST',

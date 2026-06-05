@@ -28,7 +28,14 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
-from database.models import AdClient, AdInteraction, AdPayment, AdPublication, AdRequest
+from database.models import (
+    AdClient,
+    AdInteraction,
+    AdOrderItem,
+    AdPayment,
+    AdPublication,
+    AdRequest,
+)
 from modules.ad_cabinet.interaction_log import log_interaction
 
 logger = logging.getLogger(__name__)
@@ -38,6 +45,7 @@ router = APIRouter()
 _VALID_STAGES = ("detected", "contacted", "scheduled", "published", "paid", "lost")
 _PUBLICATION_STATUSES = {"published", "removed"}
 _PAYMENT_STATUSES = {"awaiting", "paid"}
+_ORDER_ITEM_STATUSES = {"planned", "scheduled", "published", "cancelled"}
 
 # Фикс-список банков для дропдауна оплаты. Правится здесь (owner: «фикс-список»).
 # Порядок — частые сверху; «Наличные»/«Перевод» как нефинансовые способы.
@@ -131,11 +139,47 @@ class PublicationCreateIn(BaseModel):
     published_at: Optional[str] = None  # ISO; по умолчанию — сейчас
 
 
+class OrderItemCreateIn(BaseModel):
+    """Позиция заказа клиента (что/сколько/период). Вручную или из заявки."""
+
+    client_id: int
+    description: Optional[str] = None
+    quantity: int = 1
+    period_start: Optional[str] = None  # ISO date
+    period_end: Optional[str] = None
+    status: str = "planned"
+    ad_request_id: Optional[int] = None
+    scheduled_post_id: Optional[int] = None
+    publication_id: Optional[int] = None
+    note: Optional[str] = None
+
+
+class OrderItemUpdateIn(BaseModel):
+    """Частичная правка позиции заказа (только переданные поля)."""
+
+    description: Optional[str] = None
+    quantity: Optional[int] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    status: Optional[str] = None
+    note: Optional[str] = None
+
+
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
         return datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_date(value: Optional[str]):
+    """ISO-дата (YYYY-MM-DD) → date | None. Терпимо к пустым/битым строкам."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).date()
     except (ValueError, TypeError):
         return None
 
@@ -714,6 +758,150 @@ async def delete_interaction(
     if not rec:
         raise HTTPException(status_code=404, detail="interaction not found")
     await db.delete(rec)
+    await db.commit()
+    return {"success": True}
+
+
+# ---------------------------------------------------------------- order items
+
+
+@router.get("/clients/{client_id}/order-items")
+async def list_order_items(
+    client_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Позиции заказа клиента (что и сколько реклам заказано/будет опубликовано)."""
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    rows = (
+        (
+            await db.execute(
+                select(AdOrderItem)
+                .where(AdOrderItem.client_id == client_id)
+                .order_by(AdOrderItem.created_at.desc(), AdOrderItem.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    total_qty = sum(int(r.quantity or 0) for r in rows)
+    return {"order_items": [r.to_dict() for r in rows], "total_quantity": total_qty}
+
+
+@router.post("/order-items")
+async def create_order_item(
+    payload: OrderItemCreateIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Добавить позицию заказа вручную."""
+    client = await db.get(AdClient, payload.client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    if payload.status not in _ORDER_ITEM_STATUSES:
+        raise HTTPException(status_code=400, detail="invalid order item status")
+    if payload.quantity is not None and int(payload.quantity) < 1:
+        raise HTTPException(status_code=400, detail="quantity must be >= 1")
+
+    item = AdOrderItem(
+        client_id=int(payload.client_id),
+        description=payload.description,
+        quantity=int(payload.quantity or 1),
+        period_start=_parse_date(payload.period_start),
+        period_end=_parse_date(payload.period_end),
+        status=payload.status,
+        ad_request_id=payload.ad_request_id,
+        scheduled_post_id=payload.scheduled_post_id,
+        publication_id=payload.publication_id,
+        note=payload.note,
+    )
+    db.add(item)
+    log_interaction(
+        db,
+        kind="order_item",
+        client_id=client.id,
+        ad_request_id=payload.ad_request_id,
+        summary="Позиция заказа: "
+        + ((payload.description or "без описания")[:80])
+        + f" ×{item.quantity}",
+    )
+    await db.commit()
+    await db.refresh(item)
+    return item.to_dict()
+
+
+@router.post("/order-items/from-request/{request_id}")
+async def create_order_item_from_request(
+    request_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Подтянуть позицию заказа из заявки предложки/ЛС (описание из текста заявки).
+
+    Заявка должна быть привязана к клиенту (``client_id``) — иначе 400 с просьбой
+    сначала завести/привязать клиента (кнопка «В CRM» на карточке заявки).
+    """
+    ar = await db.get(AdRequest, request_id)
+    if not ar:
+        raise HTTPException(status_code=404, detail="ad request not found")
+    if not ar.client_id:
+        raise HTTPException(status_code=400, detail="заявка не привязана к клиенту")
+
+    description = (ar.text_snapshot or ar.community_name or "").strip()[:500]
+    item = AdOrderItem(
+        client_id=int(ar.client_id),
+        ad_request_id=request_id,
+        description=description or "реклама из заявки",
+        quantity=1,
+        status="planned",
+    )
+    db.add(item)
+    log_interaction(
+        db,
+        kind="order_item",
+        client_id=int(ar.client_id),
+        ad_request_id=request_id,
+        summary="Позиция заказа из заявки: " + (description[:80] or "реклама"),
+    )
+    await db.commit()
+    await db.refresh(item)
+    return item.to_dict()
+
+
+@router.patch("/order-items/{item_id}")
+async def update_order_item(
+    item_id: int,
+    payload: OrderItemUpdateIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Правка позиции заказа (описание/кол-во/период/статус/заметка)."""
+    item = await db.get(AdOrderItem, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="order item not found")
+    fields = payload.dict(exclude_unset=True)
+    if "status" in fields and fields["status"] not in _ORDER_ITEM_STATUSES:
+        raise HTTPException(status_code=400, detail="invalid order item status")
+    if "quantity" in fields and fields["quantity"] is not None and int(fields["quantity"]) < 1:
+        raise HTTPException(status_code=400, detail="quantity must be >= 1")
+    for key, value in fields.items():
+        if key in ("period_start", "period_end"):
+            setattr(item, key, _parse_date(value))
+        else:
+            setattr(item, key, value)
+    await db.commit()
+    await db.refresh(item)
+    return item.to_dict()
+
+
+@router.delete("/order-items/{item_id}")
+async def delete_order_item(
+    item_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Удалить позицию заказа."""
+    item = await db.get(AdOrderItem, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="order item not found")
+    await db.delete(item)
     await db.commit()
     return {"success": True}
 
