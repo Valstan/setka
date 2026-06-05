@@ -45,6 +45,12 @@ def _scalars(items):
     return r
 
 
+def _scalars_first(item):
+    r = MagicMock()
+    r.scalars.return_value.first.return_value = item
+    return r
+
+
 def _scalar_one_or_none(val):
     r = MagicMock()
     r.scalar_one_or_none.return_value = val
@@ -334,6 +340,127 @@ def test_routes_registered():
     assert "/api/ad-crm/order-items" in paths
     assert "/api/ad-crm/clients/{client_id}/order-items" in paths
     assert "/api/ad-crm/order-items/from-request/{request_id}" in paths
+    assert "/api/ad-crm/clients/{client_id}/thread" in paths
+    assert "/api/ad-crm/clients/{client_id}/reply" in paths
+
+
+# ----------------------------------------------------------------- client chat (PR-5)
+
+
+class _FakeDialogs:
+    """Заглушка VKDialogsChecker: fetch_history возвращает заданный список."""
+
+    _history = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    def fetch_history(self, group_id, peer_id, count):
+        return list(self._history)
+
+
+async def test_client_thread_no_dialog():
+    client = _client(id=3)
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    db.execute = AsyncMock(return_value=_scalars_first(None))  # нет заявки с peer
+    out = await api.client_thread(3, db=db)
+    assert out["reason"] == "no_dialog"
+
+
+async def test_client_thread_404():
+    db = _db()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.client_thread(9, db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_client_thread_returns_two_way(monkeypatch):
+    import modules.notifications.vk_dialogs_checker as vdc
+    import modules.vk_token_router as tr
+
+    _FakeDialogs._history = [
+        {"out": False, "from_name": "Иван", "text": "Почём реклама?", "date": 1, "attachments": 0},
+        {"out": True, "from_name": None, "text": "1000 ₽", "date": 2, "attachments": 0},
+    ]
+    monkeypatch.setattr(vdc, "VKDialogsChecker", _FakeDialogs)
+    monkeypatch.setattr(tr, "load_vk_routing", AsyncMock(return_value=("utok", {})))
+
+    client = _client(id=3)
+    ar = _request(client_id=3, peer_id=42, community_vk_id=-100, origin="inbound_dm")
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    db.execute = AsyncMock(return_value=_scalars_first(ar))
+    out = await api.client_thread(3, db=db)
+    assert len(out["messages"]) == 2
+    assert out["messages"][1]["out"] is True
+    assert out["peer_id"] == 42
+    assert out["dialog_url"] == "https://vk.com/gim100?sel=42"
+
+
+async def test_client_reply_success_logs(monkeypatch):
+    import modules.notifications.vk_actions as va
+    import modules.vk_token_router as tr
+
+    monkeypatch.setattr(
+        va, "send_message", MagicMock(return_value={"success": True, "via": "community-token"})
+    )
+    monkeypatch.setattr(tr, "load_vk_routing", AsyncMock(return_value=("utok", {})))
+
+    client = _client(id=3)
+    ar = _request(client_id=3, peer_id=42, community_vk_id=-100)
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    db.execute = AsyncMock(return_value=_scalars_first(ar))
+    out = await api.client_reply(3, api.ClientReplyIn(message="Здравствуйте!"), db=db)
+    assert out["success"] is True
+    logs = _added_interactions(db)
+    assert logs and logs[0].kind == "reply_sent"
+
+
+async def test_client_reply_blocked_returns_deeplink(monkeypatch):
+    import modules.notifications.vk_actions as va
+    import modules.vk_token_router as tr
+
+    monkeypatch.setattr(
+        va,
+        "send_message",
+        MagicMock(
+            return_value={
+                "allowed": False,
+                "personal_deeplink": "https://vk.com/im?sel=42",
+                "error_code": 901,
+            }
+        ),
+    )
+    monkeypatch.setattr(tr, "load_vk_routing", AsyncMock(return_value=("utok", {})))
+
+    client = _client(id=3)
+    ar = _request(client_id=3, peer_id=42, community_vk_id=-100)
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    db.execute = AsyncMock(return_value=_scalars_first(ar))
+    out = await api.client_reply(3, api.ClientReplyIn(message="привет"), db=db)
+    assert out["allowed"] is False
+    assert "vk.com/im" in out["personal_deeplink"]
+
+
+async def test_client_reply_empty_message_400():
+    db = _db()
+    db.get = AsyncMock(return_value=_client(id=3))
+    with pytest.raises(HTTPException) as exc:
+        await api.client_reply(3, api.ClientReplyIn(message="  "), db=db)
+    assert exc.value.status_code == 400
+
+
+async def test_client_reply_no_dialog_400():
+    db = _db()
+    db.get = AsyncMock(return_value=_client(id=3))
+    db.execute = AsyncMock(return_value=_scalars_first(None))
+    with pytest.raises(HTTPException) as exc:
+        await api.client_reply(3, api.ClientReplyIn(message="привет"), db=db)
+    assert exc.value.status_code == 400
 
 
 # ----------------------------------------------------------------- order items (PR-4)
