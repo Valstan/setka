@@ -6,6 +6,8 @@ Redis и Telegram замоканы: ``_redis_client`` подменяется in-
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from modules import digest_heartbeat as dh
@@ -35,6 +37,9 @@ class _FakeRedis:
 def _fake_redis(monkeypatch):
     fake = _FakeRedis()
     monkeypatch.setattr(dh, "_redis_client", fake)
+    # PID-guard: помечаем инъектированный клиент «своим» для текущего процесса,
+    # иначе _redis() решит, что это унаследованный после форка, и пересоздаст.
+    monkeypatch.setattr(dh, "_redis_pid", os.getpid())
     return fake
 
 
@@ -100,6 +105,42 @@ def test_all_heartbeats_skips_non_int_values():
     dh.mark_published("novost", ts=1000.0)
     dh._redis_client.store["setka:digest_last_published:broken"] = "not-a-number"
     assert dh.all_heartbeats() == {"novost": 1000}
+
+
+# --------------------------------------------------------------------------- #
+# _redis() — fork-safety (PID-guard)
+# --------------------------------------------------------------------------- #
+
+
+def test_redis_recreated_on_pid_change(monkeypatch):
+    """Регрессия 2026-06-05: redis-py pool не fork-safe — в Celery prefork
+    унаследованный клиент мог молча не писать. _redis() пересоздаёт клиент при
+    смене PID, но НЕ дёргает конструктор повторно в том же процессе.
+    """
+    created = {"n": 0}
+
+    class _NS:
+        def __init__(self):
+            created["n"] += 1
+
+        @property
+        def redis_client(self):
+            return _FakeRedis()
+
+    monkeypatch.setattr("modules.notifications.storage.NotificationsStorage", _NS)
+    # Сброс кэша, чтобы _redis() пошёл в конструктор.
+    monkeypatch.setattr(dh, "_redis_client", None)
+    monkeypatch.setattr(dh, "_redis_pid", None)
+
+    dh._redis()
+    assert created["n"] == 1
+    # тот же PID → клиент переиспользуется, конструктор не дёргается
+    dh._redis()
+    assert created["n"] == 1
+    # смена PID (эмуляция форка) → клиент пересоздаётся
+    monkeypatch.setattr(dh.os, "getpid", lambda: 4242424)
+    dh._redis()
+    assert created["n"] == 2
 
 
 # --------------------------------------------------------------------------- #
