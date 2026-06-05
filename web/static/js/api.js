@@ -202,6 +202,10 @@ const apiClient = {
         return this.request('/ad-crm/banks');
     },
 
+    async getCrmTimeseries(days = 30) {
+        return this.request(`/ad-crm/stats/timeseries?days=${days}`);
+    },
+
     // CRM — позиции заказа (PR-4)
     async getCrmOrderItems(clientId) {
         return this.request(`/ad-crm/clients/${clientId}/order-items`);
