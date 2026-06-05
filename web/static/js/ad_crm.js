@@ -206,6 +206,7 @@ async function toggleClientDetails(id) {
         const d = await apiClient.getCrmClient(id);
         box.innerHTML = renderClientDetails(d);
         box.dataset.loaded = '1';
+        loadClientThread(id);
         loadOrderItems(id);
         loadTimeline(id);
     } catch (e) {
@@ -306,6 +307,19 @@ function renderClientDetails(d) {
             </div>
         </div>
     </div>
+
+    <hr class="my-3">
+    <div class="fw-bold small mb-1"><i class="bi bi-chat-text"></i> Переписка с клиентом</div>
+    <div id="crm-chat-${c.id}" class="border rounded p-2 mb-2"
+         style="max-height:240px; overflow-y:auto; font-size:0.85rem;">
+        <div class="text-muted small">Загрузка переписки…</div>
+    </div>
+    <div class="input-group input-group-sm mb-1">
+        <input type="text" class="form-control" id="chat-msg-${c.id}" placeholder="Ответить клиенту от имени сообщества…"
+               onkeydown="if(event.key==='Enter'){sendClientReply(${c.id});}">
+        <button class="btn btn-outline-primary" onclick="sendClientReply(${c.id})"><i class="bi bi-send"></i> Отправить</button>
+    </div>
+    <div class="small" id="chat-status-${c.id}"></div>
 
     <hr class="my-3">
     <div class="d-flex justify-content-between align-items-center mb-1">
@@ -541,6 +555,77 @@ async function deleteOrderItem(itemId, clientId) {
     }
 }
 
+// --------------------------------------------------- чат с клиентом (PR-5)
+
+const CHAT_REASON = {
+    no_dialog: 'Диалога с клиентом нет (нет заявки с ЛС). Ответить можно после первого входящего сообщения.',
+    no_token: 'Нет VK-токена для чтения переписки.',
+    error: 'Не удалось загрузить переписку (VK недоступен).',
+};
+
+function fmtChatTime(unixSec) {
+    if (!unixSec) return '';
+    try { return new Date(unixSec * 1000).toLocaleString('ru-RU').slice(0, 16); }
+    catch (e) { return ''; }
+}
+
+async function loadClientThread(id) {
+    const box = document.getElementById(`crm-chat-${id}`);
+    if (!box) return;
+    try {
+        const d = await apiClient.getCrmClientThread(id);
+        if (d.reason) {
+            box.innerHTML = `<div class="text-muted small">${escapeHtml(CHAT_REASON[d.reason] || d.reason)}</div>`;
+            return;
+        }
+        box.innerHTML = renderChat(d.messages || []);
+        box.scrollTop = box.scrollHeight;  // прокрутить к свежим
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">Ошибка переписки: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderChat(messages) {
+    if (!messages.length) return '<div class="text-muted small">Сообщений пока нет.</div>';
+    return messages.map(m => {
+        const mine = m.out;
+        const align = mine ? 'text-end' : 'text-start';
+        const bubble = mine ? 'bg-primary text-white' : 'bg-body-secondary';
+        const who = mine ? 'Мы' : escapeHtml(m.from_name || 'клиент');
+        const att = m.attachments ? ` 📎×${m.attachments}` : '';
+        return `<div class="${align} mb-1">
+            <span class="d-inline-block rounded px-2 py-1 ${bubble}" style="max-width:85%; white-space:pre-wrap; text-align:left;">${escapeHtml(m.text || '')}${att}</span>
+            <div class="text-muted" style="font-size:0.68rem;">${who} · ${fmtChatTime(m.date)}</div>
+        </div>`;
+    }).join('');
+}
+
+async function sendClientReply(id) {
+    const el = document.getElementById(`chat-msg-${id}`);
+    const status = document.getElementById(`chat-status-${id}`);
+    if (!el) return;
+    const message = (el.value || '').trim();
+    if (!message) return;
+    if (status) status.innerHTML = '<span class="text-muted">Отправляю…</span>';
+    try {
+        const res = await apiClient.sendCrmClientReply(id, message);
+        if (res.success) {
+            el.value = '';
+            if (status) status.innerHTML = '<span class="text-success">Отправлено ✓</span>';
+            await loadClientThread(id);
+            await loadTimeline(id);
+        } else if (res.allowed === false) {
+            const link = res.personal_deeplink;
+            if (status) status.innerHTML =
+                `<span class="text-warning">VK не даёт писать первым. Откройте <a href="${link}" target="_blank">личный диалог</a> и ответьте с личного аккаунта.</span>`;
+        } else {
+            if (status) status.innerHTML = `<span class="text-danger">Ошибка: ${escapeHtml(res.error || 'не отправлено')}</span>`;
+        }
+    } catch (e) {
+        if (status) status.innerHTML = `<span class="text-danger">Ошибка: ${escapeHtml(e.message)}</span>`;
+    }
+}
+
 function _cfRes(id, html, cls) {
     const el = document.getElementById(`cf-res-${id}`);
     if (el) el.innerHTML = `<span class="text-${cls || 'muted'}">${html}</span>`;
@@ -664,6 +749,7 @@ async function _detailReload(id, errMsg) {
         box.innerHTML = renderClientDetails(d);
         box.dataset.loaded = '1';
         box.style.display = '';
+        loadClientThread(id);
         loadOrderItems(id);
         loadTimeline(id);
         if (errMsg) _cfRes(id, escapeHtml(errMsg), 'danger');

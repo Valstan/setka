@@ -231,6 +231,18 @@ const apiClient = {
         return this.request(`/ad-crm/order-items/${id}`, { method: 'DELETE' });
     },
 
+    // CRM — чат с клиентом (PR-5)
+    async getCrmClientThread(clientId, count = 30) {
+        return this.request(`/ad-crm/clients/${clientId}/thread?count=${count}`);
+    },
+
+    async sendCrmClientReply(clientId, message) {
+        return this.request(`/ad-crm/clients/${clientId}/reply`, {
+            method: 'POST',
+            body: JSON.stringify({ message })
+        });
+    },
+
     async createCrmPublication(payload) {
         return this.request('/ad-crm/publications', {
             method: 'POST',

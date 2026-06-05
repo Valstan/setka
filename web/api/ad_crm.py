@@ -762,6 +762,145 @@ async def delete_interaction(
     return {"success": True}
 
 
+# ---------------------------------------------------------------- client chat (PR-5)
+
+
+class ClientReplyIn(BaseModel):
+    """Ответ клиенту из чата карточки."""
+
+    message: str
+
+
+async def _resolve_client_dialog(db: AsyncSession, client_id: int):
+    """(community_vk_id, peer_id) для чата клиента — из его свежей заявки с peer.
+
+    Берём последнюю заявку клиента с положительным ``peer_id`` (предпочитая ЛС,
+    но и у предложки peer есть). Возвращает (None, None), если диалога нет.
+    """
+    ar = (
+        (
+            await db.execute(
+                select(AdRequest)
+                .where(
+                    AdRequest.client_id == client_id,
+                    AdRequest.peer_id.isnot(None),
+                    AdRequest.peer_id > 0,
+                )
+                .order_by(
+                    AdRequest.origin.desc(), AdRequest.detected_at.desc(), AdRequest.id.desc()
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if not ar:
+        return None, None, None
+    return int(ar.community_vk_id), int(ar.peer_id), ar
+
+
+@router.get("/clients/{client_id}/thread")
+async def client_thread(
+    client_id: int,
+    count: int = 30,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Двусторонняя переписка с клиентом (вход + наши ответы) — для чата в карточке.
+
+    ``messages.getHistory`` уже содержит и входящие, и наши исходящие (``out``),
+    поэтому видно «я ему уже отвечал». Никогда не 500-ит на флапе VK.
+    """
+    import asyncio
+
+    from modules.notifications.vk_dialogs_checker import VKDialogsChecker
+    from modules.vk_token_router import load_vk_routing
+
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+
+    community_vk_id, peer_id, _ = await _resolve_client_dialog(db, client_id)
+    if not peer_id:
+        return {"messages": [], "reason": "no_dialog"}
+
+    user_token, community_tokens = await load_vk_routing()
+    if not user_token:
+        return {"messages": [], "reason": "no_token"}
+
+    try:
+        checker = VKDialogsChecker(user_token, community_tokens=community_tokens)
+        messages = await asyncio.to_thread(checker.fetch_history, community_vk_id, peer_id, count)
+    except Exception as e:  # pragma: no cover - защита от неожиданного
+        logger.warning("client thread fetch failed for %s: %s", client_id, e)
+        return {"messages": [], "reason": "error", "error": str(e)}
+
+    dialog_url = f"https://vk.com/gim{abs(community_vk_id)}?sel={peer_id}"
+    return {
+        "messages": messages,
+        "community_vk_id": community_vk_id,
+        "peer_id": peer_id,
+        "dialog_url": dialog_url,
+    }
+
+
+@router.post("/clients/{client_id}/reply")
+async def client_reply(
+    client_id: int,
+    payload: ClientReplyIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Отправить ответ клиенту от имени сообщества (полу-авто, как в кабинете).
+
+    Цель (community, peer) — из свежей заявки клиента. VK 901/нет доступа →
+    возвращаем ``personal_deeplink`` (оператор пишет с личного). Успех пишется в
+    таймлайн (kind=reply_sent), чтобы видеть «я ему уже отвечал».
+    """
+    from modules.notifications.vk_actions import send_message
+    from modules.vk_token_router import load_vk_routing
+
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    if not (payload.message or "").strip():
+        raise HTTPException(status_code=400, detail="empty message")
+
+    community_vk_id, peer_id, _ = await _resolve_client_dialog(db, client_id)
+    if not peer_id:
+        raise HTTPException(status_code=400, detail="нет диалога с клиентом")
+
+    user_token, community_tokens = await load_vk_routing()
+    if not user_token:
+        return {"success": False, "error": "VK token not found"}
+
+    res = send_message(
+        group_id=community_vk_id,
+        peer_id=peer_id,
+        message=payload.message.strip(),
+        user_token=user_token,
+        community_tokens=community_tokens,
+        random_id=0,
+    )
+
+    if res.get("success"):
+        log_interaction(
+            db,
+            kind="reply_sent",
+            client_id=client_id,
+            summary="Ответ клиенту (чат): " + payload.message.strip()[:120],
+            meta={"via": res.get("via")},
+        )
+        await db.commit()
+        return {"success": True, "via": res.get("via")}
+
+    if res.get("allowed") is False:
+        return {
+            "allowed": False,
+            "personal_deeplink": res.get("personal_deeplink") or f"https://vk.com/im?sel={peer_id}",
+            "error_code": res.get("error_code"),
+        }
+    return {"success": False, "error": res.get("error"), "error_code": res.get("error_code")}
+
+
 # ---------------------------------------------------------------- order items
 
 
