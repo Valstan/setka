@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Optional
 
@@ -35,22 +36,32 @@ ALERT_COOLDOWN_SECONDS = 6 * 3600
 DEFAULT_MAX_AGE_HOURS = 6
 
 _redis_client = None
+_redis_pid: Optional[int] = None
 
 
 def _redis():
-    """Лениво-кэшированный Redis-клиент (db=1, decode_responses=True).
+    """Лениво-кэшированный, **fork-safe** Redis-клиент (db=1, decode_responses).
 
     Переиспользует параметры подключения ``NotificationsStorage`` — единый
     источник настроек Redis для app-level ключей.
+
+    **PID-guard:** клиент кэшируется вместе с PID процесса и пересоздаётся,
+    если PID сменился (целевой процесс — форк, как Celery prefork-worker:
+    redis-py connection pool не fork-safe). Сбой инициализации логируется на
+    **WARNING** (раньше debug → невидимо при прод LOG_LEVEL=INFO, из-за чего
+    «heartbeat молчит» пряталось — инцидент 2026-06-05).
     """
-    global _redis_client
-    if _redis_client is None:
+    global _redis_client, _redis_pid
+    pid = os.getpid()
+    if _redis_client is None or _redis_pid != pid:
         try:
             from modules.notifications.storage import NotificationsStorage
 
             _redis_client = NotificationsStorage().redis_client
+            _redis_pid = pid
         except Exception:  # pragma: no cover - инфраструктурный сбой
-            logger.debug("redis init failed for digest heartbeat", exc_info=True)
+            logger.warning("redis init failed for digest heartbeat", exc_info=True)
+            _redis_client = None
             return None
     return _redis_client
 
@@ -65,6 +76,9 @@ def mark_published(topic: str, *, ts: Optional[float] = None) -> None:
     try:
         client = _redis()
         if client is None:
+            # Громко (WARNING): немой `return` здесь скрывал, что heartbeat не
+            # пишется, хотя публикация прошла (инцидент 2026-06-05).
+            logger.warning("digest heartbeat skipped: redis unavailable (topic=%s)", topic)
             return
         client.setex(
             f"{KEY_PREFIX}:{topic}",

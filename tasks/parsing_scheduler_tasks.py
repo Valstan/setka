@@ -367,7 +367,9 @@ def parse_and_publish_theme(
                         except (
                             Exception
                         ):  # pragma: no cover - metrics никогда не должны валить публикацию
-                            logger.debug("track_digest_published failed", exc_info=True)
+                            # WARNING (не debug): прод LOG_LEVEL=INFO глушил debug,
+                            # из-за чего сбой heartbeat #018 был невидим (2026-06-05).
+                            logger.warning("track_digest_published failed", exc_info=True)
 
             # Mourning digest
             if mourning_posts:
