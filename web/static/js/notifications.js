@@ -268,7 +268,7 @@ function loadUnreadMessages(unreadMessages, deniedGroups) {
                             <div class="notif-body-text">${lastText || '<em>(без текста)</em>'}</div>
                         </div>
                         <button class="btn btn-sm btn-outline-primary" title="Ответить"
-                                onclick='openReplyModal({kind:"message", groupId:${groupId}, peerId:${peerId}, peerName:${JSON.stringify(peerLabel)}, text:${JSON.stringify(lastMsg.text || "")}, regionName:${JSON.stringify(notif.region_name || "")}})'>
+                                onclick='event.stopPropagation(); openReplyModal({kind:"message", groupId:${groupId}, peerId:${peerId}, peerName:${JSON.stringify(peerLabel)}, text:${JSON.stringify(lastMsg.text || "")}, regionName:${JSON.stringify(notif.region_name || "")}})'>
                             <i class="bi bi-reply"></i>
                         </button>
                     </div>
@@ -281,17 +281,20 @@ function loadUnreadMessages(unreadMessages, deniedGroups) {
             ? `<div class="notif-meta"><i class="bi bi-clock"></i> ${new Date(notif.checked_at).toLocaleTimeString('ru-RU')}</div>`
             : '';
 
+        // Вся плашка кликабельна → переход в раздел сообщений группы VK
+        // (как у «Предложенных постов»). Кнопки «Ответить» внутри гасят
+        // всплытие (event.stopPropagation), чтобы клик по ним не открывал VK.
         return `
-            <div class="notif-card bg-info-tint">
+            <div class="notif-card bg-info-tint" style="cursor: pointer;" role="link"
+                 title="Открыть сообщения сообщества в VK"
+                 onclick="window.open('${notif.url}', '_blank')">
                 <div class="d-flex justify-content-between align-items-start gap-2">
                     <div class="flex-grow-1">
                         <h6 class="mb-1"><i class="bi bi-geo-alt-fill text-info"></i> ${regionName}</h6>
                         <span class="badge bg-info text-white">${word}</span>
                         ${checked}
                     </div>
-                    <a href="${notif.url}" target="_blank" class="btn btn-sm btn-outline-info" title="Открыть в VK">
-                        <i class="bi bi-box-arrow-up-right"></i>
-                    </a>
+                    <i class="bi bi-box-arrow-up-right text-info fs-5"></i>
                 </div>
                 ${convRowsHtml}
             </div>
