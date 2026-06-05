@@ -361,17 +361,30 @@ def track_digest_published(region: str, topic: str, result: str = "success") -> 
             Для остальных — только Counter (нужно для алёртов «давно не
             публиковали успешно»).
     """
-    digest_published_total.labels(region=region, topic=topic, result=result).inc()
+    # ── Redis-heartbeat пишем ПЕРВЫМ и НЕЗАВИСИМО от Prometheus ──────────────
+    # Heartbeat — это НАДЁЖНЫЙ сигнал для watchdog'а «давно нет дайджестов»
+    # (#018); Prometheus multiproc-gauge на проде исторически ненадёжен (mmap,
+    # mode='max', боль #229) и его вызов может бросить исключение. Раньше
+    # heartbeat стоял ПОСЛЕ ``gauge.set()`` в общей обёртке, и сбой Prometheus
+    # глушил heartbeat — watchdog молча не получал данных на проде с 2026-06-03
+    # (вскрыто дашбордом 2026-06-05). Поэтому: сначала heartbeat в своём
+    # try/except, затем — отдельно — Prometheus. Логируем сбой на WARNING
+    # (раньше debug → невидимо при LOG_LEVEL=INFO, оттого и не замечали).
     if result == "success":
-        digest_last_published_timestamp.labels(region=region, topic=topic).set(time.time())
-        # Надёжный Redis-heartbeat для watchdog «давно нет дайджестов» — на проде
-        # Prometheus-gauge ненадёжен (multiproc-mmap). Best-effort, не падать.
         try:
             from modules.digest_heartbeat import mark_published
 
             mark_published(topic)
-        except Exception:  # pragma: no cover
-            pass
+        except Exception:  # pragma: no cover - наблюдаемость не должна валить публикацию
+            logger.warning("digest heartbeat write failed (topic=%s)", topic, exc_info=True)
+
+    # ── Prometheus — best-effort, отдельно: его сбой больше не трогает heartbeat ─
+    try:
+        digest_published_total.labels(region=region, topic=topic, result=result).inc()
+        if result == "success":
+            digest_last_published_timestamp.labels(region=region, topic=topic).set(time.time())
+    except Exception:  # pragma: no cover - метрики никогда не должны валить публикацию
+        logger.warning("prometheus digest metric failed (topic=%s)", topic, exc_info=True)
 
 
 def track_error(component: str, error_type: str):
