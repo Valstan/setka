@@ -119,6 +119,49 @@
         </div>
     </div>
 
+    <!-- Heartbeat дайджестов (#018) + Liveness Celery -->
+    <div class="row mb-4">
+        <div class="col-lg-7 mb-3 mb-lg-0">
+            <div class="card border-info h-100">
+                <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <h5 class="mb-0">💓 Heartbeat дайджестов</h5>
+                    <span id="heartbeat-watchdog-badge" class="badge bg-secondary">novost: загрузка…</span>
+                </div>
+                <div class="card-body p-0">
+                    <div id="heartbeat-loading" class="text-center py-3 text-muted">
+                        <div class="spinner-border spinner-border-sm"></div> Загрузка heartbeat…
+                    </div>
+                    <div id="heartbeat-content" style="display:none;"></div>
+                    <div id="heartbeat-error" class="alert alert-warning m-3" style="display:none;"></div>
+                </div>
+                <div class="card-footer bg-white small text-muted">
+                    <i class="bi bi-info-circle"></i>
+                    Источник — Redis-ключи последних публикаций (<code>digest_heartbeat</code>).
+                    Watchdog по <code>novost</code> (порог 6ч) шлёт Telegram-алёрт при простое.
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card border-success h-100">
+                <div class="card-header bg-success bg-opacity-10">
+                    <h5 class="mb-0">🫀 Liveness Celery</h5>
+                </div>
+                <div class="card-body">
+                    <div id="liveness-loading" class="text-center py-3 text-muted">
+                        <div class="spinner-border spinner-border-sm"></div> Пинг воркеров…
+                    </div>
+                    <div id="liveness-content" style="display:none;"></div>
+                    <div id="liveness-error" class="alert alert-warning" style="display:none;"></div>
+                </div>
+                <div class="card-footer bg-white small text-muted">
+                    <i class="bi bi-info-circle"></i>
+                    Воркеры — прямой <code>inspect.ping()</code>. Beat не пингуется —
+                    его живость выводится по свежести <code>novost</code>-heartbeat.
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Current Operations -->
     <div class="row mb-4">
         <div class="col-12">
@@ -166,6 +209,42 @@
                     Источник — таблица <code>parsing_stats</code>. Сортировка: проблемные пары
                     (broken → dead → stale → fresh) сверху. Цвет считается из времени последнего
                     успеха и подряд-неуспешных запусков (см. tooltips).
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ручное управление -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-warning">
+                <div class="card-header bg-warning bg-opacity-10">
+                    <h5 class="mb-0">🎛️ Ручное управление</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-5">
+                            <label class="form-label small mb-1" for="control-region-select">Регион для скана</label>
+                            <select id="control-region-select" class="form-select form-select-sm">
+                                <option value="">— загрузка регионов —</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <button id="control-scan-btn" class="btn btn-sm btn-primary w-100" onclick="controlScanRegion()">
+                                <i class="bi bi-play-fill"></i> Запустить скан
+                            </button>
+                        </div>
+                        <div class="col-md-4">
+                            <button id="control-stop-btn" class="btn btn-sm btn-outline-danger w-100" onclick="controlStopWorkflow()">
+                                <i class="bi bi-stop-fill"></i> Остановить workflow
+                            </button>
+                        </div>
+                    </div>
+                    <div class="small text-muted mt-2">
+                        <i class="bi bi-info-circle"></i>
+                        Скан запускает реальный workflow региона в фоне (как beat-волна, вне расписания).
+                        Остановка сбрасывает флаг выполнения и ставит систему на паузу. Оба действия требуют подтверждения.
+                    </div>
                 </div>
             </div>
         </div>
@@ -379,12 +458,161 @@ async function loadDigestsStatus() {
     }
 }
 
+// --------------------------------------------------------------------------- //
+// Heartbeat дайджестов (#018) + Liveness Celery + ручное управление
+// --------------------------------------------------------------------------- //
+
+function _agoFromSeconds(sec) {
+    if (sec == null) return '<span class="text-muted">никогда</span>';
+    let diff = Math.floor(sec);
+    if (diff < 0) diff = 0;
+    if (diff < 60)    return diff + ' с назад';
+    if (diff < 3600)  return Math.floor(diff / 60) + ' мин назад';
+    if (diff < 86400) return Math.floor(diff / 3600) + ' ч назад';
+    return Math.floor(diff / 86400) + ' дн назад';
+}
+
+const _HB_STATUS = {
+    fresh:   { label: 'свежо',      cls: 'bg-success' },
+    stale:   { label: 'давно',      cls: 'bg-warning text-dark' },
+    unknown: { label: 'нет данных', cls: 'bg-secondary' },
+};
+
+async function loadHeartbeat() {
+    const loading = document.getElementById('heartbeat-loading');
+    const content = document.getElementById('heartbeat-content');
+    const errorEl = document.getElementById('heartbeat-error');
+    const wdBadge = document.getElementById('heartbeat-watchdog-badge');
+    try {
+        const resp = await fetch('/api/monitoring/heartbeat');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const json = await resp.json();
+        if (!json.success || !json.data) throw new Error(json.error || 'нет данных');
+        const { topics, watchdog } = json.data;
+
+        // watchdog novost (строгий 6ч-порог)
+        const wd = _HB_STATUS[watchdog.status] || _HB_STATUS.unknown;
+        wdBadge.className = 'badge ' + wd.cls;
+        wdBadge.textContent = 'novost: ' + wd.label
+            + (watchdog.age_seconds != null ? ' · ' + _agoFromSeconds(watchdog.age_seconds).replace(/<[^>]+>/g, '') : '');
+
+        if (!topics.length) {
+            content.innerHTML = '<div class="alert alert-light m-3 mb-0">Нет тем.</div>';
+        } else {
+            const tbody = topics.map(t => {
+                const st = _HB_STATUS[t.status] || _HB_STATUS.unknown;
+                return `<tr>
+                    <td><code>${_esc(t.topic)}</code></td>
+                    <td><span class="badge ${st.cls}">${st.label}</span></td>
+                    <td class="text-end small">${_agoFromSeconds(t.age_seconds)}</td>
+                </tr>`;
+            }).join('');
+            content.innerHTML = `<div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <thead><tr>
+                        <th>Тема</th><th>Статус</th>
+                        <th class="text-end">Последняя публикация</th>
+                    </tr></thead>
+                    <tbody>${tbody}</tbody>
+                </table></div>`;
+        }
+        content.style.display = 'block';
+        loading.style.display = 'none';
+        errorEl.style.display = 'none';
+    } catch (e) {
+        loading.style.display = 'none';
+        errorEl.style.display = 'block';
+        errorEl.textContent = 'Не удалось загрузить heartbeat: ' + e.message;
+    }
+}
+
+async function loadLiveness() {
+    const loading = document.getElementById('liveness-loading');
+    const content = document.getElementById('liveness-content');
+    const errorEl = document.getElementById('liveness-error');
+    try {
+        const resp = await fetch('/api/monitoring/liveness');
+        const json = await resp.json();
+        const data = json.data || {};
+        const workers = data.workers || [];
+        let html = '';
+
+        if (!workers.length) {
+            html += '<div class="alert alert-danger py-2 mb-2"><i class="bi bi-exclamation-triangle"></i> '
+                + 'Воркеры не отвечают на ping'
+                + (json.error ? ' (' + _esc(json.error) + ')' : '') + '</div>';
+        } else {
+            html += '<div class="mb-2"><strong>Воркеры (' + data.worker_count + ')</strong></div>';
+            html += workers.map(w => `<div class="d-flex justify-content-between align-items-center mb-1">
+                <code class="small">${_esc(w.name)}</code>
+                <span class="badge ${w.ok ? 'bg-success' : 'bg-danger'}">${w.ok ? '🟢 pong' : '🔴 нет ответа'}</span>
+            </div>`).join('');
+        }
+
+        const beat = data.beat || {};
+        const beatCls = beat.status === 'alive' ? 'bg-success'
+            : (beat.status === 'stale' ? 'bg-warning text-dark' : 'bg-secondary');
+        const beatLabel = beat.status === 'alive' ? '🟢 жив'
+            : (beat.status === 'stale' ? '🟡 давно нет волн' : '⚪ неизвестно');
+        html += `<hr class="my-2"><div class="d-flex justify-content-between align-items-center">
+            <strong>Beat <small class="text-muted">(${_esc(beat.note || '')})</small></strong>
+            <span class="badge ${beatCls}">${beatLabel}</span>
+        </div>`;
+        if (beat.age_seconds != null) {
+            html += `<div class="small text-muted mt-1">novost: ${_agoFromSeconds(beat.age_seconds)}</div>`;
+        }
+
+        content.innerHTML = html;
+        content.style.display = 'block';
+        loading.style.display = 'none';
+        errorEl.style.display = 'none';
+    } catch (e) {
+        loading.style.display = 'none';
+        errorEl.style.display = 'block';
+        errorEl.textContent = 'Не удалось загрузить liveness: ' + e.message;
+    }
+}
+
+function controlScanRegion() {
+    const sel = document.getElementById('control-region-select');
+    const code = sel ? sel.value : '';
+    if (!code) { showError('Сначала выберите регион'); return; }
+    if (!confirm('Запустить реальный workflow региона "' + code + '" сейчас?\n'
+        + 'Он соберёт и опубликует дайджесты вне расписания.')) return;
+    const btn = document.getElementById('control-scan-btn');
+    btn.disabled = true;
+    fetch('/api/test-workflow/scan-region/' + encodeURIComponent(code), { method: 'POST' })
+        .then(r => r.json())
+        .then(j => {
+            if (j.success) showSuccess(j.message || 'Скан запущен');
+            else showError(j.detail || j.error || 'Не удалось запустить скан');
+        })
+        .catch(e => showError('Ошибка: ' + e.message))
+        .finally(() => { btn.disabled = false; });
+}
+
+function controlStopWorkflow() {
+    if (!confirm('Остановить текущий workflow и поставить систему на паузу?')) return;
+    const btn = document.getElementById('control-stop-btn');
+    btn.disabled = true;
+    fetch('/api/test-workflow/stop', { method: 'POST' })
+        .then(r => r.json())
+        .then(j => {
+            if (j.success) showSuccess(j.message || 'Workflow остановлен');
+            else showError(j.detail || j.error || 'Не удалось остановить');
+        })
+        .catch(e => showError('Ошибка: ' + e.message))
+        .finally(() => { btn.disabled = false; });
+}
+
 async function loadAllMonitoringData() {
     try {
         console.log('Loading all monitoring data...');
 
         // Виджет дайджестов не должен блокировать остальные данные — fire-and-forget
         loadDigestsStatus().catch(e => console.warn('digests status failed:', e));
+        loadHeartbeat().catch(e => console.warn('heartbeat failed:', e));
+        loadLiveness().catch(e => console.warn('liveness failed:', e));
 
         // Load all monitoring data
         const [statsResponse, operationsResponse, regionsResponse] = await Promise.all([
@@ -631,10 +859,21 @@ function updateCurrentOperations(operationsData) {
 
 function updateRegionsStatus(regionsData) {
     const container = document.getElementById('regions-status');
-    
+
     if (!regionsData.regions || regionsData.regions.length === 0) {
         container.innerHTML = '<div class="text-center text-muted">Нет регионов</div>';
         return;
+    }
+
+    // Заполняем select ручного управления списком регионов (сохраняем выбор)
+    const ctrlSel = document.getElementById('control-region-select');
+    if (ctrlSel) {
+        const cur = ctrlSel.value;
+        ctrlSel.innerHTML = '<option value="">— выберите регион —</option>'
+            + regionsData.regions.map(r =>
+                `<option value="${_esc(r.code)}">${_esc(r.name)} (${_esc(r.code)})</option>`
+            ).join('');
+        if (cur) ctrlSel.value = cur;
     }
     
     container.innerHTML = `

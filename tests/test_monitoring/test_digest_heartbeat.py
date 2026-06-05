@@ -23,6 +23,13 @@ class _FakeRedis:
     def get(self, key):
         return self.store.get(key)
 
+    def keys(self, pattern):
+        """Мини-glob: поддерживаем только хвостовую `*` (как в all_heartbeats)."""
+        if pattern.endswith("*"):
+            prefix = pattern[:-1]
+            return [k for k in self.store if k.startswith(prefix)]
+        return [k for k in self.store if k == pattern]
+
 
 @pytest.fixture(autouse=True)
 def _fake_redis(monkeypatch):
@@ -50,6 +57,49 @@ def test_last_published_none_when_absent():
 def test_mark_published_empty_topic_noop():
     dh.mark_published("")
     assert dh._redis_client.store == {}
+
+
+# --------------------------------------------------------------------------- #
+# all_heartbeats — скан всех тем для дашборда
+# --------------------------------------------------------------------------- #
+
+
+def test_all_heartbeats_empty_when_no_keys():
+    assert dh.all_heartbeats() == {}
+
+
+def test_all_heartbeats_returns_all_topics():
+    dh.mark_published("novost", ts=1000.0)
+    dh.mark_published("sport", ts=2000.0)
+    dh.mark_published("kultura", ts=3000.0)
+    assert dh.all_heartbeats() == {"novost": 1000, "sport": 2000, "kultura": 3000}
+
+
+def test_all_heartbeats_excludes_cooldown_keys(monkeypatch):
+    """Служебный cooldown-ключ не должен попадать в темы дашборда."""
+    sent = {}
+
+    class _Resp:
+        status_code = 200
+        text = "ok"
+
+    monkeypatch.setattr("requests.post", lambda url, **kw: sent.setdefault("n", 0) or _Resp())
+
+    dh.mark_published("novost", ts=0.0)
+    # Простой → выставит cooldown-ключ setka:digest_last_published:stale_alert_cooldown:novost
+    dh.maybe_alert_stale_digest(
+        topic="novost", max_age_hours=6, telegram_token="t", chat_id="c", now=10 * 3600
+    )
+    hb = dh.all_heartbeats()
+    assert hb == {"novost": 0}
+    # cooldown-ключ присутствует в Redis, но отфильтрован
+    assert any("stale_alert_cooldown" in k for k in dh._redis_client.store)
+
+
+def test_all_heartbeats_skips_non_int_values():
+    dh.mark_published("novost", ts=1000.0)
+    dh._redis_client.store["setka:digest_last_published:broken"] = "not-a-number"
+    assert dh.all_heartbeats() == {"novost": 1000}
 
 
 # --------------------------------------------------------------------------- #

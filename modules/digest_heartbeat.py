@@ -88,6 +88,41 @@ def last_published_ts(topic: str) -> Optional[int]:
         return None
 
 
+def all_heartbeats() -> dict[str, int]:
+    """Все ``topic → unix-ts`` из Redis (best-effort, не падает).
+
+    Сканирует ключи ``setka:digest_last_published:*``, исключая служебные
+    cooldown-ключи (``…:stale_alert_cooldown:<topic>``). Возвращает ``{}`` при
+    любом инфраструктурном сбое — наблюдаемость не должна валить вызывающего.
+    Используется дашбордом (``/api/monitoring/heartbeat``) для показа свежести
+    публикаций по всем темам разом.
+    """
+    out: dict[str, int] = {}
+    try:
+        client = _redis()
+        if client is None:
+            return out
+        prefix = f"{KEY_PREFIX}:"
+        scan_iter = getattr(client, "scan_iter", None)
+        keys = scan_iter(match=f"{prefix}*") if callable(scan_iter) else client.keys(f"{prefix}*")
+        for raw in keys:
+            key = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+            topic = key[len(prefix) :]
+            # cooldown-ключи начинаются с "stale_alert_cooldown:" — не темы
+            if not topic or topic.startswith("stale_alert_cooldown"):
+                continue
+            val = client.get(key)
+            if val is None:
+                continue
+            try:
+                out[topic] = int(val)
+            except (TypeError, ValueError):
+                continue
+    except Exception:  # pragma: no cover - инфраструктурный сбой
+        logger.debug("digest heartbeat scan failed", exc_info=True)
+    return out
+
+
 def maybe_alert_stale_digest(
     *,
     topic: str = "novost",
