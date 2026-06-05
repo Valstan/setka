@@ -122,3 +122,41 @@ def test_community_token_success_no_fallback_needed():
     assert result["count"] == 5
     assert result["via"] == "community-token"
     checker.vk.wall.get.assert_not_called()
+
+
+def test_oldest_and_newest_suggested_ts_extracted():
+    """Даты предложки берутся из items (самый старый/новый), без доп. запроса."""
+    checker = _build_checker_with_community_token()
+    community_api = MagicMock()
+    # items новыми→старыми (как VK), даты вразнобой — проверяем сортировку.
+    community_api.wall.get.return_value = {
+        "count": 3,
+        "items": [
+            {"id": 10, "date": 1_700_000_200},
+            {"id": 9, "date": 1_700_000_000},  # самый старый
+            {"id": 11, "date": 1_700_000_500},  # самый новый
+        ],
+    }
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
+        community_instance = MagicMock()
+        community_instance.get_api.return_value = community_api
+        m.return_value = community_instance
+        result = checker.check_suggested_posts(GROUP_ID)
+
+    assert result["oldest_suggested_ts"] == 1_700_000_000
+    assert result["newest_suggested_ts"] == 1_700_000_500
+
+
+def test_no_items_means_null_suggested_ts():
+    """Пустые items → даты None (карточка падает на время проверки)."""
+    checker = _build_checker_with_community_token()
+    community_api = MagicMock()
+    community_api.wall.get.return_value = {"count": 0, "items": []}
+    with patch("modules.notifications.base_checker.vk_api.VkApi") as m:
+        community_instance = MagicMock()
+        community_instance.get_api.return_value = community_api
+        m.return_value = community_instance
+        result = checker.check_suggested_posts(GROUP_ID)
+
+    assert result["oldest_suggested_ts"] is None
+    assert result["newest_suggested_ts"] is None

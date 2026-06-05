@@ -191,9 +191,14 @@ function loadSuggestedPosts(suggestedPosts) {
         const regionName = escapeHtml(notif.region_name || '');
         const cnt = notif.suggested_count;
         const word = `${cnt} предложенн${cnt === 1 ? 'ый' : cnt < 5 ? 'ых' : 'ых'} пост${cnt === 1 ? '' : cnt < 5 ? 'а' : 'ов'}`;
-        const checked = notif.checked_at
-            ? `<div class="notif-meta"><i class="bi bi-clock"></i> ${new Date(notif.checked_at).toLocaleTimeString('ru-RU')}</div>`
-            : '';
+        // Дата предложения (самый старый пост) — видно, как давно висит предложка.
+        // На время проверки падаем только если дата предложки недоступна.
+        const oldestTs = notif.oldest_suggested_ts;
+        const checked = oldestTs
+            ? `<div class="notif-meta" title="Дата самого старого предложенного поста"><i class="bi bi-calendar-event"></i> в предложке с ${fmtSuggestedTs(oldestTs)}${daysAgoLabel(oldestTs)}</div>`
+            : (notif.checked_at
+                ? `<div class="notif-meta"><i class="bi bi-clock"></i> проверено ${new Date(notif.checked_at).toLocaleTimeString('ru-RU')}</div>`
+                : '');
         return `
             <a href="${notif.url}" target="_blank" class="notif-card bg-warning-tint text-decoration-none text-body">
                 <div class="d-flex justify-content-between align-items-start gap-2">
@@ -311,6 +316,23 @@ function escapeHtml(str) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+}
+
+// Дата предложенного поста (unix-сек VK) → «ДД.ММ ЧЧ:ММ».
+function fmtSuggestedTs(ts) {
+    if (!ts) return '';
+    try {
+        return new Date(ts * 1000).toLocaleString('ru-RU', {
+            day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+        });
+    } catch (e) { return ''; }
+}
+
+// «(N дн.)» — сколько дней пост висит в предложке (≥1 дня; иначе пусто).
+function daysAgoLabel(ts) {
+    if (!ts) return '';
+    const days = Math.floor((Date.now() - ts * 1000) / 86400000);
+    return days >= 1 ? ` <span class="text-danger">(${days} дн.)</span>` : '';
 }
 
 async function loadRecentComments(recentComments) {
