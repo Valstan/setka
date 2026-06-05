@@ -342,6 +342,48 @@ def test_routes_registered():
     assert "/api/ad-crm/order-items/from-request/{request_id}" in paths
     assert "/api/ad-crm/clients/{client_id}/thread" in paths
     assert "/api/ad-crm/clients/{client_id}/reply" in paths
+    assert "/api/ad-crm/stats/timeseries" in paths
+
+
+# ----------------------------------------------------------------- stats / charts (PR-7)
+
+
+async def test_timeseries_fills_gaps_and_maps_counts():
+    from datetime import date
+
+    db = _db()
+    # offers: одна дата с 3 заявками; paid: одна дата с 2 оплатами на 4000
+    db.execute = AsyncMock(
+        side_effect=[
+            _rows([(date(2026, 6, 1), 3)]),
+            _rows([(date(2026, 6, 2), 2, 4000)]),
+        ]
+    )
+    out = await api.stats_timeseries(days=5, db=db)
+    assert out["days"] == 5
+    assert len(out["labels"]) == 5
+    assert len(out["offers"]) == 5
+    assert len(out["paid_count"]) == 5
+    # ряды непрерывны: сумма по offers = 3, по paid_count = 2
+    assert sum(out["offers"]) == 3
+    assert sum(out["paid_count"]) == 2
+    assert sum(out["paid_amount"]) == 4000.0
+
+
+async def test_timeseries_empty_returns_zero_filled():
+    db = _db()
+    db.execute = AsyncMock(side_effect=[_rows([]), _rows([])])
+    out = await api.stats_timeseries(days=7, db=db)
+    assert len(out["labels"]) == 7
+    assert sum(out["offers"]) == 0
+    assert sum(out["paid_count"]) == 0
+
+
+async def test_timeseries_clamps_days():
+    db = _db()
+    db.execute = AsyncMock(side_effect=[_rows([]), _rows([])])
+    out = await api.stats_timeseries(days=9999, db=db)
+    assert out["days"] == 365
 
 
 # ----------------------------------------------------------------- client chat (PR-5)

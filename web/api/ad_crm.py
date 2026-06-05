@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -1043,6 +1043,68 @@ async def delete_order_item(
     await db.delete(item)
     await db.commit()
     return {"success": True}
+
+
+# ---------------------------------------------------------------- stats / charts
+
+
+@router.get("/stats/timeseries")
+async def stats_timeseries(
+    days: int = 30,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Динамика по дням за ``days`` дней: рост предложений и оплаченной рекламы.
+
+    Возвращает непрерывные ряды (дни без данных = 0) для Chart.js:
+      * ``offers`` — число заявок (``ad_requests``) по ``detected_at``;
+      * ``paid``   — число и сумма оплат (``status='paid'``) по ``paid_at``.
+    """
+    days = max(1, min(int(days), 365))
+    start = (datetime.utcnow() - timedelta(days=days - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+    offer_rows = (
+        await db.execute(
+            select(func.date(AdRequest.detected_at), func.count(AdRequest.id))
+            .where(AdRequest.detected_at >= start)
+            .group_by(func.date(AdRequest.detected_at))
+        )
+    ).all()
+    paid_rows = (
+        await db.execute(
+            select(
+                func.date(AdPayment.paid_at),
+                func.count(AdPayment.id),
+                func.coalesce(func.sum(AdPayment.amount), 0),
+            )
+            .where(AdPayment.status == "paid", AdPayment.paid_at >= start)
+            .group_by(func.date(AdPayment.paid_at))
+        )
+    ).all()
+
+    def _key(d) -> str:
+        return d.isoformat() if hasattr(d, "isoformat") else str(d)
+
+    offers_by_day = {_key(d): int(c or 0) for d, c in offer_rows}
+    paid_by_day = {_key(d): (int(c or 0), float(s or 0)) for d, c, s in paid_rows}
+
+    labels, offers, paid_count, paid_amount = [], [], [], []
+    for i in range(days):
+        day = (start + timedelta(days=i)).date().isoformat()
+        labels.append(day)
+        offers.append(offers_by_day.get(day, 0))
+        c, s = paid_by_day.get(day, (0, 0.0))
+        paid_count.append(c)
+        paid_amount.append(s)
+
+    return {
+        "days": days,
+        "labels": labels,
+        "offers": offers,
+        "paid_count": paid_count,
+        "paid_amount": paid_amount,
+    }
 
 
 # ---------------------------------------------------------------- funnel

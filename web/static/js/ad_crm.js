@@ -39,9 +39,13 @@ let _filterTimer = null;
 let _banks = [];        // фикс-список банков (PR-3)
 let _bankStats = [];    // частоты «куда чаще платят»
 
+let _chartOffers = null;   // Chart.js instances (PR-7)
+let _chartPaid = null;
+
 document.addEventListener('DOMContentLoaded', () => {
     loadBanks();
     loadCrm();
+    loadStats();
     const stageSel = document.getElementById('filter-stage');
     if (stageSel) stageSel.addEventListener('change', loadClients);
     const q = document.getElementById('filter-q');
@@ -54,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function loadCrm() {
-    await Promise.all([loadFunnel(), loadClients()]);
+    await Promise.all([loadFunnel(), loadClients(), loadBanks(), loadStats()]);
 }
 
 // Банки (PR-3): фикс-список + частоты. Грузим один раз для дропдаунов оплаты.
@@ -63,9 +67,100 @@ async function loadBanks() {
         const d = await apiClient.getCrmBanks();
         _banks = d.banks || [];
         _bankStats = d.stats || [];
+        renderBankStats();
     } catch (e) {
         _banks = [];
     }
+}
+
+function renderBankStats() {
+    const el = document.getElementById('bank-stats');
+    if (!el) return;
+    if (!_bankStats.length) {
+        el.innerHTML = '<span class="text-muted">Банки: пока нет оплат с указанием банка.</span>';
+        return;
+    }
+    const chips = _bankStats.map(s =>
+        `<span class="badge bg-body-secondary text-body border me-1">${escapeHtml(s.bank)}: ${s.count} · ${fmtMoney(s.total)}</span>`
+    ).join('');
+    el.innerHTML = `<span class="text-muted me-1">Куда чаще платят:</span> ${chips}`;
+}
+
+// Графики динамики (PR-7).
+async function loadStats() {
+    if (!window.Chart) return;  // Chart.js ещё не загрузился
+    const sel = document.getElementById('stats-days');
+    const days = parseInt(sel ? sel.value : '30', 10) || 30;
+    let d;
+    try {
+        d = await apiClient.getCrmTimeseries(days);
+    } catch (e) {
+        return;
+    }
+    renderOffersChart(d);
+    renderPaidChart(d);
+}
+
+function renderOffersChart(d) {
+    const ctx = document.getElementById('chart-offers');
+    if (!ctx) return;
+    if (_chartOffers) _chartOffers.destroy();
+    _chartOffers = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: d.labels,
+            datasets: [{
+                label: 'Предложений рекламы / день',
+                data: d.offers,
+                borderColor: '#fd7e14',
+                backgroundColor: 'rgba(253,126,20,0.15)',
+                fill: true,
+                tension: 0.25,
+            }],
+        },
+        options: {
+            plugins: { legend: { display: true, labels: { boxWidth: 12 } } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+        },
+    });
+}
+
+function renderPaidChart(d) {
+    const ctx = document.getElementById('chart-paid');
+    if (!ctx) return;
+    if (_chartPaid) _chartPaid.destroy();
+    _chartPaid = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: d.labels,
+            datasets: [
+                {
+                    label: 'Оплат / день',
+                    data: d.paid_count,
+                    borderColor: '#198754',
+                    backgroundColor: 'rgba(25,135,84,0.15)',
+                    fill: true,
+                    tension: 0.25,
+                    yAxisID: 'y',
+                },
+                {
+                    label: 'Сумма ₽ / день',
+                    data: d.paid_amount,
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13,110,253,0.10)',
+                    tension: 0.25,
+                    yAxisID: 'y1',
+                },
+            ],
+        },
+        options: {
+            plugins: { legend: { display: true, labels: { boxWidth: 12 } } },
+            scales: {
+                y: { beginAtZero: true, position: 'left', ticks: { precision: 0 } },
+                y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false } },
+            },
+        },
+    });
 }
 
 function bankSelectHtml(id, current) {
