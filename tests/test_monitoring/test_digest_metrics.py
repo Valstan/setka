@@ -7,8 +7,41 @@ import pytest
 from monitoring.metrics import (
     digest_last_published_timestamp,
     digest_published_total,
+    publish_result_label,
     track_digest_published,
 )
+
+# --------------------------------------------------------------------------- #
+# publish_result_label — регрессия 2026-06-05
+#
+# publish_digest() возвращает dict {"success": bool}, а call-sites обращались
+# к .success как к атрибуту → AttributeError на каждой публикации, heartbeat
+# #018 не писался, watchdog был молча мёртв.
+# --------------------------------------------------------------------------- #
+
+
+def test_publish_result_label_dict_success():
+    assert publish_result_label({"success": True, "via": "community-token"}) == "success"
+
+
+def test_publish_result_label_dict_failure():
+    assert publish_result_label({"success": False, "error": "VK 27"}) == "failed"
+
+
+def test_publish_result_label_dict_missing_key_is_failed():
+    assert publish_result_label({"posts_published": 0}) == "failed"
+
+
+def test_publish_result_label_tolerates_object_with_attr():
+    """Запас на исторические пути, где возвращался объект с .success."""
+    from types import SimpleNamespace
+
+    assert publish_result_label(SimpleNamespace(success=True)) == "success"
+    assert publish_result_label(SimpleNamespace(success=False)) == "failed"
+
+
+def test_publish_result_label_none_is_failed():
+    assert publish_result_label(None) == "failed"
 
 
 @pytest.fixture(autouse=True)
@@ -55,9 +88,9 @@ def test_track_digest_published_failed_does_not_update_timestamp():
     # Gauge для (tuzha, novost) не выставлен — children'а нет.
     # Доступ через ._metrics: dict labels → metric. Если ключ отсутствует — Gauge не был set.
     key = ("tuzha", "novost")
-    assert key not in digest_last_published_timestamp._metrics, (
-        "Gauge не должен апдейтиться на failed-публикации"
-    )
+    assert (
+        key not in digest_last_published_timestamp._metrics
+    ), "Gauge не должен апдейтиться на failed-публикации"
 
 
 def test_track_digest_published_empty_does_not_update_timestamp():

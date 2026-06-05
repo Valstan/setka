@@ -357,12 +357,15 @@ def parse_and_publish_theme(
                         )
                         results.append(("regular", digest, publish_result))
                         try:
-                            from monitoring.metrics import track_digest_published
+                            from monitoring.metrics import (
+                                publish_result_label,
+                                track_digest_published,
+                            )
 
                             track_digest_published(
                                 region=region.code,
                                 topic=theme,
-                                result="success" if publish_result.success else "failed",
+                                result=publish_result_label(publish_result),
                             )
                         except (
                             Exception
@@ -420,15 +423,18 @@ def parse_and_publish_theme(
                         )
                         results.append(("mourning", mourning_digest, mourning_pub))
                         try:
-                            from monitoring.metrics import track_digest_published
+                            from monitoring.metrics import (
+                                publish_result_label,
+                                track_digest_published,
+                            )
 
                             track_digest_published(
                                 region=region.code,
                                 topic="mourning",
-                                result="success" if mourning_pub.success else "failed",
+                                result=publish_result_label(mourning_pub),
                             )
                         except Exception:  # pragma: no cover
-                            logger.debug("track_digest_published failed", exc_info=True)
+                            logger.warning("track_digest_published failed", exc_info=True)
 
             # dry_run: read-only прогон — ничего не публикуем и не пишем в БД.
             # Возвращаем что было бы опубликовано (см. /regions/<code>/diagnostics).
