@@ -35,6 +35,7 @@ from web.api import (
     schedule_management,
     scheduler,
     service_notifications,
+    subscriber_growth,
     system_monitoring,
     task_monitoring,
 )
@@ -140,6 +141,9 @@ app.include_router(filtration.router, prefix="/api/filtration", tags=["Filtratio
 app.include_router(templates_api.router, prefix="/api/templates", tags=["Message Templates"])
 app.include_router(ad_cabinet.router, prefix="/api/ad-cabinet", tags=["Ad Cabinet"])
 app.include_router(ad_crm.router, prefix="/api/ad-crm", tags=["Ad CRM"])
+app.include_router(
+    subscriber_growth.router, prefix="/api/subscriber-growth", tags=["Subscriber Growth"]
+)
 app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Discovery"])
 
 
@@ -189,6 +193,12 @@ async def ad_cabinet_page(request: Request):
 async def ad_crm_page(request: Request):
     """CRM рекламного кабинета — клиенты, воронка, оплаты и публикации (блок C)."""
     return templates.TemplateResponse("ad_crm.html", {"request": request})
+
+
+@app.get("/subscriber-growth")
+async def subscriber_growth_page(request: Request):
+    """Сравнительная динамика роста подписчиков сообществ (один график + чекбоксы)."""
+    return templates.TemplateResponse("subscriber_growth.html", {"request": request})
 
 
 @app.get("/regions/new")

@@ -477,6 +477,16 @@ const apiClient = {
                 communitiesCount: 0
             };
         }
+    },
+
+    // Subscriber growth (comparison chart)
+    async getGrowthCommunities(days = 90) {
+        return this.request(`/subscriber-growth/communities?days=${days}`);
+    },
+
+    async getGrowthSeries(ids, days = 90) {
+        const csv = Array.isArray(ids) ? ids.join(',') : String(ids || '');
+        return this.request(`/subscriber-growth/series?ids=${encodeURIComponent(csv)}&days=${days}`);
     }
 };
 
