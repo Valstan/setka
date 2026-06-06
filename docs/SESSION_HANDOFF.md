@@ -5,56 +5,52 @@
 **Status:** IDLE
 **Updated:** 2026-06-06
 **Branch:** main
-**Last release in prod:** прод на `73d9b7f` — три PR в этой сессии, все смержены и задеплоены: #027 автономия (#167), black-drift фикс (#168), граф роста подписчиков (#169). 3/3 active, health 200, `GET /subscriber-growth` → 200, `GET /api/subscriber-growth/communities` → 200 (841 сообщество).
+**Last release in prod:** прод на `a24adbd` — фикс мониторинга #171 задеплоен (restart `setka`/web, без миграции), 3/3 active, health 200, `/api/monitoring/digests-status` → `dead:0, retired:1`.
 
 ---
 
 ## Текущая нитка
 
-_Нет — все три PR этой сессии (brain #027, black-drift, subscriber-growth R2) смержены и задеплоены. Открытая стартовая позиция._
+_Нет — фикс мониторинга (#171) смержен и задеплоен, браузер-верификация всего UI пройдена. Открытая стартовая позиция._
 
-В сессии 2026-06-06 сделано (3 PR + 3 деплоя):
-1. **Brain #027 — автономия под гейтами** ([#167](https://github.com/Valstan/setka/pull/167)): `defaultMode: auto` + ярусные allow/deny в `.claude/settings.json` (дублированы для Bash и PowerShell). Человеческий гейт #025 (destructive прод) сохранён поведенчески (prefix-match не различает read-only `ssh setka` от destructive, поэтому deny-правилом не выразить). Применяется со следующей сессии.
-2. **Зелёный pre-commit гейт** ([#168](https://github.com/Valstan/setka/pull/168)): 4 файла с black-дрейфом (24.10.0) приведены к канону — pre-commit `--all-files` теперь зелёный на main.
-3. **Graf роста подписчиков R2 + VK-probe** ([#169](https://github.com/Valstan/setka/pull/169)): страница `/subscriber-growth` (нав «Контент»), бэкенд `web/api/subscriber_growth.py` (`GET /communities` + `GET /series`), Chart.js мульти-серия с единой осью дат, чекбоксы/поиск/«Топ-5»/«Отстающие», gap-as-null, +11 тестов. Probe `scripts/probe_stats_get_capability.py` выявил: VK `stats.get` отдаёт reach/visitors **только admin-токену своих групп** → MVP по подписчикам. Brain acks: `mailbox/to-brain/2026-06-06-gated-autonomy-027-ack.md` и `mailbox/to-brain/2026-06-06-subscriber-growth-charts-ack.md`.
+В сессии 2026-06-06 (вечер) сделано:
+1. **Браузер-верификация всего UI на живом проде** (через SSH-туннель `localhost:8000` + Claude-in-Chrome). Прошли: Dashboard, /monitoring, /subscriber-growth (граф/тултип/поиск/Топ-5/Отстающие), /notifications (ЛС-роутер + активность-чарт), /ad-cabinet (+ планировщик B1/B2 composer, мультидата), /ad-crm, /communities, /regions, /posts, /templates, /tokens, /publisher. Все рендерятся, консоль чистая.
+2. **Находка через верификацию → фикс** ([#171](https://github.com/Valstan/setka/pull/171), `a24adbd`): на Dashboard «Состояние дайджестов» показывало ложное «мёртво: 1 → КИРОВСКАЯ ОБЛАСТЬ / oblast». Корень — `kirov_obl` 31.05 переехал с каскада (`theme='oblast'`) на community-mode (18 тем), beat-таски каскада сняты, но 134 легаси-строки `parsing_stats` с `theme='oblast'` остались в 30-дневном окне → классификатор красит пару `(kirov_obl, oblast)` как dead. Подтверждено read-only SQL: kirov_obl публикует 18 тем сегодня (~100% успех), а `(kirov_obl, oblast)` — единственная протухшая пара во всей БД.
+3. **Фикс** в `web/api/system_monitoring.py`: `_reclassify_retired(rows)` — «dead»-тема региона, у которого есть ≥1 `fresh`-тема, → `retired` (не тревога). Консервативно (нужен именно fresh, не stale). UI: index.html «снят: N» бейдж, monitoring.html статус «снят». +5 тестов (1047 зелёных). Эффект на проде: «мёртво: 1» → «мёртво: 0» + «снят: 1».
 
 ## Следующий шаг
 
 Активной нитки нет. Кандидатные стартовые точки (приоритет — за владельцем):
 
-1. **Браузер-верификация `/subscriber-growth`** — кривые осмысленны со второго дня снимков (04:00 MSK). Проверить после 2026-06-07: выбрать сообщества чекбоксами, убедиться что график строится, «Отстающие» работают.
-2. **Браузер-верификация `/notifications`** — ЛС-роутер (R1–R5, PR #164–#165): не-рекламное ЛС остаётся в «Входящих ЛС»; «Ответить» доходит; тред переписки; кнопки маршрутизации.
-3. **R3 еженедельный анализатор роста** — отложен до ≥1-2 недель снимков (сейчас 1 день, порог медианы нельзя калибровать на пустоте). Вернуться ~2026-06-20.
-4. **Smoke tuzha** — `/regions/tuzha/prepare` → OSM → re-trigger → `/discovery/ai-batch`. Пользовательский шаг (кнопки в браузере), не код.
-5. **Фазы 4/5 рекламного кабинета**: ML-классификатор (`classifier.classify`), авто-правила/follow-up.
+1. **R4-R5 in-app переписка ЛС** — верификация требует живого входящего не-рекламного ЛС в очереди `/notifications` → нажать «Ответить»/посмотреть тред. Пользовательский шаг (нужны живые данные).
+2. **B1/B2 отправка отложки** — composer верифицирован на UI-уровне (мультидата, тумблеры, цена→CRM). Реальная отправка не делалась (создала бы VK-отложку) — владельцу под реальный пост.
+3. **Браузер-верификация `/subscriber-growth` кривых** — осмысленны с 07.06 (второй снимок 04:00 MSK).
+4. **Smoke tuzha** — `/regions/tuzha/prepare` → OSM → re-trigger → `/discovery/ai-batch` (пользовательский шаг, PENDING ⏳).
+5. **Фазы 4/5 рекламного кабинета**: ML-классификатор, авто-правила/follow-up.
 
 ## Контекст
 
 - **План:** нет активного файла-плана; roadmap'ы — в `PENDING_FOLLOWUPS.md`.
-- **Связанные коммиты сессии (все на проде `73d9b7f`):**
-  - `206c5eb` / [#167](https://github.com/Valstan/setka/pull/167) — автономия под гейтами (brain #027 MANDATE)
-  - `eccf23d` / [#168](https://github.com/Valstan/setka/pull/168) — зелёный pre-commit гейт (black drift fix)
-  - `73d9b7f` / [#169](https://github.com/Valstan/setka/pull/169) — граф роста подписчиков R2 + VK-probe
-- **Прод:** HEAD `73d9b7f`, 3/3 active, health 200, 1042 теста зелёных на main.
-- **Открытых PR:** нет.
-- **Brain mailbox:** прочитаны все письма из `brain_matrica/mailboxes/setka/from-brain/`; acks отправлены за #027 и R2-граф. Оставшиеся письма (secrets/watchdog/probe/liveness/session-sync) — `suggest`-подтверждения уже реализованных ниток, действий не требуют.
+- **Связанные коммиты сессии:**
+  - `a24adbd` / [#171](https://github.com/Valstan/setka/pull/171) — retired-theme detection (фикс ложного «мёртво»)
+- **Прод:** HEAD `a24adbd`, 3/3 active, health 200, 1047 тестов зелёных на main. Деплой этой сессии — только restart `setka` (web), worker/beat не трогались.
+- **Открытых PR:** нет (handoff-PR этой сессии — см. ниже).
+- **Brain mailbox:** прочитаны все письма из `from-brain/`. Отправлена находка `mailbox/to-brain/2026-06-06-retired-vs-dead-monitoring-pattern.md` (рефлекс #009 — паттерн «мониторинг здоровья из исторических event-строк ложно-мёртвит снятые режимы»).
 
 ## Failed approaches (этой нитки)
 
-- **`gh pr merge --auto`** (`gh pr merge 167 --squash --auto --delete-branch`) — не работает в репо: «Auto merge is not allowed for this repository (enablePullRequestAutoMerge)». Заменили на `gh pr checks --watch`, затем `gh pr merge --squash --delete-branch` после CI. Гейт машинный, не требует ручного OK — соответствует #027.
-- **VK `stats.get` с `date_from`/`date_to`** — deprecated с VK 5.86, возвращает error [100]. Заменили на unix `timestamp_from`/`timestamp_to` + `interval="day"`. Probe-скрипт сохранён.
-- **Community-токен для `stats.get`** — VK error [27] `Group auth failed`. Только admin user-token для своих групп. Зафиксировано в probe-скрипте и brain ack.
+_Не было — диагноз подтвердился с первой гипотезы (ложная тревога мониторинга, не мёртвый регион), фикс прямой._
 
 ## Открытые вопросы для пользователя
 
-- Следующая нитка: браузер-верификация, R3 через 2 недели, tuzha smoke, фазы 4/5 кабинета, или иное?
+- Следующая нитка: R4-R5/B1-B2 верификация (нужны живые данные), tuzha smoke, фазы 4/5 кабинета, или иное?
 
 ## Не забыть (low-priority)
 
+- 🟢 **Счётчик «Главные/Вспомогательные токены: 0»** на `/tokens` при 19 валидных — возможная особенность категоризации (publisher видит 2 доступных токена, публикация идёт). Глянуть при случае (PENDING 🟢).
 - 🟢 **Браузер-верификация `/subscriber-growth`** — смотреть с 2026-06-07 (второй снимок).
-- 🟢 **Браузер-верификация ЛС-роутера** (`/notifications`) — живые не-рекламные ЛС.
-- 🟢 **R3 еженедельный анализатор** — вернуться ~2026-06-20 (нужны ≥2 недели снимков).
-- ⚠️ **VPS SSH периодически таймаутит** (~10-20s, порт 49237) — при деплое закладывать retry.
+- 🟢 **R4-R5 in-app переписка** — нужен живой входящий ЛС.
+- ⚠️ **VPS SSH периодически таймаутит** — при деплое закладывать retry.
 
 ---
 
