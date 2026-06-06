@@ -31,11 +31,18 @@ from database.models import Community, CommunityMemberSnapshot
 logger = logging.getLogger(__name__)
 
 
-def _pick_parse_token() -> Optional[str]:
-    """First VK user-token valid for READ right now (respects cooldown)."""
-    from modules.vk_token_router import get_active_parse_tokens_sync
+async def _resolve_parse_token() -> Optional[str]:
+    """First VK user-token valid for READ right now (DB-sourced, respects cooldown).
 
-    for name, tok in get_active_parse_tokens_sync().items():
+    Async on purpose: this module runs inside the task's event loop, so calling
+    the sync wrapper here would hit "another loop is running" and silently fall
+    back to env-only tokens (no cooldown filtering). We query the DB directly.
+    """
+    from modules.vk_token_router import get_active_parse_tokens
+
+    async with AsyncSessionLocal() as session:
+        tokens = await get_active_parse_tokens(session)
+    for name, tok in tokens.items():
         if tok:
             logger.debug("member-snapshots: using token %s", name)
             return tok
@@ -127,7 +134,7 @@ async def collect_member_snapshots(
     session_factory = session_factory or AsyncSessionLocal
 
     if fetch_members is None:
-        token = token or _pick_parse_token()
+        token = token or await _resolve_parse_token()
         if not token:
             logger.warning("member-snapshots: no active parse token — skipping")
             return {"success": False, "error": "no active parse token"}
