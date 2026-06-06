@@ -533,14 +533,22 @@ def scan_inbound_dm_ads():
 
         result = run_coro(run_dm_scan())
         new_total = int(result.get("new_total", 0))
-        if new_total > 0:
-            _maybe_alert_new_ads(new_total, result.get("regions", []), source_label="личке")
+        # Telegram-алерт — только про НОВУЮ рекламу в личке; не-рекламные ЛС видны в
+        # разделе «Уведомления» (Этап 1), отдельно ими не спамим.
+        new_ads_total = int(result.get("new_ads_total", 0))
+        if new_ads_total > 0:
+            _maybe_alert_new_ads(new_ads_total, result.get("regions", []), source_label="личке")
 
-        logger.info("ad cabinet DM scan done: %d new ad requests", new_total)
+        logger.info(
+            "ad cabinet DM scan done: %d new DM rows (%d ad → cabinet)",
+            new_total,
+            new_ads_total,
+        )
         return {
             "success": result.get("success", False),
             "timestamp": datetime.now().isoformat(),
             "new_total": new_total,
+            "new_ads_total": new_ads_total,
             "regions": result.get("regions", []),
         }
     except Exception as e:

@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _VALID_STATUSES = {"new", "contacted", "skipped", "published"}
+# Единый роутер входящих ЛС (Этап 1): куда направлено сообщение и наш статус обработки.
+_VALID_ROUTES = {"ad_cabinet", "notifications"}
+_VALID_HANDLING = {"new", "in_progress", "done"}
 
 # Время оператор вводит по Москве; VK ждёт unix (UTC). МСК = UTC+3, без DST.
 MSK = timezone(timedelta(hours=3))
@@ -50,6 +53,18 @@ class PrepareIn(BaseModel):
 
 class StatusIn(BaseModel):
     status: str
+
+
+class RouteIn(BaseModel):
+    """Сменить маршрут заявки/сообщения: 'ad_cabinet' | 'notifications' (R3)."""
+
+    route: str
+
+
+class HandlingIn(BaseModel):
+    """Наш статус обработки сообщения: 'new' | 'in_progress' | 'done' (R2)."""
+
+    handling_status: str
 
 
 class BulkActionIn(BaseModel):
@@ -119,6 +134,7 @@ def _parse_date(value: str) -> Optional[datetime]:
 async def list_requests(
     status: Optional[str] = None,
     origin: Optional[str] = None,
+    route: Optional[str] = None,
     community_vk_id: Optional[int] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
@@ -128,13 +144,17 @@ async def list_requests(
     """Список заявок с серверной фильтрацией, свежие сверху.
 
     ``origin`` — источник заявки (``suggested`` / ``inbound_dm``); без него —
-    все источники.
+    все источники. ``route`` — где «живёт» сообщение (``ad_cabinet`` /
+    ``notifications``); инбокс кабинета запрашивает ``route='ad_cabinet'``, чтобы
+    не-рекламные ЛС, отданные в уведомления, сюда не попадали.
     """
     stmt = select(AdRequest)
     if status:
         stmt = stmt.where(AdRequest.status == status)
     if origin:
         stmt = stmt.where(AdRequest.origin == origin)
+    if route:
+        stmt = stmt.where(AdRequest.route == route)
     if community_vk_id is not None:
         stmt = stmt.where(AdRequest.community_vk_id == community_vk_id)
     df = _parse_date(date_from) if date_from else None
@@ -331,6 +351,60 @@ async def set_status(
         summary=f"Статус заявки → {payload.status}",
         meta={"status": payload.status},
     )
+    await db.commit()
+    return ar.to_dict()
+
+
+@router.post("/requests/{request_id}/route")
+async def set_route(
+    request_id: int,
+    payload: RouteIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Перенести сообщение между кабинетом и уведомлениями (R3).
+
+    «Не реклама → в уведомления» (из `/ad-cabinet`) и «Это реклама → в кабинет»
+    (из `/notifications`) дёргают этот эндпоинт. Переезд сбрасывает наш статус
+    обработки в ``new`` — на новом месте сообщение всплывает как необработанное.
+    """
+    if payload.route not in _VALID_ROUTES:
+        raise HTTPException(status_code=400, detail="invalid route")
+    ar = await db.get(AdRequest, request_id)
+    if not ar:
+        raise HTTPException(status_code=404, detail="ad request not found")
+    ar.route = payload.route
+    ar.handling_status = "new"
+    ar.handled_at = None
+    log_interaction(
+        db,
+        kind="status_changed",
+        client_id=ar.client_id,
+        ad_request_id=ar.id,
+        summary=f"Маршрут → {payload.route}",
+        meta={"route": payload.route},
+    )
+    await db.commit()
+    return ar.to_dict()
+
+
+@router.post("/requests/{request_id}/handling")
+async def set_handling(
+    request_id: int,
+    payload: HandlingIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Сменить НАШ статус обработки сообщения (R2): new|in_progress|done.
+
+    Источник истины «обработано» — этот флаг, а не VK read/unread. ``done`` ставит
+    ``handled_at`` (для архива); любой другой статус его снимает (реоткрытие).
+    """
+    if payload.handling_status not in _VALID_HANDLING:
+        raise HTTPException(status_code=400, detail="invalid handling_status")
+    ar = await db.get(AdRequest, request_id)
+    if not ar:
+        raise HTTPException(status_code=404, detail="ad request not found")
+    ar.handling_status = payload.handling_status
+    ar.handled_at = datetime.utcnow() if payload.handling_status == "done" else None
     await db.commit()
     return ar.to_dict()
 

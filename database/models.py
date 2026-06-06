@@ -553,6 +553,16 @@ class AdRequest(Base):
         String(20), nullable=False, default="new", index=True
     )  # new|contacted|skipped|published
 
+    # Единый роутер входящих ЛС (Этап 1, миграция 032). Где сейчас «живёт» сообщение
+    # (инвариант R1: ровно одно текущее место) и наш собственный статус обработки
+    # (R2 — источник истины вместо VK read/unread). Для предложки оба остаются на
+    # дефолтах (заявка всегда в кабинете).
+    route = Column(
+        String(16), nullable=False, default="ad_cabinet", index=True
+    )  # ad_cabinet|notifications
+    handling_status = Column(String(16), nullable=False, default="new")  # new|in_progress|done
+    handled_at = Column(DateTime, nullable=True)  # когда оператор пометил обработанным
+
     # CRM (блок C): к какому клиенту привязана заявка (миграция 027). FK SET NULL.
     client_id = Column(BigInteger, ForeignKey("ad_clients.id", ondelete="SET NULL"), nullable=True)
 
@@ -600,6 +610,9 @@ class AdRequest(Base):
             "score": self.score,
             "reasons_json": self.reasons_json,
             "status": self.status,
+            "route": self.route,
+            "handling_status": self.handling_status,
+            "handled_at": self.handled_at.isoformat() if self.handled_at else None,
             "client_id": self.client_id,
             "can_message": self.can_message,
             "can_message_checked_at": (

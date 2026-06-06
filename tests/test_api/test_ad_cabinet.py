@@ -469,3 +469,78 @@ async def test_list_requests_origin_filter():
     out = await api.list_requests(origin="inbound_dm", db=db)
     assert len(out["requests"]) == 1
     assert out["requests"][0]["origin"] == "inbound_dm"
+
+
+async def test_list_requests_route_filter():
+    """route прокидывается в WHERE (инбокс кабинета берёт route='ad_cabinet')."""
+    ar = _ad_request(origin="inbound_dm", vk_post_id=None, route="ad_cabinet")
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalars_all([ar]))
+    out = await api.list_requests(route="ad_cabinet", db=db)
+    assert out["requests"][0]["route"] == "ad_cabinet"
+
+
+# ------------------------------------------------ route / handling (Этап 1)
+
+
+async def test_set_route_moves_to_notifications_and_resets_handling():
+    """«Не реклама → в уведомления»: route меняется, handling сбрасывается в new."""
+    ar = _ad_request(origin="inbound_dm", vk_post_id=None, route="ad_cabinet")
+    ar.handling_status = "done"
+    from datetime import datetime
+
+    ar.handled_at = datetime.utcnow()
+    db = AsyncMock()
+    db.add = MagicMock()  # log_interaction → session.add (синхронно)
+    db.get = AsyncMock(return_value=ar)
+    out = await api.set_route(1, api.RouteIn(route="notifications"), db=db)
+    assert out["route"] == "notifications"
+    assert ar.route == "notifications"
+    assert ar.handling_status == "new"
+    assert ar.handled_at is None
+    db.commit.assert_awaited()
+
+
+async def test_set_route_invalid():
+    db = AsyncMock()
+    with pytest.raises(HTTPException) as exc:
+        await api.set_route(1, api.RouteIn(route="bogus"), db=db)
+    assert exc.value.status_code == 400
+
+
+async def test_set_route_404():
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.set_route(999, api.RouteIn(route="notifications"), db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_set_handling_done_stamps_handled_at():
+    ar = _ad_request(origin="inbound_dm", vk_post_id=None, route="notifications")
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=ar)
+    out = await api.set_handling(1, api.HandlingIn(handling_status="done"), db=db)
+    assert out["handling_status"] == "done"
+    assert ar.handling_status == "done"
+    assert ar.handled_at is not None
+
+
+async def test_set_handling_reopen_clears_handled_at():
+    from datetime import datetime
+
+    ar = _ad_request(origin="inbound_dm", vk_post_id=None, route="notifications")
+    ar.handling_status = "done"
+    ar.handled_at = datetime.utcnow()
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=ar)
+    await api.set_handling(1, api.HandlingIn(handling_status="in_progress"), db=db)
+    assert ar.handling_status == "in_progress"
+    assert ar.handled_at is None
+
+
+async def test_set_handling_invalid():
+    db = AsyncMock()
+    with pytest.raises(HTTPException) as exc:
+        await api.set_handling(1, api.HandlingIn(handling_status="bogus"), db=db)
+    assert exc.value.status_code == 400

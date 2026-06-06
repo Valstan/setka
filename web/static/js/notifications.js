@@ -2,6 +2,7 @@
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadNotifications();
+    await loadCommunityDmInbox();
     await loadActivityWidget();
     await loadHotPosts();
     // Deep-link from Telegram inline buttons: #section=messages|comments|suggested
@@ -307,6 +308,132 @@ function loadUnreadMessages(unreadMessages, deniedGroups) {
     }).join('');
     list.innerHTML = `<div class="notif-grid">${cards}</div>`;
     list.style.display = 'block';
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Community DM inbox (Этап 1 — багфикс потери ЛС). Источник — наш стор
+// (ad_requests, route='notifications'), а не живой VK unread-счётчик выше.
+// Не-рекламные входящие ЛС держатся тут, пока оператор не пометит «Обработано».
+// Ответ в интерфейсе (R4) — это Этап 2 (probe-gated); пока отвечаем в VK по ссылке.
+// ─────────────────────────────────────────────────────────────────
+
+async function loadCommunityDmInbox() {
+    const loading = document.getElementById('community-dm-loading');
+    const empty = document.getElementById('community-dm-empty');
+    const list = document.getElementById('community-dm-list');
+    const countBadge = document.getElementById('community-dm-count');
+    try {
+        const resp = await fetch('/api/notifications/community-dm');
+        if (loading) loading.style.display = 'none';
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const messages = data.messages || [];
+        if (countBadge) {
+            countBadge.textContent = messages.length;
+            countBadge.style.display = messages.length ? '' : 'none';
+        }
+        if (messages.length === 0) {
+            empty.style.display = 'block';
+            list.style.display = 'none';
+            return;
+        }
+        empty.style.display = 'none';
+        list.innerHTML = `<div class="notif-grid">${messages.map(renderCommunityDmCard).join('')}</div>`;
+        list.style.display = 'block';
+    } catch (e) {
+        if (loading) loading.style.display = 'none';
+        console.warn('Community DM inbox failed:', e);
+    }
+}
+
+function renderCommunityDmCard(m) {
+    const community = escapeHtml(m.community_name || 'Сообщество');
+    const author = escapeHtml(m.author_name || (m.author_is_group ? 'Сообщество' : `id${m.peer_id}`));
+    const text = escapeHtml(m.text_snapshot || '');
+    // «Ответить в диалог» — deeplink в VK (in-app ответ — Этап 2, probe-gated).
+    const dialogLink = m.dialog_url ? `
+        <a href="${m.dialog_url}" target="_blank" rel="noopener noreferrer"
+           class="btn btn-sm btn-outline-primary" title="Открыть диалог в VK и ответить">
+            <i class="bi bi-reply"></i> Ответить в VK
+            <i class="bi bi-box-arrow-up-right" style="font-size:0.7em;"></i>
+        </a>` : '';
+    return `
+        <div class="notif-card bg-primary-tint" data-ad-request-id="${m.id}">
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi bi-person-circle text-primary"></i>
+                <h6 class="mb-0 flex-grow-1">${author}</h6>
+                <span class="badge bg-primary-subtle text-primary-emphasis">${community}</span>
+            </div>
+            <div class="notif-body-text">${text || '<em>(без текста)</em>'}</div>
+            <div class="notif-actions">
+                ${dialogLink}
+                <button class="btn btn-sm btn-outline-warning" title="Это реклама → перенести в рекламный кабинет"
+                        onclick="moveDmToCabinet(${m.id}, this)">
+                    <i class="bi bi-megaphone"></i> Это реклама
+                </button>
+                <button class="btn btn-sm btn-outline-success ms-auto" title="Отметить обработанным"
+                        onclick="markDmHandled(${m.id}, this)">
+                    <i class="bi bi-check2"></i> Обработано
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+async function markDmHandled(adRequestId, btn) {
+    btn.disabled = true;
+    try {
+        const resp = await fetch(`/api/ad-cabinet/requests/${adRequestId}/handling`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({handling_status: 'done'}),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        fadeOutDmCard(btn);
+    } catch (e) {
+        btn.disabled = false;
+        showToast(`Не удалось отметить: ${e.message}`);
+    }
+}
+
+async function moveDmToCabinet(adRequestId, btn) {
+    btn.disabled = true;
+    try {
+        const resp = await fetch(`/api/ad-cabinet/requests/${adRequestId}/route`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({route: 'ad_cabinet'}),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        fadeOutDmCard(btn);
+        showToast('Перенесено в рекламный кабинет', 'success', 3000);
+    } catch (e) {
+        btn.disabled = false;
+        showToast(`Не удалось перенести: ${e.message}`);
+    }
+}
+
+// Fade out the card, then refresh the section counter / empty-state.
+function fadeOutDmCard(btn) {
+    const card = btn.closest('.notif-card');
+    if (!card) return;
+    card.style.transition = 'opacity 0.3s';
+    card.style.opacity = '0.2';
+    setTimeout(() => {
+        card.remove();
+        const list = document.getElementById('community-dm-list');
+        const remaining = list ? list.querySelectorAll('.notif-card').length : 0;
+        const badge = document.getElementById('community-dm-count');
+        if (badge) {
+            badge.textContent = remaining;
+            badge.style.display = remaining ? '' : 'none';
+        }
+        if (remaining === 0) {
+            if (list) list.style.display = 'none';
+            const empty = document.getElementById('community-dm-empty');
+            if (empty) empty.style.display = 'block';
+        }
+    }, 300);
 }
 
 function escapeHtml(str) {
