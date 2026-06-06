@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Рост подписчиков - SETKA{% endblock %}
+{% block nav_subscriber_growth %}active{% endblock %}
+{% block nav_section_content %}active{% endblock %}
+
+{% block content %}
+<div class="subscriber-growth-page mx-auto" style="max-width: 1100px;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1><i class="bi bi-graph-up-arrow"></i> Рост подписчиков</h1>
+        <div class="d-flex gap-2 align-items-center">
+            <select class="form-select form-select-sm" id="growth-days" style="width:auto;">
+                <option value="14">14 дней</option>
+                <option value="30">30 дней</option>
+                <option value="90" selected>90 дней</option>
+                <option value="365">Год</option>
+            </select>
+            <button class="btn btn-outline-secondary btn-sm" id="growth-refresh">
+                <i class="bi bi-arrow-clockwise"></i> Обновить
+            </button>
+        </div>
+    </div>
+    <p class="text-muted">
+        Сравнительная динамика числа подписчиков сообществ — все на одном графике,
+        галочками выбираете, кого показать, и сравниваете кривые. Метрика —
+        подписчики (просмотры/охват VK отдаёт только админам своих групп, поэтому
+        как сравнение по всем сообществам недоступны). Снимки копятся раз в сутки;
+        кривая наполняется по мере накопления точек (история задним числом не строится).
+    </p>
+
+    <!-- График -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <div id="growth-empty" class="text-muted small d-none">
+                Пока нет накопленных снимков для графика — загляните через несколько дней.
+            </div>
+            <canvas id="chart-growth" height="140"></canvas>
+        </div>
+    </div>
+
+    <!-- Панель выбора сообществ -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                <h6 class="mb-0"><i class="bi bi-check2-square"></i> Сообщества
+                    <span class="text-muted small" id="growth-summary"></span>
+                </h6>
+                <div class="d-flex flex-wrap gap-2">
+                    <input type="search" class="form-control form-control-sm" id="growth-search"
+                           placeholder="Поиск по названию…" style="width: 220px;">
+                    <button class="btn btn-outline-primary btn-sm" id="growth-pick-top">Топ-5 растущих</button>
+                    <button class="btn btn-outline-warning btn-sm" id="growth-pick-laggards">Отстающие</button>
+                    <button class="btn btn-outline-secondary btn-sm" id="growth-clear">Снять все</button>
+                </div>
+            </div>
+            <div id="growth-list" class="row g-1" style="max-height: 360px; overflow-y: auto;">
+                <div class="text-muted small">Загрузка…</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/js/subscriber_growth.js?v=20260606"></script>
+{% endblock %}
