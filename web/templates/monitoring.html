@@ -295,6 +295,7 @@
 .digests-status-stale  { background: #fff3cd; color: #664d03; }
 .digests-status-broken { background: #f8d7da; color: #58151c; }
 .digests-status-dead   { background: #e2e3e5; color: #41464b; }
+.digests-status-retired { background: #f1f3f5; color: #868e96; }
 .digests-row-broken td { background: rgba(220, 53, 69, 0.06); }
 .digests-row-dead   td { background: rgba(108, 117, 125, 0.06); }
 </style>
@@ -373,6 +374,7 @@ const _DIGEST_STATUS_TEXT = {
     stale:  { label: 'устаревает', cls: 'digests-status-stale',  icon: 'bi-clock-history' },
     broken: { label: 'сломано', cls: 'digests-status-broken', icon: 'bi-exclamation-triangle-fill' },
     dead:   { label: 'мёртво', cls: 'digests-status-dead',   icon: 'bi-x-circle' },
+    retired:{ label: 'снят', cls: 'digests-status-retired', icon: 'bi-archive' },
 };
 
 async function loadDigestsStatus() {
@@ -388,7 +390,7 @@ async function loadDigestsStatus() {
         const { rows, summary, thresholds } = json.data;
 
         // Summary badges
-        const order = ['broken', 'dead', 'stale', 'fresh'];
+        const order = ['broken', 'dead', 'stale', 'fresh', 'retired'];
         badges.innerHTML = order.map(k => {
             const st = _DIGEST_STATUS_TEXT[k] || {};
             return `<span class="badge ${st.cls || 'bg-light text-dark'}">

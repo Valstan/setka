@@ -127,6 +127,7 @@ async function loadHomeDigestsStatus() {
             <span class="badge bg-warning text-dark">устаревает: ${summary.stale || 0}</span>
             <span class="badge bg-danger">сломано: ${summary.broken || 0}</span>
             <span class="badge bg-secondary">мёртво: ${summary.dead || 0}</span>
+            ${summary.retired ? `<span class="badge bg-light text-muted border" title="Снятые режимы публикации (исторические строки parsing_stats у активного региона) — не тревога">снят: ${summary.retired}</span>` : ''}
         `;
         loading.style.display = 'none';
 

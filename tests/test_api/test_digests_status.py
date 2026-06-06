@@ -16,7 +16,12 @@ from web.api.system_monitoring import (
     _DIGEST_STATUS_FRESH_HOURS,
     _DIGEST_STATUS_STALE_HOURS,
     _classify_digest_row,
+    _reclassify_retired,
 )
+
+
+def _row(region_code: str, theme: str, status: str) -> dict:
+    return {"region_code": region_code, "theme": theme, "status": status}
 
 
 def _now() -> datetime:
@@ -113,3 +118,66 @@ def test_classify_recent_run_no_success_history_dead():
         )
         == "dead"
     )
+
+
+# ── _reclassify_retired: «dead»-тема живого региона → «retired» ──────────────
+
+
+def test_retired_dead_theme_in_live_region_becomes_retired():
+    """kirov_obl-сценарий: регион активно публикует (fresh), а одна давно
+    снятая тема (cascade theme='oblast') иначе светилась бы ложным «мёртво»."""
+    rows = [
+        _row("kirov_obl", "novost", "fresh"),
+        _row("kirov_obl", "sport", "fresh"),
+        _row("kirov_obl", "oblast", "dead"),
+    ]
+    _reclassify_retired(rows)
+    by_theme = {r["theme"]: r["status"] for r in rows}
+    assert by_theme["oblast"] == "retired"
+    assert by_theme["novost"] == "fresh"
+    assert by_theme["sport"] == "fresh"
+
+
+def test_retired_dead_theme_in_dead_region_stays_dead():
+    """Регион встал по всем темам (нет ни одной fresh) — dead остаётся dead,
+    тревогу не маскируем."""
+    rows = [
+        _row("zaglohshiy", "novost", "dead"),
+        _row("zaglohshiy", "sport", "dead"),
+    ]
+    _reclassify_retired(rows)
+    assert all(r["status"] == "dead" for r in rows)
+
+
+def test_retired_requires_fresh_not_stale():
+    """Консервативно: если самая свежая тема региона лишь stale (подостыл),
+    давно молчащую тему НЕ маскируем — могла начаться деградация."""
+    rows = [
+        _row("ostyvayushiy", "novost", "stale"),
+        _row("ostyvayushiy", "oblast", "dead"),
+    ]
+    _reclassify_retired(rows)
+    by_theme = {r["theme"]: r["status"] for r in rows}
+    assert by_theme["oblast"] == "dead"
+
+
+def test_retired_is_region_scoped():
+    """Живость одного региона не «оживляет» снятую тему другого региона."""
+    rows = [
+        _row("alive", "novost", "fresh"),
+        _row("other", "oblast", "dead"),
+    ]
+    _reclassify_retired(rows)
+    by_region = {r["region_code"]: r["status"] for r in rows}
+    assert by_region["other"] == "dead"
+
+
+def test_retired_leaves_fresh_stale_broken_untouched():
+    """Downgrade трогает только dead-строки; прочие статусы не меняются."""
+    rows = [
+        _row("r", "a", "fresh"),
+        _row("r", "b", "stale"),
+        _row("r", "c", "broken"),
+    ]
+    _reclassify_retired(rows)
+    assert [r["status"] for r in rows] == ["fresh", "stale", "broken"]
