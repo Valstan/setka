@@ -571,6 +571,26 @@ def reconcile_scheduled_publications():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.collect_member_snapshots")
+def collect_member_snapshots():
+    """Суточный снимок числа подписчиков активных сообществ (04:00 MSK).
+
+    Тянет `groups.getById(fields=members_count)` батчами и пишет по строке на
+    (сообщество, день) в `community_member_snapshots` — фундамент будущего
+    графика роста подписчиков. Идемпотентно за день (upsert).
+    """
+    logger.info("Collecting community member-count snapshots...")
+    try:
+        from modules.members_snapshot import collect_member_snapshots as _collect
+
+        result = run_coro(_collect())
+        logger.info("member snapshots done: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"collect_member_snapshots failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.check_unread_messages")
 def check_unread_messages():
     """Проверка непрочитанных сообщений в главных группах регионов.
@@ -954,6 +974,15 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute="45", hour="8-22"),
         "options": {
             "expires": 1500,
+            "catchup": False,
+        },
+    },
+    # Суточный снимок числа подписчиков сообществ (фундамент графика роста) — 04:00 MSK
+    "collect-member-snapshots-daily": {
+        "task": "tasks.celery_app.collect_member_snapshots",
+        "schedule": crontab(minute=0, hour=4),
+        "options": {
+            "expires": 3600,
             "catchup": False,
         },
     },
