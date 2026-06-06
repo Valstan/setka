@@ -35,3 +35,182 @@ def test_copy_setka_disabled(monkeypatch):
     from config.runtime import copy_setka_disabled
 
     assert copy_setka_disabled() is True
+
+
+# ---------------------------------------------------------------------------
+# Перебор parse-токенов при чтении частной стены-источника (фикс 2026-06-07)
+# ---------------------------------------------------------------------------
+
+
+class _FakeScalars:
+    def __init__(self, items):
+        self._items = list(items)
+
+    def first(self):
+        return self._items[0] if self._items else None
+
+    def all(self):
+        return list(self._items)
+
+
+class _FakeResult:
+    def __init__(self, items):
+        self._items = items
+
+    def scalars(self):
+        return _FakeScalars(self._items)
+
+
+class _FakeSession:
+    """Отдаёт заранее заготовленные результаты на каждый execute() по очереди."""
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.commits = 0
+
+    async def execute(self, _query):
+        return _FakeResult(self._results.pop(0))
+
+    async def commit(self):
+        self.commits += 1
+
+    def add(self, _obj):
+        pass
+
+    async def refresh(self, _obj):
+        pass
+
+
+class _WorkTable:
+    def __init__(self):
+        self.region_code = "copy"
+        self.theme = "setka"
+        self.lip = []
+        self.hash = []
+
+
+class _Region:
+    def __init__(self, code, vk_group_id):
+        self.code = code
+        self.vk_group_id = vk_group_id
+        self.is_active = True
+
+
+def _patch_copy_setka_deps(stack, *, parse_tokens, wall_by_token, publisher):
+    """Заглушить внешние зависимости execute_copy_setka_network.
+
+    ``wall_by_token`` — dict {token_value: [posts]} (что вернёт get_wall_posts).
+    """
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    import config.runtime as rt
+
+    @contextmanager
+    def _p(target, **kw):
+        with patch(target, **kw) as m:
+            yield m
+
+    # config.runtime
+    stack.enter_context(_p("config.runtime.copy_setka_disabled", return_value=False))
+    stack.enter_context(
+        _p("config.runtime.get_copy_setka_source_owner_id", return_value=-167381590)
+    )
+    stack.enter_context(_p("config.runtime.get_copy_setka_max_post_age_hours", return_value=48.0))
+    stack.enter_context(_p("config.runtime.get_copy_setka_repost_message", return_value=""))
+    stack.enter_context(_p("config.runtime.get_copy_setka_target_region_codes", return_value=None))
+    assert rt  # keep import used
+
+    async def _fake_get_tokens(_session):
+        return dict(parse_tokens)
+
+    stack.enter_context(
+        _p("modules.vk_token_router.get_active_parse_tokens", side_effect=_fake_get_tokens)
+    )
+
+    def _fake_vkclient(token):
+        from unittest.mock import MagicMock
+
+        m = MagicMock()
+        m.get_wall_posts.return_value = list(wall_by_token.get(token, []))
+        return m
+
+    stack.enter_context(_p("modules.vk_monitor.vk_client.VKClient", side_effect=_fake_vkclient))
+
+    async def _create_with_policy(*_a, **_k):
+        return publisher
+
+    stack.enter_context(
+        _p(
+            "modules.publisher.vk_publisher_extended.VKPublisher.create_with_policy",
+            side_effect=_create_with_policy,
+        )
+    )
+
+    # Region / WorkTable НЕ патчим: реальные SQLAlchemy-модели нужны для
+    # построения select(...).where(...). _FakeSession всё равно игнорирует
+    # запрос и отдаёт подставные инстансы (_WorkTable / _Region) из canned-
+    # результатов.
+
+    stack.enter_context(_p("utils.post_utils.lip_of_post", side_effect=lambda o, p: f"{o}_{p}"))
+    stack.enter_context(_p("utils.post_utils.clear_copy_history", side_effect=lambda post: post))
+    stack.enter_context(_p("utils.vk_attachments.extract_vk_attachments", return_value={}))
+    stack.enter_context(_p("utils.vk_attachments.build_attachments_list", return_value=[]))
+
+    # стабильное "сейчас" для проверки возраста поста
+    stack.enter_context(_p("modules.copy_setka_network.time.time", return_value=1_000_000))
+
+
+async def test_copy_setka_skips_nonmember_token_and_uses_member(monkeypatch):
+    """Первый токен не видит частную стену (error 15 → []), берётся второй."""
+    from contextlib import ExitStack
+    from unittest.mock import AsyncMock
+
+    from modules.copy_setka_network import execute_copy_setka_network
+
+    fresh_post = {"owner_id": -167381590, "id": 555, "date": 999_990, "text": "новость"}
+    publisher = AsyncMock()
+    publisher.publish_digest.return_value = {"success": True, "url": "https://vk.com/wall-1_1"}
+
+    session = _FakeSession([[_WorkTable()], [_Region("ur", -168170215)]])
+
+    with ExitStack() as stack:
+        _patch_copy_setka_deps(
+            stack,
+            # порядок важен: НЕ-участник первым (имитируем недетерминированный
+            # порядок из get_active_parse_tokens без ORDER BY)
+            parse_tokens={"VITA": "TOK_NONMEMBER", "VALSTAN": "TOK_MEMBER"},
+            wall_by_token={"TOK_MEMBER": [fresh_post]},  # TOK_NONMEMBER → []
+            publisher=publisher,
+        )
+        out = await execute_copy_setka_network(session)
+
+    assert out["success"] is True
+    assert out["posts_published"] == 1
+    assert out["mode"] == "wall.post copy"
+    publisher.publish_digest.assert_awaited_once()
+
+
+async def test_copy_setka_reports_when_no_token_can_read(monkeypatch):
+    """Если ни один токен не читает стену — корректный no-op, без падения."""
+    from contextlib import ExitStack
+    from unittest.mock import AsyncMock
+
+    from modules.copy_setka_network import execute_copy_setka_network
+
+    publisher = AsyncMock()
+    session = _FakeSession([[_WorkTable()], [_Region("ur", -168170215)]])
+
+    with ExitStack() as stack:
+        _patch_copy_setka_deps(
+            stack,
+            parse_tokens={"VITA": "TOK_A", "VALSTAN": "TOK_B"},
+            wall_by_token={},  # оба токена → []
+            publisher=publisher,
+        )
+        out = await execute_copy_setka_network(session)
+
+    assert out["success"] is True
+    assert out["posts_published"] == 0
+    assert out["message"] == "no posts on source wall"
+    publisher.publish_digest.assert_not_called()

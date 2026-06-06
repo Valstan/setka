@@ -100,9 +100,6 @@ async def execute_copy_setka_network(
             "stats": _empty_stats(),
         }
 
-    parse_token = next(iter(parse_tokens.values()))
-    vk = VKClient(parse_token)
-
     result = await session.execute(
         select(WorkTable).where(
             WorkTable.region_code == "copy",
@@ -118,16 +115,46 @@ async def execute_copy_setka_network(
 
     known: Set[str] = set(wt.lip or [])
 
-    posts: List[Dict[str, Any]] = await asyncio.to_thread(
-        vk.get_wall_posts, source_owner_id, WALL_FETCH_COUNT, 0
-    )
+    # Источник copy_by_setka — ЧАСТНАЯ группа (is_closed=2): wall.get отдаёт
+    # VK error 15 («доступна только участникам сообщества») для токенов, чей
+    # аккаунт в ней не состоит. get_active_parse_tokens идёт без ORDER BY →
+    # порядок строк из Postgres недетерминирован (плавает после last_used-
+    # апдейтов), и слепой «первый токен» периодически попадал на НЕ-участника
+    # → get_wall_posts глотал error 15 и возвращал [] → «no posts on source
+    # wall», и вся сеть переставала размножать посты (инцидент 2026-06-07,
+    # после ротации токенов 2026-05-28). Поэтому перебираем все активные READ-
+    # токены и берём первый, которым стена реально читается.
+    posts: List[Dict[str, Any]] = []
+    used_token_name: Optional[str] = None
+    for tok_name, tok in parse_tokens.items():
+        fetched = await asyncio.to_thread(
+            VKClient(tok).get_wall_posts, source_owner_id, WALL_FETCH_COUNT, 0
+        )
+        if fetched:
+            posts = fetched
+            used_token_name = tok_name
+            break
+        logger.info(
+            "copy-setka: стена источника %s недоступна/пуста токеном %s — пробую следующий",
+            source_owner_id,
+            tok_name,
+        )
+
     if not posts:
+        logger.warning(
+            "copy-setka: ни один из %d активных READ-токенов не смог прочитать "
+            "стену источника %s (частная группа? аккаунт-участник в cooldown?)",
+            len(parse_tokens),
+            source_owner_id,
+        )
         return {
             "success": True,
             "message": "no posts on source wall",
             "posts_published": 0,
             "stats": _empty_stats(),
         }
+
+    logger.info("copy-setka: стена источника прочитана токеном %s", used_token_name)
 
     max_age = int(get_copy_setka_max_post_age_hours() * 3600)
     now_ts = int(time.time())
