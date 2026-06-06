@@ -49,9 +49,7 @@ def _load_json_env(name: str, default: Any) -> Any:
                 repaired = raw.strip()
                 if repaired.startswith("{") and repaired.endswith("}"):
                     # Quote keys: {foo:1,bar:baz} -> {"foo":1,"bar":baz}
-                    repaired = re.sub(
-                        r"([{,])\s*([A-Za-z0-9_]+)\s*:", r'\1"\2":', repaired
-                    )
+                    repaired = re.sub(r"([{,])\s*([A-Za-z0-9_]+)\s*:", r'\1"\2":', repaired)
 
                     # Quote bareword string values (but keep numbers/bools/null unquoted).
                     def _quote_bare_value(m: re.Match[str]) -> str:
@@ -185,9 +183,7 @@ def _csv_token_names(raw: Optional[str]) -> list:
     """Parse CSV with token names; uppercase + strip + drop empties."""
     if not raw:
         return []
-    return [
-        item.strip().upper() for item in str(raw).split(",") if item and item.strip()
-    ]
+    return [item.strip().upper() for item in str(raw).split(",") if item and item.strip()]
 
 
 def get_publish_token_names() -> list:
@@ -259,9 +255,7 @@ def validate_publish_token(token: str, token_name: str = "") -> bool:
     # whitelist'а — пропускаем.
     for name, env_token in VK_TOKENS.items():
         if env_token == token:
-            return name.upper() not in never and (
-                not whitelist or name.upper() in whitelist
-            )
+            return name.upper() not in never and (not whitelist or name.upper() in whitelist)
     return False
 
 

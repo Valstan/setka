@@ -193,9 +193,7 @@ def test_build_rate_limiter_redis_when_available(monkeypatch):
     monkeypatch.setenv("VK_RATE_LIMIT_BACKEND", "redis")
     fake_client = MagicMock()
     fake_client.register_script.return_value = MagicMock(return_value=0)
-    with patch(
-        "modules.vk_monitor.rate_limiter._build_redis_client", return_value=fake_client
-    ):
+    with patch("modules.vk_monitor.rate_limiter._build_redis_client", return_value=fake_client):
         limiter = build_rate_limiter(interval=0.25)
     assert isinstance(limiter, RedisRateLimiter)
     assert limiter.interval == pytest.approx(0.25)
@@ -255,9 +253,9 @@ def test_redis_rate_limiter_wait_sleeps_returned_amount():
     elapsed = time.monotonic() - t0
 
     # 30% slack на Windows timer jitter и CI shared runners.
-    assert elapsed >= wait_ms / 1000.0 * 0.7, (
-        f"expected >= {wait_ms * 0.7:.0f}ms, got {elapsed * 1000:.1f}ms"
-    )
+    assert (
+        elapsed >= wait_ms / 1000.0 * 0.7
+    ), f"expected >= {wait_ms * 0.7:.0f}ms, got {elapsed * 1000:.1f}ms"
     assert elapsed < 0.5, f"unexpectedly slow: {elapsed * 1000:.1f}ms"
 
 

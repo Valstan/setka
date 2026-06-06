@@ -117,9 +117,7 @@ class RedisRateLimiter:
     def wait(self, token: str) -> None:
         now_ms = int(time.time() * 1000)
         try:
-            wait_ms = self._script(
-                keys=[self._key(token)], args=[now_ms, self.interval_ms]
-            )
+            wait_ms = self._script(keys=[self._key(token)], args=[now_ms, self.interval_ms])
         except Exception as e:
             # Redis недоступен в момент вызова (timeout, disconnect). Логируем
             # и не блокируем выполнение — это не критичная защита, а гигиена.
@@ -173,9 +171,7 @@ def build_rate_limiter(interval: float, backend: Optional[str] = None) -> RateLi
     if backend == "redis":
         client = _build_redis_client()
         if client is not None:
-            logger.info(
-                "VKClient rate-limit backend: redis (interval=%.3fs)", interval
-            )
+            logger.info("VKClient rate-limit backend: redis (interval=%.3fs)", interval)
             return RedisRateLimiter(client, interval)
         # fallback
         logger.warning("VKClient rate-limit: redis requested but unavailable — using threading")
