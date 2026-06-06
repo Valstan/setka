@@ -3,59 +3,49 @@
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
 **Status:** IDLE
-**Updated:** 2026-06-05
+**Updated:** 2026-06-06
 **Branch:** main
-**Last release in prod:** прод на `7f5ea30` (#158). Серия «интерактивный рекламный кабинет» + правки уведомлений **задеплоены и верифицированы**: миграции 028-030 применены, 3/3 сервиса active, health 200, smoke-test OK (`posts_parsed=3, would_publish=1`), новые эндпоинты `/api/ad-crm/{funnel,banks,stats/timeseries}`→200.
+**Last release in prod:** прод на `33bdf6d` — всё этой сессии задеплоено и верифицировано: clipboard-fallback AI-черновика (#160, restart web), инфра снимков подписчиков (#161, миграция 031 + restart worker/beat) и фикс async-резолва токена (#162, restart worker). 3/3 сервиса active, health 200, первый снимок подписчиков засеян вживую (841/896).
 
 ---
 
 ## Текущая нитка
 
-_Нет активной нитки — вся запланированная серия закрыта, задеплоена, проверена round-trip'ом._ Открытая стартовая позиция.
+_Нет — приборка хвостов + инфра графика подписчиков закрыты, задеплоены и проверены round-trip'ом._ Открытая стартовая позиция.
 
-В сессии 2026-06-05 сделано (8 PR + деплой):
-1. **Уведомления** ([#150](https://github.com/Valstan/setka/pull/150), [#158](https://github.com/Valstan/setka/pull/158)) — текст непрочитанных ЛС + кликабельные плашки; дата предложения постов («в предложке с … (N дн.)») вместо времени проверки.
-2. **Smoke-test после деплоя** ([#151](https://github.com/Valstan/setka/pull/151)) — `scripts/smoke_test.py` + Шаг 8.5 в `/reliz` (обкатан на проде вживую).
-3. **Рекламный кабинет — интерактивность** ([#152](https://github.com/Valstan/setka/pull/152)–[#157](https://github.com/Valstan/setka/pull/157)): история взаимодействий (audit-log) + таймлайн, оплаты с банком/статусом + должники, заказы клиента, прямой чат, авто-фиксация публикаций (beat), графики.
+В сессии 2026-06-06 сделано (3 PR + 3 деплоя):
+1. **Clipboard-fallback AI-черновика** ([#160](https://github.com/Valstan/setka/pull/160)) — кнопка «✨ AI-черновик» в `/notifications` при недоступном Groq копирует готовый промпт в буфер (human-in-the-loop, нулевой бюджет). Заодно: реконсиляция PENDING (закрыты Groq-техдолг + дубль «Фаза 3 CRM») + фикс date-бомбы в `test_ad_crm` (хардкод дат выпадал из скользящего окна).
+2. **Инфра графика роста подписчиков** ([#161](https://github.com/Valstan/setka/pull/161)) — миграция 031 `community_member_snapshots` + ORM `CommunityMemberSnapshot` + модуль `modules/members_snapshot.py` + суточная beat-таска `collect-member-snapshots-daily` (04:00 MSK): `groups.getById(fields=members_count)` батчами, upsert по `(community_id, snapshot_date)`, маппинг по `abs(vk_id)` (в БД смешанные знаки 788/108).
+3. **Фикс async-резолва токена** ([#162](https://github.com/Valstan/setka/pull/162)) — `_pick_parse_token` (sync) внутри event-loop'а сорил RuntimeWarning + откатывался на env-only без cooldown-фильтра; заменён на async `_resolve_parse_token` через `get_active_parse_tokens(session)`. Пойман на живом деплое #161.
 
 ## Следующий шаг
 
 Активной нитки нет. Кандидатные стартовые точки (приоритет — за владельцем):
 
-1. **Браузер-верификация владельцем** свежих фич (агент в UI не ходит): `/ad-crm` — раскрыть клиента → таймлайн истории, оплаты с банком/должники, заказы, чат, графики динамики; `/notifications` — даты предложки, текст ЛС.
+1. **График подписчиков — шаг 3 (UI)**: страница/виджет мульти-line Chart.js + toggle-чекбоксы + API `member-history` поверх `community_member_snapshots`. ⏳ **Делать после накопления ≥ нескольких недель снимков** (сейчас данные — 1 точка/сообщество, график был бы пустой). Снимки копятся автоматически 04:00 MSK.
 2. **AI-дедуп новостей** — отложен; путь без бюджета: локальные embeddings (`multilingual-e5`/`LaBSE`, CPU).
-3. **Фазы 4/5 рекламного кабинета** (см. `PENDING_FOLLOWUPS.md`): ML-классификатор рекламы за тем же интерфейсом `classifier.classify`; авто-правила ответов / follow-up по расписанию / аналитика воронки.
-4. **График роста подписчиков по сообществам** (owner-request) — отложен, нужна сначала инфра сбора `members_count` (см. PENDING → Продукт).
+3. **Фазы 4/5 рекламного кабинета** (см. `PENDING_FOLLOWUPS.md`): ML-классификатор рекламы за интерфейсом `classifier.classify`; авто-правила ответов / follow-up / аналитика воронки.
+4. **Браузер-верификация владельцем** свежих фич: `/notifications` (clipboard-fallback AI-черновика), `/ad-crm` (виджеты прошлой сессии).
 
 ## Контекст
 
-- **План:** `~/.claude/plans/foamy-snacking-stallman.md` (план серии кабинета — выполнен полностью).
-- **Связанные коммиты сессии (все на проде `7f5ea30`):**
-  - `7f5ea30`/[#158](https://github.com/Valstan/setka/pull/158) — дата предложения постов в уведомлениях.
-  - `26f5a1d`/[#157](https://github.com/Valstan/setka/pull/157) — графики предложений/оплат + банки.
-  - `d356dd3`/[#156](https://github.com/Valstan/setka/pull/156) — авто-фиксация публикаций (beat `reconcile-scheduled-publications`).
-  - `9d8ac8f`/[#155](https://github.com/Valstan/setka/pull/155) — прямой чат с клиентом.
-  - `f1d6713`/[#154](https://github.com/Valstan/setka/pull/154) — заказы клиента (миграция 030).
-  - `44bb5c2`/[#153](https://github.com/Valstan/setka/pull/153) — оплаты: банк + ожидание/оплачено (миграция 029).
-  - `d8e4946`/[#152](https://github.com/Valstan/setka/pull/152) — история взаимодействий + таймлайн (миграция 028).
-  - `8f0a256`/[#150](https://github.com/Valstan/setka/pull/150) — уведомления: текст + кликабельность.
-  - `6ec4ee6`/[#151](https://github.com/Valstan/setka/pull/151) — smoke-test (Шаг 8.5 `/reliz`).
-- **Прод:** HEAD `7f5ea30`, 3/3 active, health 200. Миграции 028-030 применены. **Без невыполненных миграций.** ~1009 тестов зелёные на main.
+- **План:** нет активного файла-плана; roadmap'ы — в `PENDING_FOLLOWUPS.md`.
+- **Связанные коммиты сессии (все на проде `33bdf6d`):**
+  - `f056dd8`/[#160](https://github.com/Valstan/setka/pull/160) — clipboard-fallback AI-черновика + реконсиляция PENDING + фикс date-бомбы теста.
+  - `c279c91`/[#161](https://github.com/Valstan/setka/pull/161) — инфра снимков подписчиков (миграция 031 + таска + beat).
+  - `33bdf6d`/[#162](https://github.com/Valstan/setka/pull/162) — async-резолв токена в снимках (без RuntimeWarning, с cooldown).
+- **Прод:** HEAD `33bdf6d`, 3/3 active, health 200. Миграция 031 применена. Beat-слот `collect-member-snapshots-daily` активен (первый авто-снимок — 04:00 MSK). ~1021 тест зелёный на main.
 - **Открытых PR:** doc-only handoff-PR этого `/close_session` (авто-merge). Кодовых открытых PR нет.
-
-## Failed approaches (этой нитки)
-
-_Не было — серия прошла по плану._
 
 ## Открытые вопросы для пользователя
 
-- Следующая нитка: AI-дедуп (локальные embeddings), фазы 4/5 кабинета, график подписчиков, или иное?
+- Следующая нитка: дождаться данных для графика подписчиков и сделать UI, AI-дедуп, фазы 4/5 кабинета, или иное?
 
 ## Не забыть (low-priority)
 
-- 🟢 **Браузер-верификация владельцем** всех новых виджетов `/ad-crm` и `/notifications` — логика доказана тестами (+~80 за серию) и прод round-trip'ом, но визуал кнопок проверяется глазами.
-- 🟢 **Beat `reconcile-scheduled-publications`** (X:45, 8-22) проверить вживую: поставить тестовую отложку на ближайшую минуту → дождаться публикации VK + прогона таски → проверить авто-запись в CRM (publication + awaiting-оплата).
-- 🟢 **График подписчиков** и **AI-дедуп** остаются отложенными (нужна инфра / нулевой бюджет).
+- 🟢 **График подписчиков (шаг 3)** ждёт накопления снимков — проверить через неделю-две, что таска исправно пишет (`SELECT snapshot_date, count(*) FROM community_member_snapshots GROUP BY 1 ORDER BY 1`), затем строить UI.
+- ⚠️ **VPS периодически таймаутил SSH** в этой сессии (порт 49237), восстанавливался за ~10-20с — на работу прода не влияло, но при деплое закладывай retry.
+- 🟢 **Браузер-верификация владельцем** clipboard-fallback AI-черновика (`/notifications`) — на проде нет `GROQ_API_KEY`, так что кнопка идёт именно через fallback.
 
 ---
 
