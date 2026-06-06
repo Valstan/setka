@@ -23,6 +23,37 @@ async def test_missing_api_key_returns_clear_error():
     assert "GROQ_API_KEY" in result["error"]
 
 
+async def test_missing_api_key_carries_prompt_for_clipboard_fallback():
+    """No budget → still hand back the prompt so the UI offers clipboard copy."""
+    with patch.object(ai_drafter, "GROQ_API_KEY", None):
+        result = await ai_drafter.draft_comment_reply(
+            original_text="когда уберут снег?",
+            region_name="МАЛМЫЖ - ИНФО",
+        )
+    assert result["success"] is False
+    assert "когда уберут снег?" in result["prompt"]
+    assert "МАЛМЫЖ - ИНФО" in result["prompt"]
+
+
+async def test_empty_text_has_no_prompt_in_fallback():
+    """Empty input → no draftable prompt to fall back to."""
+    with patch.object(ai_drafter, "GROQ_API_KEY", None):
+        result = await ai_drafter.draft_comment_reply(original_text="   ")
+    assert result["success"] is False
+    assert "prompt" not in result
+
+
+async def test_groq_exception_carries_prompt_for_fallback():
+    """Quota/network failure → prompt is attached so the operator can copy it."""
+    with patch.object(ai_drafter, "GROQ_API_KEY", "sk-test"):
+        with patch("groq.Groq") as g:
+            g.return_value.chat.completions.create.side_effect = RuntimeError("403 forbidden")
+            result = await ai_drafter.draft_comment_reply(original_text="вопрос?")
+    assert result["success"] is False
+    assert "403" in result["error"]
+    assert "вопрос?" in result["prompt"]
+
+
 async def test_happy_path_returns_trimmed_draft():
     """Groq responds → we trim and forward the text + model id."""
     fake_completion = MagicMock()
@@ -85,3 +116,8 @@ def test_prompt_falls_back_to_friendly_for_unknown_style():
         style="rude-mode",
     )
     assert "дружелюбный" in prompt.lower()
+
+
+def test_public_prompt_builder_is_aliased():
+    """The clipboard fallback relies on the public name; alias kept for back-compat."""
+    assert ai_drafter.build_draft_prompt is ai_drafter._build_prompt

@@ -8,6 +8,12 @@ to edit before sending — this is a starting point, not a final answer.
 Returns a uniform `{success, draft, model}` / `{success: False, error}`
 shape so the API endpoint can pass it through to the frontend without
 extra mapping.
+
+Clipboard fallback: when Groq is unavailable (no `GROQ_API_KEY`, SDK
+missing, network/quota error) the failure dict also carries `prompt` —
+the exact text the operator can paste into their own ChatGPT/Claude.
+The frontend copies it to the clipboard so the feature stays usable
+with zero API budget (same human-in-the-loop pattern as discovery).
 """
 
 from __future__ import annotations
@@ -35,12 +41,13 @@ _STYLE_HINTS = {
 }
 
 
-def _build_prompt(
+def build_draft_prompt(
     *,
     original_text: str,
     region_name: Optional[str],
     style: Optional[str],
 ) -> str:
+    """Build the LLM prompt. Public so the clipboard fallback can reuse it."""
     region_part = f"Сообщество: «{region_name}». " if region_name else ""
     style_hint = _STYLE_HINTS.get((style or "").strip().lower(), _STYLE_HINTS["friendly"])
     return (
@@ -57,6 +64,10 @@ def _build_prompt(
     )
 
 
+# Backward-compatible alias — earlier code/tests referenced the private name.
+_build_prompt = build_draft_prompt
+
+
 async def draft_comment_reply(
     *,
     original_text: str,
@@ -69,22 +80,25 @@ async def draft_comment_reply(
     raising — the UI displays the error inline and lets the operator type
     their own reply.
     """
-    if not GROQ_API_KEY:
-        return {"success": False, "error": "GROQ_API_KEY is not configured"}
-
     if not (original_text or "").strip():
+        # No text → nothing to draft and no useful prompt to hand back.
         return {"success": False, "error": "original_text is empty"}
 
-    try:
-        from groq import Groq
-    except ImportError:
-        return {"success": False, "error": "groq SDK not installed"}
-
-    prompt = _build_prompt(
+    # Built once up front so every failure branch can attach it for the
+    # clipboard fallback (operator pastes it into their own LLM).
+    prompt = build_draft_prompt(
         original_text=original_text,
         region_name=region_name,
         style=style,
     )
+
+    if not GROQ_API_KEY:
+        return {"success": False, "error": "GROQ_API_KEY is not configured", "prompt": prompt}
+
+    try:
+        from groq import Groq
+    except ImportError:
+        return {"success": False, "error": "groq SDK not installed", "prompt": prompt}
 
     try:
         client = Groq(api_key=GROQ_API_KEY)
@@ -98,8 +112,8 @@ async def draft_comment_reply(
         )
         content = (completion.choices[0].message.content or "").strip()
         if not content:
-            return {"success": False, "error": "empty AI response"}
+            return {"success": False, "error": "empty AI response", "prompt": prompt}
         return {"success": True, "draft": content, "model": _MODEL}
     except Exception as e:
         logger.warning("Groq draft failed: %s", e)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "prompt": prompt}
