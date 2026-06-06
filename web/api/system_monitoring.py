@@ -380,6 +380,31 @@ def _classify_digest_row(
     return "dead"
 
 
+# Регион считается «живым», если хотя бы одна его тема — fresh. У живого региона
+# давно молчащая тема — это СНЯТЫЙ режим публикации (``retired``), а не сбой:
+# при переезде режима (напр. kirov_obl каскад ``theme='oblast'`` →
+# community-mode 2026-05-31, beat-таски каскада сняты) исторические строки
+# parsing_stats остаются в 30-дневном окне и иначе светятся ложным «мёртво».
+# Настоящий мёртвый регион глохнет по ВСЕМ темам — fresh не будет ни одной,
+# и downgrade не сработает (тревога сохранится).
+_REGION_ALIVE_STATUS = "fresh"
+
+
+def _reclassify_retired(rows: List[Dict]) -> None:
+    """In-place: «dead»-пара живого региона → «retired» (не тревога).
+
+    Живой регион = есть хотя бы одна ``fresh``-тема. Меняем только поле
+    ``status``; счётчики summary пересчитывает вызывающий из финальных строк.
+    Консервативно: требуется именно ``fresh`` (не ``stale``) — если регион
+    лишь подостыл, давно молчащую тему не маскируем, чтобы не спрятать
+    начинающуюся деградацию.
+    """
+    alive_regions = {r["region_code"] for r in rows if r["status"] == _REGION_ALIVE_STATUS}
+    for r in rows:
+        if r["status"] == "dead" and r["region_code"] in alive_regions:
+            r["status"] = "retired"
+
+
 @router.get("/digests-status", response_model=Dict)
 @cache(ttl=60, key_prefix="monitoring")
 async def get_digests_status(db: AsyncSession = Depends(get_db_session)):
@@ -480,7 +505,6 @@ async def get_digests_status(db: AsyncSession = Depends(get_db_session)):
 
     # ── 4. Склейка ────────────────────────────────────────────────────────
     rows = []
-    counters = {"fresh": 0, "stale": 0, "broken": 0, "dead": 0}
     for r in agg_rows:
         key = (r.region_code, r.theme)
         cf = consecutive_failed.get(key, 0)
@@ -490,7 +514,6 @@ async def get_digests_status(db: AsyncSession = Depends(get_db_session)):
             consecutive_failed=cf,
             now_utc=now_utc,
         )
-        counters[status] = counters.get(status, 0) + 1
         meta = region_meta.get(r.region_code, {})
         rows.append(
             {
@@ -511,9 +534,18 @@ async def get_digests_status(db: AsyncSession = Depends(get_db_session)):
             }
         )
 
-    # Sort: broken first (внимание!), затем dead, stale, fresh; внутри — по
-    # давности last_run_date (старые впереди).
-    status_order = {"broken": 0, "dead": 1, "stale": 2, "fresh": 3}
+    # «dead»-пара живого региона = снятый режим публикации, не сбой → «retired»
+    # (убирает ложный «мёртво», не маскируя по-настоящему вставший регион).
+    _reclassify_retired(rows)
+
+    # Счётчики summary — из финальных статусов (после reclassify).
+    counters = {"fresh": 0, "stale": 0, "broken": 0, "dead": 0, "retired": 0}
+    for r in rows:
+        counters[r["status"]] = counters.get(r["status"], 0) + 1
+
+    # Sort: broken first (внимание!), затем dead, stale, fresh, retired; внутри —
+    # по давности last_run_date (старые впереди). retired — наименее срочный.
+    status_order = {"broken": 0, "dead": 1, "stale": 2, "fresh": 3, "retired": 4}
     rows.sort(
         key=lambda r: (
             status_order.get(r["status"], 9),
