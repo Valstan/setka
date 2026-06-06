@@ -350,12 +350,25 @@ function renderCommunityDmCard(m) {
     const community = escapeHtml(m.community_name || 'Сообщество');
     const author = escapeHtml(m.author_name || (m.author_is_group ? 'Сообщество' : `id${m.peer_id}`));
     const text = escapeHtml(m.text_snapshot || '');
-    // «Ответить в диалог» — deeplink в VK (in-app ответ — Этап 2, probe-gated).
+    // R4: ответить в приложении (community-токеном через /messages/reply) — для
+    // не-групповых авторов, написавших первыми (VK всегда разрешает ответ).
+    const canReplyInApp = !m.author_is_group && m.peer_id && Number(m.peer_id) > 0;
+    const replyBtn = canReplyInApp ? `
+        <button class="btn btn-sm btn-primary" title="Ответить из приложения (от имени сообщества)"
+                onclick='openDmReply(${JSON.stringify(m)})'>
+            <i class="bi bi-reply"></i> Ответить
+        </button>` : '';
+    // R5: нитка переписки прямо тут (тред-вью через тот же эндпоинт, что в кабинете).
+    const threadBtn = m.origin === 'inbound_dm' ? `
+        <button class="btn btn-sm btn-outline-info" title="Показать переписку"
+                onclick="toggleDmThread(${m.id}, this)">
+            <i class="bi bi-chat-left-text"></i> Переписка
+        </button>` : '';
+    // VK-deeplink остаётся как запасной путь (ответить вручную в VK).
     const dialogLink = m.dialog_url ? `
         <a href="${m.dialog_url}" target="_blank" rel="noopener noreferrer"
-           class="btn btn-sm btn-outline-primary" title="Открыть диалог в VK и ответить">
-            <i class="bi bi-reply"></i> Ответить в VK
-            <i class="bi bi-box-arrow-up-right" style="font-size:0.7em;"></i>
+           class="btn btn-sm btn-outline-secondary" title="Открыть диалог в VK">
+            <i class="bi bi-box-arrow-up-right"></i>
         </a>` : '';
     return `
         <div class="notif-card bg-primary-tint" data-ad-request-id="${m.id}">
@@ -366,6 +379,8 @@ function renderCommunityDmCard(m) {
             </div>
             <div class="notif-body-text">${text || '<em>(без текста)</em>'}</div>
             <div class="notif-actions">
+                ${replyBtn}
+                ${threadBtn}
                 ${dialogLink}
                 <button class="btn btn-sm btn-outline-warning" title="Это реклама → перенести в рекламный кабинет"
                         onclick="moveDmToCabinet(${m.id}, this)">
@@ -376,8 +391,78 @@ function renderCommunityDmCard(m) {
                     <i class="bi bi-check2"></i> Обработано
                 </button>
             </div>
+            <div class="mt-2" id="dm-thread-${m.id}" style="display:none;"></div>
         </div>
     `;
+}
+
+// R4: открыть модалку ответа для входящего ЛS (community-DM из нашего стора).
+// Переиспользует общий reply-modal (kind='message'), но передаёт adRequestId,
+// чтобы после отправки пометить НАШУ строку обработанной (handling_status=done).
+function openDmReply(m) {
+    openReplyModal({
+        kind: 'message',
+        groupId: m.community_vk_id,
+        peerId: m.peer_id,
+        peerName: m.author_name || `id${m.peer_id}`,
+        text: m.text_snapshot || '',
+        regionName: m.community_name || '',
+        adRequestId: m.id,
+    });
+}
+
+// R5: тред переписки прямо в карточке уведомления (тот же эндпоинт, что в кабинете).
+async function toggleDmThread(adRequestId, btn) {
+    const box = document.getElementById(`dm-thread-${adRequestId}`);
+    if (!box) return;
+    if (box.style.display !== 'none' && box.dataset.loaded === '1') {
+        box.style.display = 'none';
+        box.dataset.loaded = '0';
+        return;
+    }
+    box.style.display = '';
+    box.innerHTML = '<div class="text-muted small">Загрузка переписки…</div>';
+    try {
+        const resp = await fetch(`/api/ad-cabinet/requests/${adRequestId}/thread`);
+        const data = await resp.json();
+        const msgs = data.messages || [];
+        if (!msgs.length) {
+            const why = data.reason === 'no_token' ? 'нет VK-токена'
+                : data.reason === 'error' ? 'ошибка VK'
+                : 'переписка пуста или недоступна';
+            box.innerHTML = `<div class="text-muted small">История недоступна (${why}).</div>`;
+            box.dataset.loaded = '1';
+            return;
+        }
+        box.innerHTML = renderDmThread(msgs);
+        box.dataset.loaded = '1';
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">Ошибка загрузки переписки: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderDmThread(msgs) {
+    const rows = msgs.map(mm => {
+        const mine = mm.out;  // true — написали мы (сообщество)
+        const who = mine
+            ? '<i class="bi bi-building"></i> мы'
+            : `<i class="bi bi-person"></i> ${escapeHtml(mm.from_name || 'автор')}`;
+        const att = mm.attachments
+            ? ` <span class="badge bg-light text-dark border">+${mm.attachments} вложений</span>` : '';
+        const date = mm.date
+            ? new Date(mm.date * 1000).toLocaleString('ru-RU', {
+                day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})
+            : '';
+        const align = mine ? 'text-end' : '';
+        const bg = mine ? 'bg-primary bg-opacity-10' : 'bg-light';
+        return `<div class="${align} mb-1">
+            <div class="d-inline-block border rounded p-2 ${bg}" style="max-width:85%;text-align:left;white-space:pre-wrap;">
+                <div class="text-muted" style="font-size:.75em;">${who} · ${date}</div>
+                ${escapeHtml(mm.text || '')}${att}
+            </div>
+        </div>`;
+    }).join('');
+    return `<div class="border rounded p-2 bg-white" style="max-height:280px;overflow:auto;">${rows}</div>`;
 }
 
 async function markDmHandled(adRequestId, btn) {
@@ -802,16 +887,31 @@ async function sendReply() {
         if (data.success) {
             status.className = 'mt-2 small text-success';
             status.textContent = `✅ Отправлено (via ${data.via || '?'})`;
-            // Auto-mark as handled & close modal after a beat.
-            fetch('/api/notifications/handled', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({notification_type: notifType, item_id: itemId}),
-            }).catch(() => {});
-            setTimeout(() => {
-                bootstrap.Modal.getInstance(document.getElementById('reply-modal'))?.hide();
-                loadNotifications();
-            }, 900);
+            if (_replyCtx.adRequestId) {
+                // DB-backed community DM (Этап 2): помечаем НАШУ строку обработанной
+                // (handling_status=done) и обновляем ленту ЛС, а не Redis-handled.
+                // Новое входящее от этого же человека переоткроет строку (UPSERT в скане).
+                fetch(`/api/ad-cabinet/requests/${_replyCtx.adRequestId}/handling`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({handling_status: 'done'}),
+                }).catch(() => {});
+                setTimeout(() => {
+                    bootstrap.Modal.getInstance(document.getElementById('reply-modal'))?.hide();
+                    loadCommunityDmInbox();
+                }, 900);
+            } else {
+                // Legacy (комменты / старые VK-unread сообщения): Redis-handled + полный reload.
+                fetch('/api/notifications/handled', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({notification_type: notifType, item_id: itemId}),
+                }).catch(() => {});
+                setTimeout(() => {
+                    bootstrap.Modal.getInstance(document.getElementById('reply-modal'))?.hide();
+                    loadNotifications();
+                }, 900);
+            }
         } else {
             status.className = 'mt-2 small text-danger';
             status.textContent = `Не отправилось: [${data.error_code || '?'}] ${data.error || '—'}`;
