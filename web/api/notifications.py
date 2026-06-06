@@ -5,9 +5,13 @@ Notifications API endpoints
 import logging
 from typing import List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from database.connection import get_db_session
+from database.models import AdRequest
 from modules.notifications.storage import NotificationsStorage
 
 logger = logging.getLogger(__name__)
@@ -109,6 +113,35 @@ async def get_messages_notifications():
     """
     storage = NotificationsStorage()
     return storage.get_messages_notifications()
+
+
+@router.get("/community-dm")
+async def get_community_dm_inbox(
+    include_handled: bool = False,
+    limit: int = 200,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Входящие ЛС сообществ, отданные в уведомления (Этап 1 — багфикс потери ЛС).
+
+    Источник — НАШ стор (``ad_requests`` с ``origin='inbound_dm'`` и
+    ``route='notifications'``), а не живой VK unread-счётчик. Каждое не-рекламное
+    ЛС persist'ится при скане и держится тут как «требует обработки», пока оператор
+    не пометит ``handling_status='done'`` — независимо от того, что VK сделал с
+    read-флагом. ``include_handled=true`` показывает и обработанные (архив).
+    """
+    stmt = select(AdRequest).where(
+        AdRequest.origin == "inbound_dm",
+        AdRequest.route == "notifications",
+    )
+    if not include_handled:
+        stmt = stmt.where(AdRequest.handling_status != "done")
+    # Свежие сверху: по последнему входящему сообщению, затем по времени детекта.
+    stmt = stmt.order_by(
+        AdRequest.last_message_id.desc().nullslast(),
+        AdRequest.detected_at.desc(),
+    ).limit(limit)
+    rows = (await db.execute(stmt)).scalars().all()
+    return {"messages": [r.to_dict() for r in rows]}
 
 
 @router.get("/comments")

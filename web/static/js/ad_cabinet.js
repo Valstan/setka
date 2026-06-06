@@ -198,7 +198,9 @@ async function loadAdRequests() {
         const status = document.getElementById('filter-status').value;
         const originEl = document.getElementById('filter-origin');
         const origin = originEl ? originEl.value : '';
-        const data = await apiClient.getAdRequests({ status, origin });
+        // Инбокс кабинета — только реклама (route='ad_cabinet'). Не-рекламные ЛС,
+        // отданные в уведомления, сюда не попадают (Этап 1 — единый роутер ЛС).
+        const data = await apiClient.getAdRequests({ status, origin, route: 'ad_cabinet' });
         const requests = data.requests || [];
         loading.style.display = 'none';
         if (!requests.length) {
@@ -274,6 +276,10 @@ function renderCard(ar) {
                 ${isDm
                     ? `<button class="btn btn-sm btn-outline-info" onclick="toggleThread(${ar.id})">
                            <i class="bi bi-chat-left-text"></i> Показать переписку
+                       </button>
+                       <button class="btn btn-sm btn-outline-warning" onclick="moveToNotifications(${ar.id})"
+                               title="Это не реклама — перенести в раздел «Уведомления»">
+                           <i class="bi bi-bell"></i> Не реклама → в уведомления
                        </button>`
                     : `<button class="btn btn-sm btn-outline-primary" onclick="scheduleFromRequest(${ar.id})">
                            <i class="bi bi-calendar-plus"></i> Запланировать
@@ -361,6 +367,20 @@ async function markCard(id, status) {
         setTimeout(loadAdRequests, 300);
     } catch (e) {
         _res(id, 'Ошибка смены статуса: ' + escapeHtml(e.message), 'danger');
+    }
+}
+
+// R3: «Не реклама → в уведомления». Переносит ЛС-заявку в раздел «Уведомления»
+// (route='notifications', наш статус обработки сбрасывается в new), и она уходит
+// из инбокса кабинета.
+async function moveToNotifications(id) {
+    _res(id, 'Переношу в уведомления…', 'muted');
+    try {
+        await apiClient.setAdRoute(id, 'notifications');
+        _res(id, 'Перенесено в «Уведомления» ✓', 'success');
+        setTimeout(loadAdRequests, 500);
+    } catch (e) {
+        _res(id, 'Не удалось перенести: ' + escapeHtml(e.message), 'danger');
     }
 }
 

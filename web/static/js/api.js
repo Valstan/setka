@@ -42,6 +42,7 @@ const apiClient = {
         const q = new URLSearchParams();
         if (params.status) q.set('status', params.status);
         if (params.origin) q.set('origin', params.origin);
+        if (params.route) q.set('route', params.route);
         if (params.community_vk_id) q.set('community_vk_id', params.community_vk_id);
         if (params.date_from) q.set('date_from', params.date_from);
         if (params.date_to) q.set('date_to', params.date_to);
@@ -74,6 +75,21 @@ const apiClient = {
         return this.request(`/ad-cabinet/requests/${id}/status`, {
             method: 'POST',
             body: JSON.stringify({ status })
+        });
+    },
+
+    // Единый роутер входящих ЛС (Этап 1): маршрут и наш статус обработки.
+    async setAdRoute(id, route) {
+        return this.request(`/ad-cabinet/requests/${id}/route`, {
+            method: 'POST',
+            body: JSON.stringify({ route })
+        });
+    },
+
+    async setAdHandling(id, handlingStatus) {
+        return this.request(`/ad-cabinet/requests/${id}/handling`, {
+            method: 'POST',
+            body: JSON.stringify({ handling_status: handlingStatus })
         });
     },
 
