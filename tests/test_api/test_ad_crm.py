@@ -349,14 +349,20 @@ def test_routes_registered():
 
 
 async def test_timeseries_fills_gaps_and_maps_counts():
-    from datetime import date
+    from datetime import datetime, timedelta
+
+    # Anchor to the rolling window [today-(days-1) … today] the endpoint builds,
+    # so the test doesn't rot as real time moves past hardcoded dates.
+    today = datetime.utcnow().date()
+    offer_day = today - timedelta(days=4)  # oldest day still inside a 5-day window
+    paid_day = today - timedelta(days=2)
 
     db = _db()
     # offers: одна дата с 3 заявками; paid: одна дата с 2 оплатами на 4000
     db.execute = AsyncMock(
         side_effect=[
-            _rows([(date(2026, 6, 1), 3)]),
-            _rows([(date(2026, 6, 2), 2, 4000)]),
+            _rows([(offer_day, 3)]),
+            _rows([(paid_day, 2, 4000)]),
         ]
     )
     out = await api.stats_timeseries(days=5, db=db)

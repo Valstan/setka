@@ -586,8 +586,14 @@ async function generateAiDraft() {
         });
         const data = await resp.json();
         if (data.success === false || !data.draft) {
-            status.className = 'mt-2 small text-danger';
-            status.textContent = `AI не смог сгенерировать: ${data.error || '—'}`;
+            if (data.prompt) {
+                // Groq unavailable (no budget / quota) — clipboard fallback:
+                // hand the ready prompt to the operator's own LLM.
+                await offerDraftPromptFallback(data.prompt, status);
+            } else {
+                status.className = 'mt-2 small text-danger';
+                status.textContent = `AI не смог сгенерировать: ${data.error || '—'}`;
+            }
         } else {
             textarea.value = data.draft;
             status.className = 'mt-2 small text-muted';
@@ -599,6 +605,25 @@ async function generateAiDraft() {
     } finally {
         btn.disabled = false;
         btn.innerHTML = orig;
+    }
+}
+
+// Clipboard fallback when the AI server is unavailable: copy the ready
+// prompt so the operator pastes it into ChatGPT/Claude, then pastes the
+// answer back into the textarea. Keeps the button useful with zero budget.
+async function offerDraftPromptFallback(promptText, status) {
+    status.className = 'mt-2 small text-muted';
+    try {
+        await navigator.clipboard.writeText(promptText);
+        status.innerHTML =
+            '🤖 ИИ-сервер недоступен. Промпт <b>скопирован в буфер</b> — вставьте его ' +
+            'в ChatGPT/Claude/любую нейросеть, а готовый ответ вставьте в поле выше ' +
+            'и отредактируйте.';
+    } catch (e) {
+        // Clipboard blocked (non-secure context) — show prompt for manual copy.
+        status.innerHTML =
+            '🤖 ИИ-сервер недоступен. Скопируйте промпт из окна и вставьте в нейросеть.';
+        window.prompt('Скопируйте промпт (Ctrl+C) и вставьте в нейросеть:', promptText);
     }
 }
 
