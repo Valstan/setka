@@ -134,7 +134,7 @@ def test_collect_empty_pool_is_noop():
 
 def test_collect_without_token_short_circuits(monkeypatch):
     """No injected fetch and no active token → graceful skip, no DB touch."""
-    monkeypatch.setattr(ms, "_pick_parse_token", lambda: None)
+    monkeypatch.setattr(ms, "_resolve_parse_token", AsyncMock(return_value=None))
     out = asyncio.run(ms.collect_member_snapshots(session_factory=lambda: _CM(_FakeSession([]))))
     assert out["success"] is False
     assert "token" in out["error"].lower()
