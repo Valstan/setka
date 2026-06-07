@@ -203,6 +203,18 @@ ssh setka "cd /home/valstan/SETKA && source venv/bin/activate && pip install -e 
 ssh setka "sudo systemctl restart <services> && sleep 4 && systemctl is-active <services>"
 ```
 
+После рестарта **дождаться готовности web поллингом**, а не одиночным curl —
+на тонком VPS (1 ядро / 1.5 ГБ) при рестарте нескольких сервисов uvicorn
+встаёт >5с, и одиночный `curl` ловит `000` (ложный фейл деплоя; инцидент
+2026-06-07 — цикл 6× зря рестартил прод). Если рестартили `setka` (web):
+
+```bash
+ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 90 --interval 3"
+```
+
+Exit 0 — web поднялся (health 200). Exit 1 — не поднялся за 90с: **тогда**
+смотреть журнал (Шаг 9 / откат Шаг 10), а не рестартить вслепую.
+
 ## Шаг 8.5. Smoke-test пайплайна (dry-run)
 
 После рестарта — за один шаг проверить, что пайплайн **живой** (токены валидны, VK
@@ -232,7 +244,8 @@ Exit 2 — сетевая ошибка/нет `task_id` (API не поднялс
 Параллельно:
 
 ```bash
-ssh setka "curl -s -o /dev/null -w '/api/health/full: %{http_code} in %{time_total}s\n' --max-time 15 http://127.0.0.1:8000/api/health/full"
+# Поллер (Шаг 8) уже дождался 200; этот вызов вернётся сразу, если web жив.
+ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 30 --interval 3"
 
 ssh setka "systemctl is-active setka setka-celery-worker setka-celery-beat"
 
