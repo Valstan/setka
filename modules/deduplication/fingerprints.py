@@ -210,6 +210,32 @@ def create_text_simhash(text: str, shingle_size: int = 4) -> str:
     return f"{out:016x}"
 
 
+def text_token_set(text: str) -> frozenset:
+    """Множество значимых слов текста для Jaccard near-dup.
+
+    В отличие от ``text_to_rafinad`` (склеивает всё в одну строку без пробелов,
+    нужен для char-shingle SimHash) — тут текст режется на СЛОВА: lowercase,
+    не-буквенно-цифровое → разделитель, слова длиной ≥3 (отсекаем предлоги/шум).
+    Порядок-независимо → ловит переставленные/переписанные пересказы, которые
+    char-SimHash упускает.
+    """
+    if not text:
+        return frozenset()
+    cleaned = re.sub(r"[^a-zа-яёa-z0-9]+", " ", text.lower())
+    return frozenset(w for w in cleaned.split() if len(w) >= 3)
+
+
+def jaccard_similarity(set_a: frozenset, set_b: frozenset) -> float:
+    """|A∩B| / |A∪B|; 0.0 если оба пусты."""
+    if not set_a or not set_b:
+        return 0.0
+    inter = len(set_a & set_b)
+    if inter == 0:
+        return 0.0
+    union = len(set_a | set_b)
+    return inter / union if union else 0.0
+
+
 def simhash_hamming_distance(hash_a: str, hash_b: str) -> int:
     """Return Hamming distance between two 64-bit SimHash hex strings."""
     if not hash_a or not hash_b:

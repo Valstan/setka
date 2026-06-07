@@ -13,13 +13,22 @@ import random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
+from config.runtime import (
+    digest_jaccard_dedup_enabled,
+    get_digest_jaccard_min_tokens,
+    get_digest_jaccard_threshold,
+    get_digest_simhash_bucket_gate,
+    get_digest_similarity_threshold,
+)
 from modules.deduplication.fingerprints import (
     create_media_fingerprint,
     create_text_core_fingerprint,
     create_text_fingerprint,
     create_text_simhash,
+    jaccard_similarity,
     simhash_hamming_distance,
     text_to_rafinad,
+    text_token_set,
 )
 from modules.vk_monitor.vk_client import VKClient
 from utils.post_utils import clear_copy_history, lip_of_post, post_popularity
@@ -76,12 +85,20 @@ class AdvancedVKParser:
         self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
         self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
         self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
-        self._text_similarity_threshold = float(_TEXT_SIMILARITY_THRESHOLD)
+        # near-dup параметры из env (дефолты = прежние хардкоды → нулевая регрессия)
+        self._env_similarity_threshold = get_digest_similarity_threshold()
+        self._simhash_bucket_gate = get_digest_simhash_bucket_gate()
+        self._jaccard_enabled = digest_jaccard_dedup_enabled()
+        self._jaccard_threshold = get_digest_jaccard_threshold()
+        self._jaccard_min_tokens = get_digest_jaccard_min_tokens()
+        self._text_similarity_threshold = float(self._env_similarity_threshold)
         self._max_simhash_hamming = self._compute_max_simhash_hamming(
             self._text_similarity_threshold
         )
         self._historical_text_simhashes: List[tuple[int, str]] = []
         self._batch_text_simhashes: Set[str] = set()
+        # Множества слов постов текущего батча (intra-batch Jaccard near-dup).
+        self._batch_token_sets: List[tuple[int, frozenset]] = []
 
         # Parsing statistics (stat_mode)
         self.stats = {
@@ -91,6 +108,9 @@ class AdvancedVKParser:
             "posts_filtered_duplicate_lip": 0,
             "posts_filtered_duplicate_text": 0,
             "posts_filtered_duplicate_foto": 0,
+            # Диагностика near-dup (входят в posts_filtered_duplicate_text):
+            "near_dup_simhash": 0,
+            "near_dup_jaccard": 0,
             "posts_filtered_black_id": 0,
             "posts_filtered_no_region_words": 0,
             "posts_filtered_advertisement": 0,
@@ -148,12 +168,13 @@ class AdvancedVKParser:
         self._batch_core_fps: Set[str] = set()
         self._batch_media_sigs: Set[str] = set()
         self._batch_text_simhashes: Set[str] = set()
+        self._batch_token_sets = []
 
         if pipeline_settings is None:
             self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
             self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
             self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
-            self._text_similarity_threshold = float(_TEXT_SIMILARITY_THRESHOLD)
+            self._text_similarity_threshold = float(self._env_similarity_threshold)
             effective_count = count_per_community
         else:
             self._max_post_age_hours = float(
@@ -169,7 +190,7 @@ class AdvancedVKParser:
                 )
             )
             self._text_similarity_threshold = float(
-                pipeline_settings.get("text_similarity_threshold", _TEXT_SIMILARITY_THRESHOLD)
+                pipeline_settings.get("text_similarity_threshold", self._env_similarity_threshold)
             )
             effective_count = int(
                 pipeline_settings.get("posts_per_community_fetch", count_per_community)
@@ -269,12 +290,13 @@ class AdvancedVKParser:
         self._batch_core_fps = set()
         self._batch_media_sigs = set()
         self._batch_text_simhashes = set()
+        self._batch_token_sets = []
 
         if pipeline_settings is None:
             self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
             self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
             self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
-            self._text_similarity_threshold = float(_TEXT_SIMILARITY_THRESHOLD)
+            self._text_similarity_threshold = float(self._env_similarity_threshold)
         else:
             self._max_post_age_hours = float(
                 pipeline_settings.get("max_post_age_hours", DIGEST_MAX_POST_AGE_HOURS)
@@ -289,7 +311,7 @@ class AdvancedVKParser:
                 )
             )
             self._text_similarity_threshold = float(
-                pipeline_settings.get("text_similarity_threshold", _TEXT_SIMILARITY_THRESHOLD)
+                pipeline_settings.get("text_similarity_threshold", self._env_similarity_threshold)
             )
         self._max_simhash_hamming = self._compute_max_simhash_hamming(
             self._text_similarity_threshold
@@ -485,8 +507,19 @@ class AdvancedVKParser:
                 if rlen >= self._min_rafinad_similarity:
                     simhash = create_text_simhash(text)
                     if simhash and self._is_near_duplicate_text(simhash, rlen):
+                        self.stats["near_dup_simhash"] += 1
                         self.stats["posts_filtered_duplicate_text"] += 1
                         return None
+                    # Второй сигнал: intra-batch Jaccard (переставленные/переписанные)
+                    if getattr(self, "_jaccard_enabled", False):
+                        tokset = text_token_set(text)
+                        if len(tokset) >= self._jaccard_min_tokens and self._is_jaccard_duplicate(
+                            tokset, rlen
+                        ):
+                            self.stats["near_dup_jaccard"] += 1
+                            self.stats["posts_filtered_duplicate_text"] += 1
+                            logger.info("near-dup (jaccard) drop: %s", text[:80].replace("\n", " "))
+                            return None
 
         # Регистрируем отобранный пост в батч-дедупе
         self._batch_lips.add(lip)
@@ -500,10 +533,17 @@ class AdvancedVKParser:
                     cfp = create_text_core_fingerprint(text)
                     if cfp:
                         self._batch_core_fps.add(cfp)
-                if len(text_to_rafinad(text)) >= self._min_rafinad_similarity:
+                rlen_reg = len(text_to_rafinad(text))
+                if rlen_reg >= self._min_rafinad_similarity:
                     simhash = create_text_simhash(text)
                     if simhash:
-                        self._register_batch_simhash(simhash, len(text_to_rafinad(text)))
+                        self._register_batch_simhash(simhash, rlen_reg)
+                    if getattr(self, "_jaccard_enabled", False):
+                        tokset = text_token_set(text)
+                        if len(tokset) >= self._jaccard_min_tokens:
+                            self._batch_token_sets.append(
+                                (self._simhash_bucket_for_len(rlen_reg), tokset)
+                            )
 
         return post_data
 
@@ -560,15 +600,31 @@ class AdvancedVKParser:
 
     def _is_near_duplicate_text(self, simhash: str, rafinad_len: int) -> bool:
         bucket = self._simhash_bucket_for_len(rafinad_len)
+        gate = getattr(self, "_simhash_bucket_gate", 1)
         for b, sh in self._historical_text_simhashes:
-            if abs(b - bucket) > 1:
+            if abs(b - bucket) > gate:
                 continue
             if simhash_hamming_distance(simhash, sh) <= self._max_simhash_hamming:
                 return True
         for b, sh in self._iter_batch_simhashes():
-            if abs(b - bucket) > 1:
+            if abs(b - bucket) > gate:
                 continue
             if simhash_hamming_distance(simhash, sh) <= self._max_simhash_hamming:
+                return True
+        return False
+
+    def _is_jaccard_duplicate(self, tokset: frozenset, rafinad_len: int) -> bool:
+        """Intra-batch near-dup по множеству слов (порядок-независимо).
+
+        Ловит переставленные/переписанные пересказы одной новости в пределах
+        одного дайджеста — класс, который char-SimHash упускает. Гейтится той же
+        длины-корзиной, что и SimHash (анти-false-positive)."""
+        bucket = self._simhash_bucket_for_len(rafinad_len)
+        gate = getattr(self, "_simhash_bucket_gate", 1)
+        for b, other in getattr(self, "_batch_token_sets", []):
+            if abs(b - bucket) > gate:
+                continue
+            if jaccard_similarity(tokset, other) >= self._jaccard_threshold:
                 return True
         return False
 

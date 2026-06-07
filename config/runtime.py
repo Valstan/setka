@@ -383,3 +383,57 @@ def get_digest_curation_region_codes() -> Optional[Set[str]]:
     if not raw or not str(raw).strip():
         return None
     return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
+
+
+# --- Near-dup дедуп дайджестов (SimHash + Jaccard), env-тюнинг -----------------
+# Параметры вынесены в env, чтобы калибровать порог на проде без передеплоя.
+# Дефолты совпадают с прежними хардкодами → нулевая регрессия (кроме Jaccard,
+# который новый и включён консервативно).
+
+
+def get_digest_similarity_threshold() -> float:
+    """Порог near-dup по SimHash (доля схожести). Дефолт 0.90 (как было)."""
+    try:
+        v = float(_getenv("DIGEST_SIMILARITY_THRESHOLD", "0.90") or "0.90")
+    except ValueError:
+        return 0.90
+    return min(1.0, max(0.0, v))
+
+
+def get_digest_simhash_bucket_gate() -> int:
+    """Насколько соседние длины-корзины сравнивать (|Δbucket| ≤ gate). Дефолт 1."""
+    try:
+        return max(0, int(_getenv("DIGEST_SIMHASH_BUCKET_GATE", "1") or "1"))
+    except ValueError:
+        return 1
+
+
+def digest_jaccard_dedup_enabled() -> bool:
+    """Включить intra-batch Jaccard near-dup (ловит переставленные/переписанные
+    дубли в пределах одного дайджеста). ON по умолчанию, консервативный порог;
+    мгновенно отключается env при ложных срабатываниях."""
+    return (_getenv("DIGEST_JACCARD_DEDUP_ENABLED", "1") or "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def get_digest_jaccard_threshold() -> float:
+    """Порог Jaccard по множеству слов (|A∩B|/|A∪B|). Дефолт 0.85 (консервативно —
+    переписанный пересказ той же новости делит ~0.7–0.9 слов, разные ~0.2–0.4)."""
+    try:
+        v = float(_getenv("DIGEST_JACCARD_THRESHOLD", "0.85") or "0.85")
+    except ValueError:
+        return 0.85
+    return min(1.0, max(0.0, v))
+
+
+def get_digest_jaccard_min_tokens() -> int:
+    """Минимум слов в множестве, чтобы вообще применять Jaccard (короткие тексты
+    дают ложные совпадения по шаблонным словам). Дефолт 10."""
+    try:
+        return max(1, int(_getenv("DIGEST_JACCARD_MIN_TOKENS", "10") or "10"))
+    except ValueError:
+        return 10
