@@ -578,17 +578,38 @@ async function enableTokenManual(tokenName) {
     }
 }
 
-function updateStatistics(tokens) {
-    // Token type is not stored in DB model; keep placeholders for counters
-    const mainTokens = 0;
-    const auxTokens = 0;
-    const brokenTokens = tokens.filter(t => (t.validation_status || 'unknown') !== 'valid').length;
-    const totalTokens = tokens.length;
-    
-    document.getElementById('main-tokens-count').textContent = mainTokens;
-    document.getElementById('aux-tokens-count').textContent = auxTokens;
-    document.getElementById('broken-tokens-count').textContent = brokenTokens;
-    document.getElementById('total-tokens-count').textContent = totalTokens;
+// Клиентская категоризация — зеркалит backend compute_token_stats().
+// Главные = валидные user-токены (нет community_id); Вспомогательные =
+// валидные community-токены (COMM_*); Сломанные = любые невалидные.
+function tokenStatsFromList(tokens) {
+    const isValid = t => (t.validation_status || 'unknown') === 'valid';
+    const isCommunity = t => t.community_id !== null && t.community_id !== undefined;
+    return {
+        main: tokens.filter(t => isValid(t) && !isCommunity(t)).length,
+        aux: tokens.filter(t => isValid(t) && isCommunity(t)).length,
+        broken: tokens.filter(t => !isValid(t)).length,
+        total: tokens.length,
+    };
+}
+
+function renderStats(stats) {
+    document.getElementById('main-tokens-count').textContent = stats.main;
+    document.getElementById('aux-tokens-count').textContent = stats.aux;
+    document.getElementById('broken-tokens-count').textContent = stats.broken;
+    document.getElementById('total-tokens-count').textContent = stats.total;
+}
+
+async function updateStatistics(tokens) {
+    // Источник истины — backend /api/tokens/stats; при сбое считаем клиентски
+    // из уже загруженного списка (эквивалентная логика, нулевая деградация).
+    try {
+        const r = await fetch('/api/tokens/stats');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderStats(await r.json());
+    } catch (e) {
+        console.warn('token stats endpoint failed, computing client-side:', e);
+        renderStats(tokenStatsFromList(tokens));
+    }
 }
 
 async function addToken(event) {

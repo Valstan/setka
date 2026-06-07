@@ -20,6 +20,39 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def compute_token_stats(tokens: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Категоризация токенов для плашек-счётчиков на ``/tokens``.
+
+    Чистая функция (без БД/IO) — единый источник истины для UI, тестируема.
+
+    ``tokens`` — список dict'ов с ключами ``community_id`` (int | None) и
+    ``validation_status`` (str | None).
+
+    - ``main``   — валидные **user**-токены (``community_id is None``): костяк
+      парсинга/публикации (VALSTAN, VITA…).
+    - ``aux``    — валидные **community**-токены (``community_id`` задан):
+      публикуют в свою группу (``COMM_*``).
+    - ``broken`` — любые невалидные (``validation_status != 'valid'``,
+      включая ``unknown``/cooldown-протухшие) — user и community вместе.
+    - ``total``  — всего.
+
+    Разбиение чистое: ``main + aux + broken == total``. Это чинит прежнюю
+    заглушку (``main=aux=0`` с устаревшим комментарием «type is not stored in
+    DB» — на деле ``community_id`` есть в модели с миграции 007).
+    """
+    main = aux = broken = 0
+    for t in tokens:
+        is_valid = (t.get("validation_status") or "unknown") == "valid"
+        is_community = t.get("community_id") is not None
+        if not is_valid:
+            broken += 1
+        elif is_community:
+            aux += 1
+        else:
+            main += 1
+    return {"main": main, "aux": aux, "broken": broken, "total": len(tokens)}
+
+
 class TokenResponse(BaseModel):
     """Ответ с информацией о токене"""
 
@@ -102,6 +135,27 @@ async def get_all_tokens(db: AsyncSession = Depends(get_db_session)):
 
     except Exception as e:
         logger.error(f"Error getting tokens: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/stats")
+async def get_token_stats(db: AsyncSession = Depends(get_db_session)):
+    """Счётчики для плашек /tokens: main / aux / broken / total.
+
+    Регистрируется ДО ``/{token_name}`` — иначе FastAPI поймает ``/stats``
+    как ``token_name="stats"`` (та же причина, что у ``/communities`` ниже).
+    """
+    try:
+        result = await db.execute(select(VKToken))
+        tokens = result.scalars().all()
+        return compute_token_stats(
+            [
+                {"community_id": t.community_id, "validation_status": t.validation_status}
+                for t in tokens
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Error computing token stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
