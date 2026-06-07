@@ -26,10 +26,35 @@ logger = logging.getLogger(__name__)
 
 WALL_FETCH_COUNT = 10
 LIP_HISTORY_MAX = 10
+# После стольких тиков с недобором (VK Captcha на хвосте) — сдаёмся и помечаем
+# пост разосланным, чтобы не застрять навсегда и не блокировать новые посты.
+PENDING_MAX_TRIES = 4
 
 
 def _text_has_repost_keyword(text: str) -> bool:
     return "репост" in (text or "").lower()
+
+
+def _mark_post_done(wt: Any, lip: str) -> None:
+    """Добавить lip в список полностью разосланных постов (с дедупом и cap)."""
+    prev = list(wt.lip or [])
+    if lip not in prev:
+        prev.append(lip)
+    wt.lip = prev[-LIP_HISTORY_MAX:]
+
+
+async def _fetch_post_by_lip(token: str, lip: str) -> Optional[Dict[str, Any]]:
+    """Дофетчить исходный пост по lip (когда он уехал из последних N постов)."""
+    from modules.vk_monitor.vk_client import VKClient
+
+    try:
+        abs_oid_s, pid_s = lip.split("_")
+        owner = -abs(int(abs_oid_s))
+        pid = int(pid_s)
+    except (ValueError, AttributeError):
+        return None
+    fetched = await asyncio.to_thread(VKClient(token).get_posts_by_ids, [(owner, pid)])
+    return fetched[0] if fetched else None
 
 
 def _resolve_repost_target(post: Dict[str, Any]) -> Optional[Tuple[int, int]]:
@@ -63,6 +88,7 @@ async def execute_copy_setka_network(
     from config.runtime import (
         copy_setka_disabled,
         get_copy_setka_max_post_age_hours,
+        get_copy_setka_post_interval_seconds,
         get_copy_setka_repost_message,
         get_copy_setka_source_owner_id,
         get_copy_setka_target_region_codes,
@@ -113,8 +139,6 @@ async def execute_copy_setka_network(
         await session.commit()
         await session.refresh(wt)
 
-    known: Set[str] = set(wt.lip or [])
-
     # Источник copy_by_setka — ЧАСТНАЯ группа (is_closed=2): wall.get отдаёт
     # VK error 15 («доступна только участникам сообщества») для токенов, чей
     # аккаунт в ней не состоит. get_active_parse_tokens идёт без ORDER BY →
@@ -158,37 +182,17 @@ async def execute_copy_setka_network(
 
     max_age = int(get_copy_setka_max_post_age_hours() * 3600)
     now_ts = int(time.time())
-    candidate: Optional[Dict[str, Any]] = None
 
-    posts_sorted = sorted(posts, key=lambda p: p.get("date", 0), reverse=True)
-    for p in posts_sorted:
-        oid = p.get("owner_id", source_owner_id)
+    # Карта lip → пост (для поиска pending-поста среди свежих).
+    posts_by_lip: Dict[str, Dict[str, Any]] = {}
+    for p in posts:
         pid = p.get("id")
         if pid is None:
             continue
-        lip = lip_of_post(int(oid), int(pid))
-        if lip in known:
-            continue
-        post_date = int(p.get("date") or 0)
-        if max_age > 0 and now_ts - post_date > max_age:
-            continue
-        candidate = p
-        break
+        oid = p.get("owner_id", source_owner_id)
+        posts_by_lip[lip_of_post(int(oid), int(pid))] = p
 
-    if candidate is None:
-        return {
-            "success": True,
-            "message": "no fresh post to propagate",
-            "posts_published": 0,
-            "stats": _empty_stats(),
-        }
-
-    src_oid = int(candidate.get("owner_id", source_owner_id))
-    src_pid = int(candidate["id"])
-    src_lip = lip_of_post(src_oid, src_pid)
-    body_text = candidate.get("text") or ""
-    use_api_repost = _text_has_repost_keyword(body_text)
-
+    # Целевые регионы (все активные, кроме псевдо-региона copy).
     region_filter = get_copy_setka_target_region_codes()
     rq = select(Region).where(
         Region.is_active.is_(True),
@@ -206,6 +210,83 @@ async def execute_copy_setka_network(
             "error": "no target regions with vk_group_id",
             "stats": _empty_stats(),
         }
+    target_codes = {reg.code for reg in regions}
+
+    # --- Выбор поста: сперва ДОБИРАЕМ недоставленный (pending) -----------------
+    # Пост помечается «разослан» (wt.lip) только когда его получили ВСЕ целевые
+    # регионы. Если на прошлом тике часть регионов отвалилась по VK Captcha
+    # (бурст из 16+ репостов с одного аккаунта), хвост добирается на следующих
+    # тиках. Прогресс храним в work_tables.hash псевдо-региона copy/setka (для
+    # него фото-дедуп не нужен) как {"lip", "done": [codes], "tries"}. Без
+    # миграции. PENDING_MAX_TRIES — backstop от вечного застревания.
+    candidate: Optional[Dict[str, Any]] = None
+    done_codes: Set[str] = set()
+    pending_tries = 0
+
+    pending = wt.hash if isinstance(wt.hash, dict) else None
+    if pending and pending.get("lip"):
+        plip = str(pending["lip"])
+        pdone = {str(c) for c in (pending.get("done") or [])}
+        ptries = int(pending.get("tries") or 0)
+        if target_codes <= pdone:
+            logger.info("copy-setka: pending-пост %s уже доставлен всем — закрываю", plip)
+            _mark_post_done(wt, plip)
+            wt.hash = []
+            await session.commit()
+        else:
+            cand = posts_by_lip.get(plip)
+            if cand is None:
+                cand = await _fetch_post_by_lip(parse_tokens[used_token_name], plip)
+            if cand is None:
+                logger.info(
+                    "copy-setka: pending-пост %s недоступен (удалён?) — снимаю pending",
+                    plip,
+                )
+                wt.hash = []
+                await session.commit()
+            else:
+                candidate = cand
+                done_codes = pdone
+                pending_tries = ptries
+                logger.info(
+                    "copy-setka: добор pending-поста %s — осталось %d рег. (попытка %d/%d)",
+                    plip,
+                    len(target_codes - pdone),
+                    ptries + 1,
+                    PENDING_MAX_TRIES,
+                )
+
+    # Нет pending к добору → берём свежий новый пост.
+    if candidate is None:
+        known: Set[str] = set(wt.lip or [])
+        posts_sorted = sorted(posts, key=lambda p: p.get("date", 0), reverse=True)
+        for p in posts_sorted:
+            oid = p.get("owner_id", source_owner_id)
+            pid = p.get("id")
+            if pid is None:
+                continue
+            lip = lip_of_post(int(oid), int(pid))
+            if lip in known:
+                continue
+            post_date = int(p.get("date") or 0)
+            if max_age > 0 and now_ts - post_date > max_age:
+                continue
+            candidate = p
+            break
+
+    if candidate is None:
+        return {
+            "success": True,
+            "message": "no fresh post to propagate",
+            "posts_published": 0,
+            "stats": _empty_stats(),
+        }
+
+    src_oid = int(candidate.get("owner_id", source_owner_id))
+    src_pid = int(candidate["id"])
+    src_lip = lip_of_post(src_oid, src_pid)
+    body_text = candidate.get("text") or ""
+    use_api_repost = _text_has_repost_keyword(body_text)
 
     msg_suffix = get_copy_setka_repost_message()
 
@@ -243,9 +324,16 @@ async def execute_copy_setka_network(
         att_dict = extract_vk_attachments(effective)
         copy_attachments = build_attachments_list(att_dict, max_items=10)
 
-    successes = 0
+    # Шлём только тем регионам, кто ещё НЕ получил этот пост, с паузой между
+    # репостами (анти-Captcha: бурст с одного аккаунта триггерит капчу).
+    targets_remaining = [reg for reg in regions if reg.code not in done_codes]
+    interval = get_copy_setka_post_interval_seconds()
+
+    newly_done: Set[str] = set()
     errors: List[str] = []
-    for reg in regions:
+    for idx, reg in enumerate(targets_remaining):
+        if idx > 0 and interval > 0:
+            await asyncio.sleep(interval)
         gid = int(reg.vk_group_id)
         try:
             if use_api_repost and repost_pair:
@@ -263,7 +351,7 @@ async def execute_copy_setka_network(
                     attachments=copy_attachments,
                 )
             if out.get("success"):
-                successes += 1
+                newly_done.add(reg.code)
                 logger.info("copy-setka: %s -> %s OK %s", src_lip, reg.code, out.get("url"))
             else:
                 errors.append(f"{reg.code}: {out.get('error', 'unknown')}")
@@ -271,23 +359,51 @@ async def execute_copy_setka_network(
             logger.exception("copy-setka: failed for %s", reg.code)
             errors.append(f"{reg.code}: {e}")
 
-    if successes > 0:
-        prev = list(wt.lip or [])
-        prev.append(src_lip)
-        wt.lip = prev[-LIP_HISTORY_MAX:]
-        await session.commit()
+    all_done = done_codes | newly_done
+    complete = target_codes <= all_done
+    missing = sorted(target_codes - all_done)
+
+    if complete:
+        _mark_post_done(wt, src_lip)
+        wt.hash = []
+        logger.info("copy-setka: пост %s доставлен всем %d регионам", src_lip, len(target_codes))
+    else:
+        tries = pending_tries + 1
+        if tries >= PENDING_MAX_TRIES:
+            logger.warning(
+                "copy-setka: пост %s не добран за %d попыток — сдаюсь; " "пропущены регионы: %s",
+                src_lip,
+                tries,
+                ", ".join(missing),
+            )
+            _mark_post_done(wt, src_lip)
+            wt.hash = []
+        else:
+            wt.hash = {"lip": src_lip, "done": sorted(all_done), "tries": tries}
+            logger.info(
+                "copy-setka: пост %s разослан частично (%d/%d), добор на след. тике; "
+                "осталось: %s",
+                src_lip,
+                len(all_done),
+                len(target_codes),
+                ", ".join(missing),
+            )
+    await session.commit()
 
     return {
-        "success": successes > 0,
-        "posts_published": successes,
+        "success": complete or len(newly_done) > 0,
+        "posts_published": len(newly_done),
         "source_lip": src_lip,
         "mode": "wall.repost" if use_api_repost else "wall.post copy",
-        "targets": len(regions),
+        "targets": len(targets_remaining),
+        "complete": complete,
+        "done_total": len(all_done),
+        "missing": missing,
         "errors": errors[:20],
         "stats": {
-            "total_groups_checked": len(regions),
+            "total_groups_checked": len(targets_remaining),
             "total_posts_scanned": len(posts),
-            "posts_final_count": 1 if successes else 0,
+            "posts_final_count": 1 if complete else 0,
             "posts_filtered_old": 0,
             "posts_filtered_duplicate_lip": 0,
             "posts_filtered_duplicate_text": 0,

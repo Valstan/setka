@@ -343,3 +343,15 @@ def get_copy_setka_target_region_codes() -> Optional[Set[str]]:
     if not raw or not str(raw).strip():
         return None
     return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
+
+
+def get_copy_setka_post_interval_seconds() -> float:
+    """Пауза между репостами по регионам внутри одного прогона (анти-Captcha).
+
+    16+ быстрых wall.repost с одного аккаунта подряд → VK требует капчу на
+    хвостовых регионах. Разносим публикации во времени. Дефолт 5с (16 целей
+    ≈80с, в пределах expires=1800 у beat-таски). 0 = без паузы (тесты)."""
+    try:
+        return max(0.0, float(_getenv("COPY_SETKA_POST_INTERVAL_SECONDS", "5") or "5"))
+    except ValueError:
+        return 5.0
