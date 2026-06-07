@@ -7,7 +7,7 @@
 {% block content %}
 <div class="subscriber-growth-page mx-auto" style="max-width: 1100px;">
     <div class="d-flex justify-content-between align-items-center mb-3">
-        <h1><i class="bi bi-graph-up-arrow"></i> Рост подписчиков</h1>
+        <h1><i class="bi bi-graph-up-arrow"></i> Рост подписчиков (главные группы регионов)</h1>
         <div class="d-flex gap-2 align-items-center">
             <select class="form-select form-select-sm" id="growth-days" style="width:auto;">
                 <option value="14">14 дней</option>
@@ -21,11 +21,12 @@
         </div>
     </div>
     <p class="text-muted">
-        Сравнительная динамика числа подписчиков сообществ — все на одном графике,
-        галочками выбираете, кого показать, и сравниваете кривые. Метрика —
-        подписчики (просмотры/охват VK отдаёт только админам своих групп, поэтому
-        как сравнение по всем сообществам недоступны). Снимки копятся раз в сутки;
-        кривая наполняется по мере накопления точек (история задним числом не строится).
+        Сравнительная динамика числа подписчиков <strong>главных ИНФО-групп регионов</strong>
+        (куда выпускаем дайджесты) — все на одном графике, галочками выбираете, кого
+        показать, и сравниваете кривые. Учитываем только главные группы, а не весь пул
+        источников. Метрика — подписчики (просмотры/охват VK отдаёт только админам своих
+        групп). Снимки копятся раз в сутки; кривая наполняется по мере накопления точек
+        (история задним числом не строится).
     </p>
 
     <!-- График -->
@@ -38,11 +39,11 @@
         </div>
     </div>
 
-    <!-- Панель выбора сообществ -->
+    <!-- Панель выбора регионов -->
     <div class="card mb-3">
         <div class="card-body">
             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-                <h6 class="mb-0"><i class="bi bi-check2-square"></i> Сообщества
+                <h6 class="mb-0"><i class="bi bi-check2-square"></i> Регионы
                     <span class="text-muted small" id="growth-summary"></span>
                 </h6>
                 <div class="d-flex flex-wrap gap-2">

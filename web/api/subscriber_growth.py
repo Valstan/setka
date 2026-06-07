@@ -1,23 +1,28 @@
-"""Сравнительная динамика роста подписчиков сообществ (`/api/subscriber-growth`).
+"""Сравнительная динамика роста подписчиков ГЛАВНЫХ ИНФО-групп регионов
+(`/api/subscriber-growth`).
 
 Owner-request 2026-06-05 / brain-директива 2026-06-06 (#027-сосед, recommend):
-видеть, **кто из сообществ как растёт, и сравнивать между собой** — один график,
-много серий, чекбоксы-переключатели под ним; отстающих выделять для ручной
-раскрутки.
+видеть, **как растут главные группы регионов и сравнивать между собой** — один
+график, много серий, чекбоксы-переключатели под ним; отстающих выделять для
+ручной раскрутки.
 
-Фундамент — `community_member_snapshots` (миграция 031): дневные снимки
-`members_count` по каждому активному сообществу (beat `collect-member-snapshots-daily`).
-Кривая строится из накопленных точек; задним числом историю не достать.
+Учитываем **только главные ИНФО-группы регионов** (`regions.vk_group_id` — куда
+выпускаем дайджесты), а не весь пул источников (owner 2026-06-07): снимать ~840
+сообществ ежедневно жгло VK API ради групп, которые не сравниваем.
+
+Фундамент — `region_member_snapshots` (миграция 033, заменила per-community 031):
+дневные снимки `members_count` по каждому активному региону (beat
+`collect-member-snapshots-daily`). Кривая строится из накопленных точек; задним
+числом историю не достать.
 
 Метрика — **только подписчики**. Просмотры/охват (`stats.get`) probe-gated и по
 живому VK-probe 2026-06-06 (`scripts/probe_stats_get_capability.py`) доступны лишь
-**админ-токену своих групп** (community-токен → VK error 27, чужие группы → 15),
-т.е. не как сравнение по всем отслеживаемым сообществам. Подписчики
-(`groups.getById fields=members_count`) — публичны и единственная универсальная метрика.
+**админ-токену своих групп** (community-токен → VK error 27, чужие группы → 15).
+Подписчики (`groups.getById fields=members_count`) — публичны и универсальны.
 
 Эндпоинты:
-  * ``GET /communities`` — сообщества со снимками + сводка роста для чекбоксов;
-  * ``GET /series?ids=1,2,3&days=90`` — единая ось дат + ряд на каждое выбранное сообщество.
+  * ``GET /regions`` — регионы со снимками + сводка роста для чекбоксов;
+  * ``GET /series?ids=1,2,3&days=90`` — единая ось дат + ряд на каждый выбранный регион.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
-from database.models import Community, CommunityMemberSnapshot, Region
+from database.models import Region, RegionMemberSnapshot
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -47,27 +52,27 @@ def _day_key(d: Any) -> str:
     return d.isoformat() if hasattr(d, "isoformat") else str(d)
 
 
-def summarize_communities(
+def summarize_regions(
     rows: Iterable[Tuple[int, Any, int]],
     meta_by_id: Dict[int, Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Свод по сообществам из снимков (`(community_id, snapshot_date, members_count)`).
+    """Свод по регионам из снимков (`(region_id, snapshot_date, members_count)`).
 
-    ``rows`` должны быть **отсортированы** по ``(community_id, snapshot_date)``.
-    Возвращает по строке на сообщество: latest/first count, абсолютная и
-    процентная дельта за окно, число точек и флаг ``is_laggard``.
+    ``rows`` должны быть **отсортированы** по ``(region_id, snapshot_date)``.
+    Возвращает по строке на регион: latest/first count, абсолютная и процентная
+    дельта за окно, число точек и флаг ``is_laggard``.
 
     Отстающий = есть ≥2 точек И рост ``delta <= 0`` (плоский/отрицательный). Порог
     «ниже медианы» не зашиваем вслепую (директива R3) — это считает анализатор
     позже на реальных данных; здесь — только явный нулевой/отрицательный рост.
     """
     agg: Dict[int, Dict[str, Any]] = {}
-    for community_id, snap_date, count in rows:
-        cid = int(community_id)
+    for region_id, snap_date, count in rows:
+        rid = int(region_id)
         cnt = int(count)
-        bucket = agg.get(cid)
+        bucket = agg.get(rid)
         if bucket is None:
-            agg[cid] = {
+            agg[rid] = {
                 "first": cnt,
                 "first_date": _day_key(snap_date),
                 "latest": cnt,
@@ -80,16 +85,14 @@ def summarize_communities(
             bucket["points"] += 1
 
     out: List[Dict[str, Any]] = []
-    for cid, b in agg.items():
-        meta = meta_by_id.get(cid, {})
+    for rid, b in agg.items():
+        meta = meta_by_id.get(rid, {})
         delta = b["latest"] - b["first"]
         delta_pct = round(delta / b["first"] * 100, 2) if b["first"] else 0.0
         out.append(
             {
-                "id": cid,
-                "name": meta.get("name") or f"community {cid}",
-                "category": meta.get("category"),
-                "region": meta.get("region"),
+                "id": rid,
+                "name": meta.get("name") or f"регион {rid}",
                 "latest_count": b["latest"],
                 "first_count": b["first"],
                 "delta": delta,
@@ -109,27 +112,27 @@ def build_series(
     rows: Iterable[Tuple[int, Any, int]],
     names_by_id: Dict[int, str],
 ) -> Dict[str, Any]:
-    """Снимки → единая ось дат + ряд на сообщество для мульти-line Chart.js.
+    """Снимки → единая ось дат + ряд на регион для мульти-line Chart.js.
 
-    ``rows`` — ``(community_id, snapshot_date, members_count)``. Ось X — объединение
-    всех дат выбранных сообществ (отсортированы); пропуски = ``None`` (Chart.js
+    ``rows`` — ``(region_id, snapshot_date, members_count)``. Ось X — объединение
+    всех дат выбранных регионов (отсортированы); пропуски = ``None`` (Chart.js
     рисует разрыв). Так кривые разной длины сравнимы на одном графике.
     """
-    by_comm: Dict[int, Dict[str, int]] = {}
+    by_region: Dict[int, Dict[str, int]] = {}
     all_days: set = set()
-    for community_id, snap_date, count in rows:
-        cid = int(community_id)
+    for region_id, snap_date, count in rows:
+        rid = int(region_id)
         day = _day_key(snap_date)
         all_days.add(day)
-        by_comm.setdefault(cid, {})[day] = int(count)
+        by_region.setdefault(rid, {})[day] = int(count)
 
     labels = sorted(all_days)
     series: List[Dict[str, Any]] = []
-    for cid, day_map in by_comm.items():
+    for rid, day_map in by_region.items():
         series.append(
             {
-                "id": cid,
-                "name": names_by_id.get(cid) or f"community {cid}",
+                "id": rid,
+                "name": names_by_id.get(rid) or f"регион {rid}",
                 "data": [day_map.get(day) for day in labels],
             }
         )
@@ -159,25 +162,25 @@ def _parse_ids(ids: Optional[str]) -> List[int]:
     return out
 
 
-@router.get("/communities")
-async def list_growth_communities(
+@router.get("/regions")
+async def list_growth_regions(
     days: int = Query(_DEFAULT_DAYS, ge=1, le=_MAX_DAYS),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Сообщества, по которым есть снимки за окно, + сводка роста для панели чекбоксов."""
+    """Регионы, по которым есть снимки за окно, + сводка роста для панели чекбоксов."""
     start = _window_start(days).date()
 
     snap_rows = (
         await db.execute(
             select(
-                CommunityMemberSnapshot.community_id,
-                CommunityMemberSnapshot.snapshot_date,
-                CommunityMemberSnapshot.members_count,
+                RegionMemberSnapshot.region_id,
+                RegionMemberSnapshot.snapshot_date,
+                RegionMemberSnapshot.members_count,
             )
-            .where(CommunityMemberSnapshot.snapshot_date >= start)
+            .where(RegionMemberSnapshot.snapshot_date >= start)
             .order_by(
-                CommunityMemberSnapshot.community_id,
-                CommunityMemberSnapshot.snapshot_date,
+                RegionMemberSnapshot.region_id,
+                RegionMemberSnapshot.snapshot_date,
             )
         )
     ).all()
@@ -186,38 +189,26 @@ async def list_growth_communities(
     meta_by_id: Dict[int, Dict[str, Any]] = {}
     if ids:
         meta_rows = (
-            await db.execute(
-                select(
-                    Community.id,
-                    Community.name,
-                    Community.category,
-                    Region.name,
-                )
-                .join(Region, Community.region_id == Region.id, isouter=True)
-                .where(Community.id.in_(ids))
-            )
+            await db.execute(select(Region.id, Region.name).where(Region.id.in_(ids)))
         ).all()
-        meta_by_id = {
-            int(cid): {"name": name, "category": category, "region": region}
-            for cid, name, category, region in meta_rows
-        }
+        meta_by_id = {int(rid): {"name": name} for rid, name in meta_rows}
 
-    communities = summarize_communities(snap_rows, meta_by_id)
+    regions = summarize_regions(snap_rows, meta_by_id)
     return {
         "days": days,
-        "count": len(communities),
-        "laggards": sum(1 for c in communities if c["is_laggard"]),
-        "communities": communities,
+        "count": len(regions),
+        "laggards": sum(1 for r in regions if r["is_laggard"]),
+        "regions": regions,
     }
 
 
 @router.get("/series")
 async def growth_series(
-    ids: Optional[str] = Query(None, description="CSV community ids, напр. 1,2,3"),
+    ids: Optional[str] = Query(None, description="CSV region ids, напр. 1,2,3"),
     days: int = Query(_DEFAULT_DAYS, ge=1, le=_MAX_DAYS),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Мульти-серийный ряд подписчиков по выбранным сообществам (единая ось дат)."""
+    """Мульти-серийный ряд подписчиков по выбранным регионам (единая ось дат)."""
     start = _window_start(days).date()
     wanted = _parse_ids(ids)[:_MAX_SERIES]
     if not wanted:
@@ -226,25 +217,25 @@ async def growth_series(
     snap_rows = (
         await db.execute(
             select(
-                CommunityMemberSnapshot.community_id,
-                CommunityMemberSnapshot.snapshot_date,
-                CommunityMemberSnapshot.members_count,
+                RegionMemberSnapshot.region_id,
+                RegionMemberSnapshot.snapshot_date,
+                RegionMemberSnapshot.members_count,
             )
             .where(
-                CommunityMemberSnapshot.community_id.in_(wanted),
-                CommunityMemberSnapshot.snapshot_date >= start,
+                RegionMemberSnapshot.region_id.in_(wanted),
+                RegionMemberSnapshot.snapshot_date >= start,
             )
             .order_by(
-                CommunityMemberSnapshot.community_id,
-                CommunityMemberSnapshot.snapshot_date,
+                RegionMemberSnapshot.region_id,
+                RegionMemberSnapshot.snapshot_date,
             )
         )
     ).all()
 
     names_rows = (
-        await db.execute(select(Community.id, Community.name).where(Community.id.in_(wanted)))
+        await db.execute(select(Region.id, Region.name).where(Region.id.in_(wanted)))
     ).all()
-    names_by_id = {int(cid): name for cid, name in names_rows}
+    names_by_id = {int(rid): name for rid, name in names_rows}
 
     result = build_series(snap_rows, names_by_id)
     result["days"] = days

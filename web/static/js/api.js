@@ -479,9 +479,9 @@ const apiClient = {
         }
     },
 
-    // Subscriber growth (comparison chart)
-    async getGrowthCommunities(days = 90) {
-        return this.request(`/subscriber-growth/communities?days=${days}`);
+    // Subscriber growth (comparison chart) — главные ИНФО-группы регионов
+    async getGrowthRegions(days = 90) {
+        return this.request(`/subscriber-growth/regions?days=${days}`);
     },
 
     async getGrowthSeries(ids, days = 90) {
