@@ -581,13 +581,14 @@ def reconcile_scheduled_publications():
 
 @app.task(name="tasks.celery_app.collect_member_snapshots")
 def collect_member_snapshots():
-    """Суточный снимок числа подписчиков активных сообществ (04:00 MSK).
+    """Суточный снимок подписчиков ГЛАВНЫХ ИНФО-групп активных регионов (04:00 MSK).
 
-    Тянет `groups.getById(fields=members_count)` батчами и пишет по строке на
-    (сообщество, день) в `community_member_snapshots` — фундамент будущего
-    графика роста подписчиков. Идемпотентно за день (upsert).
+    Тянет `groups.getById(fields=members_count)` по `regions.vk_group_id` и пишет
+    по строке на (регион, день) в `region_member_snapshots` — фундамент графика
+    роста подписчиков. Только главные группы (куда выпускаем дайджесты), не весь
+    пул источников — экономия VK API. Идемпотентно за день (upsert).
     """
-    logger.info("Collecting community member-count snapshots...")
+    logger.info("Collecting region member-count snapshots...")
     try:
         from modules.members_snapshot import collect_member_snapshots as _collect
 

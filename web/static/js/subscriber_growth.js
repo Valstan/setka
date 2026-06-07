@@ -1,16 +1,16 @@
-/* Сравнительная динамика роста подписчиков сообществ.
+/* Сравнительная динамика роста подписчиков ГЛАВНЫХ ИНФО-групп регионов.
  *
  * Один мульти-line Chart.js; чекбоксы под графиком переключают серии. Метрика —
- * подписчики (members_count из дневных снимков `community_member_snapshots`).
- * Данные: apiClient.getGrowthCommunities(days) — список для чекбоксов со сводкой
- * роста; apiClient.getGrowthSeries(ids, days) — ряды для выбранных сообществ.
+ * подписчики (members_count из дневных снимков `region_member_snapshots`).
+ * Данные: apiClient.getGrowthRegions(days) — список для чекбоксов со сводкой
+ * роста; apiClient.getGrowthSeries(ids, days) — ряды для выбранных регионов.
  */
 (function () {
     'use strict';
 
     const state = {
-        communities: [],      // [{id,name,delta,delta_pct,latest_count,points,is_laggard,...}]
-        selected: new Set(),  // выбранные community_id
+        regions: [],          // [{id,name,delta,delta_pct,latest_count,points,is_laggard,...}]
+        selected: new Set(),  // выбранные region_id
         days: 90,
     };
     let chart = null;
@@ -35,8 +35,8 @@
     function renderList() {
         const list = el('growth-list');
         const q = (el('growth-search').value || '').trim().toLowerCase();
-        const items = state.communities.filter(c => !q || (c.name || '').toLowerCase().includes(q));
-        if (!state.communities.length) {
+        const items = state.regions.filter(c => !q || (c.name || '').toLowerCase().includes(q));
+        if (!state.regions.length) {
             list.innerHTML = '<div class="text-muted small">Снимков пока нет — копятся раз в сутки.</div>';
             return;
         }
@@ -48,7 +48,6 @@
             const checked = state.selected.has(c.id) ? 'checked' : '';
             const lag = c.is_laggard
                 ? ' <span class="badge bg-warning text-dark">отстаёт</span>' : '';
-            const cat = c.category ? `<span class="text-muted small">${c.category}</span>` : '';
             return `
             <div class="col-md-6">
               <label class="d-flex align-items-center gap-2 p-1 rounded growth-row">
@@ -56,16 +55,15 @@
                 <span class="text-truncate" style="max-width: 230px;" title="${(c.name || '').replace(/"/g, '&quot;')}">${c.name || ('#' + c.id)}</span>
                 ${lag}
                 <span class="ms-auto small">${c.latest_count ?? '—'} · ${fmtDelta(c)}</span>
-                ${cat}
               </label>
             </div>`;
         }).join('');
     }
 
     function renderSummary() {
-        const lag = state.communities.filter(c => c.is_laggard).length;
+        const lag = state.regions.filter(c => c.is_laggard).length;
         el('growth-summary').textContent =
-            `— ${state.communities.length} со снимками, выбрано ${state.selected.size}`
+            `— ${state.regions.length} со снимками, выбрано ${state.selected.size}`
             + (lag ? `, отстающих ${lag}` : '');
     }
 
@@ -74,23 +72,23 @@
         seriesTimer = setTimeout(loadSeries, 250);
     }
 
-    async function loadCommunities() {
+    async function loadRegions() {
         const list = el('growth-list');
         list.innerHTML = '<div class="text-muted small">Загрузка…</div>';
         try {
-            const data = await apiClient.getGrowthCommunities(state.days);
-            state.communities = (data && data.communities) || [];
+            const data = await apiClient.getGrowthRegions(state.days);
+            state.regions = (data && data.regions) || [];
         } catch (e) {
-            console.error('growth communities load failed', e);
+            console.error('growth regions load failed', e);
             list.innerHTML = '<div class="text-danger small">Ошибка загрузки списка.</div>';
             return;
         }
         // Очистить выбор от исчезнувших id.
-        const present = new Set(state.communities.map(c => c.id));
+        const present = new Set(state.regions.map(c => c.id));
         state.selected.forEach(id => { if (!present.has(id)) state.selected.delete(id); });
         // Первая загрузка без выбора — авто-выбрать топ-5 растущих, чтобы график не пустовал.
-        if (!state.selected.size && state.communities.length) {
-            state.communities.slice(0, 5).forEach(c => state.selected.add(c.id));
+        if (!state.selected.size && state.regions.length) {
+            state.regions.slice(0, 5).forEach(c => state.selected.add(c.id));
         }
         renderList();
         renderSummary();
@@ -103,7 +101,7 @@
         if (!ids.length) {
             if (chart) { chart.destroy(); chart = null; }
             empty.classList.remove('d-none');
-            empty.textContent = 'Выберите сообщества галочками, чтобы построить график.';
+            empty.textContent = 'Выберите регионы галочками, чтобы построить график.';
             return;
         }
         let data;
@@ -127,7 +125,7 @@
             empty.classList.remove('d-none');
             empty.textContent = labels.length <= 1
                 ? 'Пока только один снимок — кривая появится со второго дня накопления.'
-                : 'Нет точек для выбранных сообществ за период.';
+                : 'Нет точек для выбранных регионов за период.';
             return;
         }
         empty.classList.add('d-none');
@@ -158,9 +156,9 @@
     function bind() {
         el('growth-days').addEventListener('change', (e) => {
             state.days = parseInt(e.target.value, 10) || 90;
-            loadCommunities();
+            loadRegions();
         });
-        el('growth-refresh').addEventListener('click', loadCommunities);
+        el('growth-refresh').addEventListener('click', loadRegions);
         el('growth-search').addEventListener('input', renderList);
         el('growth-clear').addEventListener('click', () => {
             state.selected.clear();
@@ -170,14 +168,14 @@
         });
         el('growth-pick-top').addEventListener('click', () => {
             state.selected.clear();
-            state.communities.slice(0, 5).forEach(c => state.selected.add(c.id));
+            state.regions.slice(0, 5).forEach(c => state.selected.add(c.id));
             renderList();
             renderSummary();
             loadSeries();
         });
         el('growth-pick-laggards').addEventListener('click', () => {
             state.selected.clear();
-            state.communities.filter(c => c.is_laggard).slice(0, 15)
+            state.regions.filter(c => c.is_laggard).slice(0, 15)
                 .forEach(c => state.selected.add(c.id));
             renderList();
             renderSummary();
@@ -196,6 +194,6 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         bind();
-        loadCommunities();
+        loadRegions();
     });
 })();

@@ -1,14 +1,15 @@
-"""Daily snapshots of VK community subscriber counts.
+"""Daily snapshots of subscriber counts for regions' MAIN INFO groups.
 
-Foundation for the subscriber-growth chart (owner-request 2026-06-05).
-`communities` carries neither `members_count` nor any history, so there is
-nothing to plot until data accumulates. This module's daily beat task
-fetches `groups.getById(fields=members_count)` in batches for every active
-community and records one immutable row per (community, day) into
-`community_member_snapshots`.
+Foundation for the subscriber-growth chart (owner-request 2026-06-05). We track
+**only** the main INFO group of each active region (``regions.vk_group_id`` —
+where digests are published), NOT the whole source pool: snapshotting all ~840
+communities daily burned VK API for groups we don't compare. This module's daily
+beat task fetches ``groups.getById(fields=members_count)`` for active regions
+(~16 groups, one batch) and records one immutable row per (region, day) into
+``region_member_snapshots`` (migration 033, replaced per-community 031).
 
 Re-running for the same day is idempotent: the upsert targets the unique
-(community_id, snapshot_date) index and overwrites the count.
+(region_id, snapshot_date) index and overwrites the count.
 
 The pure mapping (`build_snapshot_rows`) is split out so it can be unit-tested
 without a DB or VK — the orchestration (`collect_member_snapshots`) wires
@@ -26,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database.connection import AsyncSessionLocal
-from database.models import Community, CommunityMemberSnapshot
+from database.models import Region, RegionMemberSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +51,19 @@ async def _resolve_parse_token() -> Optional[str]:
 
 
 def build_snapshot_rows(
-    communities: Iterable[Tuple[int, Optional[int]]],
+    regions: Iterable[Tuple[int, Optional[int]]],
     vk_info: Optional[List[Dict[str, Any]]],
     snapshot_day: date,
 ) -> Tuple[List[Dict[str, Any]], List[int]]:
-    """Map communities + ``groups.getById`` items → snapshot rows.
+    """Map regions + ``groups.getById`` items → snapshot rows.
 
-    ``communities`` — iterable of ``(community_id, vk_id)``. ``vk_id`` may be
-    stored with either sign in the DB, so matching is done on ``abs``; VK
-    returns a positive ``id``.
+    ``regions`` — iterable of ``(region_id, vk_group_id)``. ``vk_group_id`` is
+    stored negative for groups, so matching is done on ``abs``; VK returns a
+    positive ``id``.
 
     Returns ``(rows, missing)``:
-      * ``rows``    — ``[{community_id, members_count, snapshot_date}]`` ready to upsert;
-      * ``missing`` — ``community_id`` with no usable count (banned / closed /
+      * ``rows``    — ``[{region_id, members_count, snapshot_date}]`` ready to upsert;
+      * ``missing`` — ``region_id`` with no usable count (banned / closed /
                       deleted group, or absent from the VK response).
     """
     by_gid: Dict[int, int] = {}
@@ -83,22 +84,22 @@ def build_snapshot_rows(
 
     rows: List[Dict[str, Any]] = []
     missing: List[int] = []
-    for community_id, vk_id in communities:
+    for region_id, vk_group_id in regions:
         try:
-            gid = abs(int(vk_id))
+            gid = abs(int(vk_group_id))
         except (TypeError, ValueError):
-            missing.append(community_id)
+            missing.append(region_id)
             continue
         if gid in by_gid:
             rows.append(
                 {
-                    "community_id": community_id,
+                    "region_id": region_id,
                     "members_count": by_gid[gid],
                     "snapshot_date": snapshot_day,
                 }
             )
         else:
-            missing.append(community_id)
+            missing.append(region_id)
     return rows, missing
 
 
@@ -121,10 +122,10 @@ async def collect_member_snapshots(
     session_factory: Any = None,
     fetch_members: Any = None,
 ) -> Dict[str, Any]:
-    """Fetch members_count for all active communities and upsert today's snapshot.
+    """Fetch members_count for active regions' main INFO groups and upsert today's snapshot.
 
     Idempotent for the same day. Returns a summary dict
-    ``{success, communities, written, missing, snapshot_date}``.
+    ``{success, regions, written, missing, snapshot_date}``.
 
     ``session_factory`` and ``fetch_members`` are injectable for tests (default
     to the real async session and VK client). ``fetch_members`` is an async
@@ -144,30 +145,33 @@ async def collect_member_snapshots(
 
     async with session_factory() as session:
         result = await session.execute(
-            select(Community.id, Community.vk_id).where(Community.is_active.is_(True))
+            select(Region.id, Region.vk_group_id).where(
+                Region.is_active.is_(True),
+                Region.vk_group_id.isnot(None),
+            )
         )
-        communities: List[Tuple[int, Optional[int]]] = [(r[0], r[1]) for r in result.all()]
+        regions: List[Tuple[int, Optional[int]]] = [(r[0], r[1]) for r in result.all()]
 
-    if not communities:
+    if not regions:
         return {
             "success": True,
-            "communities": 0,
+            "regions": 0,
             "written": 0,
             "missing": 0,
             "snapshot_date": snapshot_day.isoformat(),
         }
 
-    gids = [abs(int(vk_id)) for _, vk_id in communities if vk_id is not None]
+    gids = [abs(int(vk_group_id)) for _, vk_group_id in regions if vk_group_id is not None]
     vk_info = await fetch_members(gids)
 
-    rows, missing = build_snapshot_rows(communities, vk_info, snapshot_day)
+    rows, missing = build_snapshot_rows(regions, vk_info, snapshot_day)
 
     written = 0
     if rows:
         async with session_factory() as session:
-            stmt = pg_insert(CommunityMemberSnapshot).values(rows)
+            stmt = pg_insert(RegionMemberSnapshot).values(rows)
             stmt = stmt.on_conflict_do_update(
-                index_elements=["community_id", "snapshot_date"],
+                index_elements=["region_id", "snapshot_date"],
                 set_={"members_count": stmt.excluded.members_count},
             )
             await session.execute(stmt)
@@ -175,15 +179,15 @@ async def collect_member_snapshots(
             written = len(rows)
 
     logger.info(
-        "member-snapshots: %d active, %d written, %d missing (day=%s)",
-        len(communities),
+        "member-snapshots: %d active regions, %d written, %d missing (day=%s)",
+        len(regions),
         written,
         len(missing),
         snapshot_day,
     )
     return {
         "success": True,
-        "communities": len(communities),
+        "regions": len(regions),
         "written": written,
         "missing": len(missing),
         "snapshot_date": snapshot_day.isoformat(),

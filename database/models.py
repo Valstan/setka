@@ -156,27 +156,30 @@ class Community(Base):
         return f"<Community {self.name} ({self.category})>"
 
 
-class CommunityMemberSnapshot(Base):
-    """Дневной снимок числа подписчиков сообщества (миграция 031).
+class RegionMemberSnapshot(Base):
+    """Дневной снимок подписчиков ГЛАВНОЙ ИНФО-группы региона (миграция 033).
 
     Копится суточной beat-таской `collect_member_snapshots` (groups.getById
-    fields=members_count). Иммутабелен; один снимок на (community_id, день) —
-    повторный прогон за тот же день перезаписывает count (ON CONFLICT). Основа
-    для будущего графика роста подписчиков (owner-request 2026-06-05).
+    fields=members_count по `regions.vk_group_id` активных регионов). Иммутабелен;
+    один снимок на (region_id, день) — повторный прогон за день перезаписывает
+    count (ON CONFLICT). Основа графика роста подписчиков (owner-request
+    2026-06-05). Учитываем **только** главные группы (куда выпускаем дайджесты),
+    а не весь пул источников — чтобы не жечь VK API (миграция 033 заменила
+    per-community `community_member_snapshots`).
     """
 
-    __tablename__ = "community_member_snapshots"
+    __tablename__ = "region_member_snapshots"
 
     id = Column(BigInteger, primary_key=True, index=True)
-    community_id = Column(Integer, ForeignKey("communities.id", ondelete="CASCADE"), nullable=False)
+    region_id = Column(Integer, ForeignKey("regions.id", ondelete="CASCADE"), nullable=False)
     members_count = Column(Integer, nullable=False)
     snapshot_date = Column(Date, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
         Index(
-            "uq_member_snapshot_community_day",
-            "community_id",
+            "uq_region_member_snapshot_day",
+            "region_id",
             "snapshot_date",
             unique=True,
         ),
@@ -184,7 +187,7 @@ class CommunityMemberSnapshot(Base):
 
     def __repr__(self):
         return (
-            f"<CommunityMemberSnapshot c={self.community_id} "
+            f"<RegionMemberSnapshot r={self.region_id} "
             f"{self.snapshot_date} n={self.members_count}>"
         )
 

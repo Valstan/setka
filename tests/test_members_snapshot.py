@@ -1,4 +1,4 @@
-"""Tests for daily community member-count snapshots (foundation for growth chart).
+"""Tests for daily region main-INFO-group member-count snapshots (growth chart).
 
 Pure row-building is tested directly; the orchestration uses an injected fake
 session + fetch callable (no DB / no VK), mirroring test_publish_reconciler.
@@ -19,25 +19,25 @@ DAY = date(2026, 6, 6)
 
 
 def test_build_rows_matches_on_abs_sign():
-    """communities.vk_id is stored with mixed signs; VK returns positive id."""
-    communities = [(1, -100), (2, 200)]
+    """regions.vk_group_id is negative for groups; VK returns positive id."""
+    regions = [(1, -100), (2, 200)]
     vk_info = [{"id": 100, "members_count": 1500}, {"id": 200, "members_count": 42}]
-    rows, missing = ms.build_snapshot_rows(communities, vk_info, DAY)
+    rows, missing = ms.build_snapshot_rows(regions, vk_info, DAY)
     assert missing == []
-    assert {r["community_id"]: r["members_count"] for r in rows} == {1: 1500, 2: 42}
+    assert {r["region_id"]: r["members_count"] for r in rows} == {1: 1500, 2: 42}
     assert all(r["snapshot_date"] == DAY for r in rows)
 
 
 def test_build_rows_marks_missing_for_absent_or_banned():
-    """No VK item / deactivated / no members_count / null vk_id → missing, not a row."""
-    communities = [(1, -100), (2, -200), (3, -300), (4, None)]
+    """No VK item / deactivated / no members_count / null vk_group_id → missing, not a row."""
+    regions = [(1, -100), (2, -200), (3, -300), (4, None)]
     vk_info = [
         {"id": 100, "members_count": 10},  # ok
         {"id": 200, "deactivated": "banned", "members_count": 5},  # banned → skip
         {"id": 300},  # no members_count → skip
     ]
-    rows, missing = ms.build_snapshot_rows(communities, vk_info, DAY)
-    assert [r["community_id"] for r in rows] == [1]
+    rows, missing = ms.build_snapshot_rows(regions, vk_info, DAY)
+    assert [r["region_id"] for r in rows] == [1]
     assert sorted(missing) == [2, 3, 4]
 
 
@@ -75,8 +75,8 @@ class _CM:
 
 
 def test_collect_writes_snapshots_and_counts_missing():
-    communities = [(1, -100), (2, 200), (3, -300)]
-    session = _FakeSession(communities)
+    regions = [(1, -100), (2, 200), (3, -300)]
+    session = _FakeSession(regions)
     vk_info = [{"id": 100, "members_count": 1500}, {"id": 200, "members_count": 42}]
 
     out = asyncio.run(
@@ -88,7 +88,7 @@ def test_collect_writes_snapshots_and_counts_missing():
     )
 
     assert out["success"] is True
-    assert out["communities"] == 3
+    assert out["regions"] == 3
     assert out["written"] == 2
     assert out["missing"] == 1
     assert out["snapshot_date"] == "2026-06-06"
@@ -96,9 +96,9 @@ def test_collect_writes_snapshots_and_counts_missing():
 
 
 def test_collect_skips_commit_when_nothing_resolved():
-    """All communities banned → no rows → no insert/commit, but still success."""
-    communities = [(1, -100), (2, -200)]
-    session = _FakeSession(communities)
+    """All region groups banned → no rows → no insert/commit, but still success."""
+    regions = [(1, -100), (2, -200)]
+    session = _FakeSession(regions)
 
     out = asyncio.run(
         ms.collect_member_snapshots(
@@ -125,7 +125,7 @@ def test_collect_empty_pool_is_noop():
     )
     assert out == {
         "success": True,
-        "communities": 0,
+        "regions": 0,
         "written": 0,
         "missing": 0,
         "snapshot_date": "2026-06-06",

@@ -1,7 +1,8 @@
 """Тесты сравнительного графика роста подписчиков (web/api/subscriber_growth).
 
-Чистые хелперы (`build_series`/`summarize_communities`/`_parse_ids`) проверяются
+Чистые хелперы (`build_series`/`summarize_regions`/`_parse_ids`) проверяются
 без БД; эндпоинты — с AsyncMock-сессией (в стиле tests/test_api/test_ad_crm.py).
+Учёт по ГЛАВНЫМ ИНФО-группам регионов (миграция 033), не по сообществам.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ def test_build_series_names_fallback_and_sorted():
     rows = [(7, date(2026, 6, 1), 5), (3, date(2026, 6, 1), 9)]
     out = api.build_series(rows, {3: "Zeta"})  # 7 без имени → fallback
     names = [s["name"] for s in out["series"]]
-    assert names == ["community 7", "Zeta"]  # сортировка по имени
+    assert names == ["Zeta", "регион 7"]  # сортировка по имени (кириллица после латиницы)
 
 
 def test_build_series_empty():
@@ -56,7 +57,7 @@ def test_build_series_empty():
     assert out == {"labels": [], "series": []}
 
 
-# ----------------------------------------------------------- summarize_communities
+# ----------------------------------------------------------- summarize_regions
 
 
 def test_summarize_delta_and_laggard():
@@ -71,7 +72,7 @@ def test_summarize_delta_and_laggard():
         (3, date(2026, 6, 1), 50),
     ]
     meta = {1: {"name": "Up"}, 2: {"name": "Down"}, 3: {"name": "Solo"}}
-    out = api.summarize_communities(rows, meta)
+    out = api.summarize_regions(rows, meta)
     by_id = {c["id"]: c for c in out}
 
     assert by_id[1]["delta"] == 20
@@ -91,14 +92,14 @@ def test_summarize_delta_and_laggard():
 
 def test_summarize_zero_first_count_no_div_by_zero():
     rows = [(1, date(2026, 6, 1), 0), (1, date(2026, 6, 2), 10)]
-    out = api.summarize_communities(rows, {1: {"name": "FromZero"}})
+    out = api.summarize_regions(rows, {1: {"name": "FromZero"}})
     assert out[0]["delta"] == 10
     assert out[0]["delta_pct"] == 0.0  # деления на ноль нет
 
 
 def test_summarize_name_fallback():
-    out = api.summarize_communities([(9, date(2026, 6, 1), 1)], {})
-    assert out[0]["name"] == "community 9"
+    out = api.summarize_regions([(9, date(2026, 6, 1), 1)], {})
+    assert out[0]["name"] == "регион 9"
 
 
 # ----------------------------------------------------------------- _parse_ids
@@ -115,29 +116,28 @@ def test_parse_ids_csv_and_invalid():
 
 
 @pytest.mark.asyncio
-async def test_list_growth_communities_serializes():
+async def test_list_growth_regions_serializes():
     snaps = _rows(
         [
             (1, date(2026, 6, 1), 100),
             (1, date(2026, 6, 2), 130),
         ]
     )
-    meta = _rows([(1, "Alpha", "novost", "Тужа")])
+    meta = _rows([(1, "Тужа")])  # (region_id, region_name)
     db = _db_seq(snaps, meta)
 
-    out = await api.list_growth_communities(days=30, db=db)
+    out = await api.list_growth_regions(days=30, db=db)
     assert out["count"] == 1
-    assert out["communities"][0]["name"] == "Alpha"
-    assert out["communities"][0]["region"] == "Тужа"
-    assert out["communities"][0]["delta"] == 30
+    assert out["regions"][0]["name"] == "Тужа"
+    assert out["regions"][0]["delta"] == 30
 
 
 @pytest.mark.asyncio
-async def test_list_growth_communities_empty():
+async def test_list_growth_regions_empty():
     db = _db_seq(_rows([]))  # нет снимков → второй запрос не выполняется
-    out = await api.list_growth_communities(days=30, db=db)
+    out = await api.list_growth_regions(days=30, db=db)
     assert out["count"] == 0
-    assert out["communities"] == []
+    assert out["regions"] == []
 
 
 @pytest.mark.asyncio
