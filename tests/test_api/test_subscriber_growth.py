@@ -123,28 +123,69 @@ async def test_list_growth_regions_serializes():
             (1, date(2026, 6, 2), 130),
         ]
     )
-    meta = _rows([(1, "Тужа")])  # (region_id, region_name)
-    db = _db_seq(snaps, meta)
+    # meta: (id, name, kind, parent_region_id); uniq: пусто (дедупа ещё не было)
+    meta = _rows([(1, "Тужа", "raion", None)])
+    uniq = _rows([])
+    db = _db_seq(snaps, meta, uniq)
 
     out = await api.list_growth_regions(days=30, db=db)
     assert out["count"] == 1
     assert out["regions"][0]["name"] == "Тужа"
     assert out["regions"][0]["delta"] == 30
+    # район без родителя-области → группы нет
+    assert out["regions"][0]["oblast_id"] is None
+    assert out["oblasts"] == []
+
+
+@pytest.mark.asyncio
+async def test_list_growth_regions_oblast_grouping():
+    d1, d2 = date(2026, 6, 1), date(2026, 6, 2)
+    snaps = _rows(
+        [
+            (10, d1, 1000),
+            (10, d2, 1100),  # область (kind=oblast)
+            (1, d1, 200),
+            (1, d2, 260),  # район под областью 10
+        ]
+    )
+    meta = _rows(
+        [
+            (10, "КИРОВСКАЯ ОБЛАСТЬ - ИНФО", "oblast", None),
+            (1, "Тужа", "raion", 10),
+        ]
+    )
+    uniq = _rows([(10, 5000, d2)])  # последний дедуп-снимок области 10
+    db = _db_seq(snaps, meta, uniq)
+
+    out = await api.list_growth_regions(days=30, db=db)
+    by_id = {r["id"]: r for r in out["regions"]}
+    assert by_id[10]["oblast_id"] == 10
+    assert by_id[10]["oblast_name"] == "КИРОВСКАЯ ОБЛАСТЬ"  # суффикс «- ИНФО» срезан
+    assert by_id[1]["oblast_id"] == 10
+    assert by_id[1]["oblast_name"] == "КИРОВСКАЯ ОБЛАСТЬ"
+
+    assert len(out["oblasts"]) == 1
+    ob = out["oblasts"][0]
+    assert ob["id"] == 10
+    assert ob["region_count"] == 2
+    assert ob["latest_sum"] == 1100 + 260  # районы + областная группа
+    assert ob["latest_unique"] == 5000
 
 
 @pytest.mark.asyncio
 async def test_list_growth_regions_empty():
-    db = _db_seq(_rows([]))  # нет снимков → второй запрос не выполняется
+    db = _db_seq(_rows([]))  # нет снимков → meta/uniq-запросы не выполняются
     out = await api.list_growth_regions(days=30, db=db)
     assert out["count"] == 0
     assert out["regions"] == []
+    assert out["oblasts"] == []
 
 
 @pytest.mark.asyncio
 async def test_growth_series_no_ids_short_circuits():
     db = AsyncMock()
     db.execute = AsyncMock()
-    out = await api.growth_series(ids=None, days=30, db=db)
+    out = await api.growth_series(ids=None, oblast_sum=None, oblast_uniq=None, days=30, db=db)
     assert out == {"days": 30, "labels": [], "series": []}
     db.execute.assert_not_called()  # без id в БД не ходим
 
@@ -153,9 +194,41 @@ async def test_growth_series_no_ids_short_circuits():
 async def test_growth_series_returns_series():
     snaps = _rows([(1, date(2026, 6, 1), 10), (1, date(2026, 6, 2), 12)])
     names = _rows([(1, "Alpha")])
-    db = _db_seq(snaps, names)
-    out = await api.growth_series(ids="1", days=30, db=db)
+    db = _db_seq(snaps, names)  # region-only путь: 2 запроса (snaps, names)
+    out = await api.growth_series(ids="1", oblast_sum=None, oblast_uniq=None, days=30, db=db)
     assert out["labels"] == ["2026-06-01", "2026-06-02"]
     assert out["series"][0]["name"] == "Alpha"
     assert out["series"][0]["data"] == [10, 12]
+    assert out["series"][0]["kind"] == "region"
     assert out["days"] == 30
+
+
+@pytest.mark.asyncio
+async def test_growth_series_oblast_sum():
+    d1, d2 = date(2026, 6, 1), date(2026, 6, 2)
+    # запросы по порядку: члены области, имена областей, снимки регионов
+    members = _rows([(10, "oblast", None), (1, "raion", 10)])
+    onames = _rows([(10, "КИРОВСКАЯ ОБЛАСТЬ - ИНФО")])
+    snaps = _rows([(10, d1, 1000), (10, d2, 1100), (1, d1, 200), (1, d2, 210)])
+    db = _db_seq(members, onames, snaps)
+    out = await api.growth_series(ids=None, oblast_sum="10", oblast_uniq=None, days=30, db=db)
+    assert out["labels"] == ["2026-06-01", "2026-06-02"]
+    s = out["series"][0]
+    assert s["kind"] == "oblast_sum"
+    assert s["name"] == "Σ КИРОВСКАЯ ОБЛАСТЬ"
+    assert s["data"] == [1200, 1310]  # район + область по датам
+
+
+@pytest.mark.asyncio
+async def test_growth_series_oblast_uniq():
+    d1, d2 = date(2026, 6, 1), date(2026, 6, 8)
+    # запросы по порядку: имена областей, дедуп-снимки (членов/снимков регионов нет)
+    onames = _rows([(10, "ТАТАРСТАН - ИНФО")])
+    uniq = _rows([(10, d1, 5000), (10, d2, 5200)])
+    db = _db_seq(onames, uniq)
+    out = await api.growth_series(ids=None, oblast_sum=None, oblast_uniq="10", days=30, db=db)
+    assert out["labels"] == ["2026-06-01", "2026-06-08"]
+    s = out["series"][0]
+    assert s["kind"] == "oblast_uniq"
+    assert s["name"] == "ТАТАРСТАН (без дублей)"
+    assert s["data"] == [5000, 5200]

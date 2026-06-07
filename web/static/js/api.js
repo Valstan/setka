@@ -484,9 +484,13 @@ const apiClient = {
         return this.request(`/subscriber-growth/regions?days=${days}`);
     },
 
-    async getGrowthSeries(ids, days = 90) {
-        const csv = Array.isArray(ids) ? ids.join(',') : String(ids || '');
-        return this.request(`/subscriber-growth/series?ids=${encodeURIComponent(csv)}&days=${days}`);
+    async getGrowthSeries(ids, days = 90, oblastSum = [], oblastUniq = []) {
+        const csv = (a) => (Array.isArray(a) ? a.join(',') : String(a || ''));
+        const params = new URLSearchParams({ days: String(days) });
+        if (csv(ids)) params.set('ids', csv(ids));
+        if (csv(oblastSum)) params.set('oblast_sum', csv(oblastSum));
+        if (csv(oblastUniq)) params.set('oblast_uniq', csv(oblastUniq));
+        return this.request(`/subscriber-growth/series?${params.toString()}`);
     }
 };
 

@@ -600,6 +600,28 @@ def collect_member_snapshots():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.collect_oblast_unique_snapshots")
+def collect_oblast_unique_snapshots():
+    """Еженедельный снимок УНИКАЛЬНЫХ подписчиков области без дублей (ночь пн).
+
+    Объединяет member-id главных ИНФО-групп каждой области (сама область +
+    районы) через `groups.getMembers` и пишет уникальных в
+    `oblast_unique_member_snapshots` — «чистый» охват области для сравнения
+    областей на графике роста. Только ~16 главных групп (1000 id/запрос) →
+    нагрузка ничтожна. Идемпотентно за день (upsert).
+    """
+    logger.info("Collecting oblast unique-member snapshots...")
+    try:
+        from modules.oblast_unique_members import collect_oblast_unique_snapshots as _collect
+
+        result = run_coro(_collect())
+        logger.info("oblast unique snapshots done: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"collect_oblast_unique_snapshots failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.check_unread_messages")
 def check_unread_messages():
     """Проверка непрочитанных сообщений в главных группах регионов.
@@ -992,6 +1014,16 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=4),
         "options": {
             "expires": 3600,
+            "catchup": False,
+        },
+    },
+    # Еженедельный снимок УНИКАЛЬНЫХ подписчиков области без дублей — пн 02:30 UTC
+    # (05:30 MSK), пока сеть спит. groups.getMembers по ~16 главным группам дёшев.
+    "collect-oblast-unique-snapshots-weekly": {
+        "task": "tasks.celery_app.collect_oblast_unique_snapshots",
+        "schedule": crontab(minute=30, hour=2, day_of_week=1),
+        "options": {
+            "expires": 6 * 3600,
             "catchup": False,
         },
     },

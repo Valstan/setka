@@ -36,6 +36,14 @@
                 Пока нет накопленных снимков для графика — загляните через несколько дней.
             </div>
             <canvas id="chart-growth" height="140"></canvas>
+            <!-- Кнопки-агрегаты по областям (Σ область + область без дублей) -->
+            <div id="growth-oblast-aggs" class="d-flex flex-wrap gap-2 mt-2"></div>
+            <div class="text-muted small mt-1">
+                <strong>Σ область</strong> — сумма подписчиков всех главных групп области
+                (районы + областная группа; человек в нескольких группах учтён несколько раз).
+                <strong>Без дублей</strong> — уникальные подписчики области (пересчёт раз в неделю
+                ночью); точек на кривой меньше.
+            </div>
         </div>
     </div>
 
@@ -64,5 +72,5 @@
 
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/static/js/subscriber_growth.js?v=20260606"></script>
+<script src="/static/js/subscriber_growth.js?v=20260607"></script>
 {% endblock %}
