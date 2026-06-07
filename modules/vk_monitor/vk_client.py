@@ -6,7 +6,7 @@ Handles all interactions with VK API
 import asyncio
 import logging
 import threading
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 import vk_api
 
@@ -325,6 +325,53 @@ class VKClient:
             except Exception as e:
                 logger.error(f"Unexpected groups.getById refs error (size={len(chunk)}): {e}")
         return out
+
+    def get_group_member_ids(
+        self,
+        group_id: int,
+        max_members: int = 300000,
+    ) -> Tuple[List[int], bool]:
+        """Все user-id участников ОТКРЫТОЙ группы через ``groups.getMembers``.
+
+        Постранично по 1000 (max VK). ``group_id`` — положительный или
+        отрицательный (берётся ``abs``). Возвращает ``(ids, complete)``:
+          * ``ids``      — user-id участников (положительные, без deactivated);
+          * ``complete`` — ``True`` если выкачали всех; ``False`` при ошибке VK
+                            (закрытая группа / нет доступа, error 15) или обрыве
+                            на ``max_members`` (страховка от гигантских групп).
+
+        Закрытая группа → VK error 15 → ``([], False)``: для дедупа области
+        такая группа просто не войдёт в объединение (считаем по доступным,
+        ``group_count`` это отразит). Rate-limited (общий лимитер токена).
+        """
+        gid = abs(int(group_id))
+        out: List[int] = []
+        offset = 0
+        page = 1000
+        while offset < max_members:
+            try:
+                self._enforce_rate_limit()
+                resp = self.vk.groups.getMembers(group_id=gid, offset=offset, count=page)
+            except vk_api.exceptions.ApiError as e:
+                _log_vk_api_error(f"VK groups.getMembers error (gid={gid}, offset={offset})", e)
+                return out, False
+            except Exception as e:
+                logger.error(f"Unexpected groups.getMembers error (gid={gid}): {e}")
+                return out, False
+            items = (resp or {}).get("items") or []
+            for x in items:
+                try:
+                    out.append(int(x))
+                except (TypeError, ValueError):
+                    continue
+            total = int((resp or {}).get("count") or 0)
+            offset += page
+            if not items or offset >= total:
+                return out, True
+        logger.warning(
+            "groups.getMembers gid=%s hit max_members=%d guard — partial", gid, max_members
+        )
+        return out, False
 
     def resolve_city(
         self,

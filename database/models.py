@@ -192,6 +192,46 @@ class RegionMemberSnapshot(Base):
         )
 
 
+class OblastUniqueMemberSnapshot(Base):
+    """Еженедельный снимок УНИКАЛЬНЫХ подписчиков области без дублей (миграция 034).
+
+    Для каждой области (``kind='oblast'``) объединяем множества member-id всех её
+    главных ИНФО-групп (сама область + районы, ``parent_region_id=oblast.id``)
+    через ``groups.getMembers`` и считаем уникальных. Позволяет сравнивать
+    «чистый» охват областей: сумма ``members_count`` по группам завышена (человек,
+    подписанный на N групп области, учтён N раз). Копится еженедельной ночной
+    beat-таской — getMembers по ~16 главным группам дёшев (1000 id/запрос).
+    Иммутабелен; один снимок на (oblast, день), повторный прогон перезаписывает
+    (ON CONFLICT). ``group_count`` — сколько групп реально вошло (закрытые
+    пропущены), ``total_with_dupes`` — сумма |members| (для коэффициента дублей).
+    """
+
+    __tablename__ = "oblast_unique_member_snapshots"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    oblast_region_id = Column(Integer, ForeignKey("regions.id", ondelete="CASCADE"), nullable=False)
+    unique_count = Column(Integer, nullable=False)
+    total_with_dupes = Column(Integer, nullable=False)
+    group_count = Column(Integer, nullable=False)
+    snapshot_date = Column(Date, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index(
+            "uq_oblast_unique_member_snapshot_day",
+            "oblast_region_id",
+            "snapshot_date",
+            unique=True,
+        ),
+    )
+
+    def __repr__(self):
+        return (
+            f"<OblastUniqueMemberSnapshot o={self.oblast_region_id} "
+            f"{self.snapshot_date} uniq={self.unique_count}/{self.total_with_dupes}>"
+        )
+
+
 class CommunityCandidate(Base):
     """Кандидат на добавление в communities — буфер discovery до approve.
 
