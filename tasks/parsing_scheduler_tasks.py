@@ -76,6 +76,7 @@ def parse_and_publish_theme(
     from database.connection import AsyncSessionLocal
     from database.models import Community, Region
     from database.models_extended import ParsingStats, RegionConfig, WorkTable
+    from modules.curation.recorder import record_curation_run
     from modules.deduplication.digest_history import (
         GLOBAL_REGION_WORK_THEME,
         TARGET_GROUP_POSTS_SCAN_LIMIT,
@@ -550,6 +551,19 @@ def parse_and_publish_theme(
                     "Telegram mirror (Flow A) failed for %s/%s; VK publish unaffected",
                     region_code,
                     theme,
+                )
+
+            # 8.6 Shadow LLM-курация (PoC, письмо brain 2026-06-07): паркуем уже
+            # опубликованные посты для пост-фактум вердикта /curate. Best-effort,
+            # изолировано (своя сессия) — на публикацию не влияет.
+            for kind, d, pub in results:
+                await record_curation_run(
+                    region_code=region.code,
+                    theme=theme,
+                    kind=kind,
+                    selected_by_lip=selected_by_lip,
+                    posts_included=d.posts_included,
+                    publish_result=pub,
                 )
 
             # 9. Return result

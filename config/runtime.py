@@ -355,3 +355,31 @@ def get_copy_setka_post_interval_seconds() -> float:
         return max(0.0, float(_getenv("COPY_SETKA_POST_INTERVAL_SECONDS", "5") or "5"))
     except ValueError:
         return 5.0
+
+
+# --- LLM-курация дайджестов (shadow PoC, письмо brain 2026-06-07) -------------
+
+
+def digest_curation_shadow_enabled() -> bool:
+    """Включить shadow-журнал LLM-курации дайджестов (Фаза 1).
+
+    OFF по умолчанию — нулевая регрессия. ON => после публикации дайджеста его
+    посты паркуются в `digest_curation_runs` для пост-фактум LLM-вердикта
+    (/curate). Публикация при этом НЕ затрагивается (shadow)."""
+    return (_getenv("DIGEST_CURATION_SHADOW_ENABLED", "0") or "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def get_digest_curation_region_codes() -> Optional[Set[str]]:
+    """Ограничить shadow-курацию списком кодов регионов (через запятую).
+
+    None / пусто = все регионы (но для PoC brain рекомендует 1 регион, см.
+    письмо 2026-06-07 — задаём явный allowlist в `/etc/setka/setka.env`)."""
+    raw = _getenv("DIGEST_CURATION_REGION_CODES")
+    if not raw or not str(raw).strip():
+        return None
+    return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
