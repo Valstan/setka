@@ -119,6 +119,7 @@ def _patch_copy_setka_deps(stack, *, parse_tokens, wall_by_token, publisher):
     stack.enter_context(_p("config.runtime.get_copy_setka_max_post_age_hours", return_value=48.0))
     stack.enter_context(_p("config.runtime.get_copy_setka_repost_message", return_value=""))
     stack.enter_context(_p("config.runtime.get_copy_setka_target_region_codes", return_value=None))
+    stack.enter_context(_p("config.runtime.get_copy_setka_post_interval_seconds", return_value=0.0))
     assert rt  # keep import used
 
     async def _fake_get_tokens(_session):
@@ -214,3 +215,99 @@ async def test_copy_setka_reports_when_no_token_can_read(monkeypatch):
     assert out["posts_published"] == 0
     assert out["message"] == "no posts on source wall"
     publisher.publish_digest.assert_not_called()
+
+
+def _digest_side_effect(captcha_gids):
+    """Фабрика side_effect для publish_digest: капча на заданных gid."""
+
+    def _se(*, group_id, text=None, attachments=None):
+        if group_id in captcha_gids:
+            return {"success": False, "error": "Captcha needed"}
+        return {"success": True, "url": f"https://vk.com/wall{group_id}_1"}
+
+    return _se
+
+
+async def test_copy_setka_partial_then_retries_tail_next_tick(monkeypatch):
+    """Регион в капче → пост помечается pending, добирается на следующем тике."""
+    from contextlib import ExitStack
+    from unittest.mock import AsyncMock
+
+    from modules.copy_setka_network import execute_copy_setka_network
+
+    post = {"owner_id": -167381590, "id": 555, "date": 999_990, "text": "новость"}
+    wt = _WorkTable()  # общий между прогонами — несёт pending в .hash
+    UR, MI = -168170215, -158787639
+
+    # --- Тик 1: MI ловит капчу ---
+    pub1 = AsyncMock()
+    pub1.publish_digest.side_effect = _digest_side_effect({MI})
+    with ExitStack() as stack:
+        _patch_copy_setka_deps(
+            stack,
+            parse_tokens={"VALSTAN": "TOK_MEMBER"},
+            wall_by_token={"TOK_MEMBER": [post]},
+            publisher=pub1,
+        )
+        out1 = await execute_copy_setka_network(
+            _FakeSession([[wt], [_Region("ur", UR), _Region("mi", MI)]])
+        )
+
+    assert out1["complete"] is False
+    assert out1["posts_published"] == 1  # ur доставлен
+    assert out1["missing"] == ["mi"]
+    assert wt.lip == []  # пост ещё НЕ помечен разосланным
+    assert isinstance(wt.hash, dict) and wt.hash["done"] == ["ur"] and wt.hash["tries"] == 1
+
+    # --- Тик 2: капчи нет, добираем MI ---
+    pub2 = AsyncMock()
+    pub2.publish_digest.side_effect = _digest_side_effect(set())
+    with ExitStack() as stack:
+        _patch_copy_setka_deps(
+            stack,
+            parse_tokens={"VALSTAN": "TOK_MEMBER"},
+            wall_by_token={"TOK_MEMBER": [post]},
+            publisher=pub2,
+        )
+        out2 = await execute_copy_setka_network(
+            _FakeSession([[wt], [_Region("ur", UR), _Region("mi", MI)]])
+        )
+
+    assert out2["complete"] is True
+    assert out2["posts_published"] == 1  # только MI (UR уже был)
+    assert out2["targets"] == 1  # слали только недоставленному
+    assert wt.hash == []  # pending снят
+    assert wt.lip == ["-167381590_555"]  # пост помечен полностью разосланным
+    # UR не дёргали повторно на тике 2
+    assert pub2.publish_digest.await_count == 1
+
+
+async def test_copy_setka_gives_up_after_max_tries(monkeypatch):
+    """Если хвост не добирается за PENDING_MAX_TRIES — пост закрывается, не застревает."""
+    from contextlib import ExitStack
+    from unittest.mock import AsyncMock
+
+    from modules.copy_setka_network import PENDING_MAX_TRIES, execute_copy_setka_network
+
+    post = {"owner_id": -167381590, "id": 999, "date": 999_990, "text": "новость"}
+    wt = _WorkTable()
+    wt.hash = {"lip": "-167381590_999", "done": [], "tries": PENDING_MAX_TRIES - 1}
+    UR, MI = -168170215, -158787639
+
+    pub = AsyncMock()
+    pub.publish_digest.side_effect = _digest_side_effect({UR, MI})  # обе в капче
+    with ExitStack() as stack:
+        _patch_copy_setka_deps(
+            stack,
+            parse_tokens={"VALSTAN": "TOK_MEMBER"},
+            wall_by_token={"TOK_MEMBER": [post]},
+            publisher=pub,
+        )
+        out = await execute_copy_setka_network(
+            _FakeSession([[wt], [_Region("ur", UR), _Region("mi", MI)]])
+        )
+
+    assert out["complete"] is False
+    assert out["posts_published"] == 0
+    assert wt.hash == []  # backstop сработал — pending снят
+    assert wt.lip == ["-167381590_999"]  # пост закрыт, новые не блокируются
