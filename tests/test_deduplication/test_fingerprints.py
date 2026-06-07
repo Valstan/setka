@@ -10,8 +10,38 @@ from modules.deduplication.fingerprints import (
     create_text_core_fingerprint,
     create_text_fingerprint,
     create_text_simhash,
+    jaccard_similarity,
     simhash_hamming_distance,
+    text_token_set,
 )
+
+
+class TestJaccard:
+    """text_token_set + jaccard_similarity (word-level near-dup)."""
+
+    def test_token_set_words_only_min_len(self):
+        ts = text_token_set("Привет, мир! Это тест-2026 ок я")
+        assert "привет" in ts and "мир" in ts and "2026" in ts and "тест" in ts
+        assert "я" not in ts and "ок" not in ts  # длина < 3 отброшена
+
+    def test_token_set_order_independent(self):
+        assert text_token_set("один два три") == text_token_set("три один два")
+
+    def test_jaccard_identical(self):
+        s = text_token_set("новая детская площадка откроется в субботу рядом")
+        assert jaccard_similarity(s, s) == 1.0
+
+    def test_jaccard_partial(self):
+        assert jaccard_similarity(frozenset("abc"), frozenset("bcd")) == 2 / 4
+
+    def test_jaccard_empty_is_zero(self):
+        assert jaccard_similarity(frozenset(), frozenset("abc")) == 0.0
+
+    def test_jaccard_reordered_high_distinct_low(self):
+        base = text_token_set("в кильмези откроется детская площадка рядом со школой")
+        reworded = text_token_set("рядом со школой откроется новая детская площадка кильмези")
+        distinct = text_token_set("график отключения горячей воды на следующей неделе район")
+        assert jaccard_similarity(base, reworded) > jaccard_similarity(base, distinct)
 
 
 class TestLipFingerprint:
