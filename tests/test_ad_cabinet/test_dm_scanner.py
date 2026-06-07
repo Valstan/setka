@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+
+from sqlalchemy.dialects import postgresql
 
 from database.models import AdRequest
 from modules.ad_cabinet import dm_scanner
@@ -165,3 +168,24 @@ async def test_insert_group_author_no_can_message(monkeypatch):
     assert fake.values_kw["author_is_group"] is True
     assert fake.values_kw["can_message"] is None
     assert fake.values_kw["can_message_checked_at"] is None
+
+
+# ----------------------------------------------------- ON CONFLICT predicate (регресс)
+
+
+def test_upsert_on_conflict_predicate_renders_as_literal():
+    """Регресс прод-2026-06-07: предикат частичного индекса в ON CONFLICT должен
+    рендериться ЛИТЕРАЛОМ ``origin = 'inbound_dm'``, а не bind-параметром.
+
+    Раньше ``index_where=AdRequest.origin == "inbound_dm"`` давало ``origin = $N``,
+    и Postgres не находил частичный индекс ``uq_ad_requests_inbound_dm`` →
+    InvalidColumnReferenceError → КАЖДОЕ входящее ЛС терялось. Компилируем БЕЗ
+    literal_binds (иначе все binds стали бы литералами и тест бы не различал) —
+    text()-предикат всё равно остаётся литералом, bind-param остался бы ``%(...)s``.
+    """
+    stmt = dm_scanner._build_dm_upsert_stmt(
+        _REGION, _dialog(), True, 5, ["x"], datetime(2026, 6, 7, 9, 0, 0)
+    )
+    sql = str(stmt.compile(dialect=postgresql.dialect()))
+    assert "ON CONFLICT" in sql
+    assert "WHERE origin = 'inbound_dm'" in sql  # литерал, не $N / %(origin)s
