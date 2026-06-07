@@ -61,6 +61,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from modules.curation.recorder import record_curation_run
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_POSTS_PER_CHILD = 5
@@ -623,6 +625,19 @@ async def run_cascaded_digest(
             WORK_TABLE_HASH_LIMIT,
         )
         await session.commit()
+
+    # Shadow LLM-курация (PoC, письмо brain 2026-06-07): паркуем уже
+    # опубликованные посты для пост-фактум вердикта /curate. Best-effort,
+    # изолировано — на публикацию не влияет (см. modules/curation/recorder.py).
+    for kind, d, pub in results:
+        await record_curation_run(
+            region_code=region.code,
+            theme=theme,
+            kind=kind,
+            selected_by_lip=selected_by_lip,
+            posts_included=d.posts_included,
+            publish_result=pub,
+        )
 
     total_published = sum(d.post_count for _, d, _ in results)
     first_url = results[0][2].get("url") if results else None

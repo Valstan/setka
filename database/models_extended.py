@@ -311,3 +311,62 @@ class ScheduledPublication(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "created_by": self.created_by,
         }
+
+
+class DigestCurationRun(Base):
+    """Shadow-журнал LLM-курации дайджестов (PoC, миграция 035).
+
+    Один прогон = одна опубликованная порция дайджеста. После публикации
+    (текущим детерминированным путём) вошедшие посты паркуются сюда; /curate
+    проставляет per-post вердикт. Публикация не зависит от этой строки —
+    recorder изолирован (отдельная сессия, best-effort). См.
+    modules/curation/recorder.py и письмо brain 2026-06-07."""
+
+    __tablename__ = "digest_curation_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    region_code = Column(String(50), nullable=False, index=True)
+    theme = Column(String(50), nullable=False, index=True)
+    kind = Column(String(20), nullable=False, default="regular")  # regular|mourning|neighbors
+    status = Column(String(20), nullable=False, default="pending", index=True)  # pending|reviewed
+    shadow = Column(Boolean, nullable=False, default=True)
+
+    # [{lip, owner_id, post_id, text, has_media, url}] — посты дайджеста
+    candidates = Column(JSON, nullable=False)
+    total_count = Column(Integer, nullable=False)
+
+    # [{lip, verdict: keep|drop, reason}] — заполняет /curate
+    verdicts = Column(JSON, nullable=True)
+    flagged_count = Column(Integer, nullable=True)  # сколько drop = дельта над алгоритмом
+    tokens_estimate = Column(Integer, nullable=True)
+
+    published_post_id = Column(Integer, nullable=True)
+    published_url = Column(String(500), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    reviewed_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return (
+            f"<DigestCurationRun {self.region_code}/{self.theme} "
+            f"status={self.status} n={self.total_count}>"
+        )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "region_code": self.region_code,
+            "theme": self.theme,
+            "kind": self.kind,
+            "status": self.status,
+            "shadow": self.shadow,
+            "candidates": self.candidates or [],
+            "total_count": self.total_count,
+            "verdicts": self.verdicts,
+            "flagged_count": self.flagged_count,
+            "tokens_estimate": self.tokens_estimate,
+            "published_post_id": self.published_post_id,
+            "published_url": self.published_url,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+        }

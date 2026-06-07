@@ -24,6 +24,15 @@ _Сейчас нет._
 
 ## ⏳ В процессе
 
+### 🤖 LLM-курация дайджестов — Фаза 1 (shadow PoC, письмо brain 2026-06-07)
+
+Оценка `suggest`-предложения brain: возложить фильтрацию релевантности дайджестов на LLM (ловит то, что алгоритм пропускает — рекламу, нерелевантное району, **перефразированные дубли**, которые simhash не берёт). **Скорректировали дизайн brain'а:** вместо enforcing (публикуем только approved → сцепляет публикацию с доступностью desktop'а, риск G26/протухание вечерних волн) — **Фаза 1 в shadow-режиме**: публикуем как сейчас, параллельно паркуем опубликованные посты и мерим, сколько LLM бы отсеяла (дельта над алгоритмом) + precision + токены. Нулевой риск, нулевой сдвиг тайминга, fail-open by design.
+
+- ✅ **Построено (ветка `feat/digest-llm-curation-shadow`):** миграция 035 (`digest_curation_runs`), ORM `DigestCurationRun`, изолированный `modules/curation/recorder.py` (своя сессия + never-raises, гейт `DIGEST_CURATION_SHADOW_ENABLED` + allowlist `DIGEST_CURATION_REGION_CODES`), 2 шва (cascaded_digest + parsing_scheduler пост-публикация), CLI `scripts/curate_pending.py` (`--list/--apply/--stats`), `/curate` + рубрика `docs/curation/rubric.md`. +9 тестов (1085 зелёных).
+- ⏳ **Деплой (под #025 — миграция):** применить 035 на проде (`CREATE TABLE IF NOT EXISTS`, неразрушающая) + внести env `DIGEST_CURATION_SHADOW_ENABLED=1` и `DIGEST_CURATION_REGION_CODES=<1 регион>` в `/etc/setka/setka.env` + restart worker/beat. Через `/reliz`.
+- ⏳ **Прогон PoC (≈неделя, 1 регион):** `/loop 60m /curate` локально → накопить вердикты → `--stats` (flag-rate, precision по ручному ревью, токены/прогон).
+- ⏳ **ack brain'у с цифрами** → решить Фазу 2: enforcing с fail-open vs перенос фильтра в код на Haiku-API (если объём большой / нужно 24/7). Граница автономии: LLM только вердикт, публикация/удаление — за кодом (#025/#027).
+
 ### 🌍 Big idea — модуль авто-регистрации регионов и сообществ
 
 **MVP + recheck закрыты 2026-05-22** (см. `DEV_HISTORY.md`):
