@@ -30,6 +30,7 @@ import logging
 from datetime import datetime
 from typing import Any, Callable, Dict, List
 
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database.models import AdRequest
@@ -37,16 +38,28 @@ from modules.ad_cabinet.classifier import classify
 
 logger = logging.getLogger(__name__)
 
+# Предикат частичного уникального индекса `uq_ad_requests_inbound_dm` (миграция
+# 026). КРИТИЧНО: передаём как литеральный SQL через text(), а НЕ как
+# `AdRequest.origin == "inbound_dm"` — иначе SQLAlchemy рендерит правую часть
+# bind-параметром (`origin = $N`), а Postgres при выводе цели ON CONFLICT
+# сравнивает выражения предиката и bind-параметр НЕ совпадает с литералом
+# `'inbound_dm'` в предикате индекса → InvalidColumnReferenceError «there is no
+# unique or exclusion constraint matching the ON CONFLICT specification». Из-за
+# этого весь UPSERT входящих ЛС молча падал в проде (инцидент 2026-06-07: скан
+# ловил ошибку per-region WARNING'ом и терял КАЖДОЕ новое ЛС — ровно тот баг,
+# который Этап 1 чинил). text() рендерит предикат литералом и матчит индекс.
+_INBOUND_DM_INDEX_WHERE = text("origin = 'inbound_dm'")
 
-async def _insert_dm_if_new(
-    session,
+
+def _build_dm_upsert_stmt(
     region: Dict[str, Any],
     dialog: Dict[str, Any],
     is_ad: bool,
     score: int,
     reasons: List[str],
-) -> bool:
-    """UPSERT ЛС-строки. True если вставлена новая ИЛИ переоткрыта свежим сообщением.
+    now: datetime,
+):
+    """Построить ON CONFLICT-UPSERT для ЛС-строки (вынесено ради юнит-теста SQL).
 
     ``route`` — куда направить: ``ad_cabinet`` (реклама) или ``notifications`` (не
     реклама). При конфликте (диалог уже есть) обновляем снимок и **переоткрываем**
@@ -57,7 +70,6 @@ async def _insert_dm_if_new(
     ``can_message`` для не-групповых авторов ставится ``True`` сразу: пользователь
     написал первым → ответ в диалог разрешён без отдельного VK-пречека.
     """
-    now = datetime.utcnow()
     author_is_group = bool(dialog.get("author_is_group"))
     route = "ad_cabinet" if is_ad else "notifications"
     insert_stmt = pg_insert(AdRequest).values(
@@ -84,9 +96,9 @@ async def _insert_dm_if_new(
         can_message_checked_at=None if author_is_group else now,
     )
     excluded = insert_stmt.excluded
-    stmt = insert_stmt.on_conflict_do_update(
+    return insert_stmt.on_conflict_do_update(
         index_elements=["community_vk_id", "peer_id"],
-        index_where=AdRequest.origin == "inbound_dm",
+        index_where=_INBOUND_DM_INDEX_WHERE,
         set_={
             "last_message_id": excluded.last_message_id,
             "text_snapshot": excluded.text_snapshot,
@@ -105,6 +117,18 @@ async def _insert_dm_if_new(
             | (excluded.last_message_id > AdRequest.last_message_id)
         ),
     )
+
+
+async def _insert_dm_if_new(
+    session,
+    region: Dict[str, Any],
+    dialog: Dict[str, Any],
+    is_ad: bool,
+    score: int,
+    reasons: List[str],
+) -> bool:
+    """UPSERT ЛС-строки. True если вставлена новая ИЛИ переоткрыта свежим сообщением."""
+    stmt = _build_dm_upsert_stmt(region, dialog, is_ad, score, reasons, datetime.utcnow())
     result = await session.execute(stmt)
     return bool(result.rowcount or 0)
 
