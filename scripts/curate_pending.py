@@ -27,6 +27,9 @@ from datetime import datetime
 
 from sqlalchemy import select
 
+# noqa: F401 — импорт регистрирует Region/прочие классы в SQLAlchemy-registry,
+# иначе конфигурация мапперов падает на relationship ScheduledPublication.region.
+from database import models  # noqa: F401
 from database.connection import AsyncSessionLocal
 from database.models_extended import DigestCurationRun
 
