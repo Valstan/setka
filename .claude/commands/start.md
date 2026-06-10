@@ -100,21 +100,9 @@ ref:
 
 Вызови `mcp__ccd_session__mark_chapter` с заголовком `СЕТКА <дата>` (используй `# currentDate` из системного контекста; формат: `СЕТКА 21 мая 2026`). В `summary` — кратко: «Открытие сессии разработки».
 
-## Шаг 2. Source of truth (читать параллельно)
+## Шаг 2. Git sync — ДО чтения SESSION_HANDOFF (pool #032)
 
-Прочитай **полностью** в одном параллельном блоке:
-
-1. [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md) — sticky-note с прошлой сессии: `Status`, текущая нитка, следующий шаг, failed approaches. **Если файла нет** или `Status: IDLE` — нет активной нитки, идём по обычному onboarding.
-2. [`CLAUDE.md`](../../CLAUDE.md) — entry point, правила, lessons learned
-3. [`docs/AI_DEV_GUIDE.md`](../../docs/AI_DEV_GUIDE.md) — архитектурная картина
-4. `git log --oneline -20` + `gh pr list --state merged --limit 10` — что сделано в последних сессиях (заменяет старый `DEV_HISTORY.md`, см. [ADR-0001](../../docs/adr/0001-archive-dev-history.md)). Для конкретного PR — `gh pr view <N>`.
-5. [`docs/PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) — открытые задачи и техдолги
-6. [`docs/START_HERE.md`](../../docs/START_HERE.md) — быстрые команды на проде
-7. [`docs/adr/`](../../docs/adr/) — посмотри список ADR-ов (заголовков достаточно для оценки контекста; читай файлом при необходимости)
-
-Memory-файлы автоматически подгружены через `MEMORY.md` — учитывай их (особенно `reference-ssh-alias`, `remote-access-ssh-only`, `workflow-dev-history` — последний теперь говорит «DEV_HISTORY упразднена, пиши описательные commit messages»).
-
-## Шаг 3. Git sync (параллельно)
+**Порядок жёсткий** ([pool #032](../../../brain_matrica/cross-project-ideas/ideas/032-session-start-sync-before-state.md), директива brain 2026-06-09): сначала синхронизация с `origin`, **только потом** чтение `SESSION_HANDOFF` / `PENDING`. Пользователь работает на разных машинах — другая машина могла запушить свежий handoff; чтение до pull = работа по устаревшему состоянию (что-то уже сделано, новые задачи прозёваны).
 
 В одном Bash-блоке:
 
@@ -131,7 +119,25 @@ git status --short --branch         # оценить ahead/behind после fet
 gh pr list --state open --limit 20 2>/dev/null | head -20  # опц.
 ```
 
-**`git pull --ff-only` без подтверждения** только если: текущая ветка — `main`, есть `behind` без `ahead`, рабочее дерево чистое. Иначе — отчитаться и подождать решения. Если на worktree-ветке (`claude/...`) — pull не делать, просто доложить состояние.
+**`git pull --ff-only` без подтверждения** только если: текущая ветка — `main`, есть `behind` без `ahead`, рабочее дерево чистое. Иначе — отчитаться и подождать решения (SoT-файлы в этом случае читать можно, но в отчёте пометить «handoff может быть не последним — origin впереди»). Если на worktree-ветке (`claude/...`) — pull не делать, просто доложить состояние.
+
+## Шаг 3. Source of truth (читать параллельно, ПОСЛЕ Шага 2)
+
+Прочитай **полностью** в одном параллельном блоке:
+
+1. [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md) — sticky-note с прошлой сессии: `Status`, текущая нитка, следующий шаг, failed approaches. **Если файла нет** или `Status: IDLE` — нет активной нитки, идём по обычному onboarding. Сверь `Updated:` с датой последнего коммита — устаревшему handoff (старше последних merged PR) не доверять слепо, ground truth — `git log`.
+2. [`CLAUDE.md`](../../CLAUDE.md) — entry point, правила, lessons learned
+3. [`docs/AI_DEV_GUIDE.md`](../../docs/AI_DEV_GUIDE.md) — архитектурная картина
+4. `git log --oneline -20` + `gh pr list --state merged --limit 10` — что сделано в последних сессиях (заменяет старый `DEV_HISTORY.md`, см. [ADR-0001](../../docs/adr/0001-archive-dev-history.md)). Для конкретного PR — `gh pr view <N>`.
+5. [`docs/PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) — открытые задачи и техдолги
+6. [`docs/START_HERE.md`](../../docs/START_HERE.md) — быстрые команды на проде
+7. [`docs/adr/`](../../docs/adr/) — посмотри список ADR-ов (заголовков достаточно для оценки контекста; читай файлом при необходимости)
+
+Memory-файлы автоматически подгружены через `MEMORY.md` — учитывай их (особенно `reference-ssh-alias`, `remote-access-ssh-only`, `workflow-dev-history` — последний теперь говорит «DEV_HISTORY упразднена, пиши описательные commit messages»).
+
+### 3.1. Самопроверка старения PENDING (pool #033)
+
+При чтении `PENDING_FOLLOWUPS.md` отдельно выцепить **протухшие** открытые пункты ([pool #033](../../../brain_matrica/cross-project-ideas/ideas/033-deferred-backlog-aging-retriage.md)): тег `stale`, либо открыто > 30 дней, либо `snooze ≥ 3` (конвенция меток — в шапке самого файла). Найденное вынести в отчёт (Шаг 6) с предложением **ре-триажа тремя исходами**: возобновить / переформулировать под текущий код / выкинуть (с причиной). Не возобновлять слепо. Пункты `parked` (сознательно отложены до явного условия) не всплывать, пока условие не наступило.
 
 ## Шаг 4. Sanity-check локального окружения (параллельно)
 
@@ -174,6 +180,7 @@ ssh -o ConnectTimeout=10 setka "cd /home/valstan/SETKA && git log --oneline -3" 
 5. **Локально:** venv (есть/нет), `pytest --co` (N tests / ошибки).
 6. **Прод** (если делали probe): systemd (active/inactive), `/api/health/full` (200/ошибка), последний коммит на проде.
 7. **🔴 Блокеры и ⏳ в процессе** из `PENDING_FOLLOWUPS.md`.
+7.5. **⏱ Протухшее** (из Шага 3.1, если есть): пункты `stale` / >30 дней / snooze≥3 — с предложением ре-триажа (возобновить / переформулировать / выкинуть).
 8. **Самые свежие 🟡 техдолги** (топ-3) и 🟢 идеи (топ-3) — кратко.
 9. **Чем займёмся?** — открытый вопрос. Приоритет: `MANDATE`-письма → активная нитка из handoff → 🔴 блокеры → выбор пользователя.
 
