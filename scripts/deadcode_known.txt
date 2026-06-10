@@ -1,0 +1,190 @@
+# Триаженные dead-code кандидаты (#036, методика #028). Формат: file::symbol  # вердикт — заметка.
+# Вердикты: dead (хвост/не внедрено — кандидат на удаление PR'ом), test-only (живёт только в тестах),
+# alive (false positive vulture — динамика/протокол/внутренний вызов), sleeping (недостроенная фича — PENDING),
+# uncertain (нужен взгляд владельца). Первый полный триаж — 2026-06-10 (7 агентов, grep+git-история).
+# Подавленные здесь записи скрыты из ежемесячного отчёта scripts/deadcode_scan.py (показывается дельта).
+
+# ── config / database ──────────────────────────────────────────────────────
+config/runtime.py::POSTGRES  # dead — back-compat dict, никем не импортируется
+config/runtime.py::validate_publish_token  # test-only — только tests/test_config/test_token_policy_env.py
+config/runtime.py::VK_AUXILIARY_TOKENS  # dead — пустой dict, никогда не наполнялся
+config/runtime.py::VK_TOKEN_CONFIG  # dead — env-загрузка без потребителя
+config/runtime.py::copy_setka_use_repost  # test-only — tests/test_copy_setka_runtime.py
+database/models_extended.py::ScheduledPublication  # sleeping — задел Smart Scheduler, persistence не доделан (TODO smart_scheduler.py:226)
+
+# ── modules/aggregation, ai_analyzer, celery_task_monitor ──────────────────
+modules/aggregation/clustering.py::cluster_by_similarity  # dead — не вызывается
+modules/aggregation/content_mixer.py::OPTIMAL_SENTIMENT_MIX  # dead — константа без чтения
+modules/ai_analyzer/groq_client.py::batch_analyze  # dead — не вызывается (Groq и так без бюджета)
+modules/celery_task_monitor.py::RETRY  # dead — enum-значение не используется
+modules/celery_task_monitor.py::REVOKED  # dead — enum-значение не используется
+modules/celery_task_monitor.py::task_history  # dead — init без чтения/записи
+
+# ── modules/core — postopus-слой; живой только calculate_post_score ────────
+modules/core/config.py::get_sources_by_category  # dead — postopus, потребитель не мигрирован
+modules/core/config.py::get_active_sources  # dead — postopus
+modules/core/config.py::ScheduleConfig  # dead — postopus
+modules/core/config.py::GlobalConfig  # dead — postopus
+modules/core/config.py::load_defaults  # dead — postopus
+modules/core/config.py::ContextFactory  # test-only — tests/test_core/test_context_factory.py
+modules/core/config.py::create_from_region  # test-only — там же
+modules/core/context.py::is_neighbor_content  # dead — поле без читателей
+modules/core/context.py::work_data  # dead — поле без читателей
+modules/core/context.py::add_processed_lip  # dead — postopus
+modules/core/context.py::add_processed_media  # dead — postopus
+modules/core/context.py::add_processed_text  # dead — postopus
+modules/core/context.py::is_duplicate_lip  # dead — postopus
+modules/core/context.py::is_duplicate_media  # dead — postopus
+modules/core/context.py::is_duplicate_text  # dead — postopus
+modules/core/context.py::ContextManager  # dead — класс не инстанцируется
+modules/core/context.py::create_context  # dead — метод ContextManager
+modules/core/context.py::get_context  # dead — метод ContextManager
+modules/core/context.py::clear_contexts  # dead — метод ContextManager
+modules/core/scoring.py::get_score_breakdown  # dead — не вызывается
+modules/core/scoring.py::ai_heavy  # dead — пресет, используется только postopus_style
+modules/core/scoring.py::viral_hunter  # dead — пресет, не используется
+
+# ── modules/deduplication, digest, discovery, filters ──────────────────────
+modules/deduplication/detector.py::get_similar_posts  # dead — не вызывается
+modules/deduplication/fingerprints.py::extract_text_features  # dead — не вызывается
+modules/digest_template.py::parse_region_hashtags  # alive — внутренний вызов из compute_effective_digest_settings
+modules/digest_template.py::get_effective_digest_settings_for_region  # dead — обёртка без вызовов
+modules/discovery/health_check.py::posts_sampled  # alive — поле dataclass, используется в health_check + тестах
+modules/filters/age_filter.py::AgeFilter  # dead — класс не инстанцируется, не в __all__
+modules/filters/age_filter.py::get_threshold_for_theme  # dead — метод неиспользуемого класса
+modules/filters/base.py::ExpensiveFilter  # dead — база без наследников
+modules/filters/morphology.py::expand_keywords  # alive — используется region-words логикой + тесты
+modules/filters/morphology.py::text_matches_keyword  # alive — используется фильтром
+modules/filters/photo_duplicate_filter.py::PhotoDuplicateFilter  # dead — не инстанцируется
+modules/filters/photo_duplicate_filter.py::add_hashes  # dead — метод неиспользуемого класса
+modules/filters/photo_duplicate_filter.py::compute_photo_hash  # dead — метод неиспользуемого класса
+modules/filters/photo_duplicate_filter.py::compute_video_hash  # dead — метод неиспользуемого класса
+modules/filters/pipeline.py::get_statistics  # alive — вызывается в process()
+modules/filters/pipeline.py::reset_statistics  # alive — вызывается внутри pipeline
+modules/filters/region_words_filter.py::RegionWordsFilter  # dead — не инстанцируется (живой путь — RegionalRelevanceFilter)
+modules/filters/region_words_filter.py::check_post_for_region_words  # dead — метод неиспользуемого класса
+modules/filters/text_duplicate_filter.py::compute_text_fingerprint  # dead — не вызывается
+modules/filters/text_duplicate_filter.py::compute_core_fingerprint  # dead — не вызывается
+modules/filters/text_duplicate_filter.py::texts_are_similar  # dead — не вызывается
+
+# ── modules: notifiers / monitoring / notifications / tracking ─────────────
+modules/kirov_oblast_digest.py::run_kirov_oblast_digest  # test-only — back-compat обёртка run_cascaded_digest, живёт в тестах
+modules/module_activity_notifier.py::last_activities  # dead — init без чтения
+modules/module_activity_notifier.py::get_module_stats  # dead — не вызывается
+modules/module_activity_notifier.py::get_all_module_stats  # dead — не вызывается
+modules/module_activity_notifier.py::get_recent_activities  # dead — не вызывается
+modules/module_activity_notifier.py::notify_system_health  # dead — только __main__-блок
+modules/monitoring/health_checker.py::last_check  # alive — пишется в full_health_check(), класс жив в web/api/health.py
+modules/monitoring/health_checker.py::start_monitoring  # dead — заменён full_health_check через API
+modules/notifications/storage.py::is_handled  # test-only — tests/test_notifications/test_handled_marks.py
+modules/notifications/telegram_notifier.py::send_workflow_summary  # dead — помечен «НЕ ИСПОЛЬЗОВАТЬ — чтобы не спамить»
+modules/notifications/vk_comments_checker.py::check_recent_comments_for_posts  # dead — не вызывается
+modules/notifications/vk_comments_checker.py::max_comments_per_post  # dead — back-compat параметр, в теле не читается
+modules/operation_tracking.py::exc_tb  # alive — сигнатура __exit__ (протокол)
+modules/operation_tracking.py::track_operation  # dead — декоратор ни разу не применён
+modules/operation_tracking.py::start_publishing_operation  # dead — используются start_monitoring/filtering_operation
+
+# ── modules/publisher ───────────────────────────────────────────────────────
+modules/publisher/base_publisher.py::check_connection  # alive — abstract, переопределяется наследниками
+modules/publisher/base_publisher.py::format_post_text  # alive — используется TelegramPublisher._format_telegram_text
+modules/publisher/digest_builder.py::DigestPost  # uncertain — dataclass не инстанцируется напрямую, нужен взгляд владельца
+modules/publisher/digest_builder.py::source_attribution  # alive — поле DigestPost, читается _format_post_entry
+modules/publisher/digest_builder.py::popularity_score  # alive — поле модели
+modules/publisher/digest_builder.py::max_length_exceeded  # alive — возвращается из build_digest
+modules/publisher/digest_builder.py::_available_length  # dead — не вызывается
+modules/publisher/digest_builder.py::post_number  # dead — параметр _available_length
+modules/publisher/digest_builder.py::estimate_post_capacity  # dead — не вызывается
+modules/publisher/digest_builder.py::TextOnlyDigestBuilder  # test-only — живёт в test_text_utils (bezfoto-ветка)
+modules/publisher/digest_builder.py::build_bezfoto_digest  # test-only — там же
+modules/publisher/event_distribution.py::KaravanEventDistributor  # dead — наследие «Каравана», нигде не импортируется
+modules/publisher/event_distribution.py::distribute_event_to_all_regions  # dead — метод мёртвого класса
+modules/publisher/telegram_publisher.py::TelegramPublisher  # dead — старый TG-стек; живой путь — modules/publisher/telegram_repost.py
+modules/publisher/telegram_publisher.py::check_connection  # dead — метод мёртвого класса
+modules/publisher/telegram_publisher.py::pin_message  # dead — метод мёртвого класса
+modules/publisher/telegram_publisher.py::edit_message  # dead — метод мёртвого класса
+modules/publisher/vk_publisher_extended.py::set_publish_candidates  # alive — используется в publish-workflow
+modules/publisher/vk_publisher_extended.py::is_test_mode  # uncertain — интерфейсный геттер без найденных вызовов
+modules/publisher/vk_publisher_extended.py::get_posts_remaining_today  # uncertain — интерфейсный геттер без найденных вызовов
+modules/publisher/wordpress_publisher.py::WordPressPublisher  # dead — WordPress-публикация никогда не использовалась
+modules/publisher/wordpress_publisher.py::check_connection  # dead — метод мёртвого класса
+modules/publisher/wordpress_publisher.py::update_post  # dead — метод мёртвого класса
+
+# ── modules: region_config / scheduler / notifiers / vk_monitor / router ───
+modules/region_config.py::get_active_regions  # dead — не вызывается
+modules/region_config.py::get_region_neighbors  # dead — не вызывается
+modules/region_config.py::get_region_hashtags  # dead — не вызывается
+modules/region_config.py::get_telegram_channel  # dead — не вызывается
+modules/region_config.py::get_vk_production_groups  # dead — не вызывается
+modules/region_config.py::get_vk_test_group_id  # dead — не вызывается
+modules/scheduler/smart_scheduler.py::find_next_available_slot  # dead — не вызывается
+modules/service_activity_notifier.py::notify_post_collection_progress  # dead — не вызывается
+modules/service_activity_notifier.py::notify_post_sorting_progress  # dead — не вызывается
+modules/service_activity_notifier.py::notify_health_check_start  # dead — не вызывается
+modules/service_activity_notifier.py::notify_health_check_complete  # dead — не вызывается
+modules/service_activity_notifier.py::notify_system_shutdown  # dead — не вызывается
+modules/service_notifications.py::REGION_START  # alive — член enum NotificationType
+modules/system_status_notifier.py::WORKFLOW_STARTING  # alive — член enum SystemStatusType
+modules/system_status_notifier.py::add_region_processing  # dead — не вызывается
+modules/test_info_post_collector.py::collect_test_info_posts_by_topic  # dead — не вызывается (test_info-стек удалён 2026-05-22)
+modules/vk_monitor/carousel_manager.py::SKIPPED  # dead — член enum без сравнений
+modules/vk_monitor/monitor.py::start_monitoring  # dead — не вызывается
+modules/vk_monitor/monitor.py::stop_monitoring  # dead — не вызывается
+modules/vk_monitor/vk_client.py::get_post_by_id  # dead — не вызывается (sync-клиент)
+modules/vk_monitor/vk_client.py::get_message_history  # dead — не вызывается
+modules/vk_monitor/vk_client.py::VKTokenRotator  # dead — sync-версия; везде используется VKTokenRotatorAsync
+modules/vk_monitor/vk_client.py::check_all_tokens  # dead — метод sync-ротатора
+modules/vk_monitor/vk_client_async.py::exc_tb  # alive — сигнатура __aexit__ (протокол)
+modules/vk_monitor/vk_client_async.py::get_post_by_id  # dead — не вызывается
+modules/vk_monitor/vk_client_async.py::get_multiple_groups_info  # dead — не вызывается
+modules/vk_monitor/vk_client_async.py::check_all_tokens  # dead — не вызывается
+modules/vk_token_router.py::pick_token  # uncertain — документированная back-compat обёртка, вызовов нет
+modules/vk_token_router.py::get_publish_candidates_for_group  # dead — не вызывается
+
+# ── monitoring / scripts / tasks ────────────────────────────────────────────
+monitoring/metrics.py::db_connections_active  # alive — multiproc-gauge, проверяется test_metrics_multiproc
+monitoring/metrics.py::track_api_request  # dead — декоратор только в docstring-примере
+monitoring/metrics.py::track_vk_request  # dead — декоратор только в docstring-примере
+monitoring/metrics.py::track_db_query  # dead — декоратор только в docstring-примере
+monitoring/metrics.py::track_post_processed  # dead — не вызывается
+monitoring/metrics.py::track_post_published  # dead — не вызывается
+monitoring/metrics.py::update_system_info  # dead — явный коммент «dead code» в metrics.py:182
+scripts/migrate_mongodb_config.py::CATEGORY_MAPPING  # dead — one-shot Mongo-миграция, маппинг не читается
+scripts/probe_community_dm_capabilities.py::unread_peers  # dead — локальная переменная probe-скрипта
+tasks/parsing_tasks.py::VIDEO_REPORT_PATH  # dead — константа без потребителей
+tasks/vk_carousel_tasks.py::task_routes  # dead — МОДУЛЬ не в include Celery (tasks/celery_app.py:171) — конфиг не применяется
+tasks/vk_carousel_tasks.py::task_annotations  # dead — то же: модуль не подключён
+
+# ── utils ───────────────────────────────────────────────────────────────────
+utils/cache.py::cache_key_builder  # dead — не вызывается
+utils/image_utils.py::get_link_image_select_size  # dead — postopus, не вызывается
+utils/image_utils.py::download_image  # dead — не вызывается
+utils/image_utils.py::image_files_are_duplicate  # dead — не вызывается
+utils/image_utils.py::get_vk_attachment_photo  # dead — не вызывается
+utils/image_utils.py::get_vk_attachment_video  # dead — не вызывается
+utils/image_utils.py::get_vk_attachment_audio  # dead — не вызывается
+utils/post_utils.py::parse_lip  # dead — postopus, не вызывается
+utils/post_utils.py::url_of_post  # dead — не вызывается
+utils/post_utils.py::post_popularity_v2  # dead — не вызывается
+utils/post_utils.py::format_post_stats  # dead — не вызывается
+utils/retry.py::retry_database  # uncertain — живёт только в examples/error_handling_example.py
+utils/retry.py::retry_external_api  # dead — нигде не импортируется
+utils/retry.py::retry_with_fallback  # uncertain — examples/ + тесты, прод-вызовов нет
+utils/retry.py::retry_with_circuit_breaker  # uncertain — examples/ + тесты, прод-вызовов нет
+utils/retry.py::log_error_to_db  # uncertain — только examples/
+utils/text_utils.py::clear_text  # alive — database/models_extended.py + scripts
+utils/text_utils.py::search_text  # dead — не импортируется
+utils/text_utils.py::extract_hashtags  # dead — не импортируется
+utils/text_utils.py::remove_hashtags  # dead — не импортируется
+utils/translit.py::slugify_cyrillic  # test-only — tests/test_utils/test_translit.py
+utils/vk_attachments.py::get_video_info  # dead — не импортируется
+utils/vk_attachments.py::has_video_attachments  # dead — не импортируется
+utils/vk_attachments.py::has_photo_attachments  # dead — не импортируется
+utils/vk_attachments.py::has_audio_attachments  # dead — не импортируется
+
+# ── web/api ─────────────────────────────────────────────────────────────────
+web/api/notifications.py::NotificationsResponse  # dead — схема ни в одном endpoint
+web/api/regions.py::REGION_KINDS  # alive — контракт, проверяется tests/test_api/test_regions.py
+web/api/scheduler.py::OptimalTimeResponse  # dead — не используется как response_model
+web/api/subscriber_growth.py::build_series  # test-only — tests/test_api/test_subscriber_growth.py
+web/api/system_monitoring.py::SystemStats  # dead — endpoint отдаёт Dict
+web/api/templates.py::TemplateOut  # dead — схема ни в одном endpoint
