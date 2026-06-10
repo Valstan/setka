@@ -141,13 +141,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Refresh button
     document.getElementById('refresh-posts').addEventListener('click', () => loadPosts());
-    
+
     // Filter changes
-    ['filter-region', 'filter-status', 'filter-search'].forEach(id => {
+    ['filter-region', 'filter-status'].forEach(id => {
         document.getElementById(id).addEventListener('change', () => {
             currentPage = 1;
             loadPosts();
         });
+    });
+
+    // Поиск (#035): debounce, чтобы не дёргать БД на каждый keypress
+    let searchTimer = null;
+    document.getElementById('filter-search').addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+            currentPage = 1;
+            loadPosts();
+        }, 400);
     });
 });
 
@@ -167,12 +177,31 @@ async function loadPosts() {
             page: currentPage,
             limit: 20
         };
-        
+
         const regionFilter = document.getElementById('filter-region').value;
         if (regionFilter) params.region_id = regionFilter;
-        
-        const posts = await apiClient.getPosts(params);
-        
+
+        const statusFilter = document.getElementById('filter-status').value;
+        if (statusFilter) params.status = statusFilter;
+
+        const searchQuery = document.getElementById('filter-search').value.trim();
+        if (searchQuery.length >= 2) params.q = searchQuery;
+
+        let posts = await apiClient.getPosts(params);
+
+        // tiered #035: ноль результатов → ретрай в другой раскладке (ghbdtn→привет)
+        let effectiveQuery = params.q || '';
+        if (!posts.length && params.q) {
+            const alt = searchMatch.convertLayout(params.q);
+            if (alt !== searchMatch.normQuery(params.q)) {
+                const retry = await apiClient.getPosts({ ...params, q: alt });
+                if (retry.length) {
+                    posts = retry;
+                    effectiveQuery = alt;
+                }
+            }
+        }
+
         if (posts.length === 0) {
             tbody.innerHTML = `
                 <tr>
@@ -188,8 +217,10 @@ async function loadPosts() {
                     <td>${post.id}</td>
                     <td><span class="badge bg-secondary">${post.region_code || 'N/A'}</span></td>
                     <td>
-                        <div class="text-truncate" style="max-width: 300px;" title="${post.text || ''}">
-                            ${post.text ? post.text.substring(0, 100) + '...' : 'Нет текста'}
+                        <div class="text-truncate" style="max-width: 300px;" title="${searchMatch.escapeHtml(post.text || '')}">
+                            ${post.text
+                                ? searchMatch.highlightQuery(post.text.substring(0, 100), effectiveQuery) + '...'
+                                : 'Нет текста'}
                         </div>
                     </td>
                     <td>
