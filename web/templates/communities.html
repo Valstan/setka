@@ -27,20 +27,26 @@
         <div class="card">
             <div class="card-body">
                 <div class="row g-3">
-                    <div class="col-md-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Поиск</label>
+                        <input type="text" class="form-control" id="filter-search"
+                               placeholder="Название или VK ID — любая часть, найдёт и похожее"
+                               title="Ищет в любом месте названия; при нуле точных — похожие (опечатки, другая раскладка)">
+                    </div>
+                    <div class="col-md-2">
                         <label class="form-label">Регион</label>
                         <select class="form-select" id="filter-region">
                             <option value="">Все регионы</option>
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <label class="form-label">Категория</label>
                         <select class="form-select" id="filter-category">
                             <option value="">Все категории</option>
                             <!-- опции заполняются из window.communityCategories -->
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <label class="form-label">Статус</label>
                         <select class="form-select" id="filter-active">
                             <option value="">Все</option>
@@ -48,7 +54,7 @@
                             <option value="false">Неактивные</option>
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <label class="form-label">Здоровье</label>
                         <select class="form-select" id="filter-health">
                             <option value="">Все</option>
@@ -261,6 +267,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             element.addEventListener('change', () => loadCommunities());
         }
     });
+
+    // Поиск (#035) — чисто клиентский, перерисовка без рефетча
+    let searchTimer = null;
+    document.getElementById('filter-search').addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(renderCommunitiesTable, 200);
+    });
     
     // VK ID input change for preview
     const vkIdInput = document.getElementById('communityVkId');
@@ -274,8 +287,7 @@ async function loadCommunities() {
     const table = document.getElementById('communities-table');
     const error = document.getElementById('communities-error');
     const errorText = document.getElementById('communities-error-text');
-    const tbody = document.getElementById('communities-table-body');
-    
+
     loading.style.display = 'block';
     table.style.display = 'none';
     error.style.display = 'none';
@@ -295,7 +307,29 @@ async function loadCommunities() {
         const healthFilter = document.getElementById('filter-health').value;
         if (healthFilter) params.health_status = healthFilter;
 
-        const communities = await apiClient.getCommunities(params);
+        allCommunities = await apiClient.getCommunities(params);
+
+        renderCommunitiesTable();
+
+        loading.style.display = 'none';
+        table.style.display = 'block';
+    } catch (err) {
+        console.error('Error loading communities:', err);
+        errorText.textContent = err.message;
+        loading.style.display = 'none';
+        error.style.display = 'block';
+    }
+}
+
+// Последняя загрузка — для клиентского tiered-поиска (#035) без рефетча
+let allCommunities = [];
+
+function renderCommunitiesTable() {
+    const tbody = document.getElementById('communities-table-body');
+    const q = document.getElementById('filter-search').value.trim();
+    const communities = q
+        ? searchMatch.filter(q, allCommunities, c => [c.name || '', String(c.vk_id || '')])
+        : allCommunities;
         
         if (communities.length === 0) {
             tbody.innerHTML = `
@@ -303,7 +337,9 @@ async function loadCommunities() {
                     <td colspan="9" class="text-center text-muted py-4">
                         <i class="bi bi-inbox fs-1"></i>
                         <p class="mt-2">Сообщества не найдены</p>
-                        <small>Импортируйте данные из старого проекта или добавьте вручную</small>
+                        ${q
+                            ? '<small>Поиск не дал результатов даже по похожим названиям</small>'
+                            : '<small>Импортируйте данные из старого проекта или добавьте вручную</small>'}
                     </td>
                 </tr>
             `;
@@ -374,14 +410,6 @@ async function loadCommunities() {
             `).join('');
         }
         
-        loading.style.display = 'none';
-        table.style.display = 'block';
-    } catch (err) {
-        console.error('Error loading communities:', err);
-        errorText.textContent = err.message;
-        loading.style.display = 'none';
-        error.style.display = 'block';
-    }
 }
 
 function getCategoryColor(category) {

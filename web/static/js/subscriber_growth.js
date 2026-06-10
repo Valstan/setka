@@ -39,15 +39,18 @@
         return `<span class="${cls}">${sign}${c.delta} (${sign}${c.delta_pct}%)</span>`;
     }
 
-    function rowHtml(c) {
+    function rowHtml(c, q) {
         const checked = state.selected.has(c.id) ? 'checked' : '';
         const lag = c.is_laggard
             ? ' <span class="badge bg-warning text-dark">отстаёт</span>' : '';
+        const name = c.name
+            ? (q ? searchMatch.highlightQuery(c.name, q) : searchMatch.escapeHtml(c.name))
+            : ('#' + c.id);
         return `
         <div class="col-md-6">
           <label class="d-flex align-items-center gap-2 p-1 rounded growth-row">
             <input type="checkbox" class="form-check-input mt-0 growth-cb" value="${c.id}" ${checked}>
-            <span class="text-truncate" style="max-width: 220px;" title="${esc(c.name)}">${c.name || ('#' + c.id)}</span>
+            <span class="text-truncate" style="max-width: 220px;" title="${esc(c.name)}">${name}</span>
             ${lag}
             <span class="ms-auto small">${c.latest_count ?? '—'} · ${fmtDelta(c)}</span>
           </label>
@@ -60,8 +63,10 @@
             list.innerHTML = '<div class="text-muted small">Снимков пока нет — копятся раз в сутки.</div>';
             return;
         }
-        const q = (el('growth-search').value || '').trim().toLowerCase();
-        const items = state.regions.filter(c => !q || (c.name || '').toLowerCase().includes(q));
+        // tiered-поиск (#035): substring → subsequence → fuzzy + RU↔EN раскладка.
+        // Порядок остаётся групповым (по областям), поэтому filter, не rank.
+        const q = (el('growth-search').value || '').trim();
+        const items = q ? searchMatch.filter(q, state.regions, c => [c.name || '']) : state.regions;
         if (!items.length) {
             list.innerHTML = '<div class="text-muted small">Ничего не найдено.</div>';
             return;
@@ -86,7 +91,7 @@
             g.items.sort((x, y) => (y.latest_count || 0) - (x.latest_count || 0));
             const title = k === '__none__' ? 'Без области' : (g.name || ('Область #' + k));
             html.push(`<div class="col-12 mt-2 mb-1"><h6 class="mb-0 text-uppercase small text-muted border-bottom pb-1">${esc(title)} <span class="text-secondary">(${g.items.length})</span></h6></div>`);
-            g.items.forEach(c => html.push(rowHtml(c)));
+            g.items.forEach(c => html.push(rowHtml(c, q)));
         });
         list.innerHTML = html.join('');
     }

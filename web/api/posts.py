@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.connection import get_db_session
 from database.models import Community, Post, Region
 from utils.cache import cache
+from utils.search_query import tokenize
 
 router = APIRouter()
 
@@ -50,6 +51,7 @@ class PostResponse(BaseModel):
 async def get_posts(
     region_id: int | None = None,
     status: str | None = None,
+    q: str | None = None,
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db_session),
@@ -61,6 +63,11 @@ async def get_posts(
         query = query.where(Post.region_id == region_id)
     if status:
         query = query.where(Post.status == status)
+    if q:
+        # tiered-поиск #035, уровень 1: многотокен AND, substring в любом месте.
+        # RU↔EN-ретрай при нуле результатов делает клиент (search_match.js).
+        for token in tokenize(q):
+            query = query.where(Post.text.ilike(f"%{token}%"))
 
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
