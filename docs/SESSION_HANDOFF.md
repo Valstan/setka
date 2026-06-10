@@ -3,48 +3,51 @@
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
 **Status:** ACTIVE
-**Updated:** 2026-06-07
+**Updated:** 2026-06-10
 **Branch:** main
-**Last release in prod:** прод на `adf563a` — near-dup Jaccard дедуп + env-тюнинг задеплоены (restart worker/beat); ранее в сессии — shadow LLM-курация (`fe27360`, миграция 035 применена, env-флаги внесены, регион `mi`).
+**Last release in prod:** прод на `69c2360` — tiered-поиск #035 задеплоен (миграция 036 `pg_trgm`, restart web); worker/beat не трогались с `adf563a`.
 
 ---
 
 ## Текущая нитка
 
-Две задеплоенные фичи в **фазе наблюдения** (код шиплён, мид-имплементации нет):
+Кодовых ниток в полёте нет — всё построенное смержено и задеплоено. Три нитки в **фазе наблюдения/ожидания**:
 
-1. **PoC LLM-курации дайджестов (shadow, регион `mi`)** — [#186](https://github.com/Valstan/setka/pull/186). Ответ на `suggest` brain (письмо 2026-06-07). Дизайн скорректирован: enforcing→**shadow** (публикуем как сейчас, мерим, сколько LLM бы отсеяла; fail-open). На проде: миграция 035 `digest_curation_runs` применена, env `DIGEST_CURATION_SHADOW_ENABLED=1` + `DIGEST_CURATION_REGION_CODES=mi`, рутина `/loop 30m /curate` на Haiku (локальный дефолт машины в `.claude/settings.local.json`, не коммитится).
-2. **near-dup Jaccard дедуп** — [#187](https://github.com/Valstan/setka/pull/187), задеплоен на `adf563a`. SimHash near-dup уже работал (в `advanced_parser`, не `detector.py`); добавлен intra-batch Jaccard (ловит переставленные/переписанные дубли) + env-тюнинг + счётчики. ON by default, консервативно.
+1. **Tiered-поиск #035** — построен и задеплоен целиком за сессию 2026-06-10 ([PR #191](https://github.com/Valstan/setka/pull/191)): shared `web/static/js/search_match.js` + серверный tiered (`/ad-crm`, `/posts`) + поле поиска на `/communities` + миграция 036 (`pg_trgm`). Остаток — браузер-верификация владельцем. Brain получил report (`mailbox/to-brain/2026-06-10-tiered-search-shipped.md`).
+2. **PoC LLM-курации (shadow, регион `mi`)** — ждёт накопления вердиктов до ~2026-06-14, затем `--stats` → ack brain с цифрами.
+3. **near-dup Jaccard дедуп** — наблюдение логов (`ssh setka "grep 'near-dup (jaccard) drop' /home/valstan/SETKA/logs/celery-worker.log | tail"`).
+
+Также в сессии 2026-06-10 обработаны 3 recommend-директивы brain ([PR #190](https://github.com/Valstan/setka/pull/190)): `/start` пересобран (sync ДО handoff, pool #032), PENDING получил метки старения (#033), consolidation-probe метрики ушли brain'у.
 
 ## Следующий шаг
 
-Приоритет за владельцем. Конкретные follow-up'ы:
+Приоритет за владельцем:
 
-1. **Наблюдать Jaccard на проде** пару дней: `ssh setka "grep 'near-dup (jaccard) drop' /home/valstan/SETKA/logs/celery-worker.log | tail"`. Режет лишнее → поднять `DIGEST_JACCARD_THRESHOLD=0.92` или выключить `DIGEST_JACCARD_DEDUP_ENABLED=0` в `/etc/setka/setka.env` + restart worker (без передеплоя).
-2. **PoC курации:** первая shadow-строка ляжет с ближайшей публикацией `mi`; проверить рутину `/curate` (и что Haiku подхватился на первом автозапуске). Через ~неделю — `scripts/curate_pending.py --stats` → flag-rate/precision/токены → **ack brain'у с цифрами** (письмо-feedback уже ушло, ждёт данных).
-3. **Освежить `nolinsk`** — верх 🔴 очереди в [`REGION_REFRESH_LOG.md`](REGION_REFRESH_LOG.md) (далее vp/arbazh/bal/nema/klz/kukmor). Процесс: localities из ru.wikipedia → 2 прохода `discover_scan` → классификация по постам → seed в пробелы.
+1. **~2026-06-14: цифры PoC курации** — `ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/curate_pending.py --stats"` → flag-rate/precision/токены → письмо-ack brain'у (он ждёт).
+2. **Браузер-проход по чек-листу** «Пакет браузер-верификаций владельцем» (`PENDING_FOLLOWUPS.md`, 🟢 Идеи) — теперь включает tiered-поиск (середина слова / опечатка / EN-раскладка / номер с дефисами).
+3. **Освежить `nolinsk`** — верх 🔴 очереди в [`REGION_REFRESH_LOG.md`](REGION_REFRESH_LOG.md) (далее vp/arbazh/bal/nema/klz/kukmor).
 
 ## Контекст
 
-- **План:** нет активного файла-плана; roadmap'ы — в `PENDING_FOLLOWUPS.md`, очередь регионов — в `REGION_REFRESH_LOG.md`.
-- **Связанные коммиты сессии:** `fe27360` #186 (shadow LLM-curation PoC), `adf563a` #187 (near-dup Jaccard + env-tuning).
-- **Прод:** HEAD `adf563a`, 3/3 active, health 200. Миграция 035 применена. Env-добавления: `DIGEST_CURATION_*` (бэкап `/etc/setka/setka.env.bak.20260607`). near-dup Jaccard ON по дефолту.
-- **Открытых PR:** нет (оба смержены; handoff-PR этой сессии — отдельно, doc-only).
+- **План:** нет активного файла-плана; roadmap — `PENDING_FOLLOWUPS.md`, очередь регионов — `REGION_REFRESH_LOG.md`.
+- **Связанные коммиты сессии:** `671e1bc` #190 (3 директивы: sync-order, aging, план #035, probe), `69c2360` #191 (tiered-поиск Ф0–Ф3).
+- **Прод:** HEAD `69c2360`, 3/3 active, health 200. Миграция 036 применена (`pg_trgm` стоит); migrate.py заодно дозаписал в журнал 034/035 (применялись вручную, идемпотентные). Smoke: `search_match.js` 200, `/api/ad-crm/clients?q=` 200, `/api/posts/?q=` 200.
+- **Открытых PR:** нет (handoff-PR этой сессии — doc-only, авто-merge).
 
 ## Failed approaches (этой нитки)
 
-- **Enforcing-схема курации (публиковать только approved)** — отвергнута на этапе оценки: сцепляет публикацию с доступностью desktop'а (вечерние волны 21/23 MSK рискуют протухнуть, [G26](../../brain_matrica/cross-project-ideas/GOTCHAS.md)). Заменена shadow-режимом (measure-before-enforce). Не возвращаться к enforcing без fail-open.
-- **Слепое ужесточение SimHash-порога** для ловли перефраза — отвергнуто: риск срезать живые разные новости. Вместо этого — env-тюнинг (калибровка по данным) + intra-batch Jaccard (другой класс) + наблюдаемость.
+- **Подсветка совпадения в имени на `/communities`** — невозможна: ячейка имени — редактируемый `<input>` (inline-rename), внутрь input HTML не вставить. Поиск работает, подсветка пропущена осознанно (решение «везде, где дёшево» это допускает).
+- Прочих отвергнутых подходов в сессии не было; уроки наблюдения (мёртвые фильтры `/posts`, клиентский поиск поверх серверной пагинации) — зафиксированы в письме brain и PR #191.
 
 ## Открытые вопросы для пользователя
 
-- Триаж «Автор: Валентин Савиных» в админ-подсказке VK на постах главных групп — разобрано (это владелец user-авторизованного community-токена, публичный автор = группа, не баг). Опционально: переезд на групповые API-ключи (косметика). Решения не требует, если не мешает.
+_Нет._
 
 ## Не забыть (low-priority)
 
-- 🟢 Браузер-верификации владельцем накопились: ad-cabinet серии (#152–165), планировщик отложки (B1/B2), CRM, subscriber-growth, тёмная тема, `/publications`, `/monitoring`.
-- 🟢 subscriber-growth R3 (авто-анализатор динамики) — готов будет ~через неделю накопления снимков.
-- ⏸ AI-дедуп тяжёлого перефраза (embeddings) — до апгрейда VPS ≥4ГБ.
+- 🟢 «Пакет браузер-верификаций владельцем» — консолидированный чек-лист в PENDING (🟢 Идеи): один ~20-минутный проход или вычеркнуть то, чем уже пользуешься.
+- 🟢 `/posts`: серверный `q` ищет по всей базе, но кандидат на доработку — серверная подсветка за пределами первых 100 символов превью (сейчас подсвечивается только видимая часть).
+- ⏸ AI-дедуп тяжёлого перефраза (embeddings) — `parked` до апгрейда VPS ≥4 ГБ (метка в PENDING).
 
 ---
 
