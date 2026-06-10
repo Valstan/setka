@@ -37,8 +37,12 @@ from database.models import (
     AdRequest,
 )
 from modules.ad_cabinet.interaction_log import log_interaction
+from utils.search_query import compact_number, normalize_query, query_variants
 
 logger = logging.getLogger(__name__)
+
+# Порог pg_trgm similarity для fuzzy-фолбэка поиска клиентов (#035, Уровень 3).
+_FUZZY_SIMILARITY_THRESHOLD = 0.3
 router = APIRouter()
 
 # Воронка сделки. Порядок — для сортировки/прогресса в UI.
@@ -187,6 +191,67 @@ def _parse_date(value: Optional[str]):
 # ---------------------------------------------------------------- clients
 
 
+def _compact_contact_col():
+    """``contact`` без разделителей — матч «номерных» токенов (``8912…`` ≡ ``8-912 …``)."""
+    col = func.coalesce(AdClient.contact, "")
+    for sep in (" ", "-", ".", "/"):
+        col = func.replace(col, sep, "")
+    return col
+
+
+def _text_search_conditions(tokens: list[str]) -> list:
+    """Многотокен AND (#035, Уровень 1): каждый токен — substring в name/contact."""
+    conds = []
+    compact_col = _compact_contact_col()
+    for token in tokens:
+        like = f"%{token}%"
+        cond = AdClient.name.ilike(like) | AdClient.contact.ilike(like)
+        compact = compact_number(token)
+        if compact:
+            cond = cond | compact_col.like(f"%{compact}%")
+        conds.append(cond)
+    return conds
+
+
+def _supports_trgm(db: AsyncSession) -> bool:
+    """pg_trgm есть только на Postgres; на других диалектах fuzzy пропускаем."""
+    try:
+        return db.get_bind().dialect.name == "postgresql"
+    except Exception:
+        return False
+
+
+async def _search_client_rows(db: AsyncSession, stmt, q: Optional[str], limit: int):
+    """Tiered-поиск клиентов (#035): substring → RU↔EN раскладка → pg_trgm fuzzy.
+
+    Следующий уровень пробуется только при нуле результатов предыдущего —
+    «похожее» не разбавляет точные совпадения.
+    """
+
+    def _ordered(s):
+        return s.order_by(AdClient.updated_at.desc()).limit(limit)
+
+    variants = query_variants(q) if q else []
+    if not variants:
+        return (await db.execute(_ordered(stmt))).all()
+
+    for tokens in variants:
+        rows = (await db.execute(_ordered(stmt.where(*_text_search_conditions(tokens))))).all()
+        if rows:
+            return rows
+
+    if not _supports_trgm(db):
+        return []
+
+    qn = normalize_query(q)
+    sim = func.greatest(
+        func.similarity(AdClient.name, qn),
+        func.similarity(func.coalesce(AdClient.contact, ""), qn),
+    )
+    fuzzy_stmt = stmt.where(sim > _FUZZY_SIMILARITY_THRESHOLD).order_by(sim.desc()).limit(limit)
+    return (await db.execute(fuzzy_stmt)).all()
+
+
 @router.get("/clients")
 async def list_clients(
     stage: Optional[str] = None,
@@ -229,12 +294,8 @@ async def list_clients(
         stmt = stmt.where(AdClient.stage == stage)
     if region_id is not None:
         stmt = stmt.where(AdClient.region_id == region_id)
-    if q:
-        like = f"%{q.strip()}%"
-        stmt = stmt.where(AdClient.name.ilike(like) | AdClient.contact.ilike(like))
-    stmt = stmt.order_by(AdClient.updated_at.desc()).limit(limit)
 
-    rows = (await db.execute(stmt)).all()
+    rows = await _search_client_rows(db, stmt, q, limit)
     clients = []
     for client, total_paid, total_awaiting, payments_count, publications_count in rows:
         d = client.to_dict()
