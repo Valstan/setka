@@ -257,30 +257,6 @@ def cache(ttl: int = 300, key_prefix: str = "", key_builder: Optional[Callable] 
     return decorator
 
 
-def cache_key_builder(*args, **kwargs) -> str:
-    """
-    Build cache key from arguments
-    Helper function for custom key building
-    """
-    parts = []
-
-    # Add positional arguments
-    for arg in args:
-        if hasattr(arg, "id"):  # For DB models
-            parts.append(f"{arg.__class__.__name__}:{arg.id}")
-        else:
-            parts.append(str(arg))
-
-    # Add keyword arguments
-    for key, value in sorted(kwargs.items()):
-        if hasattr(value, "id"):
-            parts.append(f"{key}:{value.__class__.__name__}:{value.id}")
-        else:
-            parts.append(f"{key}:{value}")
-
-    return ":".join(parts)
-
-
 async def invalidate_cache(pattern: str):
     """
     Invalidate cache by pattern

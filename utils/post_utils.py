@@ -27,38 +27,6 @@ def lip_of_post(owner_id: int, post_id: int) -> str:
     return f"{abs(owner_id)}_{post_id}"
 
 
-def parse_lip(lip: str) -> tuple:
-    """
-    Parse lip string back into owner_id and post_id.
-
-    Args:
-        lip: "{abs(owner_id)}_{id}"
-
-    Returns:
-        (owner_id, post_id) tuple
-    """
-    parts = lip.split("_")
-    if len(parts) != 2:
-        raise ValueError(f"Invalid lip format: {lip}")
-
-    return int(parts[0]), int(parts[1])
-
-
-def url_of_post(owner_id: int, post_id: int) -> str:
-    """
-    Build VK post URL.
-    Migrated from old_postopus bin/utils/url_of_post.py
-
-    Args:
-        owner_id: VK owner ID
-        post_id: VK post ID
-
-    Returns:
-        Full VK post URL
-    """
-    return f"https://vk.com/wall{owner_id}_{post_id}"
-
-
 def post_popularity(views: int, likes: int, comments: int, reposts: int) -> float:
     """
     Calculate post popularity score.
@@ -83,35 +51,6 @@ def post_popularity(views: int, likes: int, comments: int, reposts: int) -> floa
     view_factor = math.sqrt(views + 1)
 
     return engagement / view_factor
-
-
-def post_popularity_v2(views: int, likes: int, comments: int, reposts: int) -> float:
-    """
-    Improved popularity score with better weighting.
-    Modern version for SETKA.
-
-    Args:
-        views: Number of views
-        likes: Number of likes
-        comments: Number of comments
-        reposts: Number of reposts
-
-    Returns:
-        Popularity score (0-100 scale)
-    """
-    if views == 0 and likes == 0 and comments == 0 and reposts == 0:
-        return 0.0
-
-    # Weighted engagement
-    engagement = (likes * 1.0) + (comments * 2.0) + (reposts * 3.0)
-
-    # Normalize by views (logarithmic scale to avoid extreme values)
-    view_factor = math.log10(views + 1) + 1
-
-    score = (engagement / view_factor) * 10
-
-    # Cap at 100
-    return min(score, 100.0)
 
 
 def clear_copy_history(post_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -152,30 +91,6 @@ def clear_copy_history(post_data: Dict[str, Any]) -> Dict[str, Any]:
     # Not a repost
     post_data["is_repost"] = False
     return post_data
-
-
-def format_post_stats(views: int, likes: int, comments: int, reposts: int) -> str:
-    """
-    Format post statistics for display.
-
-    Args:
-        views, likes, comments, reposts
-
-    Returns:
-        Formatted string
-    """
-    parts = []
-
-    if views > 0:
-        parts.append(f"👁 {format_number(views)}")
-    if likes > 0:
-        parts.append(f"❤️ {format_number(likes)}")
-    if comments > 0:
-        parts.append(f"💬 {format_number(comments)}")
-    if reposts > 0:
-        parts.append(f"🔄 {format_number(reposts)}")
-
-    return " | ".join(parts) if parts else "Нет статистики"
 
 
 def format_number(num: int) -> str:

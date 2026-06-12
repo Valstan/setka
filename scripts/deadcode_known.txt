@@ -111,42 +111,17 @@ modules/vk_token_router.py::get_publish_candidates_for_group  # dead — не в
 
 # ── monitoring / scripts / tasks ────────────────────────────────────────────
 monitoring/metrics.py::db_connections_active  # alive — multiproc-gauge, проверяется test_metrics_multiproc
-monitoring/metrics.py::track_api_request  # dead — декоратор только в docstring-примере
-monitoring/metrics.py::track_vk_request  # dead — декоратор только в docstring-примере
-monitoring/metrics.py::track_db_query  # dead — декоратор только в docstring-примере
-monitoring/metrics.py::track_post_processed  # dead — не вызывается
-monitoring/metrics.py::track_post_published  # dead — не вызывается
-monitoring/metrics.py::update_system_info  # dead — явный коммент «dead code» в metrics.py:182
 scripts/migrate_mongodb_config.py::CATEGORY_MAPPING  # dead — one-shot Mongo-миграция, маппинг не читается
 scripts/probe_community_dm_capabilities.py::unread_peers  # dead — локальная переменная probe-скрипта
 tasks/parsing_tasks.py::VIDEO_REPORT_PATH  # dead — константа без потребителей
 
 # ── utils ───────────────────────────────────────────────────────────────────
-utils/cache.py::cache_key_builder  # dead — не вызывается
-utils/image_utils.py::get_link_image_select_size  # dead — postopus, не вызывается
-utils/image_utils.py::download_image  # dead — не вызывается
-utils/image_utils.py::image_files_are_duplicate  # dead — не вызывается
-utils/image_utils.py::get_vk_attachment_photo  # dead — не вызывается
-utils/image_utils.py::get_vk_attachment_video  # dead — не вызывается
-utils/image_utils.py::get_vk_attachment_audio  # dead — не вызывается
-utils/post_utils.py::parse_lip  # dead — postopus, не вызывается
-utils/post_utils.py::url_of_post  # dead — не вызывается
-utils/post_utils.py::post_popularity_v2  # dead — не вызывается
-utils/post_utils.py::format_post_stats  # dead — не вызывается
 utils/retry.py::retry_database  # uncertain — живёт только в examples/error_handling_example.py
-utils/retry.py::retry_external_api  # dead — нигде не импортируется
 utils/retry.py::retry_with_fallback  # uncertain — examples/ + тесты, прод-вызовов нет
 utils/retry.py::retry_with_circuit_breaker  # uncertain — examples/ + тесты, прод-вызовов нет
 utils/retry.py::log_error_to_db  # uncertain — только examples/
 utils/text_utils.py::clear_text  # alive — database/models_extended.py + scripts
-utils/text_utils.py::search_text  # dead — не импортируется
-utils/text_utils.py::extract_hashtags  # dead — не импортируется
-utils/text_utils.py::remove_hashtags  # dead — не импортируется
 utils/translit.py::slugify_cyrillic  # test-only — tests/test_utils/test_translit.py
-utils/vk_attachments.py::get_video_info  # dead — не импортируется
-utils/vk_attachments.py::has_video_attachments  # dead — не импортируется
-utils/vk_attachments.py::has_photo_attachments  # dead — не импортируется
-utils/vk_attachments.py::has_audio_attachments  # dead — не импортируется
 
 # ── web/api ─────────────────────────────────────────────────────────────────
 web/api/notifications.py::NotificationsResponse  # dead — схема ни в одном endpoint

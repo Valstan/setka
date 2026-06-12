@@ -11,7 +11,6 @@ shared mmap-файлах и агрегируются через ``MultiProcessCo
 import logging
 import os
 import time
-from functools import wraps
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -178,8 +177,8 @@ regions_active = Gauge(
 # =============================================================================
 
 # Info-метрики prometheus_client multiproc-mode не поддерживает — определяем
-# только в single-process режиме. Сейчас никем не используется (см. далее
-# update_system_info — dead code), но оставляем для совместимости импорта.
+# только в single-process режиме. Сейчас никем не используется, но оставляем
+# для совместимости импорта.
 if not _is_multiproc():
     system_info = Info("setka_system", "SETKA system information")
 else:
@@ -191,129 +190,6 @@ else:
     system_info = _InfoStub()
 
 errors_total = Counter("setka_errors_total", "Total errors", ["component", "error_type"])
-
-# =============================================================================
-# DECORATORS
-# =============================================================================
-
-
-def track_api_request(endpoint: str):
-    """
-    Decorator to track API request metrics
-
-    Usage:
-        @track_api_request('get_regions')
-        async def get_regions():
-            ...
-    """
-
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            api_requests_in_progress.inc()
-            start_time = time.time()
-            status = "success"
-
-            try:
-                result = await func(*args, **kwargs)
-                return result
-            except Exception:
-                status = "error"
-                raise
-            finally:
-                duration = time.time() - start_time
-
-                # Get method from request if available
-                method = "GET"  # Default
-                if args:
-                    request = next((arg for arg in args if hasattr(arg, "method")), None)
-                    if request:
-                        method = request.method
-
-                api_requests_total.labels(method=method, endpoint=endpoint, status=status).inc()
-
-                api_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(
-                    duration
-                )
-
-                api_requests_in_progress.dec()
-
-        return wrapper
-
-    return decorator
-
-
-def track_vk_request(method: str):
-    """
-    Decorator to track VK API request metrics
-
-    Usage:
-        @track_vk_request('wall.get')
-        async def get_wall_posts():
-            ...
-    """
-
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            start_time = time.time()
-            status = "success"
-
-            try:
-                result = await func(*args, **kwargs)
-                return result
-            except Exception as e:
-                status = "error"
-
-                # Track specific error codes
-                if hasattr(e, "error_code"):
-                    vk_api_errors_total.labels(error_code=str(e.error_code)).inc()
-
-                    # Track rate limit hits
-                    if e.error_code == 6:
-                        vk_api_rate_limit_hits.inc()
-
-                raise
-            finally:
-                duration = time.time() - start_time
-
-                vk_api_requests_total.labels(method=method, status=status).inc()
-
-                vk_api_request_duration_seconds.labels(method=method).observe(duration)
-
-        return wrapper
-
-    return decorator
-
-
-def track_db_query(operation: str):
-    """
-    Decorator to track database query metrics
-
-    Usage:
-        @track_db_query('select_posts')
-        async def get_posts():
-            ...
-    """
-
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            start_time = time.time()
-
-            try:
-                result = await func(*args, **kwargs)
-                return result
-            finally:
-                duration = time.time() - start_time
-
-                db_queries_total.labels(operation=operation).inc()
-                db_query_duration_seconds.labels(operation=operation).observe(duration)
-
-        return wrapper
-
-    return decorator
-
 
 # =============================================================================
 # UTILITY FUNCTIONS
@@ -328,26 +204,6 @@ def track_cache_hit(cache_type: str = "redis"):
 def track_cache_miss(cache_type: str = "redis"):
     """Record a cache miss"""
     cache_misses_total.labels(cache_type=cache_type).inc()
-
-
-def track_post_processed(status: str):
-    """
-    Record a processed post
-
-    Args:
-        status: 'approved', 'rejected', 'analyzed', etc.
-    """
-    posts_processed_total.labels(status=status).inc()
-
-
-def track_post_published(channel: str):
-    """
-    Record a published post
-
-    Args:
-        channel: 'vk', 'telegram', 'ok', etc.
-    """
-    posts_published_total.labels(channel=channel).inc()
 
 
 def publish_result_label(publish_result) -> str:
@@ -416,13 +272,6 @@ def track_error(component: str, error_type: str):
     errors_total.labels(component=component, error_type=error_type).inc()
 
     logger.error(f"Error tracked: {component}.{error_type}")
-
-
-def update_system_info(version: str, python_version: str, environment: str = "production"):
-    """Update system information"""
-    system_info.info(
-        {"version": version, "python_version": python_version, "environment": environment}
-    )
 
 
 async def get_cache_metrics():
