@@ -23,6 +23,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DOWNLOAD_TIMEOUT_SECONDS = 30
+# Telegram-CDN тарпитит datacenter-egress (CF Worker) до ~1 КБ/с (факт деплоя
+# Ф0.3; локально тот же файл — за секунды). Превью-фото ≤~100 КБ → 90с хватает.
+RELAY_DOWNLOAD_TIMEOUT_SECONDS = 90
 MAX_FILE_BYTES = 20 * 1024 * 1024  # один файл больше 20 MB не качаем
 MAX_FILES_PER_ITEM = 10
 
@@ -93,7 +96,10 @@ async def download_media(
             if entry.get("type") == "photo" and entry.get("url"):
                 try:
                     dl_url, dl_headers = _download_plan(entry["url"])
-                    response = await client.get(dl_url, headers=dl_headers)
+                    timeout = (
+                        RELAY_DOWNLOAD_TIMEOUT_SECONDS if dl_headers else DOWNLOAD_TIMEOUT_SECONDS
+                    )
+                    response = await client.get(dl_url, headers=dl_headers, timeout=timeout)
                     response.raise_for_status()
                     blob = response.content
                     if 0 < len(blob) <= MAX_FILE_BYTES and downloaded + len(blob) <= quota_left:
