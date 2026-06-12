@@ -16,12 +16,14 @@ from fastapi.templating import Jinja2Templates
 
 from _version import __version__ as APP_VERSION
 from database.connection import close_db, init_db
+from middleware.auth_gate import AuthGateMiddleware
 from middleware.metrics_middleware import MetricsMiddleware
 from middleware.rate_limiter import RateLimitMiddleware
 from modules.module_activity_notifier import notify_system_startup
 from web.api import (
     ad_cabinet,
     ad_crm,
+    auth,
     communities,
     discovery,
     filtration,
@@ -102,6 +104,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# App-level auth + изоляция ролей operator|radar (Ф0.1 контент-радара).
+# Secure by default: всё закрыто, кроме allowlist'а в middleware/auth_gate.py.
+app.add_middleware(AuthGateMiddleware)
+
 # Rate limiting middleware (защита от DoS)
 app.add_middleware(
     RateLimitMiddleware,
@@ -121,6 +127,7 @@ templates.env.globals["app_version"] = APP_VERSION
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), name="static")
 
 # Include routers
+app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(health.router, prefix="/api/health", tags=["Health"])
 app.include_router(regions.router, prefix="/api/regions", tags=["Regions"])
 app.include_router(communities.router, prefix="/api/communities", tags=["Communities"])
@@ -151,6 +158,18 @@ app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Disc
 async def root(request: Request):
     """Main dashboard page"""
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    """Логин/регистрация (Ф0.1) — единственная публичная страница."""
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.get("/radar")
+async def radar_page(request: Request):
+    """Контент-радар: лендинг radar-юзера. Лента — Ф0.2/Ф0.4, пока заглушка."""
+    return templates.TemplateResponse("radar.html", {"request": request})
 
 
 @app.get("/regions")
