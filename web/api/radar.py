@@ -24,6 +24,7 @@ from database import models  # noqa: F401 - конфигурация маппе�
 from database.connection import AsyncSessionLocal
 from database.models_extended import (
     RadarItem,
+    RadarPushSubscription,
     RadarSaved,
     RadarSource,
     RadarSubscription,
@@ -395,3 +396,80 @@ async def get_saved_media(saved_id: int, filename: str, request: Request):
     if path is None:
         raise HTTPException(status_code=404, detail="Файл не найден")
     return FileResponse(path)
+
+
+# ───────────────────────── Web-push (Ф0.5) ─────────────────────────
+
+
+class PushKeysIn(BaseModel):
+    p256dh: str = Field(..., min_length=1, max_length=256)
+    auth: str = Field(..., min_length=1, max_length=128)
+
+
+class PushSubscriptionIn(BaseModel):
+    endpoint: str = Field(..., min_length=10, max_length=1024)
+    keys: PushKeysIn
+
+
+@router.get("/push/vapid-public-key")
+async def get_vapid_public_key(request: Request):
+    """Публичный VAPID-ключ для pushManager.subscribe; 404 = push не настроен."""
+    _current_user(request)
+    from modules.radar.push import vapid_public_key
+
+    key = vapid_public_key()
+    if not key:
+        raise HTTPException(status_code=404, detail="Push не настроен на сервере")
+    return {"key": key}
+
+
+@router.post("/push/subscriptions", status_code=201)
+async def create_push_subscription(body: PushSubscriptionIn, request: Request):
+    """Зарегистрировать браузерную push-подписку (идемпотентно по endpoint)."""
+    user = _current_user(request)
+    async with AsyncSessionLocal() as session:
+        existing = (
+            await session.execute(
+                select(RadarPushSubscription).where(RadarPushSubscription.endpoint == body.endpoint)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            # Браузер мог пересоздать ключи / юзер перелогинился — обновляем.
+            existing.user_id = user.id
+            existing.p256dh = body.keys.p256dh
+            existing.auth = body.keys.auth
+            await session.commit()
+            return {"subscription_id": existing.id, "created": False}
+        sub = RadarPushSubscription(
+            user_id=user.id,
+            endpoint=body.endpoint,
+            p256dh=body.keys.p256dh,
+            auth=body.keys.auth,
+        )
+        session.add(sub)
+        await session.commit()
+        await session.refresh(sub)
+        return {"subscription_id": sub.id, "created": True}
+
+
+class PushUnsubscribeIn(BaseModel):
+    endpoint: str = Field(..., min_length=10, max_length=1024)
+
+
+@router.post("/push/unsubscribe")
+async def delete_push_subscription(body: PushUnsubscribeIn, request: Request):
+    """Снять push-подписку по endpoint (только свою)."""
+    user = _current_user(request)
+    async with AsyncSessionLocal() as session:
+        sub = (
+            await session.execute(
+                select(RadarPushSubscription).where(
+                    RadarPushSubscription.endpoint == body.endpoint,
+                    RadarPushSubscription.user_id == user.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if sub is not None:
+            await session.delete(sub)
+            await session.commit()
+    return {"deleted": sub is not None}
