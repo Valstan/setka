@@ -189,4 +189,4 @@ async def test_feed_last_page_has_no_cursor():
     fake = _FakeSession(all_results=[[]])
     with patch.object(radar_api, "AsyncSessionLocal", lambda: fake):
         result = await radar_api.get_feed(_request(_user()), before_id=None, limit=30)
-    assert result == {"items": [], "next_before_id": None}
+    assert result == {"items": [], "next_before_id": None, "last_seen_item_id": None}

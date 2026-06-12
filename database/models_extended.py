@@ -398,6 +398,10 @@ class RadarUser(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_login_at = Column(DateTime, nullable=True)
 
+    # Курсор новизны ленты (миграция 039, Ф0.4): всё с RadarItem.id больше
+    # курсора UI показывает как непрочитанное.
+    last_seen_item_id = Column(BigInteger, nullable=True)
+
     def __repr__(self):
         return f"<RadarUser {self.login} role={self.role} active={self.is_active}>"
 
@@ -518,4 +522,48 @@ class RadarItem(Base):
             "media": self.media or [],
             "published_at": self.published_at.isoformat() if self.published_at else None,
             "fetched_at": self.fetched_at.isoformat() if self.fetched_at else None,
+        }
+
+
+class RadarSaved(Base):
+    """Сохранёнка радара — СНИМОК элемента ленты (миграция 039, Ф0.4).
+
+    Не FK-ссылка на содержимое: элементы ленты подлежат ретенции, сохранёнки
+    живут вечно (решение владельца). ``item_id`` — только для дедупа «уже
+    сохранено», гаснет в NULL при чистке элемента. Фото скачаны на диск
+    (см. modules/radar/archive.py), видео — ссылкой.
+    """
+
+    __tablename__ = "radar_saved"
+    __table_args__ = (Index("ix_radar_saved_user_saved_at", "user_id", "saved_at"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("radar_users.id", ondelete="CASCADE"), nullable=False)
+    item_id = Column(BigInteger, ForeignKey("radar_items.id", ondelete="SET NULL"), nullable=True)
+
+    source_title = Column(String(256), nullable=True)
+    url = Column(String(1024), nullable=True)
+    title = Column(String(512), nullable=True)
+    text = Column(Text, nullable=True)
+    media = Column(JSON, nullable=True)  # [{type, url|file, bytes}]
+    published_at = Column(DateTime, nullable=True)
+
+    archived_bytes = Column(BigInteger, nullable=False, default=0)
+    saved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<RadarSaved user={self.user_id} item={self.item_id}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "item_id": self.item_id,
+            "source_title": self.source_title,
+            "url": self.url,
+            "title": self.title,
+            "text": self.text,
+            "media": self.media or [],
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "archived_bytes": self.archived_bytes,
+            "saved_at": self.saved_at.isoformat() if self.saved_at else None,
         }

@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Контент-радар — SETKA</title>
+    <title>Радар</title>
+    <meta name="theme-color" content="#0d6efd">
+    <link rel="manifest" href="/static/radar/manifest.webmanifest">
+    <link rel="icon" href="/static/radar/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/static/radar/icon.svg">
     <script>
         (function () {
             try {
@@ -14,12 +18,27 @@
     </script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        .radar-card img.radar-photo { max-height: 360px; object-fit: cover; width: 100%; border-radius: .375rem; }
+        .radar-text { white-space: pre-wrap; word-break: break-word; }
+        .radar-new { border-left: 3px solid var(--bs-primary); }
+        @media (max-width: 576px) { .container { padding-left: .5rem; padding-right: .5rem; } }
+    </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="/radar"><i class="bi bi-broadcast"></i> Контент-радар</a>
-            <ul class="navbar-nav ms-auto flex-row gap-3">
+    <nav class="navbar navbar-expand navbar-dark bg-primary sticky-top">
+        <div class="container" style="max-width: 720px;">
+            <a class="navbar-brand" href="/radar"><i class="bi bi-broadcast"></i> Радар</a>
+            <ul class="nav nav-pills flex-row gap-1 me-auto" id="radar-tabs">
+                <li class="nav-item">
+                    <a class="nav-link active text-white" data-tab="feed" role="button">
+                        Лента <span class="badge bg-light text-primary d-none" id="new-badge"></span>
+                    </a>
+                </li>
+                <li class="nav-item"><a class="nav-link text-white" data-tab="saved" role="button">Архив</a></li>
+                <li class="nav-item"><a class="nav-link text-white" data-tab="sources" role="button">Источники</a></li>
+            </ul>
+            <ul class="navbar-nav flex-row gap-3">
                 <li class="nav-item"><span class="nav-link" id="me-badge"></span></li>
                 <li class="nav-item">
                     <a class="nav-link" role="button" id="logout-btn" title="Выйти">
@@ -30,21 +49,67 @@
         </div>
     </nav>
 
-    <div class="container py-5 text-center text-secondary">
-        <i class="bi bi-broadcast" style="font-size: 3rem;"></i>
-        <h1 class="h4 mt-3">Лента скоро появится</h1>
-        <p>Источники и лента — следующие срезы стройки (Ф0.2–Ф0.4).<br>
-           Аккаунт работает: вы вошли как radar-пользователь.</p>
+    <div class="container py-3" style="max-width: 720px;">
+
+        <!-- Лента -->
+        <div id="tab-feed">
+            <div id="feed-empty" class="text-center text-secondary py-5 d-none">
+                <i class="bi bi-broadcast" style="font-size: 3rem;"></i>
+                <p class="mt-3">Лента пуста. Добавьте источники на вкладке «Источники» —<br>
+                   новые посты появятся в течение 10 минут.</p>
+            </div>
+            <div id="feed-list"></div>
+            <div class="text-center py-3">
+                <button class="btn btn-outline-primary d-none" id="feed-more">Показать ещё</button>
+            </div>
+        </div>
+
+        <!-- Архив -->
+        <div id="tab-saved" class="d-none">
+            <div class="text-secondary small mb-2" id="quota-line"></div>
+            <div id="saved-empty" class="text-center text-secondary py-5 d-none">
+                <i class="bi bi-bookmark" style="font-size: 3rem;"></i>
+                <p class="mt-3">Архив пуст. Сохраняйте посты из ленты кнопкой <i class="bi bi-bookmark-plus"></i>.</p>
+            </div>
+            <div id="saved-list"></div>
+            <div class="text-center py-3">
+                <button class="btn btn-outline-primary d-none" id="saved-more">Показать ещё</button>
+            </div>
+        </div>
+
+        <!-- Источники -->
+        <div id="tab-sources" class="d-none">
+            <div class="card mb-3">
+                <div class="card-body">
+                    <h2 class="h6">Добавить источник</h2>
+                    <div class="alert alert-danger d-none" id="source-error"></div>
+                    <form id="source-form" class="row g-2">
+                        <div class="col-12 col-sm-3">
+                            <select class="form-select" id="source-type">
+                                <option value="vk">VK</option>
+                                <option value="rss">RSS</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-sm-6">
+                            <input class="form-control" id="source-value" required
+                                   placeholder="vk.com/группа или URL фида">
+                        </div>
+                        <div class="col-12 col-sm-3 d-grid">
+                            <button class="btn btn-primary" type="submit" id="source-add-btn">Добавить</button>
+                        </div>
+                    </form>
+                    <div class="form-text">Telegram-каналы появятся в следующем обновлении.</div>
+                </div>
+            </div>
+            <div id="sources-list"></div>
+        </div>
     </div>
 
     <script>
-        fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(u => {
-            if (u) document.getElementById('me-badge').textContent = u.login;
-        });
-        document.getElementById('logout-btn').addEventListener('click', async () => {
-            await fetch('/api/auth/logout', { method: 'POST' });
-            location.href = '/login';
-        });
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/radar/sw.js', { scope: '/radar' }).catch(() => {});
+        }
     </script>
+    <script src="/static/js/radar.js"></script>
 </body>
 </html>
