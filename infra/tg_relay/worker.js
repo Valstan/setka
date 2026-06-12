@@ -90,11 +90,15 @@ export default {
                 return deny(403, 'host not allowed');
             }
             const resp = await fetch(target, { headers: { 'user-agent': UA } });
-            return new Response(resp.body, {
+            // Тело БУФЕРИЗУЕМ, не стримим: стриминг через CF по HTTP/1.1
+            // подвешивает httpx-клиент на VPS до ReadTimeout (факт деплоя
+            // Ф0.3; curl по HTTP/2 работал). Файлы ≤20 MB (лимит архива) —
+            // в память воркера (128 MB) помещаются с запасом.
+            const blob = await resp.arrayBuffer();
+            return new Response(blob, {
                 status: resp.status,
                 headers: {
                     'content-type': resp.headers.get('content-type') || 'application/octet-stream',
-                    'content-length': resp.headers.get('content-length') || '',
                 },
             });
         }
