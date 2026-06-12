@@ -7,6 +7,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -369,4 +370,45 @@ class DigestCurationRun(Base):
             "published_url": self.published_url,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+        }
+
+
+class RadarUser(Base):
+    """Пользователь web-слоя setka: оператор или radar-user (миграция 037, Ф0.1).
+
+    Роли: ``operator`` — весь существующий setka (регионы/CRM/токены/...);
+    ``radar`` — только контент-радар (свои источники/лента/архив). Изоляцию
+    enforce'ит AuthGateMiddleware (middleware/auth_gate.py), а не route-код.
+
+    quota_bytes/used_bytes — учёт личного архива радара: схема сразу (решение
+    владельца «вечно + предупредительные квоты»), enforcement — Ф1.
+    """
+
+    __tablename__ = "radar_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    login = Column(String(64), nullable=False, unique=True, index=True)
+    password_hash = Column(String(256), nullable=False)
+    role = Column(String(16), nullable=False, default="radar")  # operator|radar
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    quota_bytes = Column(BigInteger, nullable=False, default=209_715_200)  # 200 MB
+    used_bytes = Column(BigInteger, nullable=False, default=0)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_login_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<RadarUser {self.login} role={self.role} active={self.is_active}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "login": self.login,
+            "role": self.role,
+            "is_active": self.is_active,
+            "quota_bytes": self.quota_bytes,
+            "used_bytes": self.used_bytes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,
         }
