@@ -21,25 +21,6 @@ modules/celery_task_monitor.py::REVOKED  # dead — enum-значение не �
 modules/celery_task_monitor.py::task_history  # dead — init без чтения/записи
 
 # ── modules/core — postopus-слой; живой только calculate_post_score ────────
-modules/core/config.py::get_sources_by_category  # dead — postopus, потребитель не мигрирован
-modules/core/config.py::get_active_sources  # dead — postopus
-modules/core/config.py::ScheduleConfig  # dead — postopus
-modules/core/config.py::GlobalConfig  # dead — postopus
-modules/core/config.py::load_defaults  # dead — postopus
-modules/core/config.py::ContextFactory  # test-only — tests/test_core/test_context_factory.py
-modules/core/config.py::create_from_region  # test-only — там же
-modules/core/context.py::is_neighbor_content  # dead — поле без читателей
-modules/core/context.py::work_data  # dead — поле без читателей
-modules/core/context.py::add_processed_lip  # dead — postopus
-modules/core/context.py::add_processed_media  # dead — postopus
-modules/core/context.py::add_processed_text  # dead — postopus
-modules/core/context.py::is_duplicate_lip  # dead — postopus
-modules/core/context.py::is_duplicate_media  # dead — postopus
-modules/core/context.py::is_duplicate_text  # dead — postopus
-modules/core/context.py::ContextManager  # dead — класс не инстанцируется
-modules/core/context.py::create_context  # dead — метод ContextManager
-modules/core/context.py::get_context  # dead — метод ContextManager
-modules/core/context.py::clear_contexts  # dead — метод ContextManager
 modules/core/scoring.py::get_score_breakdown  # dead — не вызывается
 modules/core/scoring.py::ai_heavy  # dead — пресет, используется только postopus_style
 modules/core/scoring.py::viral_hunter  # dead — пресет, не используется
