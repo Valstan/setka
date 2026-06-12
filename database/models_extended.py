@@ -412,3 +412,110 @@ class RadarUser(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,
         }
+
+
+class RadarSource(Base):
+    """Источник контент-радара (миграция 038, Ф0.2).
+
+    Fan-out: источник поллится один раз на всех подписчиков (требование
+    директивы brain 2026-06-11). ``key`` — нормализованный идентификатор
+    внутри ``type``: vk → owner_id стены строкой ('-218688001'),
+    rss → канонизированный URL фида, tg → username канала (Ф0.3).
+    """
+
+    __tablename__ = "radar_sources"
+    __table_args__ = (Index("uq_radar_sources_type_key", "type", "key", unique=True),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    type = Column(String(8), nullable=False)  # vk|tg|rss
+    key = Column(String(512), nullable=False)
+    title = Column(String(256), nullable=True)
+    url = Column(String(1024), nullable=True)
+
+    is_active = Column(Boolean, nullable=False, default=True)
+    last_polled_at = Column(DateTime, nullable=True)
+    last_item_at = Column(DateTime, nullable=True)
+    fail_count = Column(Integer, nullable=False, default=0)
+    last_error = Column(String(512), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<RadarSource {self.type}:{self.key} active={self.is_active}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "type": self.type,
+            "key": self.key,
+            "title": self.title,
+            "url": self.url,
+            "is_active": self.is_active,
+            "last_polled_at": self.last_polled_at.isoformat() if self.last_polled_at else None,
+            "last_item_at": self.last_item_at.isoformat() if self.last_item_at else None,
+            "fail_count": self.fail_count,
+        }
+
+
+class RadarSubscription(Base):
+    """Подписка radar-юзера на источник (миграция 038, Ф0.2)."""
+
+    __tablename__ = "radar_subscriptions"
+    __table_args__ = (
+        Index("uq_radar_subscriptions_user_source", "user_id", "source_id", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("radar_users.id", ondelete="CASCADE"), nullable=False)
+    source_id = Column(
+        BigInteger, ForeignKey("radar_sources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    source = relationship("RadarSource", lazy="joined")
+
+    def __repr__(self):
+        return f"<RadarSubscription user={self.user_id} source={self.source_id}>"
+
+
+class RadarItem(Base):
+    """Элемент ленты радара — общий seen-стор (миграция 038, Ф0.2).
+
+    Уникальность (source_id, external_id) даёт дедуп на уровне БД: поллер
+    вставляет ON CONFLICT DO NOTHING, повторный фетч того же поста — no-op.
+    ``media`` — превью-метаданные ([{type, url}]); байты архива — Ф0.4.
+    """
+
+    __tablename__ = "radar_items"
+    __table_args__ = (
+        Index("uq_radar_items_source_external", "source_id", "external_id", unique=True),
+        Index("ix_radar_items_source_published", "source_id", "published_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_id = Column(
+        BigInteger, ForeignKey("radar_sources.id", ondelete="CASCADE"), nullable=False
+    )
+    external_id = Column(String(256), nullable=False)
+    url = Column(String(1024), nullable=True)
+    title = Column(String(512), nullable=True)
+    text = Column(Text, nullable=True)
+    media = Column(JSON, nullable=True)
+    published_at = Column(DateTime, nullable=True)
+    fetched_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<RadarItem source={self.source_id} ext={self.external_id}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "source_id": self.source_id,
+            "external_id": self.external_id,
+            "url": self.url,
+            "title": self.title,
+            "text": self.text,
+            "media": self.media or [],
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "fetched_at": self.fetched_at.isoformat() if self.fetched_at else None,
+        }

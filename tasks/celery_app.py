@@ -172,6 +172,7 @@ app = Celery(
         "tasks.parsing_tasks",
         "tasks.parsing_scheduler_tasks",  # Postopus migration
         "tasks.discovery_tasks",  # community discovery + weekly recheck
+        "tasks.radar_tasks",  # content radar: fan-out source poller (Ф0.2)
     ],
 )
 app.config_from_object("config.celery_config")
@@ -1434,6 +1435,21 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=37),
         "kwargs": {"region_code": "copy", "theme": "setka"},
         "options": {"expires": 1800},
+    },
+    # Контент-радар (Ф0.2): fan-out поллер источников каждые 10 мин круглосуточно
+    # (личная лента — не публикация в сеть, ночное окно не нужно). Внутри прогона
+    # поллятся только активные источники с ≥1 подпиской; пустой радар = no-op.
+    "radar-poll-sources": {
+        "task": "tasks.radar_tasks.poll_radar_sources",
+        "schedule": crontab(minute="*/10"),
+        "options": {"expires": 540, "catchup": False},
+    },
+    # Watchdog поллера радара (#018): раз в час на :12. Алёртит только если есть
+    # активные подписанные источники, а heartbeat протух (>40 мин) — retired≠dead.
+    "radar-poll-watchdog": {
+        "task": "tasks.radar_tasks.check_radar_poll_heartbeat",
+        "schedule": crontab(minute=12),
+        "options": {"expires": 1800, "catchup": False},
     },
     # Flow B: зеркало стены ВК-сообщества «Гоньба» → Telegram @gonba_life.
     # Каждые ~20 мин в активные часы; cap постов/run в самой задаче (анти-флуд).
