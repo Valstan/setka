@@ -32,6 +32,18 @@ _Сейчас нет._
 
 ## ⏳ В процессе
 
+### 📡 Контент-радар — Ф0 (MANDATE-директива brain 2026-06-11)
+
+`⏱ 2026-06-12 · snooze 0 · fresh`
+
+Новый модуль внутри setka: личный агрегатор «источники (VK/TG/RSS) → лента radar-user'а → save-архив → web-push». Концепт — `brain_matrica/docs/plans/content-radar-concept.md`; решения владельца зафиксированы в директиве, не переоткрывать.
+
+- ✅ **Probe #020 выполнен 2026-06-12** ([PR #196](https://github.com/Valstan/setka/pull/196), отчёт — `mailbox/to-brain/2026-06-12-content-radar-f0-probe-report.md`): механика `t.me/s/` работает, но **с VPS заблокирован весь Telegram кроме `api.telegram.org`** (включая медиа-CDN) → решение владельца: **egress-relay** (CF Worker). Web-push зелёный; HTTPS-техдомен уже есть (`3931b3fe50ab.vps.myjino.ru`, wildcard LE jino, G20).
+- ✅ **Security-находка закрыта временно 2026-06-12:** операторский UI (вкл. `/tokens`) был доступен из интернета **без auth** → nginx basic-auth на все 3 server-блока (443 + оба 80), acme-challenge открыт, certbot жив. Креды: `ssh setka "sudo cat /etc/setka/web_basic_auth.txt"`. Бэкап конфигов: `/root/nginx-backup-20260612/`.
+- 📋 **План Ф0 отправлен brain'у** — `mailbox/to-brain/2026-06-12-content-radar-f0-plan.md`. Срезы: Ф0.1 auth+изоляция (operator|radar роли, весь существующий UI под `require_operator`) → Ф0.2 sources+fan-out поллер (VK+RSS) → Ф0.3 TG-адаптер через relay → Ф0.4 PWA-лента+save-архив → Ф0.5 web-push.
+- ⏳ **Стройка: следующий срез — Ф0.1** (нужен при любом исходе обсуждения плана).
+- 🟡 **Хвост после Ф0.1: снять nginx basic-auth** (временная мера, заменяется app-auth). Не забыть — иначе двойной логин.
+
 ### 🔍 Универсальный tiered-поиск (pool #035, директива brain 2026-06-09)
 
 `⏱ 2026-06-10 · snooze 0 · watch (построено и задеплоено 2026-06-10 — PR #191, миграция 036, health 200; остаток — браузер-верификация владельцем)`
