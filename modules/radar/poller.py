@@ -77,6 +77,7 @@ async def poll_all_sources() -> dict:
     from modules.radar.sources import get_fetcher
 
     summary = {"sources": 0, "new_items": 0, "failed": 0}
+    new_by_source: dict = {}  # source_id -> новых элементов (для web-push Ф0.5)
 
     async with AsyncSessionLocal() as session:
         sources = (
@@ -144,8 +145,21 @@ async def poll_all_sources() -> dict:
             if newest and (source.last_item_at is None or newest > source.last_item_at):
                 source.last_item_at = newest
             summary["new_items"] += new_count
+            if new_count:
+                new_by_source[source.id] = new_count
 
         await session.commit()
+
+    # Web-push (Ф0.5) — после коммита, best-effort: сбой пуша не ломает прогон.
+    if new_by_source:
+        try:
+            from modules.radar.push import notify_new_items
+
+            push_summary = await notify_new_items(new_by_source)
+            if push_summary.get("sent") or push_summary.get("dropped"):
+                logger.info("radar push: %s", push_summary)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("radar push hook failed: %s", e)
 
     # Heartbeat пишем и при 0 источников: «поллер жив» ≠ «есть что поллить».
     touch_heartbeat()

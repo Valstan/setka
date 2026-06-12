@@ -567,3 +567,27 @@ class RadarSaved(Base):
             "archived_bytes": self.archived_bytes,
             "saved_at": self.saved_at.isoformat() if self.saved_at else None,
         }
+
+
+class RadarPushSubscription(Base):
+    """Web-push подписка браузера radar-юзера (миграция 040, Ф0.5).
+
+    endpoint/p256dh/auth — поля PushSubscription из Push API. Подписок у
+    юзера может быть несколько (телефон + десктоп). 404/410 от push-сервиса
+    = подписка умерла → строка удаляется (modules/radar/push.py).
+    """
+
+    __tablename__ = "radar_push_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        BigInteger, ForeignKey("radar_users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    endpoint = Column(String(1024), nullable=False, unique=True)
+    p256dh = Column(String(256), nullable=False)
+    auth = Column(String(128), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_success_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<RadarPushSubscription user={self.user_id} endpoint={self.endpoint[:40]}...>"

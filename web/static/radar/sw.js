@@ -1,7 +1,7 @@
-/* Service worker Радара (Ф0.4): минимальный — оболочка PWA + сетевой
- * приоритет. Контент всегда свежий (network-first), офлайн отдаём
- * закэшированную оболочку страницы. Push-обработчик появится в Ф0.5. */
-const CACHE = 'radar-shell-v1';
+/* Service worker Радара: оболочка PWA + сетевой приоритет (Ф0.4) +
+ * web-push (Ф0.5). Контент всегда свежий (network-first), офлайн отдаём
+ * закэшированную оболочку страницы. */
+const CACHE = 'radar-shell-v2';
 const SHELL = ['/radar'];
 
 self.addEventListener('install', (event) => {
@@ -13,6 +13,35 @@ self.addEventListener('activate', (event) => {
         caches.keys().then((keys) =>
             Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
         ).then(() => self.clients.claim())
+    );
+});
+
+self.addEventListener('push', (event) => {
+    let data = { title: 'Радар', body: 'Новые элементы в ленте', url: '/radar' };
+    try {
+        if (event.data) data = Object.assign(data, event.data.json());
+    } catch (e) { /* не-JSON payload — показываем дефолт */ }
+    event.waitUntil(
+        self.registration.showNotification(data.title, {
+            body: data.body,
+            icon: '/static/radar/icon.svg',
+            badge: '/static/radar/icon.svg',
+            data: { url: data.url },
+            tag: 'radar-new-items', // новые пуши заменяют старый, не копятся
+        })
+    );
+});
+
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const url = (event.notification.data && event.notification.data.url) || '/radar';
+    event.waitUntil(
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
+            for (const w of wins) {
+                if (w.url.includes('/radar') && 'focus' in w) return w.focus();
+            }
+            return clients.openWindow(url);
+        })
     );
 });
 

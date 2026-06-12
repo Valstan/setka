@@ -234,6 +234,63 @@
         } finally { btn.disabled = false; }
     });
 
+    // ───────────── Web-push (Ф0.5) ─────────────
+
+    function b64ToUint8(base64) {
+        const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+        const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+        return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    }
+
+    async function pushState() {
+        const reg = await navigator.serviceWorker.ready;
+        return { reg, sub: await reg.pushManager.getSubscription() };
+    }
+
+    function renderPushIcon(enabled) {
+        $('push-icon').className = enabled ? 'bi bi-bell-fill' : 'bi bi-bell';
+        $('push-btn').title = enabled
+            ? 'Push включён — нажмите, чтобы отключить'
+            : 'Включить push о новых элементах';
+    }
+
+    async function initPush() {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+        const keyResp = await fetch('/api/radar/push/vapid-public-key');
+        if (!keyResp.ok) return; // push не настроен на сервере
+        $('push-li').classList.remove('d-none');
+        const { sub } = await pushState();
+        renderPushIcon(!!sub);
+    }
+
+    $('push-btn').addEventListener('click', async () => {
+        try {
+            const { reg, sub } = await pushState();
+            if (sub) {
+                await api('/api/radar/push/unsubscribe', {
+                    method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }),
+                });
+                await sub.unsubscribe();
+                renderPushIcon(false);
+                return;
+            }
+            if ((await Notification.requestPermission()) !== 'granted') return;
+            const { key } = await api('/api/radar/push/vapid-public-key');
+            const newSub = await reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: b64ToUint8(key),
+            });
+            const json = newSub.toJSON();
+            await api('/api/radar/push/subscriptions', {
+                method: 'POST',
+                body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+            });
+            renderPushIcon(true);
+        } catch (err) { alert('Не удалось переключить push: ' + err.message); }
+    });
+
+    initPush().catch(() => {});
+
     $('logout-btn').addEventListener('click', async () => {
         await fetch('/api/auth/logout', { method: 'POST' });
         location.href = '/login';
