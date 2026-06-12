@@ -23,9 +23,13 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DOWNLOAD_TIMEOUT_SECONDS = 30
-# Telegram-CDN тарпитит datacenter-egress (CF Worker) до ~1 КБ/с (факт деплоя
-# Ф0.3; локально тот же файл — за секунды). Превью-фото ≤~100 КБ → 90с хватает.
-RELAY_DOWNLOAD_TIMEOUT_SECONDS = 90
+# Telegram-CDN душит datacenter-egress (CF Worker) до ~0.2-1 КБ/с (замер
+# деплоя Ф0.3: файл 31 КБ локально — 2с, через relay не успевает и за 120с).
+# Скачивание TG-медиа де-факто best-effort: короткая попытка, не уложились —
+# фото остаётся ссылкой (текст сохранён всегда, лента показывает CDN-URL
+# напрямую в браузере юзера). Ф1-варианты: фоновое скачивание с ретраями /
+# другой egress. Путь оставлен — на случай ослабления тарпита.
+RELAY_DOWNLOAD_TIMEOUT_SECONDS = 20
 MAX_FILE_BYTES = 20 * 1024 * 1024  # один файл больше 20 MB не качаем
 MAX_FILES_PER_ITEM = 10
 
