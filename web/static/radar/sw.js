@@ -1,7 +1,7 @@
 /* Service worker Радара: оболочка PWA + сетевой приоритет (Ф0.4) +
  * web-push (Ф0.5). Контент всегда свежий (network-first), офлайн отдаём
  * закэшированную оболочку страницы. */
-const CACHE = 'radar-shell-v2';
+const CACHE = 'radar-shell-v3';
 const SHELL = ['/radar'];
 
 self.addEventListener('install', (event) => {
@@ -24,8 +24,8 @@ self.addEventListener('push', (event) => {
     event.waitUntil(
         self.registration.showNotification(data.title, {
             body: data.body,
-            icon: '/static/radar/icon.svg',
-            badge: '/static/radar/icon.svg',
+            icon: '/static/radar/icon-192.png',
+            badge: '/static/radar/icon-192.png',
             data: { url: data.url },
             tag: 'radar-new-items', // новые пуши заменяют старый, не копятся
         })
