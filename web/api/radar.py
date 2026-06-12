@@ -16,12 +16,19 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from database import models  # noqa: F401 - конфигурация мапперов (PR #189)
 from database.connection import AsyncSessionLocal
-from database.models_extended import RadarItem, RadarSource, RadarSubscription
+from database.models_extended import (
+    RadarItem,
+    RadarSaved,
+    RadarSource,
+    RadarSubscription,
+    RadarUser,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -207,4 +214,179 @@ async def get_feed(
         }
         items.append(payload)
     next_cursor = items[-1]["id"] if len(items) == limit else None
-    return {"items": items, "next_before_id": next_cursor}
+    return {
+        "items": items,
+        "next_before_id": next_cursor,
+        "last_seen_item_id": getattr(user, "last_seen_item_id", None),
+    }
+
+
+class SeenIn(BaseModel):
+    item_id: int = Field(..., ge=1)
+
+
+@router.post("/feed/seen")
+async def mark_seen(body: SeenIn, request: Request):
+    """Сдвинуть курсор новизны вперёд (назад не двигается)."""
+    user = _current_user(request)
+    async with AsyncSessionLocal() as session:
+        db_user = await session.get(RadarUser, user.id)
+        if db_user is None:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        if (db_user.last_seen_item_id or 0) < body.item_id:
+            db_user.last_seen_item_id = body.item_id
+            await session.commit()
+        return {"last_seen_item_id": db_user.last_seen_item_id}
+
+
+# ───────────────────────── Save-архив (Ф0.4) ─────────────────────────
+
+
+class SaveIn(BaseModel):
+    item_id: int = Field(..., ge=1)
+
+
+@router.get("/saved")
+async def list_saved(
+    request: Request,
+    before_id: Optional[int] = Query(None),
+    limit: int = Query(30, ge=1, le=FEED_MAX_LIMIT),
+):
+    """Архив текущего юзера, свежее сверху, курсор по id."""
+    user = _current_user(request)
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(RadarSaved)
+            .where(RadarSaved.user_id == user.id)
+            .order_by(RadarSaved.id.desc())
+            .limit(limit)
+        )
+        if before_id is not None:
+            stmt = stmt.where(RadarSaved.id < before_id)
+        saved = (await session.execute(stmt)).scalars().all()
+        used = (
+            await session.execute(
+                select(func.coalesce(func.sum(RadarSaved.archived_bytes), 0)).where(
+                    RadarSaved.user_id == user.id
+                )
+            )
+        ).scalar()
+    items = [s.to_dict() for s in saved]
+    return {
+        "items": items,
+        "next_before_id": items[-1]["id"] if len(items) == limit else None,
+        "used_bytes": int(used or 0),
+        "quota_bytes": getattr(user, "quota_bytes", None),
+    }
+
+
+@router.post("/saved", status_code=201)
+async def save_item(body: SaveIn, request: Request):
+    """Сохранить элемент СВОЕЙ ленты в архив (снимок + скачивание фото).
+
+    Квота предупредительная (Ф0): текст сохраняется всегда, фото качаются,
+    пока юзер помещается в quota_bytes, дальше остаются ссылками.
+    """
+    user = _current_user(request)
+    from modules.radar.archive import download_media
+
+    async with AsyncSessionLocal() as session:
+        # Элемент должен принадлежать источнику, на который юзер подписан.
+        item = (
+            await session.execute(
+                select(RadarItem)
+                .join(
+                    RadarSubscription,
+                    RadarSubscription.source_id == RadarItem.source_id,
+                )
+                .where(RadarItem.id == body.item_id, RadarSubscription.user_id == user.id)
+            )
+        ).scalar_one_or_none()
+        if item is None:
+            raise HTTPException(status_code=404, detail="Элемент не найден в вашей ленте")
+
+        existing = (
+            await session.execute(
+                select(RadarSaved).where(
+                    RadarSaved.user_id == user.id, RadarSaved.item_id == item.id
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return {"saved": existing.to_dict(), "created": False}
+
+        source = await session.get(RadarSource, item.source_id)
+        saved = RadarSaved(
+            user_id=user.id,
+            item_id=item.id,
+            source_title=source.title if source else None,
+            url=item.url,
+            title=item.title,
+            text=item.text,
+            media=item.media or [],
+            published_at=item.published_at,
+        )
+        session.add(saved)
+        await session.flush()  # нужен saved.id для каталога на диске
+
+        db_user = await session.get(RadarUser, user.id)
+        quota_left = max(0, (db_user.quota_bytes or 0) - (db_user.used_bytes or 0))
+        try:
+            media, downloaded = await download_media(
+                item.media or [], user.id, saved.id, quota_left=quota_left
+            )
+        except Exception as e:  # noqa: BLE001 - архив без медиа лучше, чем 500
+            logger.warning("radar save: media archive failed: %s", e)
+            media, downloaded = item.media or [], 0
+        saved.media = media
+        saved.archived_bytes = downloaded
+        db_user.used_bytes = (db_user.used_bytes or 0) + downloaded
+
+        await session.commit()
+        await session.refresh(saved)
+        return {"saved": saved.to_dict(), "created": True}
+
+
+@router.delete("/saved/{saved_id}")
+async def delete_saved(saved_id: int, request: Request):
+    """Удалить сохранёнку: запись + файлы с диска, вернуть байты в квоту."""
+    user = _current_user(request)
+    from modules.radar.archive import remove_saved_dir
+
+    async with AsyncSessionLocal() as session:
+        saved = (
+            await session.execute(
+                select(RadarSaved).where(RadarSaved.id == saved_id, RadarSaved.user_id == user.id)
+            )
+        ).scalar_one_or_none()
+        if saved is None:
+            raise HTTPException(status_code=404, detail="Сохранёнка не найдена")
+        db_user = await session.get(RadarUser, user.id)
+        if db_user is not None:
+            db_user.used_bytes = max(0, (db_user.used_bytes or 0) - (saved.archived_bytes or 0))
+        await session.delete(saved)
+        await session.commit()
+    remove_saved_dir(user.id, saved_id)
+    return {"deleted": True}
+
+
+@router.get("/saved/{saved_id}/media/{filename}")
+async def get_saved_media(saved_id: int, filename: str, request: Request):
+    """Отдать заархивированный файл сохранёнки (только владельцу)."""
+    user = _current_user(request)
+    from modules.radar.archive import media_file_path
+
+    async with AsyncSessionLocal() as session:
+        saved = (
+            await session.execute(
+                select(RadarSaved.id).where(
+                    RadarSaved.id == saved_id, RadarSaved.user_id == user.id
+                )
+            )
+        ).scalar_one_or_none()
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Сохранёнка не найдена")
+    path = media_file_path(user.id, saved_id, filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    return FileResponse(path)

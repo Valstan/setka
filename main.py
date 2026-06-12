@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -170,8 +170,19 @@ async def login_page(request: Request):
 
 @app.get("/radar")
 async def radar_page(request: Request):
-    """Контент-радар: лендинг radar-юзера. Лента — Ф0.2/Ф0.4, пока заглушка."""
+    """Радар (Ф0.4): PWA-лента по подпискам + архив + управление источниками."""
     return templates.TemplateResponse("radar.html", {"request": request})
+
+
+@app.get("/radar/sw.js")
+async def radar_service_worker():
+    """Service worker Радара. Отдаётся с /radar/* (внутри RADAR_PREFIXES гейта);
+    Service-Worker-Allowed расширяет scope до /radar (сам файл лежит глубже)."""
+    return FileResponse(
+        str(BASE_DIR / "web" / "static" / "radar" / "sw.js"),
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/radar"},
+    )
 
 
 @app.get("/regions")
