@@ -33,6 +33,7 @@ from web.api import (
     parsing_stats,
     posts,
     publisher,
+    radar,
     regions,
     schedule_management,
     scheduler,
@@ -128,6 +129,7 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), na
 
 # Include routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
+app.include_router(radar.router, prefix="/api/radar", tags=["Content Radar"])
 app.include_router(health.router, prefix="/api/health", tags=["Health"])
 app.include_router(regions.router, prefix="/api/regions", tags=["Regions"])
 app.include_router(communities.router, prefix="/api/communities", tags=["Communities"])

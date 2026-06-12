@@ -1,0 +1,225 @@
+"""Fan-out поллер контент-радара (Ф0.2) + heartbeat/watchdog (#018).
+
+Каждый активный источник с ≥1 подпиской поллится РОВНО один раз за прогон,
+независимо от числа подписчиков (требование директивы brain 2026-06-11).
+Новые элементы вставляются в общий seen-стор ``radar_items`` через
+ON CONFLICT DO NOTHING по uniq (source_id, external_id) — повторный фетч
+того же поста = no-op, курсоры не нужны.
+
+Liveness — по паттерну ``modules/digest_heartbeat.py`` (pool #018,
+retired≠dead R6): успешный прогон пишет unix-ts в Redis
+``setka:radar_last_polled``; watchdog алёртит ТОЛЬКО если есть активные
+подписанные источники, а heartbeat протух — «нечего поллить» не считается
+смертью.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import time
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import exists, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+logger = logging.getLogger(__name__)
+
+HEARTBEAT_KEY = "setka:radar_last_polled"
+_HEARTBEAT_TTL_SECONDS = 14 * 24 * 3600
+
+# Поллер идёт каждые 10 минут; 40 мин = 4 пропущенных прогона подряд.
+DEFAULT_MAX_AGE_MINUTES = 40
+ALERT_COOLDOWN_SECONDS = 6 * 3600
+_ALERT_COOLDOWN_KEY = "setka:radar_poll_alert_cooldown"
+
+_redis_client = None
+_redis_pid: Optional[int] = None
+
+
+def _redis():
+    """Fork-safe Redis-клиент (PID-guard, как в digest_heartbeat — инцидент 2026-06-05)."""
+    global _redis_client, _redis_pid
+    pid = os.getpid()
+    if _redis_client is None or _redis_pid != pid:
+        try:
+            from modules.notifications.storage import NotificationsStorage
+
+            _redis_client = NotificationsStorage().redis_client
+            _redis_pid = pid
+        except Exception as e:  # noqa: BLE001 - heartbeat best-effort
+            logger.warning("radar poller: redis init failed: %s", e)
+            _redis_client = None
+    return _redis_client
+
+
+def touch_heartbeat() -> None:
+    client = _redis()
+    if client is None:
+        return
+    try:
+        client.setex(HEARTBEAT_KEY, _HEARTBEAT_TTL_SECONDS, int(time.time()))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("radar poller: heartbeat write failed: %s", e)
+
+
+async def poll_all_sources() -> dict:
+    """Один прогон поллера: фетч всех активных подписанных источников.
+
+    Возвращает сводку {sources, new_items, failed} для лога/таски.
+    Падение одного источника не валит прогон: fail_count++/last_error на
+    источнике, остальные поллятся дальше.
+    """
+    from database import models  # noqa: F401 - конфигурация мапперов (PR #189)
+    from database.connection import AsyncSessionLocal
+    from database.models_extended import RadarItem, RadarSource, RadarSubscription
+    from modules.radar.sources import get_fetcher
+
+    summary = {"sources": 0, "new_items": 0, "failed": 0}
+
+    async with AsyncSessionLocal() as session:
+        sources = (
+            (
+                await session.execute(
+                    select(RadarSource).where(
+                        RadarSource.is_active.is_(True),
+                        exists(
+                            select(RadarSubscription.id).where(
+                                RadarSubscription.source_id == RadarSource.id
+                            )
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        for source in sources:
+            fetcher = get_fetcher(source.type)
+            if fetcher is None:  # tg до Ф0.3 — пропускаем молча, это не ошибка
+                continue
+            summary["sources"] += 1
+            try:
+                items = await fetcher(source)
+            except Exception as e:  # noqa: BLE001 - источник упал, прогон живёт
+                source.fail_count = (source.fail_count or 0) + 1
+                source.last_error = str(e)[:512]
+                summary["failed"] += 1
+                logger.warning(
+                    "radar poll failed for %s:%s (fail #%d): %s",
+                    source.type,
+                    source.key,
+                    source.fail_count,
+                    e,
+                )
+                continue
+
+            new_count = 0
+            newest: Optional[datetime] = None
+            for item in items:
+                result = await session.execute(
+                    pg_insert(RadarItem)
+                    .values(
+                        source_id=source.id,
+                        external_id=item.external_id,
+                        url=item.url,
+                        title=item.title,
+                        text=item.text,
+                        media=item.media or [],
+                        published_at=item.published_at,
+                        fetched_at=datetime.utcnow(),
+                    )
+                    .on_conflict_do_nothing(index_elements=["source_id", "external_id"])
+                )
+                if result.rowcount:
+                    new_count += 1
+                if item.published_at and (newest is None or item.published_at > newest):
+                    newest = item.published_at
+
+            source.last_polled_at = datetime.utcnow()
+            source.fail_count = 0
+            source.last_error = None
+            if newest and (source.last_item_at is None or newest > source.last_item_at):
+                source.last_item_at = newest
+            summary["new_items"] += new_count
+
+        await session.commit()
+
+    # Heartbeat пишем и при 0 источников: «поллер жив» ≠ «есть что поллить».
+    touch_heartbeat()
+    logger.info("radar poll done: %s", summary)
+    return summary
+
+
+async def _has_pollable_sources() -> bool:
+    from database import models  # noqa: F401
+    from database.connection import AsyncSessionLocal
+    from database.models_extended import RadarSource, RadarSubscription
+
+    async with AsyncSessionLocal() as session:
+        row = await session.execute(
+            select(RadarSource.id)
+            .where(
+                RadarSource.is_active.is_(True),
+                RadarSource.type.in_(("vk", "rss")),
+                exists(
+                    select(RadarSubscription.id).where(
+                        RadarSubscription.source_id == RadarSource.id
+                    )
+                ),
+            )
+            .limit(1)
+        )
+        return row.first() is not None
+
+
+async def maybe_alert_stale_radar_poll(
+    *,
+    telegram_token: Optional[str],
+    chat_id: Optional[str],
+    max_age_minutes: int = DEFAULT_MAX_AGE_MINUTES,
+) -> str:
+    """Watchdog: алёрт, если есть что поллить, а heartbeat протух.
+
+    Возвращает статус-строку для лога: ok|no-sources|stale-alerted|
+    stale-cooldown|no-heartbeat-alerted|skipped.
+    """
+    client = _redis()
+    if client is None:
+        return "skipped"
+
+    if not await _has_pollable_sources():
+        return "no-sources"  # retired≠dead (R6): пустой радар — не инцидент
+
+    raw = client.get(HEARTBEAT_KEY)
+    age_seconds = None if raw is None else int(time.time()) - int(raw)
+    if age_seconds is not None and age_seconds < max_age_minutes * 60:
+        return "ok"
+
+    if client.get(_ALERT_COOLDOWN_KEY):
+        return "stale-cooldown"
+
+    if not telegram_token or not chat_id:
+        return "stale-no-telegram"
+
+    age_text = "никогда" if age_seconds is None else f"{age_seconds // 60} мин назад"
+    text = (
+        "📡⚠️ <b>Контент-радар: поллер молчит</b>\n"
+        f"Последний успешный прогон: {age_text} (порог {max_age_minutes} мин).\n"
+        "Проверь celery-worker/beat и логи radar poll."
+    )
+    try:
+        import requests
+
+        requests.post(
+            f"https://api.telegram.org/bot{telegram_token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=15,
+        )
+        client.setex(_ALERT_COOLDOWN_KEY, ALERT_COOLDOWN_SECONDS, 1)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("radar watchdog: telegram alert failed: %s", e)
+        return "alert-failed"
+    return "stale-alerted" if age_seconds is not None else "no-heartbeat-alerted"

@@ -19,6 +19,7 @@ click-repl==0.3.0
 distro==1.9.0
 dnspython==2.8.0
 fastapi==0.118.1
+feedparser==6.0.12
 frozenlist==1.8.0
 greenlet==3.2.4
 groq==0.32.0
