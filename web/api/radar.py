@@ -44,7 +44,7 @@ def _current_user(request: Request):
 
 
 class SubscriptionCreateIn(BaseModel):
-    type: str = Field(..., pattern=r"^(vk|rss)$")  # tg — Ф0.3 (egress-relay)
+    type: str = Field(..., pattern=r"^(vk|rss|tg)$")  # tg — через egress-relay (Ф0.3)
     value: str = Field(..., min_length=1, max_length=1024)
 
 
@@ -54,6 +54,11 @@ async def _resolve_source_meta(source_type: str, value: str) -> dict:
         from modules.radar.sources.vk import resolve_source
 
         return await resolve_source(value)
+
+    if source_type == "tg":
+        from modules.radar.sources.tg import resolve_source as resolve_tg
+
+        return await resolve_tg(value)
 
     # rss: лёгкая валидация формы + проба фида (и заодно title для UI).
     url = value.strip()

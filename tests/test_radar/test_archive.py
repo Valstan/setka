@@ -92,6 +92,29 @@ async def test_download_media_failure_keeps_link(_tmp_archive_root):
     assert result == [{"type": "photo", "url": "https://e.com/p.jpg"}]
 
 
+class TestDownloadPlan:
+    def test_tg_cdn_goes_through_relay(self, monkeypatch):
+        monkeypatch.setenv("TG_PREVIEW_RELAY_URL", "https://relay.example")
+        monkeypatch.setenv("TG_RELAY_SECRET", "s3cret")
+        url, headers = archive._download_plan("https://cdn4.telesco.pe/file/A.jpg")
+        assert url.startswith("https://relay.example/media?u=")
+        assert headers == {"X-Relay-Secret": "s3cret"}
+
+    def test_tg_cdn_without_relay_stays_direct(self, monkeypatch):
+        monkeypatch.delenv("TG_PREVIEW_RELAY_URL", raising=False)
+        monkeypatch.delenv("TG_RELAY_SECRET", raising=False)
+        url, headers = archive._download_plan("https://cdn4.telesco.pe/file/A.jpg")
+        assert url == "https://cdn4.telesco.pe/file/A.jpg"
+        assert headers == {}
+
+    def test_other_hosts_direct(self, monkeypatch):
+        monkeypatch.setenv("TG_PREVIEW_RELAY_URL", "https://relay.example")
+        monkeypatch.setenv("TG_RELAY_SECRET", "s3cret")
+        url, headers = archive._download_plan("https://sun9-1.userapi.com/p.jpg")
+        assert url == "https://sun9-1.userapi.com/p.jpg"
+        assert headers == {}
+
+
 def test_remove_saved_dir(_tmp_archive_root):
     d = _tmp_archive_root / "1" / "2"
     d.mkdir(parents=True)

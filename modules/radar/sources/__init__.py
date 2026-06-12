@@ -5,7 +5,7 @@
 что отдал источник за окно, дедуп делает поллер через uniq
 (source_id, external_id) в ``radar_items``.
 
-Регистрация по ``source.type``: vk|rss (Ф0.2), tg — Ф0.3 через egress-relay.
+Регистрация по ``source.type``: vk|rss (Ф0.2), tg через egress-relay (Ф0.3).
 """
 
 from __future__ import annotations
@@ -39,6 +39,10 @@ def get_fetcher(source_type: str) -> Optional[FetcherFn]:
         return fetch_new
     if source_type == "rss":
         from modules.radar.sources.rss import fetch_new
+
+        return fetch_new
+    if source_type == "tg":
+        from modules.radar.sources.tg import fetch_new
 
         return fetch_new
     return None

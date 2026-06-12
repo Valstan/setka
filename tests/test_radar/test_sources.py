@@ -15,8 +15,8 @@ class TestGetFetcher:
         assert get_fetcher("vk") is not None
         assert get_fetcher("rss") is not None
 
-    def test_tg_not_yet_supported(self):
-        assert get_fetcher("tg") is None  # Ф0.3
+    def test_tg_supported(self):
+        assert get_fetcher("tg") is not None  # Ф0.3 (egress-relay)
 
     def test_unknown_type(self):
         assert get_fetcher("bogus") is None
