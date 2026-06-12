@@ -85,8 +85,6 @@ modules/operation_tracking.py::track_operation  # dead — декоратор н
 modules/operation_tracking.py::start_publishing_operation  # dead — используются start_monitoring/filtering_operation
 
 # ── modules/publisher ───────────────────────────────────────────────────────
-modules/publisher/base_publisher.py::check_connection  # alive — abstract, переопределяется наследниками
-modules/publisher/base_publisher.py::format_post_text  # alive — используется TelegramPublisher._format_telegram_text
 modules/publisher/digest_builder.py::DigestPost  # uncertain — dataclass не инстанцируется напрямую, нужен взгляд владельца
 modules/publisher/digest_builder.py::source_attribution  # alive — поле DigestPost, читается _format_post_entry
 modules/publisher/digest_builder.py::popularity_score  # alive — поле модели
@@ -96,18 +94,9 @@ modules/publisher/digest_builder.py::post_number  # dead — параметр _a
 modules/publisher/digest_builder.py::estimate_post_capacity  # dead — не вызывается
 modules/publisher/digest_builder.py::TextOnlyDigestBuilder  # test-only — живёт в test_text_utils (bezfoto-ветка)
 modules/publisher/digest_builder.py::build_bezfoto_digest  # test-only — там же
-modules/publisher/event_distribution.py::KaravanEventDistributor  # dead — наследие «Каравана», нигде не импортируется
-modules/publisher/event_distribution.py::distribute_event_to_all_regions  # dead — метод мёртвого класса
-modules/publisher/telegram_publisher.py::TelegramPublisher  # dead — старый TG-стек; живой путь — modules/publisher/telegram_repost.py
-modules/publisher/telegram_publisher.py::check_connection  # dead — метод мёртвого класса
-modules/publisher/telegram_publisher.py::pin_message  # dead — метод мёртвого класса
-modules/publisher/telegram_publisher.py::edit_message  # dead — метод мёртвого класса
 modules/publisher/vk_publisher_extended.py::set_publish_candidates  # alive — используется в publish-workflow
 modules/publisher/vk_publisher_extended.py::is_test_mode  # uncertain — интерфейсный геттер без найденных вызовов
 modules/publisher/vk_publisher_extended.py::get_posts_remaining_today  # uncertain — интерфейсный геттер без найденных вызовов
-modules/publisher/wordpress_publisher.py::WordPressPublisher  # dead — WordPress-публикация никогда не использовалась
-modules/publisher/wordpress_publisher.py::check_connection  # dead — метод мёртвого класса
-modules/publisher/wordpress_publisher.py::update_post  # dead — метод мёртвого класса
 
 # ── modules: region_config / scheduler / notifiers / vk_monitor / router ───
 modules/region_config.py::get_active_regions  # dead — не вызывается
