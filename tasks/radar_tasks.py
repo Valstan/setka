@@ -29,6 +29,25 @@ def poll_radar_sources():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.radar_tasks.cleanup_old_radar_items")
+def cleanup_old_radar_items():
+    """Ретенция ленты радара: элементы старше N дней удаляются (03:20).
+
+    Сохранёнки не страдают: radar_saved — снимок контента, его item_id
+    гаснет в NULL (FK ON DELETE SET NULL). Порог — env
+    RADAR_ITEMS_RETENTION_DAYS (дефолт 30, план Ф0).
+    """
+    try:
+        from modules.radar.poller import cleanup_old_items
+
+        result = run_coro(cleanup_old_items())
+        logger.info("radar items cleanup: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"cleanup_old_radar_items failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.radar_tasks.check_radar_poll_heartbeat")
 def check_radar_poll_heartbeat():
     """Watchdog: алёрт в Telegram, если поллер радара молчит при живых подписках."""

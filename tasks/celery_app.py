@@ -1444,6 +1444,14 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute="*/10"),
         "options": {"expires": 540, "catchup": False},
     },
+    # Ретенция ленты радара: элементы старше 30 дней (RADAR_ITEMS_RETENTION_DAYS)
+    # удаляются ночью в 03:20 (после cleanup-daily в 03:00). Сохранёнки —
+    # снимки, не страдают (FK SET NULL).
+    "radar-items-retention-daily": {
+        "task": "tasks.radar_tasks.cleanup_old_radar_items",
+        "schedule": crontab(minute=20, hour=3),
+        "options": {"expires": 3600, "catchup": False},
+    },
     # Watchdog поллера радара (#018): раз в час на :12. Алёртит только если есть
     # активные подписанные источники, а heartbeat протух (>40 мин) — retired≠dead.
     "radar-poll-watchdog": {
