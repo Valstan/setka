@@ -167,6 +167,28 @@ async def poll_all_sources() -> dict:
     return summary
 
 
+async def cleanup_old_items(retention_days: Optional[int] = None) -> dict:
+    """Удалить элементы ленты старше порога (ретенция, план Ф0: 30 дней).
+
+    Сохранёнки переживают чистку by design: radar_saved — снимок контента,
+    FK item_id имеет ON DELETE SET NULL.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import delete
+
+    from database import models  # noqa: F401
+    from database.connection import AsyncSessionLocal
+    from database.models_extended import RadarItem
+
+    days = retention_days or int(os.getenv("RADAR_ITEMS_RETENTION_DAYS", "30"))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(delete(RadarItem).where(RadarItem.fetched_at < cutoff))
+        await session.commit()
+    return {"deleted": result.rowcount or 0, "retention_days": days}
+
+
 async def _has_pollable_sources() -> bool:
     from database import models  # noqa: F401
     from database.connection import AsyncSessionLocal

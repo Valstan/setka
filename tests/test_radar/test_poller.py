@@ -109,6 +109,35 @@ async def test_unsupported_type_skipped_silently():
     assert hb.called  # поллер жив, даже если поллить нечего
 
 
+@pytest.mark.asyncio
+async def test_cleanup_old_items_deletes_by_cutoff(monkeypatch):
+    monkeypatch.setenv("RADAR_ITEMS_RETENTION_DAYS", "10")
+
+    class _Session:
+        def __init__(self):
+            self.committed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, _stmt):
+            result = MagicMock()
+            result.rowcount = 5
+            return result
+
+        async def commit(self):
+            self.committed = True
+
+    fake = _Session()
+    with patch("database.connection.AsyncSessionLocal", return_value=fake):
+        result = await poller.cleanup_old_items()
+    assert result == {"deleted": 5, "retention_days": 10}
+    assert fake.committed
+
+
 class TestWatchdog:
     @pytest.mark.asyncio
     async def test_no_sources_is_not_incident(self):
