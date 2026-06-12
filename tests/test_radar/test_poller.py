@@ -97,8 +97,9 @@ async def test_failed_source_does_not_break_run():
 
 @pytest.mark.asyncio
 async def test_unsupported_type_skipped_silently():
-    tg = _source(stype="tg")
-    fake = _FakeSession([tg])
+    # 'max' — мессенджер вне скоупа Ф0 (директива): фетчера нет, это не ошибка.
+    unsupported = _source(stype="max")
+    fake = _FakeSession([unsupported])
     with (
         patch("database.connection.AsyncSessionLocal", return_value=fake),
         patch.object(poller, "touch_heartbeat") as hb,

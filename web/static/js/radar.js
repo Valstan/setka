@@ -139,7 +139,7 @@
 
     function sourceRow(sub) {
         const s = sub.source || {};
-        const icon = s.type === 'vk' ? 'bi-chat-square-text' : 'bi-rss';
+        const icon = { vk: 'bi-chat-square-text', tg: 'bi-telegram' }[s.type] || 'bi-rss';
         const fail = s.fail_count > 0
             ? `<span class="badge bg-warning text-dark" title="${esc(s.last_error || '')}">ошибки: ${s.fail_count}</span>` : '';
         return `

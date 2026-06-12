@@ -163,7 +163,7 @@ async def _has_pollable_sources() -> bool:
             select(RadarSource.id)
             .where(
                 RadarSource.is_active.is_(True),
-                RadarSource.type.in_(("vk", "rss")),
+                RadarSource.type.in_(("vk", "rss", "tg")),
                 exists(
                     select(RadarSubscription.id).where(
                         RadarSubscription.source_id == RadarSource.id

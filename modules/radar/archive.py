@@ -34,6 +34,25 @@ _EXT_BY_CONTENT_TYPE = {
 }
 
 
+_TG_CDN_RE = re.compile(
+    r"^https://(?:[a-z0-9-]+\.)*(?:cdn-telegram\.org|telesco\.pe|telegram-cdn\.org)/", re.IGNORECASE
+)
+
+
+def _download_plan(url: str) -> Tuple[str, dict]:
+    """(url, headers) для серверного скачивания: телеграмный CDN — через
+    egress-relay с секретом (с VPS он заблокирован, probe Ф0); остальное —
+    напрямую без доп. заголовков."""
+    if _TG_CDN_RE.match(url):
+        from modules.radar.sources.tg import relay_config, relay_media_url
+
+        relayed = relay_media_url(url)
+        if relayed:
+            _, secret = relay_config()
+            return relayed, {"X-Relay-Secret": secret}
+    return url, {}
+
+
 def archive_root() -> Path:
     return Path(os.getenv("RADAR_ARCHIVE_DIR", "/var/lib/setka/radar_archive"))
 
@@ -73,7 +92,8 @@ async def download_media(
             new_entry = {"type": entry.get("type"), "url": entry.get("url")}
             if entry.get("type") == "photo" and entry.get("url"):
                 try:
-                    response = await client.get(entry["url"])
+                    dl_url, dl_headers = _download_plan(entry["url"])
+                    response = await client.get(dl_url, headers=dl_headers)
                     response.raise_for_status()
                     blob = response.content
                     if 0 < len(blob) <= MAX_FILE_BYTES and downloaded + len(blob) <= quota_left:
