@@ -52,27 +52,6 @@ def clear_text(text: str, blacklist: Optional[List[str]] = None) -> str:
     return cleaned.strip()
 
 
-def search_text(pattern: str, text: str) -> bool:
-    """
-    Case-insensitive regex search in text.
-    Migrated from old_postopus bin/utils/search_text.py
-
-    Args:
-        pattern: Regex pattern to search for
-        text: Text to search in
-
-    Returns:
-        True if pattern found
-    """
-    if not pattern or not text:
-        return False
-
-    try:
-        return bool(re.search(pattern, text, re.IGNORECASE | re.MULTILINE))
-    except re.error:
-        return False
-
-
 def is_advertisement(text: str, skip_for_reklama: bool = False, theme: str = "") -> bool:
     """
     Multi-level advertisement detection.
@@ -221,19 +200,3 @@ def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
 
     # Truncate and add suffix
     return text[: max_length - len(suffix)] + suffix
-
-
-def extract_hashtags(text: str) -> List[str]:
-    """Extract all hashtags from text."""
-    if not text:
-        return []
-
-    return re.findall(r"#\w+", text)
-
-
-def remove_hashtags(text: str) -> str:
-    """Remove all hashtags from text."""
-    if not text:
-        return ""
-
-    return re.sub(r"#\w+", "", text).strip()

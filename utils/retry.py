@@ -16,12 +16,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from core.exceptions import (
-    DatabaseException,
-    ExternalServiceException,
-    SetkaException,
-    VKRateLimitException,
-)
+from core.exceptions import DatabaseException, SetkaException, VKRateLimitException
 
 logger = logging.getLogger(__name__)
 
@@ -75,26 +70,6 @@ def retry_database(max_attempts: int = 3):
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((DatabaseException, ConnectionError, asyncio.TimeoutError)),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-        after=after_log(logger, logging.INFO),
-    )
-
-
-def retry_external_api(max_attempts: int = 3):
-    """
-    Retry decorator for external API calls (Groq, etc.)
-
-    Usage:
-        @retry_external_api(max_attempts=3)
-        async def analyze_with_groq(text):
-            return await groq_client.analyze(text)
-    """
-    return retry(
-        stop=stop_after_attempt(max_attempts),
-        wait=wait_exponential(multiplier=2, min=4, max=60),
-        retry=retry_if_exception_type(
-            (ExternalServiceException, asyncio.TimeoutError, ConnectionError)
-        ),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         after=after_log(logger, logging.INFO),
     )

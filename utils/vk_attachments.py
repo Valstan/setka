@@ -161,32 +161,6 @@ def get_photo_urls(attachments: Dict[str, List[Dict]], max_photos: int = 10) -> 
     return urls
 
 
-def get_video_info(attachments: Dict[str, List[Dict]]) -> List[Dict[str, Any]]:
-    """
-    Extract video information from attachments.
-
-    Args:
-        attachments: Dict from extract_vk_attachments()
-
-    Returns:
-        List of video info dicts with title, duration, player URL
-    """
-    videos = []
-
-    for video in attachments.get("video", []):
-        video_info = {
-            "owner_id": video.get("owner_id"),
-            "id": video.get("id"),
-            "title": video.get("title", ""),
-            "duration": video.get("duration", 0),
-            "player": video.get("player", ""),
-            "image": video.get("image", [{}])[-1].get("url") if video.get("image") else None,
-        }
-        videos.append(video_info)
-
-    return videos
-
-
 async def resolve_video_url(client: Any, owner_id: int, video_id: int) -> Optional[str]:
     """
     Resolve a VK video attachment to a playable URL via ``video.get``.
@@ -226,18 +200,3 @@ def count_attachments(attachments: Dict[str, List[Dict]]) -> int:
 def has_attachments(attachments: Dict[str, List[Dict]]) -> bool:
     """Check if post has any media attachments."""
     return count_attachments(attachments) > 0
-
-
-def has_video_attachments(attachments: Dict[str, List[Dict]]) -> bool:
-    """Check if post has video attachments."""
-    return len(attachments.get("video", [])) > 0
-
-
-def has_photo_attachments(attachments: Dict[str, List[Dict]]) -> bool:
-    """Check if post has photo attachments."""
-    return len(attachments.get("photo", [])) > 0
-
-
-def has_audio_attachments(attachments: Dict[str, List[Dict]]) -> bool:
-    """Check if post has audio attachments."""
-    return len(attachments.get("audio", [])) > 0
