@@ -126,7 +126,6 @@ modules/service_notifications.py::REGION_START  # alive — член enum Notifi
 modules/system_status_notifier.py::WORKFLOW_STARTING  # alive — член enum SystemStatusType
 modules/system_status_notifier.py::add_region_processing  # dead — не вызывается
 modules/test_info_post_collector.py::collect_test_info_posts_by_topic  # dead — не вызывается (test_info-стек удалён 2026-05-22)
-modules/vk_monitor/carousel_manager.py::SKIPPED  # dead — член enum без сравнений
 modules/vk_monitor/monitor.py::start_monitoring  # dead — не вызывается
 modules/vk_monitor/monitor.py::stop_monitoring  # dead — не вызывается
 modules/vk_monitor/vk_client.py::get_post_by_id  # dead — не вызывается (sync-клиент)
@@ -151,8 +150,6 @@ monitoring/metrics.py::update_system_info  # dead — явный коммент 
 scripts/migrate_mongodb_config.py::CATEGORY_MAPPING  # dead — one-shot Mongo-миграция, маппинг не читается
 scripts/probe_community_dm_capabilities.py::unread_peers  # dead — локальная переменная probe-скрипта
 tasks/parsing_tasks.py::VIDEO_REPORT_PATH  # dead — константа без потребителей
-tasks/vk_carousel_tasks.py::task_routes  # dead — МОДУЛЬ не в include Celery (tasks/celery_app.py:171) — конфиг не применяется
-tasks/vk_carousel_tasks.py::task_annotations  # dead — то же: модуль не подключён
 
 # ── utils ───────────────────────────────────────────────────────────────────
 utils/cache.py::cache_key_builder  # dead — не вызывается
