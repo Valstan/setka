@@ -129,6 +129,7 @@ async def run_reconcile(
                 scheduled_post_id=row.id,
                 price=row.price,
                 status="published",
+                expires_at=row.expires_at,  # срок снятия (С2) переносим на публикацию
             )
             session.add(pub)
             await session.flush()

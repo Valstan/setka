@@ -256,6 +256,25 @@
                             заведённым клиентом — сделка двинется в стадию «Запланировано».
                         </div>
                     </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Снять через, дней
+                            <span class="text-muted small">(опц.)</span></label>
+                        <input type="number" min="1" step="1" class="form-control" id="sch-expire-days"
+                               placeholder="напр. 14">
+                        <div class="form-text">
+                            Пост авто-удалится через N дней после публикации. Пусто —
+                            висит без срока.
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">…или дата снятия
+                            <span class="text-muted small">(опц.)</span></label>
+                        <input type="datetime-local" class="form-control" id="sch-expire-at">
+                        <div class="form-text">
+                            Точная дата/время снятия (МСК) — для всех дат раскладки.
+                            Приоритетнее, чем «дней».
+                        </div>
+                    </div>
                 </div>
 
                 <!-- B2: контекст «из заявки предложки» (показывается при клике
@@ -398,7 +417,7 @@
 
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/static/js/ad_cabinet.js?v=20260613_unified"></script>
+<script src="/static/js/ad_cabinet.js?v=20260613_expiry"></script>
 <script src="/static/js/ad_crm.js?v=20260613_unified"></script>
 <script>
 // Единый рекламный кабинет: логика вкладок (С1).

@@ -121,6 +121,13 @@ class ScheduleCreateIn(BaseModel):
     # продвигается в стадию ``scheduled`` (мягко — не понижает paid/published).
     client_id: Optional[int] = None
     price: Optional[float] = None
+    # Срок размещения (С2): авто-снятие поста. Опционально (решение владельца —
+    # нет срока → висит вечно). Два способа на выбор оператора:
+    #   expire_days — снять через N дней после публикации каждого поста;
+    #   expire_at   — явная дата снятия (ISO, МСК) для всех постов раскладки.
+    # Если заданы оба — приоритет у expire_at. Ни одного → expires_at=NULL.
+    expire_days: Optional[int] = None
+    expire_at: Optional[str] = None
 
 
 def _parse_date(value: str) -> Optional[datetime]:
@@ -670,6 +677,18 @@ async def create_scheduled(
             raise HTTPException(status_code=400, detail=f"Дата в прошлом или слишком близко: {s}")
         parsed.append((dt, unix))
 
+    # Срок размещения (С2): опционален. expire_at (явная дата) важнее expire_days.
+    expire_at_dt: Optional[datetime] = None
+    if payload.expire_at:
+        expire_at_dt = _parse_date(payload.expire_at)
+        if expire_at_dt is None:
+            raise HTTPException(
+                status_code=400, detail=f"Некорректная дата снятия: {payload.expire_at}"
+            )
+        expire_at_dt = expire_at_dt.replace(tzinfo=None)
+    if payload.expire_days is not None and payload.expire_days <= 0:
+        raise HTTPException(status_code=400, detail="Срок в днях должен быть положительным")
+
     gid = int(payload.community_vk_id)
     _user_token, community_tokens = await load_vk_routing()
 
@@ -685,6 +704,13 @@ async def create_scheduled(
 
     created: List[AdScheduledPost] = []
     for naive_dt, unix in parsed:
+        # Срок снятия (С2): явная дата (для всех) либо +N дней от публикации поста.
+        if expire_at_dt is not None:
+            row_expires = expire_at_dt
+        elif payload.expire_days:
+            row_expires = naive_dt + timedelta(days=payload.expire_days)
+        else:
+            row_expires = None
         row = AdScheduledPost(
             community_vk_id=gid,
             region_id=payload.region_id,
@@ -692,6 +718,7 @@ async def create_scheduled(
             image_names=payload.images or [],
             attachments=attachments_str,
             publish_date=naive_dt,
+            expires_at=row_expires,
             from_group=payload.from_group,
             signed=payload.signed,
             comments_enabled=payload.comments_enabled,

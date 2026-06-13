@@ -580,6 +580,27 @@ def reconcile_scheduled_publications():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.expire_ad_posts")
+def expire_ad_posts():
+    """Авто-снятие рекламных постов по истечении срока (С2, ad-CRM).
+
+    Раз в сутки (03:30 MSK). Для вышедших публикаций с истёкшим expires_at —
+    wall.delete + статус removed + removed_at + событие 'removed' в таймлайн.
+    Срок опционален (без срока пост висит вечно). Идемпотентно (только
+    status='published').
+    """
+    logger.info("Expiring ad posts past their term (ad cabinet, С2)...")
+    try:
+        from modules.ad_cabinet.post_expirer import run_expiry
+
+        result = run_coro(run_expiry())
+        logger.info("expire ad posts done: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"expire_ad_posts failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.collect_member_snapshots")
 def collect_member_snapshots():
     """Суточный снимок подписчиков ГЛАВНЫХ ИНФО-групп активных регионов (04:00 MSK).
@@ -1006,6 +1027,16 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute="45", hour="8-22"),
         "options": {
             "expires": 1500,
+            "catchup": False,
+        },
+    },
+    # Авто-снятие рекламных постов по истечении срока (С2, ad-CRM) — 03:30 MSK
+    # (после cleanup 03:00 и radar-retention 03:20). Срок опционален.
+    "expire-ad-posts-daily": {
+        "task": "tasks.celery_app.expire_ad_posts",
+        "schedule": crontab(minute=30, hour=3),
+        "options": {
+            "expires": 3600,
             "catchup": False,
         },
     },
