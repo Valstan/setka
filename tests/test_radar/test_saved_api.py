@@ -170,10 +170,64 @@ async def test_get_saved_media_owner_only():
 
 @pytest.mark.asyncio
 async def test_list_saved_reports_quota():
-    # Первый execute — выборка сохранёнок, второй — SUM(archived_bytes).
-    fake = _FakeSession(all_results=[[]], scalars_seq=[0, 123])
+    # execute'ы: выборка сохранёнок, SUM(archived_bytes юзера), SUM(used_bytes всех).
+    fake = _FakeSession(all_results=[[]], scalars_seq=[0, 123, 0])
     with patch.object(radar_api, "AsyncSessionLocal", lambda: fake):
         result = await radar_api.list_saved(_request(_user(quota=500)), before_id=None, limit=30)
     assert result["used_bytes"] == 123
     assert result["quota_bytes"] == 500
     assert result["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_save_item_respects_global_archive_cap(monkeypatch):
+    """Box-level enforcement (Ф1): суммарный архив у потолка → quota_left урезан."""
+    monkeypatch.setenv("RADAR_ARCHIVE_MAX_BYTES", "1000")
+    item = RadarItem(
+        source_id=3,
+        external_id="x",
+        url="https://e.com/1",
+        text="hi",
+        media=[{"type": "photo", "url": "u"}],
+        published_at=datetime(2026, 6, 12),
+    )
+    item.id = 42
+    source = RadarSource(type="vk", key="-1", title="G")
+    source.id = 3
+    db_user = RadarUser(login="u", password_hash="h", quota_bytes=10**9, used_bytes=0)
+    db_user.id = 1
+    # 3 execute() до download_media: item, existing, SUM(used_bytes всех) → 950.
+    fake = _FakeSession(
+        scalar_results=[item, None], get_results=[source, db_user], scalars_seq=[0, 0, 950]
+    )
+    captured = {}
+
+    async def fake_download(media, user_id, saved_id, *, quota_left):
+        captured["quota_left"] = quota_left
+        return ([{"type": "photo", "url": "u"}], 0)
+
+    with (
+        patch.object(radar_api, "AsyncSessionLocal", lambda: fake),
+        patch("modules.radar.archive.download_media", side_effect=fake_download),
+    ):
+        await radar_api.save_item(radar_api.SaveIn(item_id=42), _request(_user()))
+    # per_user_left огромный, global_left = 1000 - 950 = 50 → min = 50.
+    assert captured["quota_left"] == 50
+
+
+@pytest.mark.asyncio
+async def test_list_saved_reports_archive_status(monkeypatch):
+    """list_saved отдаёт box-level статус; global_used ≥ потолка → writable False."""
+    monkeypatch.setenv("RADAR_ARCHIVE_MAX_BYTES", "1000")
+    monkeypatch.setenv("RADAR_ARCHIVE_MIN_FREE_BYTES", "500")
+    from modules.radar import archive as arch
+
+    monkeypatch.setattr(arch, "disk_free_bytes", lambda: 10**9)
+    # execute'ы: saved(.all), used(.scalar)=10, global(.scalar)=1200.
+    fake = _FakeSession(all_results=[[]], scalars_seq=[0, 10, 1200])
+    with patch.object(radar_api, "AsyncSessionLocal", lambda: fake):
+        result = await radar_api.list_saved(_request(_user(quota=500)), before_id=None, limit=30)
+    a = result["archive"]
+    assert a["global_used_bytes"] == 1200
+    assert a["max_bytes"] == 1000
+    assert a["writable"] is False
