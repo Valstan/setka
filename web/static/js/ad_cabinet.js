@@ -281,7 +281,11 @@ function renderCard(ar) {
                                title="Это не реклама — перенести в раздел «Уведомления»">
                            <i class="bi bi-bell"></i> Не реклама → в уведомления
                        </button>`
-                    : `<button class="btn btn-sm btn-outline-primary" onclick="scheduleFromRequest(${ar.id})">
+                    : `<button class="btn btn-sm btn-success" onclick="openAccept(${ar.id})"
+                               title="Оформить одной кнопкой: клиент + размещение (цена/срок) + ответ">
+                           <i class="bi bi-check2-all"></i> Оформить
+                       </button>
+                       <button class="btn btn-sm btn-outline-primary" onclick="scheduleFromRequest(${ar.id})">
                            <i class="bi bi-calendar-plus"></i> Запланировать
                        </button>`}
                 <button class="btn btn-sm btn-outline-success" onclick="markCard(${ar.id}, 'published')">
@@ -524,6 +528,74 @@ function clearScheduleSource() {
     if (src) src.style.display = 'none';
     const note = document.getElementById('sch-client-note');
     if (note) note.innerHTML = '';
+}
+
+// ----------------------------------------------------------------------
+// С5: сквозное оформление заявки одной кнопкой («Оформить»).
+// ----------------------------------------------------------------------
+let _acceptId = null;
+
+function openAccept(id) {
+    const ar = _adRequestsById[id];
+    if (!ar) return;
+    _acceptId = id;
+    const info = document.getElementById('acc-info');
+    if (info) info.textContent =
+        `${ar.author_name || 'без имени'} → «${ar.community_name || ''}»`;
+    const prep = document.getElementById(`prep-${id}`);
+    const reply = document.getElementById('acc-reply');
+    if (reply) reply.value = prep ? (prep.value || '').trim() : '';
+    ['acc-price', 'acc-expire-days', 'acc-date'].forEach((k) => {
+        const el = document.getElementById(k);
+        if (el) el.value = '';
+    });
+    const res = document.getElementById('acc-res');
+    if (res) res.innerHTML = '';
+    if (window.bootstrap) {
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('accept-modal')).show();
+    }
+}
+
+async function submitAccept() {
+    if (!_acceptId) return;
+    const res = document.getElementById('acc-res');
+    const dateVal = document.getElementById('acc-date').value;
+    if (!dateVal) {
+        if (res) res.innerHTML = '<span class="text-danger">Укажите дату публикации.</span>';
+        return;
+    }
+    const priceRaw = document.getElementById('acc-price').value;
+    const daysRaw = document.getElementById('acc-expire-days').value;
+    const replyRaw = (document.getElementById('acc-reply').value || '').trim();
+    const payload = {
+        dates: [dateVal],
+        price: priceRaw ? parseFloat(priceRaw) : null,
+        expire_days: daysRaw ? parseInt(daysRaw, 10) : null,
+        from_group: document.getElementById('acc-from-group').checked,
+        signed: document.getElementById('acc-signed').checked,
+        comments_enabled: document.getElementById('acc-comments').checked,
+        remove_original: document.getElementById('acc-remove').checked,
+        reply_message: replyRaw || null,
+    };
+    const btn = document.getElementById('acc-submit');
+    if (btn) btn.disabled = true;
+    if (res) res.innerHTML = '<span class="text-muted">Оформляю…</span>';
+    try {
+        const r = await apiClient.acceptAdRequest(_acceptId, payload);
+        let msg = `Запланировано: ${r.scheduled}` + (r.failed ? `, с ошибкой: ${r.failed}` : '');
+        if (r.original_removed) msg += '; оригинал убран';
+        if (r.reply && r.reply.success) msg += '; ответ отправлен';
+        if (res) res.innerHTML = `<span class="text-success">${msg} ✓</span>`;
+        await loadAdRequests();
+        if (window.bootstrap) {
+            setTimeout(() => bootstrap.Modal.getOrCreateInstance(
+                document.getElementById('accept-modal')).hide(), 1300);
+        }
+    } catch (e) {
+        if (res) res.innerHTML = `<span class="text-danger">Ошибка: ${escapeHtml(e.message)}</span>`;
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

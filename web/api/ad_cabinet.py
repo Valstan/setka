@@ -130,6 +130,25 @@ class ScheduleCreateIn(BaseModel):
     expire_at: Optional[str] = None
 
 
+class AcceptRequestIn(BaseModel):
+    """Сквозное оформление заявки одной кнопкой (С5): клиент + отложка + ответ.
+
+    Композиция движков С1–С4: завести/привязать клиента → опц. ответить →
+    запланировать пост (цена/срок, убрать оригинал, пометить заявку
+    опубликованной). Поля планирования — как в ``ScheduleCreateIn``.
+    """
+
+    dates: List[str]
+    price: Optional[float] = None
+    expire_days: Optional[int] = None
+    expire_at: Optional[str] = None
+    from_group: bool = True
+    signed: bool = False
+    comments_enabled: bool = True
+    remove_original: bool = True
+    reply_message: Optional[str] = None  # если задано — отправить ответ клиенту
+
+
 def _parse_date(value: str) -> Optional[datetime]:
     try:
         return datetime.fromisoformat(value)
@@ -822,6 +841,65 @@ async def create_scheduled(
         "original_removed": original_removed,
         "original_remove_error": original_remove_error,
         "client_id": effective_client_id,
+    }
+
+
+@router.post("/requests/{request_id}/accept")
+async def accept_request(
+    request_id: int,
+    payload: AcceptRequestIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """С5 — сквозное оформление заявки одной кнопкой.
+
+    Композиция С1–С4 в один ход: (1) завести/привязать клиента из заявки;
+    (2) опц. ответить клиенту; (3) запланировать пост движком ``create_scheduled``
+    (резолв клиента, цена/срок, убрать оригинал, пометить заявку published,
+    событие в таймлайн). Возвращает свод результатов.
+    """
+    from web.api.ad_crm import upsert_from_request
+
+    ar = await db.get(AdRequest, request_id)
+    if not ar:
+        raise HTTPException(status_code=404, detail="ad request not found")
+    if not payload.dates:
+        raise HTTPException(status_code=400, detail="Нужна хотя бы одна дата публикации")
+
+    # 1) Клиент из заявки — проставит ar.client_id (создаст или привяжет).
+    client_res = await upsert_from_request(request_id, db)
+
+    # 2) Ответ клиенту (опц.) — до пометки published; send_reply идемпотентен.
+    reply_res = None
+    if payload.reply_message and payload.reply_message.strip():
+        reply_res = await send_reply(request_id, SendIn(message=payload.reply_message), db=db)
+
+    # 3) Планирование движком create_scheduled (он же уберёт оригинал и пометит
+    #    заявку published). client_id резолвится из ar.source_ad_request_id.
+    sched_res = await create_scheduled(
+        ScheduleCreateIn(
+            community_vk_id=int(ar.community_vk_id),
+            region_id=ar.region_id,
+            text=ar.text_snapshot or "",
+            dates=payload.dates,
+            price=payload.price,
+            expire_days=payload.expire_days,
+            expire_at=payload.expire_at,
+            from_group=payload.from_group,
+            signed=payload.signed,
+            comments_enabled=payload.comments_enabled,
+            source_ad_request_id=request_id,
+            remove_original=payload.remove_original,
+        ),
+        db=db,
+    )
+
+    return {
+        "client": client_res,
+        "reply": reply_res,
+        "scheduled": sched_res.get("scheduled", 0),
+        "failed": sched_res.get("failed", 0),
+        "original_removed": sched_res.get("original_removed", False),
+        "client_id": sched_res.get("client_id"),
     }
 
 
