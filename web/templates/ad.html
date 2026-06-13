@@ -1,0 +1,431 @@
+{% extends "base.html" %}
+
+{% block title %}Реклама - SETKA{% endblock %}
+{% block nav_ad %}active{% endblock %}
+{% block nav_section_system %}active{% endblock %}
+
+{% block content %}
+<div class="ad-unified-page mx-auto" style="max-width: 1100px;">
+    <h1 class="mb-3"><i class="bi bi-megaphone"></i> Реклама</h1>
+
+    <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="tab-inbox-btn" data-bs-toggle="tab"
+                    data-bs-target="#tab-inbox" type="button" role="tab">
+                <i class="bi bi-inbox"></i> Входящие заявки
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-clients-btn" data-bs-toggle="tab"
+                    data-bs-target="#tab-clients" type="button" role="tab">
+                <i class="bi bi-people-fill"></i> Клиенты и воронка
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-scheduler-btn" data-bs-toggle="tab"
+                    data-bs-target="#tab-scheduler" type="button" role="tab">
+                <i class="bi bi-calendar-plus"></i> Планировщик и публикации
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-stats-btn" data-bs-toggle="tab"
+                    data-bs-target="#tab-stats" type="button" role="tab">
+                <i class="bi bi-graph-up-arrow"></i> Статистика
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content">
+
+        <!-- ====================== Вкладка 1: Входящие заявки ====================== -->
+        <div class="tab-pane fade show active" id="tab-inbox" role="tabpanel" aria-labelledby="tab-inbox-btn">
+            <div class="d-flex justify-content-end mb-2">
+                <button class="btn btn-outline-secondary btn-sm" onclick="loadAdRequests()">
+                    <i class="bi bi-arrow-clockwise"></i> Обновить
+                </button>
+            </div>
+            <p class="text-muted">
+                Реклама, пойманная в <strong>предложке</strong> и во <strong>входящих ЛС</strong>
+                сообществ. Подготовьте ответ из шаблона (имя автора и название паблика
+                подставятся автоматически) и отправьте в один клик. Для заявок из лички
+                ответ уходит прямо в диалог; для предложки VK часто не даёт сообществу
+                писать первым — тогда кнопка предложит скопировать текст и открыть диалог.
+            </p>
+
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-3">
+                            <label class="form-label">Источник</label>
+                            <select class="form-select" id="filter-origin">
+                                <option value="">Все источники</option>
+                                <option value="suggested">Предложка</option>
+                                <option value="inbound_dm">Личка</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Статус</label>
+                            <select class="form-select" id="filter-status">
+                                <option value="new">Новые</option>
+                                <option value="">Все</option>
+                                <option value="contacted">Связались</option>
+                                <option value="published">Опубликовано</option>
+                                <option value="skipped">Пропущено</option>
+                            </select>
+                        </div>
+                        <div class="col-md-7">
+                            <label class="form-label">Текст ответа из библиотеки (кнопка «Подготовить»)</label>
+                            <select class="form-select" id="ad-template">
+                                <option value="">— нет текстов (создайте на «Шаблоны ответов», категория ad_offer) —</option>
+                            </select>
+                            <div class="form-text">
+                                Управление текстами — на странице
+                                <a href="/templates" target="_blank">«Шаблоны ответов»</a>
+                                (категория <code>ad_offer</code>). Плейсхолдеры
+                                <code>{author_name}</code> / <code>{community_name}</code>
+                                подставятся автоматически.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label mb-0">
+                            <i class="bi bi-images"></i> Офферные картинки
+                            <span class="text-muted small">— отметьте, что прикрепить к ответу</span>
+                        </label>
+                        <label class="btn btn-sm btn-outline-primary mb-0">
+                            <i class="bi bi-upload"></i> Загрузить
+                            <input type="file" accept="image/png,image/jpeg" multiple
+                                   class="d-none" onchange="uploadOfferImages(this)">
+                        </label>
+                    </div>
+                    <div id="offer-images" class="d-flex flex-wrap align-items-start"></div>
+                    <div id="offer-upload-status" class="small text-muted mt-1"></div>
+                    <div class="form-text">
+                        Картинки уходят в ЛС community-токеном отправляющего сообщества.
+                        Если у группы нет community-токена в <a href="/tokens" target="_blank">«Токенах»</a>,
+                        оффер уйдёт текстом без картинок. Эти же отмеченные картинки
+                        использует <strong>планировщик</strong> на соседней вкладке.
+                    </div>
+                </div>
+            </div>
+
+            <div id="ad-loading" class="text-center py-4">
+                <div class="spinner-border spinner-border-sm text-secondary"></div>
+                <p class="mt-2 text-muted mb-0">Загрузка…</p>
+            </div>
+            <div id="ad-empty" class="alert alert-info" style="display:none;">
+                Рекламных заявок в этом фильтре нет.
+            </div>
+
+            <!-- Панель массовых действий (появляется, когда что-то отмечено) -->
+            <div id="bulk-bar" class="card mb-3 border-primary" style="display:none;">
+                <div class="card-body py-2 d-flex flex-wrap align-items-center gap-2">
+                    <span class="me-2"><strong id="bulk-count">0</strong> выбрано</span>
+                    <button class="btn btn-sm btn-outline-secondary" id="bulk-select-all">Выбрать все</button>
+                    <button class="btn btn-sm btn-outline-secondary" id="bulk-clear">Снять</button>
+                    <span class="vr d-none d-md-inline"></span>
+                    <button class="btn btn-sm btn-outline-info" onclick="bulkSet('contacted')">Связались</button>
+                    <button class="btn btn-sm btn-outline-success" onclick="bulkSet('published')">Опубликовано</button>
+                    <button class="btn btn-sm btn-outline-dark" onclick="bulkSet('skipped')">Пропустить</button>
+                    <button class="btn btn-sm btn-outline-danger ms-auto" onclick="bulkDelete()">
+                        <i class="bi bi-trash"></i> Удалить
+                    </button>
+                    <span class="small ms-2" id="bulk-res"></span>
+                </div>
+            </div>
+
+            <div id="ad-list"></div>
+        </div>
+
+        <!-- ====================== Вкладка 2: Клиенты и воронка ====================== -->
+        <div class="tab-pane fade" id="tab-clients" role="tabpanel" aria-labelledby="tab-clients-btn">
+            <div class="d-flex justify-content-end gap-2 mb-2">
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#client-modal">
+                    <i class="bi bi-person-plus"></i> Завести клиента
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="loadCrm()">
+                    <i class="bi bi-arrow-clockwise"></i> Обновить
+                </button>
+            </div>
+            <p class="text-muted">
+                Учёт заказчиков рекламы: кто, сколько заплатил, что и когда вышло. Клиенты
+                сводятся из заявок предложки и лички по VK-id автора — заводите карточку
+                кнопкой «В CRM» на карточке заявки во вкладке «Входящие заявки» или вручную здесь.
+            </p>
+
+            <!-- Воронка -->
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div id="crm-funnel" class="d-flex flex-wrap gap-2 align-items-stretch">
+                        <div class="text-muted small">Загрузка воронки…</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Фильтры -->
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-4">
+                            <label class="form-label">Стадия воронки</label>
+                            <select class="form-select" id="filter-stage">
+                                <option value="">Все стадии</option>
+                                <option value="detected">Обнаружен</option>
+                                <option value="contacted">Связались</option>
+                                <option value="scheduled">Запланировано</option>
+                                <option value="published">Опубликовано</option>
+                                <option value="paid">Оплачено</option>
+                                <option value="lost">Слив</option>
+                            </select>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label">Поиск по имени / контактам</label>
+                            <input type="text" class="form-control" id="filter-q"
+                                   placeholder="Имя клиента или телефон/почта…">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="crm-loading" class="text-center py-4">
+                <div class="spinner-border spinner-border-sm text-secondary"></div>
+                <p class="mt-2 text-muted mb-0">Загрузка…</p>
+            </div>
+            <div id="crm-empty" class="alert alert-info" style="display:none;">
+                Клиентов в этом фильтре нет. Заведите вручную или из заявки во вкладке «Входящие заявки».
+            </div>
+
+            <div id="crm-list"></div>
+        </div>
+
+        <!-- ================= Вкладка 3: Планировщик и публикации ================= -->
+        <div class="tab-pane fade" id="tab-scheduler" role="tabpanel" aria-labelledby="tab-scheduler-btn">
+            <div id="scheduler-body">
+                <p class="text-muted small">
+                    Соберите пост (текст + картинки) и набейте даты публикации —
+                    программа разложит их в «Отложенные записи» VK выбранного сообщества,
+                    и VK сам опубликует в назначенное время. Картинки берутся из
+                    отмеченных <em>чекбоксами</em> в галерее на вкладке
+                    «<strong>Входящие заявки</strong>».
+                </p>
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Сообщество</label>
+                        <select class="form-select" id="sch-community">
+                            <option value="">— загрузка… —</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                        <div class="d-flex flex-wrap gap-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="sch-from-group" checked>
+                                <label class="form-check-label" for="sch-from-group">От имени сообщества</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="sch-signed">
+                                <label class="form-check-label" for="sch-signed">Подпись автора</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="sch-comments" checked>
+                                <label class="form-check-label" for="sch-comments">Комментарии</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-3">
+                    <label class="form-label">Текст поста</label>
+                    <textarea class="form-control" id="sch-text" rows="4"
+                              placeholder="Текст поста (можно пустой, если только картинки)…"></textarea>
+                </div>
+
+                <div class="row g-3 mt-0">
+                    <div class="col-md-4">
+                        <label class="form-label">Цена размещения, ₽
+                            <span class="text-muted small">(для CRM, опц.)</span></label>
+                        <input type="number" min="0" step="1" class="form-control" id="sch-price"
+                               placeholder="напр. 1500">
+                        <div class="form-text">
+                            Запишется в отложенный пост. Если планируете из заявки с
+                            заведённым клиентом — сделка двинется в стадию «Запланировано».
+                        </div>
+                    </div>
+                </div>
+
+                <!-- B2: контекст «из заявки предложки» (показывается при клике
+                     «Запланировать» на карточке заявки). -->
+                <div id="sch-source" class="alert alert-secondary py-2 px-3 mt-3 mb-0"
+                     style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="small">
+                            <i class="bi bi-link-45deg"></i>
+                            Планируется из заявки предложки <span id="sch-source-label"></span>.
+                            VK не даёт публиковать предложку «как есть» — создаём пост
+                            заново; родная подпись «Предложил(а): …» не сохраняется.
+                        </span>
+                        <button type="button" class="btn-close btn-sm" aria-label="Отвязать"
+                                onclick="clearScheduleSource()"></button>
+                    </div>
+                    <div class="form-check form-switch mt-1">
+                        <input class="form-check-input" type="checkbox" id="sch-remove-original" checked>
+                        <label class="form-check-label small" for="sch-remove-original">
+                            Убрать оригинал из предложки и пометить заявку опубликованной
+                        </label>
+                    </div>
+                    <div id="sch-client-note" class="small mt-1"></div>
+                </div>
+
+                <div class="mt-3">
+                    <label class="form-label mb-1">Даты публикации <span class="text-muted small">(по Москве)</span></label>
+                    <div id="sch-dates"></div>
+                    <button type="button" class="btn btn-sm btn-outline-primary mt-1" id="sch-add-date">
+                        <i class="bi bi-plus-lg"></i> Добавить дату публикации
+                    </button>
+                </div>
+
+                <div class="mt-3 d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-primary" id="sch-submit">
+                        <i class="bi bi-send-plus"></i> Отправить в сообщество
+                    </button>
+                    <span id="sch-res" class="small"></span>
+                </div>
+
+                <hr>
+
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <strong><i class="bi bi-calendar-week"></i> Запланировано</strong>
+                    <button class="btn btn-sm btn-outline-secondary" id="sch-refresh">
+                        <i class="bi bi-arrow-clockwise"></i> Обновить
+                    </button>
+                </div>
+                <div id="sch-list" class="small"></div>
+            </div>
+        </div>
+
+        <!-- ====================== Вкладка 4: Статистика ====================== -->
+        <div class="tab-pane fade" id="tab-stats" role="tabpanel" aria-labelledby="tab-stats-btn">
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0"><i class="bi bi-graph-up-arrow"></i> Динамика рекламы</h6>
+                        <select class="form-select form-select-sm" id="stats-days" style="width:auto;"
+                                onchange="loadStats()">
+                            <option value="14">14 дней</option>
+                            <option value="30" selected>30 дней</option>
+                            <option value="90">90 дней</option>
+                        </select>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6"><canvas id="chart-offers" height="120"></canvas></div>
+                        <div class="col-md-6"><canvas id="chart-paid" height="120"></canvas></div>
+                    </div>
+                    <div class="mt-2 small" id="bank-stats">
+                        <span class="text-muted">Банки: загрузка…</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- Модалка «Завести клиента» -->
+<div class="modal fade" id="client-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-person-plus"></i> Новый клиент</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2">
+                    <label class="form-label">VK id заказчика <span class="text-danger">*</span></label>
+                    <input type="number" class="form-control" id="nc-vk-id"
+                           placeholder="напр. 12345678 (или -100… для группы)">
+                    <div class="form-text">Положительный — человек, отрицательный — сообщество.</div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Имя / название</label>
+                    <input type="text" class="form-control" id="nc-name">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Контакты</label>
+                    <textarea class="form-control" id="nc-contact" rows="2"
+                              placeholder="Телефон, почта, как связаться…"></textarea>
+                </div>
+                <div class="row g-2">
+                    <div class="col-6">
+                        <label class="form-label">Стадия</label>
+                        <select class="form-select" id="nc-stage">
+                            <option value="detected">Обнаружен</option>
+                            <option value="contacted">Связались</option>
+                            <option value="scheduled">Запланировано</option>
+                            <option value="published">Опубликовано</option>
+                            <option value="paid">Оплачено</option>
+                            <option value="lost">Слив</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">Группа?</label>
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="nc-is-group">
+                            <label class="form-check-label" for="nc-is-group">Автор — сообщество</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-2 mt-2">
+                    <label class="form-label">Заметки</label>
+                    <textarea class="form-control" id="nc-notes" rows="2"></textarea>
+                </div>
+                <div class="small" id="nc-res"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="nc-submit">
+                    <i class="bi bi-check2"></i> Создать
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/js/ad_cabinet.js?v=20260613_unified"></script>
+<script src="/static/js/ad_crm.js?v=20260613_unified"></script>
+<script>
+// Единый рекламный кабинет: логика вкладок (С1).
+document.addEventListener('DOMContentLoaded', () => {
+    // Активировать вкладку по hash (#crm / #scheduler / #stats) — для редиректов
+    // со старых /ad-cabinet, /ad-crm и in-app ссылок «открыть CRM».
+    const hashTab = {
+        '#crm': 'tab-clients-btn',
+        '#clients': 'tab-clients-btn',
+        '#scheduler': 'tab-scheduler-btn',
+        '#stats': 'tab-stats-btn',
+        '#inbox': 'tab-inbox-btn',
+    }[location.hash];
+    if (hashTab && window.bootstrap) {
+        const btn = document.getElementById(hashTab);
+        if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+    }
+    // Планировщик грузит список сообществ лениво — при первом открытии вкладки.
+    const schBtn = document.getElementById('tab-scheduler-btn');
+    if (schBtn && typeof initScheduler === 'function') {
+        schBtn.addEventListener('shown.bs.tab', () => initScheduler(), { once: true });
+    }
+    // Chart.js (responsive) в скрытой вкладке имеет нулевую ширину — подтолкнуть
+    // перерисовку при показе любой вкладки.
+    document.querySelectorAll('[data-bs-toggle="tab"]').forEach((b) => {
+        b.addEventListener('shown.bs.tab', () => window.dispatchEvent(new Event('resize')));
+    });
+});
+</script>
+{% endblock %}

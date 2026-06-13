@@ -384,7 +384,10 @@ def test_routes_registered():
     import main
 
     paths = {getattr(r, "path", None) for r in main.app.routes}
+    # Единый кабинет (С1) + сохранённые legacy-пути (теперь редиректы на /ad).
+    assert "/ad" in paths
     assert "/ad-crm" in paths
+    assert "/ad-cabinet" in paths
     assert "/api/ad-crm/funnel" in paths
     assert "/api/ad-crm/clients" in paths
     assert "/api/ad-crm/clients/{client_id}/timeline" in paths
@@ -397,6 +400,20 @@ def test_routes_registered():
     assert "/api/ad-crm/clients/{client_id}/thread" in paths
     assert "/api/ad-crm/clients/{client_id}/reply" in paths
     assert "/api/ad-crm/stats/timeseries" in paths
+
+
+def test_legacy_ad_routes_redirect_to_unified():
+    """Старые /ad-cabinet и /ad-crm редиректят на единый /ad (С1)."""
+    import asyncio
+
+    import main
+
+    cab = asyncio.run(main.ad_cabinet_page())
+    crm = asyncio.run(main.ad_crm_page())
+    assert cab.status_code in (301, 302, 307, 308)
+    assert cab.headers["location"] == "/ad"
+    assert crm.status_code in (301, 302, 307, 308)
+    assert crm.headers["location"] == "/ad#crm"
 
 
 # ----------------------------------------------------------------- stats / charts (PR-7)
