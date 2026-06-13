@@ -277,12 +277,29 @@ async def list_saved(
                 )
             )
         ).scalar()
+        global_used = (
+            await session.execute(select(func.coalesce(func.sum(RadarUser.used_bytes), 0)))
+        ).scalar()
     items = [s.to_dict() for s in saved]
+    # Box-level статус архива (Ф1) — чтобы UI показал «архив заполнен», а не молча
+    # ронял новые фото в ссылки.
+    from modules.radar.archive import disk_free_bytes, max_archive_bytes, min_free_bytes
+
+    free = disk_free_bytes()
+    min_free = min_free_bytes()
+    max_arch = max_archive_bytes()
     return {
         "items": items,
         "next_before_id": items[-1]["id"] if len(items) == limit else None,
         "used_bytes": int(used or 0),
         "quota_bytes": getattr(user, "quota_bytes", None),
+        "archive": {
+            "global_used_bytes": int(global_used or 0),
+            "max_bytes": max_arch,
+            "disk_free_bytes": free,
+            "min_free_bytes": min_free,
+            "writable": free - min_free > 0 and int(global_used or 0) < max_arch,
+        },
     }
 
 
@@ -294,7 +311,7 @@ async def save_item(body: SaveIn, request: Request):
     пока юзер помещается в quota_bytes, дальше остаются ссылками.
     """
     user = _current_user(request)
-    from modules.radar.archive import download_media
+    from modules.radar.archive import download_media, max_archive_bytes
 
     async with AsyncSessionLocal() as session:
         # Элемент должен принадлежать источнику, на который юзер подписан.
@@ -336,7 +353,15 @@ async def save_item(body: SaveIn, request: Request):
         await session.flush()  # нужен saved.id для каталога на диске
 
         db_user = await session.get(RadarUser, user.id)
-        quota_left = max(0, (db_user.quota_bytes or 0) - (db_user.used_bytes or 0))
+        # quota_left = min(остаток per-user квоты, остаток глобального потолка
+        # архива всех юзеров). Box-level enforcement (Ф1): защищаем 10-ГБ бокс от
+        # переполнения суммой архивов; диск-floor дополнительно держит archive.py.
+        per_user_left = max(0, (db_user.quota_bytes or 0) - (db_user.used_bytes or 0))
+        global_used = (
+            await session.execute(select(func.coalesce(func.sum(RadarUser.used_bytes), 0)))
+        ).scalar() or 0
+        global_left = max(0, max_archive_bytes() - int(global_used))
+        quota_left = max(0, min(per_user_left, global_left))
         try:
             media, downloaded = await download_media(
                 item.media or [], user.id, saved.id, quota_left=quota_left

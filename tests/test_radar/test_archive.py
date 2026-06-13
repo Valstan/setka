@@ -10,6 +10,9 @@ from modules.radar import archive
 @pytest.fixture(autouse=True)
 def _tmp_archive_root(tmp_path, monkeypatch):
     monkeypatch.setenv("RADAR_ARCHIVE_DIR", str(tmp_path))
+    # Disk-floor выключен по умолчанию — общие тесты скачивания не зависят от
+    # реального свободного места на диске CI-раннера. Тесты enforcement его задают.
+    monkeypatch.setenv("RADAR_ARCHIVE_MIN_FREE_BYTES", "0")
     return tmp_path
 
 
@@ -90,6 +93,68 @@ async def test_download_media_failure_keeps_link(_tmp_archive_root):
         result, downloaded = await archive.download_media(media, 1, 2, quota_left=10**6)
     assert downloaded == 0
     assert result == [{"type": "photo", "url": "https://e.com/p.jpg"}]
+
+
+class TestEnvKnobs:
+    def test_min_free_default(self, monkeypatch):
+        monkeypatch.delenv("RADAR_ARCHIVE_MIN_FREE_BYTES", raising=False)
+        assert archive.min_free_bytes() == archive.DEFAULT_MIN_FREE_BYTES
+
+    def test_max_archive_default(self, monkeypatch):
+        monkeypatch.delenv("RADAR_ARCHIVE_MAX_BYTES", raising=False)
+        assert archive.max_archive_bytes() == archive.DEFAULT_MAX_ARCHIVE_BYTES
+
+    def test_override(self, monkeypatch):
+        monkeypatch.setenv("RADAR_ARCHIVE_MIN_FREE_BYTES", "123")
+        monkeypatch.setenv("RADAR_ARCHIVE_MAX_BYTES", "456")
+        assert archive.min_free_bytes() == 123
+        assert archive.max_archive_bytes() == 456
+
+    def test_bad_value_falls_back(self, monkeypatch):
+        monkeypatch.setenv("RADAR_ARCHIVE_MIN_FREE_BYTES", "not-a-number")
+        assert archive.min_free_bytes() == archive.DEFAULT_MIN_FREE_BYTES
+
+    def test_negative_clamped(self, monkeypatch):
+        monkeypatch.setenv("RADAR_ARCHIVE_MAX_BYTES", "-5")
+        assert archive.max_archive_bytes() == 0
+
+
+class TestDiskFreeBytes:
+    def test_walks_up_to_existing_parent(self, _tmp_archive_root, monkeypatch):
+        # Каталога ещё нет — disk_usage берётся с существующего предка, не падает.
+        monkeypatch.setenv("RADAR_ARCHIVE_DIR", str(_tmp_archive_root / "nope" / "deep"))
+        assert archive.disk_free_bytes() > 0
+
+    def test_stat_failure_fails_open(self, monkeypatch):
+        monkeypatch.setattr(archive.shutil, "disk_usage", MagicMock(side_effect=OSError("boom")))
+        assert archive.disk_free_bytes() == 1 << 62
+
+
+@pytest.mark.asyncio
+async def test_download_media_blocks_when_disk_below_floor(_tmp_archive_root, monkeypatch):
+    """Свободного места меньше порога → фото остаётся ссылкой (защита бокса)."""
+    monkeypatch.setenv("RADAR_ARCHIVE_MIN_FREE_BYTES", str(10**9))
+    # На диске свободно меньше порога — писать нельзя.
+    monkeypatch.setattr(archive, "disk_free_bytes", lambda: 10**6)
+    media = [{"type": "photo", "url": "https://e.com/p.jpg"}]
+    with patch("httpx.AsyncClient", return_value=_fake_httpx_client(blob=b"x" * 100)):
+        result, downloaded = await archive.download_media(media, 1, 2, quota_left=10**9)
+    assert downloaded == 0
+    assert "file" not in result[0]
+    assert result[0]["url"] == "https://e.com/p.jpg"
+    assert not (_tmp_archive_root / "1" / "2").exists()
+
+
+@pytest.mark.asyncio
+async def test_download_media_writes_when_disk_above_floor(_tmp_archive_root, monkeypatch):
+    """Свободного места хватает с запасом → фото скачивается как обычно."""
+    monkeypatch.setenv("RADAR_ARCHIVE_MIN_FREE_BYTES", str(10**6))
+    monkeypatch.setattr(archive, "disk_free_bytes", lambda: 10**9)
+    media = [{"type": "photo", "url": "https://e.com/p.jpg"}]
+    with patch("httpx.AsyncClient", return_value=_fake_httpx_client(blob=b"JPEGDATA")):
+        result, downloaded = await archive.download_media(media, 1, 2, quota_left=10**9)
+    assert downloaded == len(b"JPEGDATA")
+    assert result[0]["file"] == "00.jpg"
 
 
 class TestDownloadPlan:

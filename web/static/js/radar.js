@@ -128,8 +128,11 @@
         $('saved-more').classList.toggle('d-none', !data.next_before_id);
         $('saved-empty').classList.toggle('d-none', $('saved-list').children.length > 0);
         if (data.quota_bytes != null) {
-            $('quota-line').textContent =
-                `Занято ${fmtBytes(data.used_bytes)} из ${fmtBytes(data.quota_bytes)}`;
+            let line = `Занято ${fmtBytes(data.used_bytes)} из ${fmtBytes(data.quota_bytes)}`;
+            if (data.archive && data.archive.writable === false) {
+                line += ' · архив заполнен — новые фото сохраняются ссылкой';
+            }
+            $('quota-line').textContent = line;
         }
         data.items.forEach((i) => { if (i.item_id) state.savedItemIds.add(i.item_id); });
         state.savedLoaded = true;
