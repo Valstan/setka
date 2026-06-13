@@ -671,6 +671,26 @@ def alert_ad_debtors():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.auto_greet_ad_requests")
+def auto_greet_ad_requests():
+    """Авто-приветствие рекламодателю на новую заявку (улучшение отклика).
+
+    Каждые 30 мин 8:00-22:00 (X:10/40, сразу после сканов). Свежим новым заявкам
+    в разрешённых сообществах (env AD_AUTO_GREETING_COMMUNITIES) шлёт приветствие
+    один раз. Off по умолчанию (пустой allowlist → no-op).
+    """
+    logger.info("Auto-greeting new ad requests (ad cabinet)...")
+    try:
+        from modules.ad_cabinet.auto_greeting import run_auto_greeting
+
+        result = run_coro(run_auto_greeting())
+        logger.info("auto-greeting done: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"auto_greet_ad_requests failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.collect_member_snapshots")
 def collect_member_snapshots():
     """Суточный снимок подписчиков ГЛАВНЫХ ИНФО-групп активных регионов (04:00 MSK).
@@ -1086,6 +1106,16 @@ app.conf.beat_schedule = {
     "scan-inbound-dm-ads": {
         "task": "tasks.celery_app.scan_inbound_dm_ads",
         "schedule": crontab(minute="5,35", hour="8-22"),
+        "options": {
+            "expires": 1500,
+            "catchup": False,
+        },
+    },
+    # Авто-приветствие рекламодателю на новую заявку — X:10/40 (сразу после сканов).
+    # Off по умолчанию (env AD_AUTO_GREETING_COMMUNITIES пуст → no-op).
+    "auto-greet-ad-requests": {
+        "task": "tasks.celery_app.auto_greet_ad_requests",
+        "schedule": crontab(minute="10,40", hour="8-22"),
         "options": {
             "expires": 1500,
             "catchup": False,
