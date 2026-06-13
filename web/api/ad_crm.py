@@ -257,12 +257,14 @@ async def list_clients(
     stage: Optional[str] = None,
     region_id: Optional[int] = None,
     q: Optional[str] = None,
+    debtors_only: bool = False,
     limit: int = 200,
     db: AsyncSession = Depends(get_db_session),
 ):
     """Список клиентов со свёрнутыми агрегатами (оплачено, число публикаций).
 
     Агрегаты считаются скалярными подзапросами — один проход, свежие сверху.
+    ``debtors_only`` (С4) — только клиенты с неоплаченным счётом старше порога.
     """
     paid_sq = (
         select(func.coalesce(func.sum(AdPayment.amount), 0))
@@ -294,6 +296,20 @@ async def list_clients(
         stmt = stmt.where(AdClient.stage == stage)
     if region_id is not None:
         stmt = stmt.where(AdClient.region_id == region_id)
+    if debtors_only:
+        from modules.ad_cabinet.debtors import DEBTOR_DAYS
+
+        cutoff = datetime.utcnow() - timedelta(days=DEBTOR_DAYS)
+        overdue_exists = (
+            select(AdPayment.id)
+            .where(
+                AdPayment.client_id == AdClient.id,
+                AdPayment.status == "awaiting",
+                AdPayment.created_at <= cutoff,
+            )
+            .exists()
+        )
+        stmt = stmt.where(overdue_exists)
 
     rows = await _search_client_rows(db, stmt, q, limit)
     clients = []
@@ -1277,6 +1293,27 @@ async def funnel(db: AsyncSession = Depends(get_db_session)):
         await db.execute(select(func.coalesce(func.sum(AdPublication.views), 0)))
     ).scalar_one()
 
+    # Должники (С4): неоплаченные счета старше порога.
+    from modules.ad_cabinet.debtors import DEBTOR_DAYS
+
+    cutoff = datetime.utcnow() - timedelta(days=DEBTOR_DAYS)
+    debtors_amount = (
+        await db.execute(
+            select(func.coalesce(func.sum(AdPayment.amount), 0)).where(
+                AdPayment.status == "awaiting", AdPayment.created_at <= cutoff
+            )
+        )
+    ).scalar_one()
+    debtors_count = (
+        await db.execute(
+            select(func.count(func.distinct(AdPayment.client_id))).where(
+                AdPayment.status == "awaiting",
+                AdPayment.created_at <= cutoff,
+                AdPayment.client_id.isnot(None),
+            )
+        )
+    ).scalar_one()
+
     return {
         "stages": _VALID_STAGES,
         "by_stage": by_stage,
@@ -1285,4 +1322,7 @@ async def funnel(db: AsyncSession = Depends(get_db_session)):
         "total_awaiting": float(total_awaiting or 0),
         "publications_count": int(publications_count or 0),
         "total_views": int(total_views or 0),
+        "debtors_count": int(debtors_count or 0),
+        "debtors_amount": float(debtors_amount or 0),
+        "debtor_days": DEBTOR_DAYS,
     }
