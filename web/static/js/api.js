@@ -100,6 +100,14 @@ const apiClient = {
         });
     },
 
+    // С5 — сквозное оформление заявки одной кнопкой.
+    async acceptAdRequest(id, payload) {
+        return this.request(`/ad-cabinet/requests/${id}/accept`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
     async getAdTemplates() {
         return this.request('/templates/?include_inactive=0');
     },

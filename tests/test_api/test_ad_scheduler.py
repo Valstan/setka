@@ -15,6 +15,7 @@ import modules.publisher.vk_publisher_extended as vpe
 import modules.vk_token_router as token_router
 from database.models import AdClient, AdRequest, AdScheduledPost
 from web.api import ad_cabinet as api
+from web.api import ad_crm
 
 # Дата заведомо в будущем (МСК) — устойчиво к запуску тестов в любой год.
 _FUTURE = "2090-01-01T12:00:00"
@@ -456,6 +457,82 @@ async def test_create_rejects_bad_expire_at(monkeypatch):
             ),
             db=db,
         )
+    assert exc.value.status_code == 400
+
+
+# ------------------------------------------------- С5: сквозное оформление (accept)
+
+
+async def test_accept_request_orchestrates(monkeypatch):
+    """accept = upsert клиента + ответ + create_scheduled; свод результатов."""
+    ar = AdRequest(id=7, community_vk_id=-100, text_snapshot="реклама", region_id=3, status="new")
+    db = _create_db()
+    db.get = AsyncMock(return_value=ar)
+    monkeypatch.setattr(
+        ad_crm,
+        "upsert_from_request",
+        AsyncMock(return_value={"client": {"id": 5}, "created": True}),
+    )
+    sched_mock = AsyncMock(
+        return_value={"scheduled": 1, "failed": 0, "original_removed": True, "client_id": 5}
+    )
+    monkeypatch.setattr(api, "create_scheduled", sched_mock)
+    send_mock = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(api, "send_reply", send_mock)
+
+    out = await api.accept_request(
+        7,
+        api.AcceptRequestIn(dates=[_FUTURE], price=1500, expire_days=14, reply_message="спасибо"),
+        db=db,
+    )
+
+    assert out["scheduled"] == 1
+    assert out["original_removed"] is True
+    assert out["client_id"] == 5
+    send_mock.assert_awaited_once()  # reply_message задан → отправляем
+    # create_scheduled получил правильные поля заявки.
+    sched_arg = sched_mock.await_args.args[0]
+    assert sched_arg.community_vk_id == -100
+    assert sched_arg.source_ad_request_id == 7
+    assert sched_arg.price == 1500
+    assert sched_arg.expire_days == 14
+    assert sched_arg.remove_original is True
+
+
+async def test_accept_request_no_reply_when_empty(monkeypatch):
+    ar = AdRequest(id=7, community_vk_id=-100, text_snapshot="x", status="new")
+    db = _create_db()
+    db.get = AsyncMock(return_value=ar)
+    monkeypatch.setattr(
+        ad_crm,
+        "upsert_from_request",
+        AsyncMock(return_value={"client": {"id": 5}, "created": False}),
+    )
+    monkeypatch.setattr(
+        api, "create_scheduled", AsyncMock(return_value={"scheduled": 1, "failed": 0})
+    )
+    send_mock = AsyncMock()
+    monkeypatch.setattr(api, "send_reply", send_mock)
+
+    out = await api.accept_request(7, api.AcceptRequestIn(dates=[_FUTURE]), db=db)
+    assert out["scheduled"] == 1
+    send_mock.assert_not_awaited()  # без reply_message ответ не шлём
+
+
+async def test_accept_request_404(monkeypatch):
+    db = _create_db()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.accept_request(999, api.AcceptRequestIn(dates=[_FUTURE]), db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_accept_request_requires_dates():
+    ar = AdRequest(id=7, community_vk_id=-100, status="new")
+    db = _create_db()
+    db.get = AsyncMock(return_value=ar)
+    with pytest.raises(HTTPException) as exc:
+        await api.accept_request(7, api.AcceptRequestIn(dates=[]), db=db)
     assert exc.value.status_code == 400
 
 
