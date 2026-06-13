@@ -2,49 +2,47 @@
 
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
-**Status:** ACTIVE (наблюдение — кодовых ниток нет, ближайшее действие календарное)
+**Status:** ACTIVE (программа ad-CRM — еженедельный ритм улучшений; ближайшее действие календарное)
 **Updated:** 2026-06-13
 **Branch:** main
-**Last release in prod:** прод на `e71d0a1` = main (все PR сессии #201–#215 задеплоены, 3/3 active, health 200).
+**Last release in prod:** прод на `0c44713` = main (все PR сессии #217–#222 задеплоены, 4/4 active, health 200, миграции 037–043 применены).
 
 ---
 
 ## Текущая нитка
 
-**Контент-радар Ф0 ЗАВЕРШЁН ЦЕЛИКОМ** (MANDATE brain 2026-06-11): за сессию построены/задеплоены/live-проверены Ф0.2 (sources + fan-out поллер VK+RSS, PR #201), Ф0.4 (PWA-лента + save-архив, #202), Ф0.3 (TG через CF egress-relay `tg-relay.zubazeirot.workers.dev`, #203/#204/#206), Ф0.5 (web-push, #207), ретенция ленты (#208), PNG-иконки (#209). Отчёт мозгу с 3 переносимыми находками — `mailbox/to-brain/2026-06-12-content-radar-f0-complete.md`.
+**Программа автоматизации рекламного CRM** (MANDATE-директива brain 2026-06-12, постоянная). За сессию построены/задеплоены **5 плановых срезов + раунд-1 улучшения**: С1 единый кабинет `/ad` (4 вкладки, #217), С2 авто-удаление по сроку (#218), С3 просмотры/лайки/репосты + отчёт клиенту (#219), С4 трекинг должников (#220), С5 сквозная «одна кнопка» (#221), + авто-приветствие рекламодателю (#222). Цель директивы «цепочка нажимается одной кнопкой» закрыта (С5).
 
-Сверх радара: ответ brain'у на #037 filestore-race («риска нет», #210) и **разбор первого deadcode-триажа целиком** — 4 пакетных PR #211–#214 (carousel-цепочка, старые publisher'ы, postopus-core, россыпь utils; −1000+ строк, orphan-цепочки #028 прослежены).
-
-Нитки в наблюдении: PoC LLM-курации `mi` (цифры ~2026-06-14), браузер-верификации владельцем (пакет в PENDING, + радар-PWA/колокольчик).
+**Модель владельца 2026-06-13:** дальнейшие улучшения — **еженедельный ритм**, где **я сам** анализирую систему + статистику и предлагаю новое (ускорить обработку рекламы / улучшить отклик с рекламодателем), реализую в тот же день. Раунд-1 = авто-приветствие.
 
 ## Следующий шаг
 
-1. **~2026-06-14: цифры PoC курации** — `ssh setka "cd /home/valstan/SETKA && sudo bash -c 'set -a; source /etc/setka/setka.env; set +a; ./venv/bin/python scripts/curate_pending.py --stats'"` → ack brain письмом в `mailbox/to-brain/` (он ждёт; решение Фазы 2: enforcing fail-open vs Haiku-API).
-2. Проверить mailbox — brain мог ответить на Ф0-complete отчёт и #037 (`cd ../brain_matrica && git pull --ff-only`).
-3. Если владелец прошёл браузер-верификации — вычеркнуть пакет из PENDING.
+1. **Авто-приветствие (#222) — спит, ждёт включения владельцем.** Если решит включить: задать в `/etc/setka/setka.env` `AD_AUTO_GREETING_COMMUNITIES=<vk_id,...>` + `AD_AUTO_GREETING_TEXT="...{author_name}...{community_name}..."` (или активный шаблон категории `ad_greeting`) → `ssh setka "sudo systemctl restart setka-celery-worker setka-celery-beat"`. ⚠️ Включение = реальные авто-сообщения рекламодателям.
+2. **~2026-06-20: раунд-2 улучшения** — посмотреть статистику (`/funnel` total_views/debtors, сколько авто-приветствий ушло, время первого отклика) → предложить владельцу следующее улучшение, реализовать.
+3. **Браузер-верификация владельцем** всего ad-CRM (С1–С5 + greeting) — пакет в PENDING.
+4. **Хвост из прошлой сессии: ~2026-06-14 цифры PoC LLM-курации** (`ssh setka "cd /home/valstan/SETKA && sudo bash -c 'set -a; source /etc/setka/setka.env; set +a; ./venv/bin/python scripts/curate_pending.py --stats'"`) → ack brain (он ждёт решения Фазы 2). Сегодня 06-13 — наступает завтра.
 
 ## Контекст
 
-- **План:** активного плана нет; roadmap Ф1-кандидатов радара — в отчёте `mailbox/to-brain/2026-06-12-content-radar-f0-complete.md` (квоты-enforcement, фоновое TG-медиа, не начинать без приоритизации).
-- **Связанные коммиты сессии:** `7a4684f` #201 Ф0.2, `ecb9b84` #202 Ф0.4, `3b7eedf` #203 Ф0.3, #204/#206 relay-фиксы, `558f5e8` #207 Ф0.5, #208 отчёт+ретенция, #209 PNG-иконки, #210 ответ #037, #211–#214 deadcode, `e71d0a1` #215 PENDING.
-- **Прод:** HEAD `e71d0a1` = main, 4/4 active (вкл. nginx), health 200. Радар-поллер крутится `*/10` под watchdog'ом; CF-relay жив (`https://tg-relay.zubazeirot.workers.dev/health`). Secrets в `/etc/setka/setka.env`: + `CLOUDFLARE_API_TOKEN`, `TG_RELAY_SECRET`, `TG_PREVIEW_RELAY_URL`, `RADAR_VAPID_PRIVATE_KEY`, `RADAR_VAPID_SUBJECT`. `/etc/setka/web_basic_auth.txt` удалён.
-- **Открытых PR:** нет (handoff-PR этой сессии — doc-only, авто-merge).
+- **План:** brain-письма этой сессии — `mailbox/to-brain/2026-06-13-ad-crm-automation-asis-map-and-plan.md` (карта as-is + план срезов + решения владельца) и `2026-06-13-ad-crm-c1-c2-progress.md` (прогресс). Карта звеньев цепочки (статусы auto/semi/manual) — в `PENDING_FOLLOWUPS.md`, держать актуальной для еженедельного выбора.
+- **Связанные коммиты сессии:** `6f9fd06` #217 С1, `242f5bb` #218 С2, `5fb711e` #219 С3, `4c718c5` #220 С4, `02176c9` #221 С5, `0c44713` #222 авто-приветствие.
+- **Прод:** HEAD `0c44713` = main, 4/4 active (вкл. nginx), health 200. Новые beat-таски: `expire-ad-posts-daily` (03:30), `collect-ad-publication-stats-daily` (04:30), `alert-ad-debtors-daily` (10:00), `auto-greet-ad-requests` (X:10/40 8-22, спит без env). Миграции 037–043 в журнале (037–040 бэкфилл-журнал по пути).
+- **Открытых PR:** нет (этот handoff-PR — doc-only, авто-merge).
 
 ## Failed approaches (этой нитки)
 
-- **Стриминг тела из CF Worker** (`return new Response(resp.body)`) — вешает httpx-клиент по HTTP/1.1 до ReadTimeout. Не повторять: тело буферизовать `arrayBuffer()` (PR #204).
-- **Скачивание TG-медиа через CF-relay с большим таймаутом** — бесполезно: Telegram-CDN душит CF-egress до ~0.2-1 КБ/с (файл 31 КБ не проходит и за 120с). Принято graceful degradation: фото ссылкой, попытка 20с (PR #206). Не наращивать таймаут — лечится только другим egress / фоновым скачиванием (Ф1).
-- **Обычный GET к t.me/s/ из CF** — отдаёт 1 сообщение (деградация для datacenter-IP). Рабочий путь: AJAX POST + `X-Requested-With` + `Content-Length: 0` (без него t.me отвечает 411).
+- **Чейнить `git push` сразу после `git commit` в одном bash-блоке** — когда pre-commit (black) переформатирует файл, `git commit` прерывается (хук Failed), а следующий `git push` пушит ветку на старом HEAD (без коммита). Дважды за сессию. **Урок:** коммитить отдельным шагом, проверить `git log -1`, и только потом push; либо прогонять `pre_commit run --all-files` до коммита.
+- **Сетевые таймауты на `gh pr merge --delete-branch` и `git push`** к github (transient) — мерж по факту проходил (проверять `gh pr view --json state`), push — повторить. Не паниковать, не задваивать.
 
 ## Открытые вопросы для пользователя
 
-- Браузер-верификации (один ~20-мин проход, чек-лист в PENDING): радар-PWA на телефоне (иконка, колокольчик-push), tiered-поиск, ad-cabinet/CRM.
-- Ф1 радара: что приоритетнее — квоты-enforcement, фоновое TG-медиа, или пауза до фидбэка от использования?
+- Включаем авто-приветствие сейчас? Нужны: текст приветствия + список сообществ (VK-id).
+- Настроить ли еженедельную авто-routine (`/schedule`) для раунда улучшений, или делать в начале сессий?
 
 ## Не забыть (low-priority)
 
-- 🟢 `utils/post_utils.py::format_number` остался без потребителей после deadcode-пакета 4 — снимет месячный прогон `/deadcode` (~2026-07-10).
-- 🟢 Pillow поставлен только в локальный venv (генерация PNG-иконок, `scripts/generate_radar_icons.py`) — в requirements не входит, это норма.
+- 🟡 Управление авто-приветствием — пока через env (per-community allowlist). При желании — UI-тумблер по сообществам (раунд-кандидат).
+- 🟢 Браузер-верификации владельцем накопились по всему ad-CRM — один проход по `/ad`.
 - ⏸ AI-дедуп (embeddings) — `parked` до VPS ≥4 ГБ.
 
 ---
