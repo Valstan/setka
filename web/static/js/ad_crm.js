@@ -198,6 +198,10 @@ async function loadFunnel() {
             <div class="text-center px-3 py-2 rounded border bg-body-tertiary">
                 <div class="h4 mb-0">${f.publications_count || 0}</div>
                 <div class="small text-muted">публикаций</div>
+            </div>
+            <div class="text-center px-3 py-2 rounded border bg-body-tertiary">
+                <div class="h4 mb-0">👁 ${f.total_views || 0}</div>
+                <div class="small text-muted">просмотров всего</div>
             </div>`;
         box.innerHTML = chips + totals;
     } catch (e) {
@@ -309,6 +313,53 @@ async function toggleClientDetails(id) {
     }
 }
 
+// Перечитать раскрытую карточку клиента (после обновления метрик).
+async function reloadClientDetails(id) {
+    const box = document.getElementById(`crm-details-${id}`);
+    if (!box || box.dataset.loaded !== '1') return;
+    const d = await apiClient.getCrmClient(id);
+    box.innerHTML = renderClientDetails(d);
+    loadClientThread(id);
+    loadOrderItems(id);
+    loadTimeline(id);
+}
+
+// С3: обновить метрики публикаций клиента из VK сейчас, затем перерисовать карточку.
+async function refreshClientStats(id) {
+    const el = document.getElementById(`stats-res-${id}`);
+    if (el) el.innerHTML = '<span class="text-muted">Обновляю из VK…</span>';
+    try {
+        const r = await apiClient.refreshCrmClientStats(id);
+        await reloadClientDetails(id);
+        const el2 = document.getElementById(`stats-res-${id}`);
+        if (el2) el2.innerHTML = `<span class="text-success">обновлено: ${r.updated}/${r.checked}</span>`;
+        loadFunnel();
+    } catch (e) {
+        if (el) el.innerHTML = `<span class="text-danger">${escapeHtml(e.message)}</span>`;
+    }
+}
+
+// С3: собрать текст отчёта по просмотрам и вставить в чат с клиентом (на отправку).
+async function clientStatsReport(id) {
+    const el = document.getElementById(`stats-res-${id}`);
+    try {
+        const r = await apiClient.getCrmClientStatsReport(id);
+        const input = document.getElementById(`chat-msg-${id}`);
+        if (input) {
+            input.value = r.report;
+            input.focus();
+            input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        if (el) {
+            el.innerHTML = r.publications_measured
+                ? '<span class="text-muted">отчёт вставлен в чат — проверьте и нажмите «Отправить»</span>'
+                : '<span class="text-muted">метрик пока нет — нажмите «Обновить просмотры»</span>';
+        }
+    } catch (e) {
+        if (el) el.innerHTML = `<span class="text-danger">${escapeHtml(e.message)}</span>`;
+    }
+}
+
 function renderClientDetails(d) {
     const c = d.client;
     const payments = d.payments || [];
@@ -344,15 +395,19 @@ function renderClientDetails(d) {
         const link = p.vk_post_url
             ? `<a href="${escapeHtml(p.vk_post_url)}" target="_blank">${escapeHtml(String(p.community_vk_id))}</a>`
             : escapeHtml(String(p.community_vk_id));
+        const metrics = p.stats_updated_at
+            ? `<span title="обновлено ${fmtDate(p.stats_updated_at)}">👁 ${p.views ?? 0} · ❤ ${p.likes ?? 0} · 🔁 ${p.reposts ?? 0}</span>`
+            : '<span class="text-muted">—</span>';
         return `<tr>
             <td class="text-nowrap">${link}</td>
             <td class="text-nowrap">${p.price != null ? fmtMoney(p.price) : ''}</td>
             <td class="text-nowrap small">${fmtDate(p.published_at)}</td>
+            <td class="text-nowrap small">${metrics}</td>
             <td class="small">${escapeHtml(p.status || '')} ${escapeHtml(p.note || '')}</td>
             <td><button class="btn btn-sm btn-outline-danger py-0 px-1"
                         onclick="deletePublication(${p.id}, ${c.id})" title="Удалить"><i class="bi bi-x"></i></button></td>
         </tr>`;
-    }).join('') : '<tr><td colspan="5" class="text-muted small">Публикаций пока нет.</td></tr>';
+    }).join('') : '<tr><td colspan="6" class="text-muted small">Публикаций пока нет.</td></tr>';
 
     return `
     <div class="row g-3">
@@ -399,6 +454,17 @@ function renderClientDetails(d) {
                 <input type="number" class="form-control" id="pub-post-${c.id}" placeholder="post id" style="max-width:90px;">
                 <input type="number" class="form-control" id="pub-price-${c.id}" placeholder="Цена ₽" style="max-width:100px;">
                 <button class="btn btn-outline-primary" onclick="addPublication(${c.id})"><i class="bi bi-plus-lg"></i> Публикация</button>
+            </div>
+            <div class="d-flex gap-2 mt-1 align-items-center">
+                <button class="btn btn-sm btn-outline-secondary" onclick="refreshClientStats(${c.id})"
+                        title="Обновить просмотры/лайки публикаций из VK">
+                    <i class="bi bi-eye"></i> Обновить просмотры
+                </button>
+                <button class="btn btn-sm btn-outline-info" onclick="clientStatsReport(${c.id})"
+                        title="Вставить отчёт по просмотрам в чат с клиентом">
+                    <i class="bi bi-clipboard-data"></i> Отчёт клиенту
+                </button>
+                <span class="small" id="stats-res-${c.id}"></span>
             </div>
         </div>
     </div>

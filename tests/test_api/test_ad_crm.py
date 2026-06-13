@@ -7,6 +7,7 @@ tests/test_api/test_ad_cabinet.py. Проверяем сериализацию, 
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -364,6 +365,7 @@ async def test_funnel_aggregates():
             _scalar_one(12000),  # total_paid
             _scalar_one(1500),  # total_awaiting
             _scalar_one(6),  # publications_count
+            _scalar_one(98765),  # total_views (С3)
         ]
     )
     out = await api.funnel(db=db)
@@ -374,6 +376,52 @@ async def test_funnel_aggregates():
     assert out["total_paid"] == 12000.0
     assert out["total_awaiting"] == 1500.0
     assert out["publications_count"] == 6
+    assert out["total_views"] == 98765  # С3: сумма просмотров публикаций
+
+
+# ----------------------------------------------------------------- stats report (С3)
+
+
+async def test_stats_report_builds_text():
+    db = _db()
+    db.get = AsyncMock(return_value=AdClient(id=1, author_vk_id=7, stage="published"))
+    pub = AdPublication(
+        id=1,
+        client_id=1,
+        community_vk_id=-100,
+        vk_post_id=55,
+        status="published",
+        views=1000,
+        likes=20,
+        reposts=3,
+        stats_updated_at=datetime(2026, 6, 1, 10, 0),
+        published_at=datetime(2026, 6, 1, 9, 0),
+    )
+    db.execute = AsyncMock(return_value=_scalars([pub]))
+    out = await api.client_stats_report(1, db=db)
+    assert out["total_views"] == 1000
+    assert out["publications_measured"] == 1
+    assert "1000 просмотров" in out["report"]
+
+
+async def test_stats_report_no_measured_pubs():
+    db = _db()
+    db.get = AsyncMock(return_value=AdClient(id=1, author_vk_id=7, stage="detected"))
+    # stats_updated_at не задан → метрика не собрана, в отчёт не идёт.
+    pub = AdPublication(id=1, client_id=1, community_vk_id=-100, vk_post_id=55, status="published")
+    db.execute = AsyncMock(return_value=_scalars([pub]))
+    out = await api.client_stats_report(1, db=db)
+    assert out["publications_measured"] == 0
+    assert out["total_views"] == 0
+    assert "собирается" in out["report"]
+
+
+async def test_stats_report_404():
+    db = _db()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.client_stats_report(999, db=db)
+    assert exc.value.status_code == 404
 
 
 # ----------------------------------------------------------------- wiring (UI PR)
@@ -400,6 +448,8 @@ def test_routes_registered():
     assert "/api/ad-crm/clients/{client_id}/thread" in paths
     assert "/api/ad-crm/clients/{client_id}/reply" in paths
     assert "/api/ad-crm/stats/timeseries" in paths
+    assert "/api/ad-crm/clients/{client_id}/refresh-stats" in paths
+    assert "/api/ad-crm/clients/{client_id}/stats-report" in paths
 
 
 def test_legacy_ad_routes_redirect_to_unified():

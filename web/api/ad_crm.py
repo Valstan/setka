@@ -962,6 +962,83 @@ async def client_reply(
     return {"success": False, "error": res.get("error"), "error_code": res.get("error_code")}
 
 
+# ---------------------------------------------------------------- stats (С3)
+
+
+@router.post("/clients/{client_id}/refresh-stats")
+async def refresh_client_stats(
+    client_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Обновить метрики (просмотры/лайки/репосты) публикаций клиента сейчас (С3).
+
+    Кнопка «Обновить» в карточке. Тянет свежие цифры из VK для публикаций этого
+    клиента; UI затем перечитывает карточку. Фон раз в день делает то же по всем.
+    """
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+
+    from modules.ad_cabinet.publication_stats import run_collect_stats
+
+    result = await run_collect_stats(only_client_id=client_id)
+    return result
+
+
+@router.get("/clients/{client_id}/stats-report")
+async def client_stats_report(
+    client_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Готовый текст отчёта клиенту по метрикам его размещений (С3).
+
+    Собирается из уже сохранённых метрик публикаций (status='published'). UI
+    предзаполняет этим текстом чат — оператор правит и отправляет клиенту.
+    """
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+
+    pubs = (
+        (
+            await db.execute(
+                select(AdPublication)
+                .where(
+                    AdPublication.client_id == client_id,
+                    AdPublication.status == "published",
+                )
+                .order_by(AdPublication.published_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    measured = [p for p in pubs if p.stats_updated_at is not None]
+    total_views = sum(int(p.views or 0) for p in measured)
+
+    if not measured:
+        report = "Статистика по вашим размещениям ещё собирается — заглянем чуть позже."
+    else:
+        lines = []
+        for p in measured:
+            when = p.published_at.strftime("%d.%m.%Y") if p.published_at else ""
+            url = p.to_dict().get("vk_post_url") or f"сообщество {p.community_vk_id}"
+            lines.append(
+                f"• {when}: 👁 {int(p.views or 0)} просмотров, "
+                f"❤ {int(p.likes or 0)}, 🔁 {int(p.reposts or 0)}\n  {url}"
+            )
+        report = (
+            "📊 Статистика ваших рекламных размещений:\n\n"
+            + "\n".join(lines)
+            + f"\n\nИтого просмотров: {total_views}."
+        )
+    return {
+        "report": report,
+        "publications_measured": len(measured),
+        "total_views": total_views,
+    }
+
+
 # ---------------------------------------------------------------- order items
 
 
@@ -1196,6 +1273,9 @@ async def funnel(db: AsyncSession = Depends(get_db_session)):
         )
     ).scalar_one()
     publications_count = (await db.execute(select(func.count(AdPublication.id)))).scalar_one()
+    total_views = (
+        await db.execute(select(func.coalesce(func.sum(AdPublication.views), 0)))
+    ).scalar_one()
 
     return {
         "stages": _VALID_STAGES,
@@ -1204,4 +1284,5 @@ async def funnel(db: AsyncSession = Depends(get_db_session)):
         "total_paid": float(total_paid or 0),
         "total_awaiting": float(total_awaiting or 0),
         "publications_count": int(publications_count or 0),
+        "total_views": int(total_views or 0),
     }
