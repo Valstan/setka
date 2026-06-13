@@ -516,6 +516,31 @@ def _maybe_alert_new_ads(new_total: int, regions: list, source_label: str = "п�
         logger.warning(f"ad cabinet telegram alert failed: {e}")
 
 
+def _send_debtor_alert(text: str) -> None:
+    """Отправить Telegram-напоминание о должниках (best-effort, С4)."""
+    try:
+        import requests as _requests
+
+        from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+
+        token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
+        chat_id = TELEGRAM_ALERT_CHAT_ID
+        if not token or not chat_id:
+            return
+        _requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=15,
+        )
+    except Exception as e:
+        logger.warning(f"ad debtor telegram alert failed: {e}")
+
+
 @app.task(name="tasks.celery_app.scan_inbound_dm_ads")
 def scan_inbound_dm_ads():
     """Скан входящих ЛС сообществ на рекламу → заявки в ad_requests (блок A).
@@ -618,6 +643,31 @@ def collect_ad_publication_stats():
         return {"success": True, "timestamp": datetime.now().isoformat(), **result}
     except Exception as e:
         logger.error(f"collect_ad_publication_stats failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
+@app.task(name="tasks.celery_app.alert_ad_debtors")
+def alert_ad_debtors():
+    """Суточное Telegram-напоминание о должниках (С4, ad-CRM).
+
+    Раз в день (10:00 MSK). Клиенты с awaiting-оплатами старше порога (3 дн.,
+    AD_DEBTOR_DAYS) → один Telegram-список оператору. Полу-авто: оплату оператор
+    отмечает руками, код лишь напоминает о просрочке.
+    """
+    logger.info("Alerting ad debtors (ad cabinet, С4)...")
+    try:
+        from config.runtime import SERVER
+        from modules.ad_cabinet.debtors import run_debtor_alert
+
+        domain = (
+            SERVER.get("domain") or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+        )
+        url = f"https://{domain}/ad#crm"
+        result = run_coro(run_debtor_alert(send=_send_debtor_alert, url=url))
+        logger.info("ad debtors alert done: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"alert_ad_debtors failed: {e}", exc_info=True)
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
@@ -1055,6 +1105,15 @@ app.conf.beat_schedule = {
     "expire-ad-posts-daily": {
         "task": "tasks.celery_app.expire_ad_posts",
         "schedule": crontab(minute=30, hour=3),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
+    # Суточное напоминание о должниках по рекламе (С4, ad-CRM) — 10:00 MSK
+    "alert-ad-debtors-daily": {
+        "task": "tasks.celery_app.alert_ad_debtors",
+        "schedule": crontab(minute=0, hour=10),
         "options": {
             "expires": 3600,
             "catchup": False,

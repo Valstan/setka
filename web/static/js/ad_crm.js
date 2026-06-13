@@ -190,11 +190,19 @@ async function loadFunnel() {
                 <div class="h4 mb-0 text-warning">${fmtMoney(awaiting)}</div>
                 <div class="small text-muted">ждём оплату</div>
             </div>` : '';
+        const debtorsN = Number(f.debtors_count || 0);
+        const debtorsChip = debtorsN > 0 ? `<div class="text-center px-3 py-2 rounded border border-danger bg-body-tertiary"
+                style="cursor:pointer;" title="Показать только должников"
+                onclick="showDebtors()">
+                <div class="h4 mb-0 text-danger">${debtorsN} · ${fmtMoney(f.debtors_amount)}</div>
+                <div class="small text-muted">должников (&gt;${f.debtor_days || 3} дн.)</div>
+            </div>` : '';
         const totals = `<div class="text-center px-3 py-2 rounded border bg-body-tertiary ms-auto">
                 <div class="h4 mb-0 text-success">${fmtMoney(f.total_paid)}</div>
                 <div class="small text-muted">оплачено всего</div>
             </div>
             ${awaitingChip}
+            ${debtorsChip}
             <div class="text-center px-3 py-2 rounded border bg-body-tertiary">
                 <div class="h4 mb-0">${f.publications_count || 0}</div>
                 <div class="small text-muted">публикаций</div>
@@ -209,6 +217,15 @@ async function loadFunnel() {
     }
 }
 
+// С4: клик по плашке должников → включить фильтр «только должники».
+function showDebtors() {
+    const el = document.getElementById('filter-debtors');
+    if (el) el.checked = true;
+    const stageEl = document.getElementById('filter-stage');
+    if (stageEl) stageEl.value = '';
+    loadClients();
+}
+
 // --------------------------------------------------- список клиентов
 
 async function loadClients() {
@@ -221,7 +238,9 @@ async function loadClients() {
     try {
         const stage = document.getElementById('filter-stage').value;
         const q = document.getElementById('filter-q').value.trim();
-        const data = await apiClient.getCrmClients({ stage, q });
+        const debtorsEl = document.getElementById('filter-debtors');
+        const debtors_only = debtorsEl ? debtorsEl.checked : false;
+        const data = await apiClient.getCrmClients({ stage, q, debtors_only });
         const clients = data.clients || [];
         loading.style.display = 'none';
         if (!clients.length) {

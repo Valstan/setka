@@ -48,3 +48,13 @@ def test_collect_ad_stats_task_registered():
     assert "collect-ad-publication-stats-daily" in app.conf.beat_schedule
     entry = app.conf.beat_schedule["collect-ad-publication-stats-daily"]
     assert entry["task"] == "tasks.celery_app.collect_ad_publication_stats"
+
+
+def test_alert_ad_debtors_task_registered():
+    """Суточное напоминание о должниках (С4) зарегистрировано + beat."""
+    from tasks.celery_app import alert_ad_debtors, app  # noqa: F401
+
+    assert "tasks.celery_app.alert_ad_debtors" in app.tasks
+    assert "alert-ad-debtors-daily" in app.conf.beat_schedule
+    entry = app.conf.beat_schedule["alert-ad-debtors-daily"]
+    assert entry["task"] == "tasks.celery_app.alert_ad_debtors"

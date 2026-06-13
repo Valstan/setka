@@ -164,6 +164,7 @@ const apiClient = {
         if (params.stage) q.set('stage', params.stage);
         if (params.region_id) q.set('region_id', params.region_id);
         if (params.q) q.set('q', params.q);
+        if (params.debtors_only) q.set('debtors_only', 'true');
         const qs = q.toString();
         return this.request(`/ad-crm/clients${qs ? '?' + qs : ''}`);
     },

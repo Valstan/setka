@@ -183,10 +183,17 @@
                                 <option value="lost">Слив</option>
                             </select>
                         </div>
-                        <div class="col-md-8">
+                        <div class="col-md-6">
                             <label class="form-label">Поиск по имени / контактам</label>
                             <input type="text" class="form-control" id="filter-q"
                                    placeholder="Имя клиента или телефон/почта…">
+                        </div>
+                        <div class="col-md-2">
+                            <div class="form-check form-switch mt-4">
+                                <input class="form-check-input" type="checkbox" id="filter-debtors"
+                                       onchange="loadClients()">
+                                <label class="form-check-label small" for="filter-debtors">Только должники</label>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -418,7 +425,7 @@
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="/static/js/ad_cabinet.js?v=20260613_expiry"></script>
-<script src="/static/js/ad_crm.js?v=20260613_stats"></script>
+<script src="/static/js/ad_crm.js?v=20260613_debtors"></script>
 <script>
 // Единый рекламный кабинет: логика вкладок (С1).
 document.addEventListener('DOMContentLoaded', () => {
