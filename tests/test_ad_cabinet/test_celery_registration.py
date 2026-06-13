@@ -38,3 +38,13 @@ def test_expire_ad_posts_task_registered():
     assert "expire-ad-posts-daily" in app.conf.beat_schedule
     entry = app.conf.beat_schedule["expire-ad-posts-daily"]
     assert entry["task"] == "tasks.celery_app.expire_ad_posts"
+
+
+def test_collect_ad_stats_task_registered():
+    """Суточный сбор метрик публикаций (С3) зарегистрирован + beat."""
+    from tasks.celery_app import app, collect_ad_publication_stats  # noqa: F401
+
+    assert "tasks.celery_app.collect_ad_publication_stats" in app.tasks
+    assert "collect-ad-publication-stats-daily" in app.conf.beat_schedule
+    entry = app.conf.beat_schedule["collect-ad-publication-stats-daily"]
+    assert entry["task"] == "tasks.celery_app.collect_ad_publication_stats"

@@ -899,6 +899,12 @@ class AdPublication(Base):
     # момент фактического wall.delete (UTC). nullable — без срока висит вечно.
     expires_at = Column(DateTime, nullable=True)
     removed_at = Column(DateTime, nullable=True)
+    # Метрики поста (С3, миграция 042): просмотры/лайки/репосты из wall.getById.
+    # NULL — ещё не собирали; stats_updated_at — момент последнего сбора (UTC).
+    views = Column(Integer, nullable=True)
+    likes = Column(Integer, nullable=True)
+    reposts = Column(Integer, nullable=True)
+    stats_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -920,6 +926,12 @@ class AdPublication(Base):
             "published_at": self.published_at.isoformat() if self.published_at else None,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "removed_at": self.removed_at.isoformat() if self.removed_at else None,
+            "views": self.views,
+            "likes": self.likes,
+            "reposts": self.reposts,
+            "stats_updated_at": (
+                self.stats_updated_at.isoformat() if self.stats_updated_at else None
+            ),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             # Производное для UI: ссылка на пост в VK.

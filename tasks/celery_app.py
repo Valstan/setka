@@ -601,6 +601,26 @@ def expire_ad_posts():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.collect_ad_publication_stats")
+def collect_ad_publication_stats():
+    """Суточный сбор метрик рекламных публикаций (С3, ad-CRM).
+
+    Раз в сутки (04:30 MSK). Для вышедших публикаций тянет просмотры/лайки/
+    репосты через wall.getById и пишет снимок. Ручное обновление одного клиента —
+    через API-кнопку (run_collect_stats(only_client_id=...)).
+    """
+    logger.info("Collecting ad publication stats (ad cabinet, С3)...")
+    try:
+        from modules.ad_cabinet.publication_stats import run_collect_stats
+
+        result = run_coro(run_collect_stats())
+        logger.info("collect ad publication stats done: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"collect_ad_publication_stats failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.collect_member_snapshots")
 def collect_member_snapshots():
     """Суточный снимок подписчиков ГЛАВНЫХ ИНФО-групп активных регионов (04:00 MSK).
@@ -1035,6 +1055,15 @@ app.conf.beat_schedule = {
     "expire-ad-posts-daily": {
         "task": "tasks.celery_app.expire_ad_posts",
         "schedule": crontab(minute=30, hour=3),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
+    # Суточный сбор метрик рекламных публикаций (С3, ad-CRM) — 04:30 MSK
+    "collect-ad-publication-stats-daily": {
+        "task": "tasks.celery_app.collect_ad_publication_stats",
+        "schedule": crontab(minute=30, hour=4),
         "options": {
             "expires": 3600,
             "catchup": False,

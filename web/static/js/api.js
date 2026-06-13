@@ -222,6 +222,15 @@ const apiClient = {
         return this.request(`/ad-crm/stats/timeseries?days=${days}`);
     },
 
+    // CRM — метрики публикаций (С3)
+    async refreshCrmClientStats(clientId) {
+        return this.request(`/ad-crm/clients/${clientId}/refresh-stats`, { method: 'POST' });
+    },
+
+    async getCrmClientStatsReport(clientId) {
+        return this.request(`/ad-crm/clients/${clientId}/stats-report`);
+    },
+
     // CRM — позиции заказа (PR-4)
     async getCrmOrderItems(clientId) {
         return this.request(`/ad-crm/clients/${clientId}/order-items`);
