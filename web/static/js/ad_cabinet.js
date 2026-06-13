@@ -392,7 +392,7 @@ async function addToCrm(id) {
         const name = (res.client && res.client.name) || 'клиент';
         _res(id,
             (res.created ? 'Клиент заведён' : 'Привязано к существующему клиенту') +
-            ` «${escapeHtml(name)}» — <a href="/ad-crm" target="_blank">открыть CRM</a>.`,
+            ` «${escapeHtml(name)}» — <a href="/ad#crm" target="_blank">открыть CRM</a>.`,
             'success');
     } catch (e) {
         _res(id, 'Не удалось завести клиента: ' + escapeHtml(e.message), 'danger');
@@ -505,7 +505,14 @@ async function scheduleFromRequest(id) {
         ? '<span class="text-success"><i class="bi bi-person-check"></i> Заявка привязана к клиенту CRM — сделка двинется в «Запланировано».</span>'
         : '<span class="text-muted"><i class="bi bi-info-circle"></i> Клиент в CRM не заведён. Нажмите «В CRM» на карточке заявки, чтобы привязать оплату/публикацию.</span>';
 
-    if (body && window.bootstrap) bootstrap.Collapse.getOrCreateInstance(body).show();
+    // Единый кабинет (С1): переключиться на вкладку планировщика; в legacy-вёрстке
+    // (collapse-секция на одной странице) — раскрыть её. Скролл — в обоих случаях.
+    const schTabBtn = document.getElementById('tab-scheduler-btn');
+    if (schTabBtn && window.bootstrap) {
+        bootstrap.Tab.getOrCreateInstance(schTabBtn).show();
+    } else if (body && window.bootstrap) {
+        bootstrap.Collapse.getOrCreateInstance(body).show();
+    }
     if (body) body.scrollIntoView({ behavior: 'smooth', block: 'start' });
     _schRes('Заявка перенесена в планировщик — задайте даты и отправьте.', 'muted');
 }

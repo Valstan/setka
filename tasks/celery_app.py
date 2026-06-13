@@ -494,7 +494,7 @@ def _maybe_alert_new_ads(new_total: int, regions: list, source_label: str = "Ð¿Ñ
         domain = (
             SERVER.get("domain") or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
         )
-        url = f"https://{domain}/ad-cabinet"
+        url = f"https://{domain}/ad"
         by_region = ", ".join(
             f"{r.get('region_code')}:{r.get('new')}" for r in (regions or []) if r.get("new")
         )

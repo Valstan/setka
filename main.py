@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -215,16 +215,22 @@ async def templates_page(request: Request):
     return templates.TemplateResponse("templates.html", {"request": request})
 
 
+@app.get("/ad")
+async def ad_page(request: Request):
+    """Единый рекламный кабинет (С1): инбокс, CRM, планировщик и статистика во вкладках."""
+    return templates.TemplateResponse("ad.html", {"request": request})
+
+
 @app.get("/ad-cabinet")
-async def ad_cabinet_page(request: Request):
-    """Рекламный кабинет — инбокс рекламных заявок из предложки."""
-    return templates.TemplateResponse("ad_cabinet.html", {"request": request})
+async def ad_cabinet_page():
+    """Старый путь — редирект на единый /ad (вкладка «Входящие заявки»)."""
+    return RedirectResponse(url="/ad")
 
 
 @app.get("/ad-crm")
-async def ad_crm_page(request: Request):
-    """CRM рекламного кабинета — клиенты, воронка, оплаты и публикации (блок C)."""
-    return templates.TemplateResponse("ad_crm.html", {"request": request})
+async def ad_crm_page():
+    """Старый путь — редирект на единый /ad (вкладка «Клиенты и воронка»)."""
+    return RedirectResponse(url="/ad#crm")
 
 
 @app.get("/subscriber-growth")
