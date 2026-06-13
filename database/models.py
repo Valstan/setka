@@ -624,6 +624,10 @@ class AdRequest(Base):
 
     detected_at = Column(DateTime, default=datetime.utcnow)
     contacted_at = Column(DateTime, nullable=True)
+    # Авто-приветствие рекламодателю (улучшение отклика 2026-06-13, миграция 043):
+    # момент авто-ответа на новую заявку. NULL — ещё не приветствовали; ставится
+    # один раз (идемпотентность) фоновой таской auto-greet-ad-requests.
+    greeting_sent_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -668,6 +672,9 @@ class AdRequest(Base):
             "vk_message_id": self.vk_message_id,
             "detected_at": self.detected_at.isoformat() if self.detected_at else None,
             "contacted_at": (self.contacted_at.isoformat() if self.contacted_at else None),
+            "greeting_sent_at": (
+                self.greeting_sent_at.isoformat() if self.greeting_sent_at else None
+            ),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             # Производные для UI:
