@@ -614,6 +614,10 @@ async function submitSchedule() {
         && document.getElementById('sch-remove-original').checked;
     const priceEl = document.getElementById('sch-price');
     const priceRaw = priceEl ? priceEl.value : '';
+    const expDaysEl = document.getElementById('sch-expire-days');
+    const expDaysRaw = expDaysEl ? expDaysEl.value : '';
+    const expAtEl = document.getElementById('sch-expire-at');
+    const expAtRaw = expAtEl ? expAtEl.value : '';
     const payload = {
         community_vk_id: communityVkId,
         region_id: opt.dataset.regionId ? parseInt(opt.dataset.regionId, 10) : null,
@@ -627,6 +631,8 @@ async function submitSchedule() {
         remove_original: !!removeOriginal,
         client_id: _schSourceClientId || null,
         price: priceRaw ? parseFloat(priceRaw) : null,
+        expire_days: expDaysRaw ? parseInt(expDaysRaw, 10) : null,
+        expire_at: expAtRaw || null,
     };
     _schRes('Планирую…');
     const btn = document.getElementById('sch-submit');
@@ -649,6 +655,8 @@ async function submitSchedule() {
         addDateRow();
         const priceEl2 = document.getElementById('sch-price');
         if (priceEl2) priceEl2.value = '';
+        if (expDaysEl) expDaysEl.value = '';
+        if (expAtEl) expAtEl.value = '';
         // Заявка отработана — отвязываем источник и обновляем инбокс.
         if (_schSourceRequestId) { clearScheduleSource(); await loadAdRequests(); }
         await loadSchedule();
@@ -705,8 +713,11 @@ function renderScheduledRow(r) {
         : '';
     const err = r.error_message
         ? `<div class="text-danger" style="font-size:.8em;">${escapeHtml(r.error_message)}</div>` : '';
+    const expiry = r.expires_at
+        ? `<div class="text-muted" style="font-size:.8em;"><i class="bi bi-clock-history"></i> снять ${_fmtSchedDate(r.expires_at)}</div>`
+        : '';
     return `<tr>
-        <td class="text-nowrap">${_fmtSchedDate(r.publish_date)}</td>
+        <td class="text-nowrap">${_fmtSchedDate(r.publish_date)}${expiry}</td>
         <td>${community}</td>
         <td>${preview}${err}</td>
         <td>${SCH_STATUS_BADGE[r.status] || escapeHtml(r.status)}</td>

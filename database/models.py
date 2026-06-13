@@ -724,6 +724,9 @@ class AdScheduledPost(Base):
     attachments = Column(Text, nullable=True)  # "photo<o>_<id>,…" после заливки на стену (кэш)
 
     publish_date = Column(DateTime, nullable=False)  # МСК wall-clock
+    # Срок размещения (С2): когда авто-снять пост. МСК wall-clock naive (как
+    # publish_date), nullable — нет срока → висит вечно. Миграция 041.
+    expires_at = Column(DateTime, nullable=True)
     from_group = Column(Boolean, nullable=False, default=True)
     signed = Column(Boolean, nullable=False, default=False)
     comments_enabled = Column(Boolean, nullable=False, default=True)
@@ -757,6 +760,7 @@ class AdScheduledPost(Base):
             "image_names": self.image_names or [],
             "attachments": self.attachments,
             "publish_date": self.publish_date.isoformat() if self.publish_date else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "from_group": self.from_group,
             "signed": self.signed,
             "comments_enabled": self.comments_enabled,
@@ -890,6 +894,11 @@ class AdPublication(Base):
     status = Column(String(20), nullable=False, default="published")  # published | removed
     note = Column(Text, nullable=True)
     published_at = Column(DateTime, default=datetime.utcnow)
+    # Срок размещения и факт авто-снятия (С2, миграция 041). expires_at — МСК
+    # wall-clock naive (копируется из отложки при фиксации публикации); removed_at —
+    # момент фактического wall.delete (UTC). nullable — без срока висит вечно.
+    expires_at = Column(DateTime, nullable=True)
+    removed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -909,6 +918,8 @@ class AdPublication(Base):
             "status": self.status,
             "note": self.note,
             "published_at": self.published_at.isoformat() if self.published_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "removed_at": self.removed_at.isoformat() if self.removed_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             # Производное для UI: ссылка на пост в VK.

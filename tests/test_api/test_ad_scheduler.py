@@ -364,6 +364,101 @@ async def test_create_no_client_keeps_null(monkeypatch):
     db.get.assert_not_awaited()
 
 
+# ------------------------------------------------- С2: срок размещения (expires_at)
+
+
+async def test_create_expire_days_sets_expiry(monkeypatch):
+    """expire_days → expires_at = publish_date + N дней (на каждый пост)."""
+    pub = _fake_publisher()
+    _patch_publish(monkeypatch, pub)
+    db = _create_db()
+
+    out = await api.create_scheduled(
+        api.ScheduleCreateIn(community_vk_id=-100, text="x", dates=[_FUTURE], expire_days=14),
+        db=db,
+    )
+    # publish 2090-01-01T12:00 + 14 дней = 2090-01-15T12:00
+    assert out["created"][0]["expires_at"] == "2090-01-15T12:00:00"
+
+
+async def test_create_expire_at_sets_explicit_expiry(monkeypatch):
+    """expire_at → одна явная дата снятия для всех постов раскладки."""
+    pub = _fake_publisher()
+    _patch_publish(monkeypatch, pub)
+    db = _create_db()
+
+    out = await api.create_scheduled(
+        api.ScheduleCreateIn(
+            community_vk_id=-100,
+            text="x",
+            dates=[_FUTURE, _FUTURE2],
+            expire_at="2090-03-01T00:00:00",
+        ),
+        db=db,
+    )
+    assert out["created"][0]["expires_at"] == "2090-03-01T00:00:00"
+    assert out["created"][1]["expires_at"] == "2090-03-01T00:00:00"
+
+
+async def test_create_expire_at_takes_priority_over_days(monkeypatch):
+    pub = _fake_publisher()
+    _patch_publish(monkeypatch, pub)
+    db = _create_db()
+
+    out = await api.create_scheduled(
+        api.ScheduleCreateIn(
+            community_vk_id=-100,
+            text="x",
+            dates=[_FUTURE],
+            expire_days=5,
+            expire_at="2090-03-01T00:00:00",
+        ),
+        db=db,
+    )
+    assert out["created"][0]["expires_at"] == "2090-03-01T00:00:00"
+
+
+async def test_create_no_expiry_by_default(monkeypatch):
+    """Без срока — expires_at NULL (пост висит вечно)."""
+    pub = _fake_publisher()
+    _patch_publish(monkeypatch, pub)
+    db = _create_db()
+
+    out = await api.create_scheduled(
+        api.ScheduleCreateIn(community_vk_id=-100, text="x", dates=[_FUTURE]),
+        db=db,
+    )
+    assert out["created"][0]["expires_at"] is None
+
+
+async def test_create_rejects_nonpositive_expire_days(monkeypatch):
+    pub = _fake_publisher()
+    _patch_publish(monkeypatch, pub)
+    db = _create_db()
+
+    with pytest.raises(HTTPException) as exc:
+        await api.create_scheduled(
+            api.ScheduleCreateIn(community_vk_id=-100, text="x", dates=[_FUTURE], expire_days=0),
+            db=db,
+        )
+    assert exc.value.status_code == 400
+
+
+async def test_create_rejects_bad_expire_at(monkeypatch):
+    pub = _fake_publisher()
+    _patch_publish(monkeypatch, pub)
+    db = _create_db()
+
+    with pytest.raises(HTTPException) as exc:
+        await api.create_scheduled(
+            api.ScheduleCreateIn(
+                community_vk_id=-100, text="x", dates=[_FUTURE], expire_at="не-дата"
+            ),
+            db=db,
+        )
+    assert exc.value.status_code == 400
+
+
 # ----------------------------------------------------------------- list
 
 

@@ -28,3 +28,13 @@ def test_reconcile_publications_task_registered():
     assert "reconcile-scheduled-publications" in app.conf.beat_schedule
     entry = app.conf.beat_schedule["reconcile-scheduled-publications"]
     assert entry["task"] == "tasks.celery_app.reconcile_scheduled_publications"
+
+
+def test_expire_ad_posts_task_registered():
+    """Авто-снятие постов по сроку (С2) зарегистрировано + ежедневный beat."""
+    from tasks.celery_app import app, expire_ad_posts  # noqa: F401
+
+    assert "tasks.celery_app.expire_ad_posts" in app.tasks
+    assert "expire-ad-posts-daily" in app.conf.beat_schedule
+    entry = app.conf.beat_schedule["expire-ad-posts-daily"]
+    assert entry["task"] == "tasks.celery_app.expire_ad_posts"
