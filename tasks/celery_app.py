@@ -1585,6 +1585,15 @@ app.conf.beat_schedule = {
         "kwargs": {"region_code": "copy", "theme": "setka"},
         "options": {"expires": 1800},
     },
+    # Поток «Кругозор» (научпоп → веером на районные паблики): раз в день 20:00 MSK
+    # (вечер — пик чтения «умного»/lean-back контента). Гейт KRUGOZOR_BROADCAST_DISABLED
+    # (OFF по умолчанию). Старт 1×/день; при хорошем охвате добавляется обед 13:00.
+    "krugozor-broadcast-evening": {
+        "task": "tasks.parsing_scheduler_tasks.parse_and_publish_theme",
+        "schedule": crontab(minute=0, hour=20),
+        "kwargs": {"region_code": "copy", "theme": "krugozor"},
+        "options": {"expires": 3600},
+    },
     # Контент-радар (Ф0.2): fan-out поллер источников каждые 10 мин круглосуточно
     # (личная лента — не публикация в сеть, ночное окно не нужно). Внутри прогона
     # поллятся только активные источники с ≥1 подпиской; пустой радар = no-op.

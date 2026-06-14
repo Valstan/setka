@@ -116,6 +116,14 @@ def parse_and_publish_theme(
 
                 return await execute_copy_setka_network(session, test_mode=test_mode)
 
+            # Псевдо-регион «copy» + тема «krugozor» — поток научпопа «Кругозор»
+            # (env KRUGOZOR_*): ротация krugozor-источников → копи-веером на стены
+            # регионов. Отдельный движок, без RegionConfig.
+            if region_code == "copy" and theme == "krugozor":
+                from modules.krugozor_broadcast import execute_krugozor_broadcast
+
+                return await execute_krugozor_broadcast(session, test_mode=test_mode)
+
             # Каскадный дайджест для регионов kind in {'oblast','strana'} —
             # ловим по типу региона, а не по жёсткому коду, чтобы новые
             # oblast/strana работали без правки кода (см. ``docs/REGIONS_HIERARCHY.md``).
