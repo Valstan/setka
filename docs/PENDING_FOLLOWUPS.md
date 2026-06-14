@@ -75,18 +75,27 @@ Batrachospermum (-85330), Время-Вперёд (-65614662).
   `RADAR_BOT_NAME=AFONYA` + `RADAR_BOT_ALLOWED_USERS=352096813` (прод-правка вне git).
 - 🟢 **Браузер/TG-проверка владельцем:** форварднуть @malm_info_bot пост канала → канал в радаре.
 
-### 🧩 Brain-директивы 2026-06-14 (recommend, probe-first) — НЕ начаты
+### 🧩 Brain-директивы 2026-06-14 (recommend, probe-first)
 
 `⏱ 2026-06-14 · snooze 0 · fresh`
 
-- ⏳ **Сетевая рассылка + внутренний планировщик** (`mailbox/setka/from-brain/2026-06-14-network-broadcast-internal-scheduler.md`):
-  собрать пост в программе → разослать по сети своим кроном (НЕ в VK-отложку), повтор N раз,
-  переиспользовать ad-CRM С2-планировщик. **Probe-ответ готов из krugozor:** 16 `wall.post` @5с =
-  16/16 без капчи; 16 `wall.edit` @3с словил капчу; охват = 16 пабликов. Первый шаг — написать
-  probe-ответ в `mailbox/to-brain/`.
+- ✅ **Сетевая рассылка + внутренний планировщик — ПОСТРОЕНА и ЗАДЕПЛОЕНА 2026-06-14**
+  (probe-ответ [#242](https://github.com/Valstan/setka/pull/242) → MVP [#243](https://github.com/Valstan/setka/pull/243) → QA-фиксы [#246](https://github.com/Valstan/setka/pull/246)).
+  `modules/broadcast/` (dispatcher + service) + миграция 044 (`broadcast_campaigns`/`_targets`/`_publications`)
+  + beat `broadcast-dispatch` (раз в минуту) + `broadcast-watchdog` (#018) + API/UI `/broadcast`.
+  Канон владельца соблюдён (свой беат `wall.post` немедленно, НЕ VK-отложка); переиспользует
+  `VKPublisher.create_with_policy` + ad-CRM-примитивы; idempotency per-(цель,прогон) ON CONFLICT claim
+  + reclaim stale-pending; throttle ≥5с; повтор N раз; per-target изоляция. 🟢 _Остаток:_ браузер-проверка
+  владельцем (собрать тест-кампанию на 1-2 паблика, запланировать, убедиться что пост вышел) +
+  опц. вариация per-target (`vary_per_target` — forward-compat поле, дизайн вариации за brain/владельцем).
 - ⏳ **Генератор обложек сообществ** (`...2026-06-14-community-cover-template-generator.md`): шаблон-сборщик
-  cover'ов (фон от владельца → название+брендинг → upload), пилот Верхошижемье. Probe cover-API
-  (`photos.getOwnerCoverPhotoUploadServer`/права — на скольких пабликах админ) ПЕРВЫМ.
+  cover'ов (фон от владельца → название+брендинг → upload), пилот Верхошижемье. **Probe cover-API выполнен
+  2026-06-14** ([#244](https://github.com/Valstan/setka/pull/244), `scripts/probe_cover_api.py`, ответ brain
+  `mailbox/to-brain/2026-06-14-community-cover-api-probe.md`): **16/16 пабликов `can_set` через user-токен
+  VALSTAN** (владелец админ везде — G19-барьер НЕ материализовался), 11/16 с обложкой (референсы), 5 без
+  (вкл. пилот Верхошижемье). **Мяч у brain↔владельца:** brain собирает промт фона по референсам → владелец
+  генерит фон → SARAFAN строит сборщик (Pillow 1920×768 + название + брендинг → `saveOwnerCoverPhoto`).
+  До прихода фона сборщик не строить (вход не определён).
 
 ### 📣 Программа автоматизации рекламного CRM (MANDATE-директива brain 2026-06-12)
 
@@ -174,13 +183,16 @@ Batrachospermum (-85330), Время-Вперёд (-65614662).
   `AD_AUTO_GREETING_TEXT` (плейсхолдеры `{author_name}`/`{community_name}`) ИЛИ активный шаблон категории
   `ad_greeting`. Идемпотентно, только где писать можно (`can_message`, не группа-автор), anti-backlog окно
   6ч. +7 тестов (1277 зелёных). **Деплой:** миграция 043 + restart web/worker/beat + env владельца.
-  🟢 _Остаток (2026-06-14):_ задеплоено; владелец согласовал текст (шаблон), но **ждёт vk-id
-  сообществ** для `AD_AUTO_GREETING_COMMUNITIES` (пустой allowlist = выкл). Дать id → выставить env.
+  ✅ **ВКЛЮЧЕНО НА ВСЕ ГРУППЫ 2026-06-14** (решение владельца): код [#241](https://github.com/Valstan/setka/pull/241)
+  добавил wildcard `AD_AUTO_GREETING_COMMUNITIES=*`/`all` = все сообщества (вкл. будущие, без перечисления
+  id). На проде выставлены env `AD_AUTO_GREETING_COMMUNITIES=*` + `AD_AUTO_GREETING_TEXT` (Вариант А, в
+  кавычках), worker/beat перезапущены, beat `10,40 8-22` живёт. 🟢 _Остаток:_ нулевой (работает).
 - ✅ **Раунд 2 (2026-06-14) — кнопка «Опубликовать»** (эмпирически из живой работы предложки):
   для бытовых бесплатных объявлений — моментальная публикация без платного пайплайна. POST
   `/ad-cabinet/requests/{id}/publish` (wall.post контента + фото → снятие оригинала → published →
-  карточка уходит), кнопка в карточке (btn-info, confirm). Идемпотентно (статус коммитится сразу
-  после поста). Задеплоено ([#239](https://github.com/Valstan/setka/pull/239), restart web). 🟢 _Остаток:_ браузер-проверка (Ctrl+Shift+R для нового JS).
+  карточка уходит), кнопка в карточке (btn-info, confirm). Идемпотентно — **усилено 2026-06-14
+  ([#247](https://github.com/Valstan/setka/pull/247)): `SELECT FOR UPDATE`** против двойного клика
+  (конкурентный запрос мог дать дубль на живой стене). Задеплоено. 🟢 _Остаток:_ браузер-проверка.
 
 ### 📡 Контент-радар — Ф0 (MANDATE-директива brain 2026-06-11)
 
