@@ -862,6 +862,10 @@ async def accept_request(
     ar = await db.get(AdRequest, request_id)
     if not ar:
         raise HTTPException(status_code=404, detail="ad request not found")
+    # Идемпотентность: повторный «Оформить» по уже опубликованной заявке не должен
+    # повторно слать ответ-ЛС и плодить вторую отложку. (Был пропущен guard.)
+    if ar.status == "published":
+        return {"already": True, "scheduled": 0, "failed": 0, "client_id": ar.client_id}
     if not payload.dates:
         raise HTTPException(status_code=400, detail="Нужна хотя бы одна дата публикации")
 
@@ -953,7 +957,13 @@ async def publish_request_now(
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_token_router import load_vk_routing
 
-    ar = await db.get(AdRequest, request_id)
+    # FOR UPDATE — атомарная защита от двойного клика: конкурентный второй запрос
+    # блокируется на строке до коммита первого, затем видит status='published' и
+    # выходит «already» (иначе оба прочли бы 'new' до коммита и запостили дважды
+    # в живую стену — async-интерливинг на await publish_digest).
+    ar = (
+        await db.execute(select(AdRequest).where(AdRequest.id == request_id).with_for_update())
+    ).scalar_one_or_none()
     if not ar:
         raise HTTPException(status_code=404, detail="ad request not found")
     if not ar.community_vk_id:
