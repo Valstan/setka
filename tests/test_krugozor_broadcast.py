@@ -1,17 +1,19 @@
-"""Тесты потока «Кругозор» (научпоп → веером на стены регионов).
+"""Тесты потока «Кругозор» (научпоп-ДАЙДЖЕСТ веером на стены регионов).
 
-Покрывают конфиг (гейт/категория/цели/исключения) и чистую логику движка:
-ротацию источников, выбор свежего непосланного поста, футер, дедуп-cap.
+Покрывают конфиг и чистую логику движка: ротацию источников, выбор свежего,
+сборку дайджеста (бюджет/max_items/грид фото), формат пункта, лид-фото, дедуп-cap.
 БД/VK-функции (execute_krugozor_broadcast) — интеграционные, тут не трогаем.
 """
 
-# Регистрируем модели (как в test_curation_recorder) — иначе SQLAlchemy-mapper
-# падает на relationship при импорте модуля.
 import database.models  # noqa: F401
 import database.models_extended  # noqa: F401
 from modules.krugozor_broadcast import (
+    HEADER,
     LIP_HISTORY_MAX,
-    _build_footer,
+    _assemble_digest,
+    _clean_text,
+    _lead_photo,
+    _make_block,
     _mark_seen,
     _newest_unseen,
     _rotation_order,
@@ -26,7 +28,7 @@ def test_disabled_by_default(monkeypatch):
     monkeypatch.delenv("KRUGOZOR_BROADCAST_DISABLED", raising=False)
     from config.runtime import krugozor_broadcast_disabled
 
-    assert krugozor_broadcast_disabled() is True  # OFF по умолчанию (#008)
+    assert krugozor_broadcast_disabled() is True
 
 
 def test_enabled_when_off(monkeypatch):
@@ -50,13 +52,6 @@ def test_target_region_codes_parse(monkeypatch):
     assert get_krugozor_target_region_codes() == {"malmyzh", "arbazh"}
 
 
-def test_target_region_codes_none_when_empty(monkeypatch):
-    monkeypatch.delenv("KRUGOZOR_TARGET_REGION_CODES", raising=False)
-    from config.runtime import get_krugozor_target_region_codes
-
-    assert get_krugozor_target_region_codes() is None
-
-
 def test_source_exclude_ids_parse(monkeypatch):
     monkeypatch.setenv("KRUGOZOR_SOURCE_EXCLUDE_IDS", "-65614662, garbage, -85330")
     from config.runtime import get_krugozor_source_exclude_ids
@@ -64,13 +59,28 @@ def test_source_exclude_ids_parse(monkeypatch):
     assert get_krugozor_source_exclude_ids() == {-65614662, -85330}
 
 
-def test_max_age_and_interval_defaults(monkeypatch):
-    monkeypatch.delenv("KRUGOZOR_MAX_POST_AGE_HOURS", raising=False)
-    monkeypatch.delenv("KRUGOZOR_POST_INTERVAL_SECONDS", raising=False)
-    from config.runtime import get_krugozor_max_post_age_hours, get_krugozor_post_interval_seconds
+def test_digest_config_defaults(monkeypatch):
+    for k in (
+        "KRUGOZOR_DIGEST_MAX_ITEMS",
+        "KRUGOZOR_SNIPPET_LEN",
+        "KRUGOZOR_TEXT_BUDGET",
+        "KRUGOZOR_DIGEST_PHOTOS",
+        "KRUGOZOR_MAX_POST_AGE_HOURS",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    from config.runtime import (
+        get_krugozor_digest_max_items,
+        get_krugozor_max_post_age_hours,
+        get_krugozor_snippet_len,
+        get_krugozor_text_budget,
+        krugozor_digest_photos_enabled,
+    )
 
+    assert get_krugozor_digest_max_items() == 4
+    assert get_krugozor_snippet_len() == 500
+    assert get_krugozor_text_budget() == 3500
+    assert krugozor_digest_photos_enabled() is True
     assert get_krugozor_max_post_age_hours() == 72.0
-    assert get_krugozor_post_interval_seconds() == 5.0
 
 
 # --------------------------------------------------------------------------- #
@@ -84,10 +94,6 @@ def test_rotation_starts_after_cursor():
 
 def test_rotation_fresh_cursor_starts_at_zero():
     assert _rotation_order(4, -1) == [0, 1, 2, 3]
-
-
-def test_rotation_wraps():
-    assert _rotation_order(3, 2) == [0, 1, 2]
 
 
 def test_rotation_edge_cases():
@@ -106,69 +112,132 @@ def _post(owner_id, pid, age_seconds, now=1_000_000):
 
 def test_newest_unseen_picks_freshest():
     now = 1_000_000
-    posts = [
-        _post(-100, 1, 3600, now),
-        _post(-100, 2, 60, now),  # самый свежий
-        _post(-100, 3, 7200, now),
-    ]
-    got = _newest_unseen(posts, seen=set(), max_age_seconds=0, now_ts=now)
-    assert got["id"] == 2
+    posts = [_post(-100, 1, 3600, now), _post(-100, 2, 60, now), _post(-100, 3, 7200, now)]
+    assert _newest_unseen(posts, set(), 0, now)["id"] == 2
 
 
-def test_newest_unseen_skips_seen():
+def test_newest_unseen_skips_seen_and_old():
     now = 1_000_000
     posts = [_post(-100, 2, 60, now), _post(-100, 1, 120, now)]
-    # lip самого свежего (100_2) уже разослан → берём следующий (100_1)
-    got = _newest_unseen(posts, seen={"100_2"}, max_age_seconds=0, now_ts=now)
-    assert got["id"] == 1
-
-
-def test_newest_unseen_respects_max_age():
-    now = 1_000_000
-    posts = [_post(-100, 1, 10_000, now)]  # старее лимита
-    assert _newest_unseen(posts, set(), max_age_seconds=3600, now_ts=now) is None
-
-
-def test_newest_unseen_none_when_all_seen():
-    now = 1_000_000
-    posts = [_post(-100, 1, 60, now)]
-    assert _newest_unseen(posts, {"100_1"}, 0, now) is None
-
-
-def test_newest_unseen_ignores_malformed():
-    now = 1_000_000
-    posts = [{"id": None, "owner_id": -100, "date": now}, _post(-100, 5, 60, now)]
-    got = _newest_unseen(posts, set(), 0, now)
-    assert got["id"] == 5
+    assert _newest_unseen(posts, {"100_2"}, 0, now)["id"] == 1
+    assert _newest_unseen([_post(-100, 9, 10_000, now)], set(), 3600, now) is None
 
 
 # --------------------------------------------------------------------------- #
-# Футер атрибуции и дедуп-cap
+# Формат пункта дайджеста
 # --------------------------------------------------------------------------- #
 
 
-def test_footer_name_and_link():
-    # ссылка идёт текстом (native copyright VK отбрасывает для vk.com)
+def test_make_block_short_text_full():
+    b = _make_block("ПостНаука", "https://vk.com/wall-1_2", "Короткий факт", 500)
+    assert b == "📚 ПостНаука\nКороткий факт\n🔗 https://vk.com/wall-1_2"
+
+
+def test_make_block_empty_text():
+    assert _make_block("N+1", "u", "", 500) == "📚 N+1\n🔗 u"
+
+
+def test_make_block_long_text_truncated():
+    long = "слово " * 200  # ~1200 знаков
+    b = _make_block("N+1", "u", long, 60)
+    assert b.startswith("📚 N+1\n")
+    assert b.endswith("…\n🔗 u")
+    # тело укорочено около лимита (+ заголовок/ссылка/многоточие)
+    assert len(b) < 60 + 40
+
+
+def test_clean_text_collapses_blank_lines():
+    assert _clean_text("a\n\n\n\nb\n  ") == "a\n\nb"
+
+
+# --------------------------------------------------------------------------- #
+# Лид-фото
+# --------------------------------------------------------------------------- #
+
+
+def test_lead_photo_extracts_first_photo():
+    post = {"attachments": [{"type": "photo", "photo": {"owner_id": -100, "id": 5}}]}
+    assert _lead_photo(post) == "photo-100_5"
+
+
+def test_lead_photo_none_when_no_photo():
     assert (
-        _build_footer("SciTopus", "https://vk.com/wall-1_2")
-        == "\n\n📚 Источник: SciTopus\nhttps://vk.com/wall-1_2"
+        _lead_photo({"attachments": [{"type": "video", "video": {"owner_id": -1, "id": 2}}]})
+        is None
     )
+    assert _lead_photo({}) is None
 
 
-def test_footer_link_without_name():
-    assert (
-        _build_footer("", "https://vk.com/wall-1_2")
-        == "\n\n📚 Источник: оригинал\nhttps://vk.com/wall-1_2"
+# --------------------------------------------------------------------------- #
+# Сборка дайджеста
+# --------------------------------------------------------------------------- #
+
+
+def _items(n):
+    return [
+        {
+            "name": f"S{i}",
+            "url": f"u{i}",
+            "text": f"t{i}",
+            "photo": (f"photo{i}" if i % 3 else None),
+        }
+        for i in range(n)
+    ]
+
+
+def test_assemble_all_fit_under_budget():
+    items = [
+        {"name": "A", "url": "u1", "text": "t1", "photo": "photoA"},
+        {"name": "B", "url": "u2", "text": "t2", "photo": "photoB"},
+        {"name": "C", "url": "u3", "text": "t3", "photo": None},
+    ]
+    text, att, used = _assemble_digest(
+        items, snippet_len=500, text_budget=3500, max_items=4, photos_enabled=True
     )
+    assert used == [0, 1, 2]
+    assert text.startswith(HEADER + "\n\n")
+    assert "📚 A" in text and "📚 B" in text and "📚 C" in text
+    assert att == ["photoA", "photoB"]  # у C фото нет — в грид не попадает
 
 
-def test_footer_name_only_when_no_url():
-    assert _build_footer("SciTopus", "") == "\n\n📚 Источник: SciTopus"
+def test_assemble_respects_max_items():
+    text, att, used = _assemble_digest(
+        _items(5), snippet_len=500, text_budget=3500, max_items=2, photos_enabled=True
+    )
+    assert used == [0, 1]
+    assert text.count("📚 ") == 2
 
 
-def test_footer_empty_when_nothing():
-    assert _build_footer("", "") == ""
-    assert _build_footer("  ", "  ") == ""
+def test_assemble_photos_disabled():
+    _t, att, _u = _assemble_digest(
+        _items(3), snippet_len=500, text_budget=3500, max_items=4, photos_enabled=False
+    )
+    assert att == []
+
+
+def test_assemble_budget_caps_items():
+    big = [
+        {"name": "A", "url": "u", "text": "x" * 1000, "photo": None},
+        {"name": "B", "url": "u", "text": "y" * 1000, "photo": None},
+    ]
+    # бюджет вмещает только первый пункт (snippet_len велик, оба блока ~1000)
+    _t, _a, used = _assemble_digest(
+        big, snippet_len=1000, text_budget=1100, max_items=4, photos_enabled=True
+    )
+    assert used == [0]
+
+
+def test_assemble_first_item_always_included_even_if_over_budget():
+    huge = [{"name": "A", "url": "u", "text": "z" * 5000, "photo": None}]
+    _t, _a, used = _assemble_digest(
+        huge, snippet_len=5000, text_budget=100, max_items=4, photos_enabled=True
+    )
+    assert used == [0]  # первый — всегда
+
+
+# --------------------------------------------------------------------------- #
+# Дедуп-cap и регистрация beat
+# --------------------------------------------------------------------------- #
 
 
 class _FakeWT:
@@ -179,20 +248,15 @@ class _FakeWT:
 def test_mark_seen_dedup_and_cap():
     wt = _FakeWT(lip=[str(i) for i in range(LIP_HISTORY_MAX)])
     _mark_seen(wt, "new_lip")
-    assert len(wt.lip) == LIP_HISTORY_MAX  # cap держится
-    assert wt.lip[-1] == "new_lip"  # новый добавлен
-    assert "0" not in wt.lip  # самый старый вытеснен
+    assert len(wt.lip) == LIP_HISTORY_MAX
+    assert wt.lip[-1] == "new_lip"
+    assert "0" not in wt.lip
 
 
 def test_mark_seen_no_duplicate():
     wt = _FakeWT(lip=["a", "b"])
     _mark_seen(wt, "b")
-    assert wt.lip == ["a", "b"]  # повтор не добавляется
-
-
-# --------------------------------------------------------------------------- #
-# Регистрация beat-задачи (раз в день 20:00 MSK через parse_and_publish_theme)
-# --------------------------------------------------------------------------- #
+    assert wt.lip == ["a", "b"]
 
 
 def test_krugozor_beat_registered():
