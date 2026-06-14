@@ -64,6 +64,12 @@ async def _run_radar_bot():
     if not token:
         return {"skipped": f"no TELEGRAM_TOKEN for {name}"}
 
+    allowed = get_radar_bot_allowed_users()
+    if not allowed:
+        # Без allowlist приёмник никому не отвечает (молчит чужим) — не поллим
+        # вовсе, чтобы зря не тревожить общий бот. Владелец задаёт свой tg-id.
+        return {"skipped": "RADAR_BOT_ALLOWED_USERS empty"}
+
     from modules.digest_heartbeat import _get_redis
 
     r = _get_redis()
@@ -81,7 +87,6 @@ async def _run_radar_bot():
     def offset_set(v):
         r.set(offset_key, int(v))
 
-    allowed = get_radar_bot_allowed_users()
     radar_user_id = get_radar_bot_radar_user_id()
 
     async def add_channel(username):
