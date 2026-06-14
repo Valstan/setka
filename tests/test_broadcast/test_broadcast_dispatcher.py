@@ -7,10 +7,10 @@ VK-публикация инъектируется (publish), сессия — �
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
-from database.models import BroadcastCampaign, BroadcastTarget
+from database.models import BroadcastCampaign, BroadcastPublication, BroadcastTarget
 from modules.broadcast import dispatcher as d
 
 _NOW = datetime(2026, 6, 14, 20, 0)
@@ -197,6 +197,45 @@ def test_existing_terminal_targets_skipped():
     )
     assert [s[0] for s in sent] == [-200]
     assert out["complete"] is True and camp.runs_done == 1
+
+
+def test_stale_pending_reclaimed_then_run_completes():
+    # Зависший pending (процесс умер mid-run) старше grace → реклеймится в error
+    # (терминально), прогон завершается, кампания не виснет навечно.
+    sent = []
+    camp = _camp()
+    old = datetime.utcnow() - timedelta(seconds=d.STALE_PENDING_SECONDS + 60)
+    stuck = BroadcastPublication(
+        id=7, campaign_id=1, group_id=-100, run_index=0, status="pending", published_at=old
+    )
+    fake = _FakeSession(targets=_targets(-100, -200), existing=[stuck], claim_rowcounts=[1])
+    out = asyncio.run(
+        d.dispatch_campaign(fake, camp, publish=_ok_publish(sent), interval=0, now=_NOW)
+    )
+    assert stuck.status == "error"  # реклеймлено
+    assert [s[0] for s in sent] == [-200]  # -100 не перепубликовываем (дубль-защита)
+    assert out["complete"] is True and camp.runs_done == 1
+
+
+def test_fresh_pending_not_reclaimed():
+    # Свежий pending (claim только что, прогон идёт) НЕ трогаем.
+    sent = []
+    camp = _camp()
+    fresh = BroadcastPublication(
+        id=8,
+        campaign_id=1,
+        group_id=-100,
+        run_index=0,
+        status="pending",
+        published_at=datetime.utcnow(),
+    )
+    fake = _FakeSession(targets=_targets(-100), existing=[fresh])
+    out = asyncio.run(
+        d.dispatch_campaign(fake, camp, publish=_ok_publish(sent), interval=0, now=_NOW)
+    )
+    assert fresh.status == "pending"  # не реклеймлено
+    assert sent == []  # -100 в done_groups (pending) → пропущен
+    assert out["complete"] is False and camp.runs_done == 0  # прогон не завершён
 
 
 # ---- run_broadcast_dispatch (внешний цикл) ----
