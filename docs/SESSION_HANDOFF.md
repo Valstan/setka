@@ -2,65 +2,58 @@
 
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
-**Status:** ACTIVE (standing-программы; mid-flight нитки нет — всё этой сессии задеплоено/закрыто)
+**Status:** ACTIVE (несколько ниток в работе/эксплуатации; mid-flight стройки нет — всё этой сессии задеплоено)
 **Updated:** 2026-06-14
 **Branch:** main
-**Last release in prod:** прод на `1349055` = main минус doc-only #225 (Ф1.2 квоты задеплоены, 4/4 active, health 200).
+**Last release in prod:** прод на `c043a5e` (= main; web+worker+beat перезапущены, health 200). Все 14 PR сессии задеплоены инкрементально.
 
 ---
 
 ## Текущая нитка
 
-**Эта сессия — радар Ф1 закрыт целиком** (MANDATE brain 2026-06-13, приоритизация Ф1):
-1 ретенция ✅ (была в Ф0.4) · **2 enforcement квот ✅ задеплоено** ([#224](https://github.com/Valstan/setka/pull/224)) ·
-3 PNG-иконки ✅ (уже были в Ф0.4, манифест install-ready) · **4 TG-медиа ✅ probe закрыл как
-нежизнеспособное** ([#225](https://github.com/Valstan/setka/pull/225)). Открытая развилка — только
-residential-egress прокси, `parked` до явного запроса владельца «файлы медиа в архиве».
+Большая сессия 2026-06-14: **14 PR** ([#227](https://github.com/Valstan/setka/pull/227)–[#239](https://github.com/Valstan/setka/pull/239)) + 3 прод-правки вне git (ниже). Mid-flight стройки нет — всё задеплоено. Активны несколько standing-ниток и открытых директив, ждущих **ввода владельца** или следующего шага.
 
-Заодно проведена **браузер-верификация** под логином владельца (Claude-for-Chrome): ad-CRM С1–С5,
-tiered-поиск #035, Σ/без-дублей, тёмная тема, `/monitoring`, `/tokens`, радар-Ф0, DM-роутер — всё работает.
-
-**Standing-программы (ритм, не закрыты):** ad-CRM (еженедельный круг улучшений, MANDATE) и хвост
-LLM-курации (ждёт цифр PoC).
+**Что сделано и живёт в проде:**
+- **LLM-курация (Ф1 PoC закрыт):** цифры сняты (flag-rate 18.81%, 19/101), ack brain + редполитика в рубрику (научпоп/познавательное = keep; reroute рекламы). Открыто: решение Фазы 2 за владельцем/brain + спот-чек владельца на 19 флагах (precision). `scripts/curate_pending.py --flagged` выгружает их.
+- **«Кругозор» — научпоп-дайджест веером** ([#230](https://github.com/Valstan/setka/pull/230)/[#232](https://github.com/Valstan/setka/pull/232)/[#233](https://github.com/Valstan/setka/pull/233)): `modules/krugozor_broadcast.py`, дайджест 2-4 поста из РАЗНЫХ источников (ротация) на 16 пабликов, лид-фото грид, анти-промо фильтр. **12 источников** (category=krugozor: SciTopus/НауЧпок/Batrachospermum/Время-Вперёд + добавил ПостНаука/N+1/Образовач/Наука-и-жизнь/Антропогенез/TechInsider/Arzamas/Кот-Шрёдингера). Beat 20:00 MSK. **Включён** (env `KRUGOZOR_BROADCAST_DISABLED=0`).
+- **Радар↔Телега починен:** корень — 0 подписок (поллер видел `sources:0`). Восстановил подписку valstan→gonba_life (прод-правка вне git). TG-чтение через relay исправно.
+- **Радар intake-бот «приём каналов»** ([#235](https://github.com/Valstan/setka/pull/235)–[#238](https://github.com/Valstan/setka/pull/238)): форвард поста канала боту → канал в радар. `modules/radar/bot_intake.py` (getUpdates-polling, молчит чужим, гейт на allowlist), сервис `modules/radar/subscriptions.py`. **Включён на AFONYA** (@malm_info_bot): env `RADAR_BOT_NAME=AFONYA` + `RADAR_BOT_ALLOWED_USERS=352096813` (прод-правка вне git).
+- **ad-CRM:** сигнал brain «push ушёл в эксплуатацию» (real-use clock) + **кнопка «Опубликовать»** ([#239](https://github.com/Valstan/setka/pull/239)) — моментальная бесплатная публикация бытовой заявки из предложки (POST `/ad-cabinet/requests/{id}/publish`).
 
 ## Следующий шаг
 
-Mid-flight задачи нет — нитка радар-Ф1 закрыта. Ближайшие по календарю:
-1. **~2026-06-14 (наступило): цифры PoC LLM-курации** → ack brain (ждёт решения Фазы 2). Команда:
-   `ssh setka "cd /home/valstan/SETKA && sudo bash -c 'set -a; source /etc/setka/setka.env; set +a; ./venv/bin/python scripts/curate_pending.py --stats'"`.
-2. **~2026-06-20: ad-CRM раунд-2** — посмотреть статистику (`/funnel` total_views/debtors, время первого
-   отклика, сколько авто-приветствий ушло) → предложить владельцу следующее улучшение, реализовать.
-3. **Авто-приветствие (#222)** — спит, ждёт включения владельцем (env `AD_AUTO_GREETING_COMMUNITIES` + текст).
+Mid-flight задачи нет. Кандидаты (по приоритету):
+1. **Ответить brain на probe сетевой рассылки** — директива `2026-06-14-network-broadcast-internal-scheduler.md` ждёт probe прав постинга + флуд-лимитов. **Данные уже есть из krugozor:** 16 `wall.post` @5с интервал = 16/16 без капчи; 16 `wall.edit` @3с (бэкфилл) словил капчу. Охват = 16 активных пабликов. Написать ответ в `mailbox/to-brain/`, затем рассылка = обобщение copy_setka/krugozor (переиспользовать ad-CRM С2-планировщик, не в VK-отложку).
+2. **Браузер/Telegram-проверка владельцем** (наружу-действия, за владельцем): кнопка «Опубликовать» на бытовой заявке (Ctrl+Shift+R для нового JS); форвард канала боту @malm_info_bot → проверить, что канал упал в радар.
+3. **Авто-приветствие** (#222) — текст согласован, ждёт от владельца **vk-id сообществ** для `AD_AUTO_GREETING_COMMUNITIES`.
+4. **Brain-директива генератора обложек** (`2026-06-14-community-cover-template-generator.md`) — probe cover-API (`photos.getOwnerCoverPhotoUploadServer`/права) на скольких пабликах админ; пилот Верхошижемье.
 
 ## Контекст
 
-- **План:** активного плана-файла нет; радар-Ф1 вёлся по brain-письму `2026-06-13-content-radar-f1-prioritization.md`.
-- **Связанные коммиты сессии:** `1349055` [#224](https://github.com/Valstan/setka/pull/224) Ф1.2 квоты (код, задеплоено),
-  `2e0de38` [#225](https://github.com/Valstan/setka/pull/225) Ф1.4 probe-результат + Ф1-доки (doc-only).
-- **Прод:** HEAD `1349055` (после deploy Ф1.2, restart web), 4/4 active, health 200, диск 54.8% (10.6 ГБ, своб. 4.56 ГБ).
-- **Отчёты brain'у этой сессии:** `mailbox/to-brain/2026-06-13-radar-f1-quota-enforcement.md`,
-  `mailbox/to-brain/2026-06-13-radar-tg-media-probe-result.md` (probe + уточнение к G56).
+- **План:** активного плана-файла нет; нитки вели по brain-письмам + запросам владельца.
+- **Прод-правки вне git (записать при следующем pull):** (1) `radar_subscriptions` — восстановлена подписка valstan→gonba_life; (2) `/etc/setka/setka.env` — добавлены `KRUGOZOR_BROADCAST_DISABLED=0`, `RADAR_BOT_NAME=AFONYA`, `RADAR_BOT_ALLOWED_USERS=352096813`. Миграций в сессии не было.
+- **Прод:** все сервисы active, HEAD `c043a5e`, health 200. Krugozor-дайджест и radar-intake живут на проде.
+- **Открытые brain-письма (2 директивы, `recommend`):** `2026-06-14-network-broadcast-internal-scheduler.md`, `2026-06-14-community-cover-template-generator.md` — обе probe-first, не начаты.
+- **Отчёты brain'у этой сессии:** `mailbox/to-brain/`: `2026-06-14-llm-curation-poc-stats.md`, `2026-06-14-ad-crm-in-operation.md`, `2026-06-14-vk-copyright-param-dropped-gotcha.md` (находка #009).
 - **Открытых PR:** нет (этот handoff-PR — doc-only, авто-merge).
 
 ## Failed approaches (этой нитки)
 
-- **Фоновый воркер скачивания TG-медиа с ретраями** — DOA, подтверждено probe 2026-06-13. Бокс setka
-  **жёстко блокирует** `*.telesco.pe` на connection-level (`ConnectError: All connection attempts failed`,
-  0/10), это **не G56-тарпит** (трикл), а полный блок egress'а. Сквозь refused-коннект ретраи не помогают.
-  **Не строить** без residential/неблокируемого egress'а. Медиа в архиве — text+link (владелец: «не критично»).
+- **VK `copyright`-плашка «Источник» для vk.com-ссылок** — не работает, VK молча отбрасывает (probe `wall.getById` → `copyright:null`). Атрибуцию даём текстом (футер). Подробно — `mailbox/to-brain/2026-06-14-vk-copyright-param-dropped-gotcha.md`. **Не пытаться через `copyright`.**
+- **Бэкфилл 16 постов через `wall.edit` подряд @3с** — словил VK-Captcha (как и copy_setka @5с на бурсте). Массовые правки/посты держать на интервале ≥5с; для общего токена бэкфилл не доделывали (косметика, забили по решению владельца).
+- **Intake-бот на публичном боте с ответом чужим** — @malm_info_bot/@valstan_bot имеют входящий трафик (111/116 в очереди, всё авто-шум/channel_post, не вопросы). Поэтому приёмник **молчит чужим** + гейт на allowlist (иначе спам сотне людей).
 
 ## Открытые вопросы для пользователя
 
-- Включаем авто-приветствие рекламодателю сейчас? Нужны: текст + список сообществ (VK-id).
-- Понадобятся ли когда-нибудь **файлы** TG-медиа в архиве радара? Если да — развилка residential-egress
-  (стоимость + поддержка); если нет — оставляем text+link навсегда (текущее).
+- Авто-приветствие: какие сообщества (vk-id) включить в `AD_AUTO_GREETING_COMMUNITIES`?
+- LLM-курация Фаза 2: enforcing vs Haiku-API — после спот-чека владельца на 19 флагах.
+- Безопасность: токен AFONYA мелькнул в транскрипте сессии — перевыпустить у @BotFather, если транскрипт не приватный (в логах прода погашено).
 
 ## Не забыть (low-priority)
 
-- 🟡 Управление авто-приветствием — пока через env (per-community allowlist); кандидат на UI-тумблер.
-- ⏸ Residential-egress прокси для TG-медиа — `parked` до явного запроса владельца.
-- ⏸ AI-дедуп (embeddings) — `parked` до VPS ≥4 ГБ.
-- 🟢 Браузер-остаток ad-CRM: С3 «Обновить просмотры»/«Отчёт клиенту» (нужны публикации), push-колокольчик радара.
+- 🟢 9 первых krugozor-постов со старым футером (без ссылки) — оставлены по решению владельца (капча, косметика).
+- 🟢 @malm_info_bot получает поток эхо-дайджестов в getUpdates (мелкий бардак линковки канал↔группа) — приёмнику безвредно, можно отдельно разобраться.
+- 🟢 Krugozor: после ~недели замерить охват (просмотры/лайки) → решить 1×/день vs +обед 13:00.
 
 ---
 
