@@ -48,6 +48,9 @@ ALERT_COOLDOWN_SECONDS = 6 * 3600
 # Кампания «просрочена», если next_run_at позади более чем на это (диспетчер
 # обязан был её взять). Запас на длинный прогон (16 целей @5с ≈ 80с).
 OVERDUE_GRACE_SECONDS = 15 * 60
+# 'pending'-строка старше этого = процесс умер между claim и записью результата
+# (рестарт mid-run). Сильно больше максимального прогона (~80с) — реклеймим в error.
+STALE_PENDING_SECONDS = 10 * 60
 
 
 def _now_msk() -> datetime:
@@ -179,6 +182,27 @@ async def dispatch_campaign(
         .scalars()
         .all()
     )
+    # Реклейм зависшего 'pending' (процесс умер между claim и записью результата —
+    # рестарт/деплой mid-run): помечаем error (терминально), чтобы прогон мог
+    # завершиться и кампания не зависла навечно (иначе done_groups скрывает цель,
+    # а terminal_groups её не считает → completion недостижим, +вечный watchdog).
+    # НЕ перепубликовываем (статус публикации неизвестен → избегаем дубля); цель
+    # видна как error, оператор при желании дожмёт через retry.
+    stale_cut = datetime.utcnow() - timedelta(seconds=STALE_PENDING_SECONDS)
+    reclaimed = False
+    for p in existing:
+        if p.status == "pending" and p.published_at and p.published_at < stale_cut:
+            await session.execute(
+                sa_update(BroadcastPublication)
+                .where(BroadcastPublication.id == p.id)
+                .values(
+                    status="error", error="stuck pending (рестарт?) — статус публикации неизвестен"
+                )
+            )
+            p.status = "error"
+            reclaimed = True
+    if reclaimed:
+        await session.commit()
     done_groups = {int(p.group_id) for p in existing}
     terminal_groups = {int(p.group_id) for p in existing if p.status in TERMINAL}
 

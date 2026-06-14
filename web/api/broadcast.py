@@ -43,6 +43,18 @@ router = APIRouter()
 
 MSK = timezone(timedelta(hours=3))
 
+# Минимальный интервал между повторами (часы): для repeat_count>1 защищает от
+# «машинганнинга» сети — interval=0 иначе перепубликовывал бы каждый тик беата.
+# 0.25ч (15 мин) комфортно больше длительности прогона (16 целей @5с ≈ 80с).
+MIN_REPEAT_INTERVAL_HOURS = 0.25
+
+
+def _clamp_interval(interval: float, repeat_count: int) -> float:
+    interval = max(0.0, float(interval or 0))
+    if repeat_count > 1:
+        return max(interval, MIN_REPEAT_INTERVAL_HOURS)
+    return interval
+
 
 class CampaignIn(BaseModel):
     title: str = ""
@@ -157,6 +169,7 @@ async def create_campaign(payload: CampaignIn, session: AsyncSession = Depends(g
         from config.runtime import get_broadcast_default_repeat_interval_hours
 
         interval = get_broadcast_default_repeat_interval_hours()
+    interval = _clamp_interval(interval, repeat_count)
     camp = BroadcastCampaign(
         title=(payload.title or "").strip(),
         body=payload.body or "",
@@ -165,7 +178,7 @@ async def create_campaign(payload: CampaignIn, session: AsyncSession = Depends(g
         status="draft",
         scheduled_at=_parse_msk(payload.scheduled_at),
         repeat_count=repeat_count,
-        repeat_interval_hours=float(interval),
+        repeat_interval_hours=interval,
         runs_done=0,
         vary_per_target=bool(payload.vary_per_target),
     )
@@ -227,6 +240,7 @@ async def update_campaign(
     camp.repeat_count = max(1, int(payload.repeat_count or 1))
     if payload.repeat_interval_hours is not None:
         camp.repeat_interval_hours = float(payload.repeat_interval_hours)
+    camp.repeat_interval_hours = _clamp_interval(camp.repeat_interval_hours, camp.repeat_count)
     camp.vary_per_target = bool(payload.vary_per_target)
     if payload.scheduled_at is not None:
         camp.scheduled_at = _parse_msk(payload.scheduled_at)
@@ -300,11 +314,16 @@ async def retry_campaign(campaign_id: int, session: AsyncSession = Depends(get_d
             BroadcastPublication.status.in_(("error", "pending")),
         )
     )
+    cleared = deleted.rowcount or 0
+    # Нечего повторять (нет error/pending в последнем прогоне) → не перематываем
+    # завершённую кампанию обратно в очередь (иначе done молча оживает зря).
+    if cleared == 0 and camp.status == "done":
+        return {"success": True, "retried_run": last_run, "cleared": 0, "note": "нечего повторять"}
     camp.runs_done = last_run
     camp.status = "scheduled"
     camp.next_run_at = datetime.now(MSK).replace(tzinfo=None)
     await session.commit()
-    return {"success": True, "retried_run": last_run, "cleared": deleted.rowcount or 0}
+    return {"success": True, "retried_run": last_run, "cleared": cleared}
 
 
 @router.delete("/campaigns/{campaign_id}")
