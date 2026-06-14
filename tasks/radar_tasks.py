@@ -48,6 +48,88 @@ def cleanup_old_radar_items():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+async def _run_radar_bot():
+    """Один тик intake-бота «Карман»: getUpdates → добавить каналы из форвардов."""
+    from config.runtime import (
+        TELEGRAM_TOKENS,
+        get_radar_bot_allowed_users,
+        get_radar_bot_name,
+        get_radar_bot_radar_user_id,
+    )
+
+    name = get_radar_bot_name()
+    if not name:
+        return {"skipped": "RADAR_BOT_NAME not set"}
+    token = TELEGRAM_TOKENS.get(name)
+    if not token:
+        return {"skipped": f"no TELEGRAM_TOKEN for {name}"}
+
+    from modules.digest_heartbeat import _get_redis
+
+    r = _get_redis()
+    if r is None:
+        return {"skipped": "no redis (offset persistence required)"}
+    offset_key = "setka:radar_bot_offset"
+
+    def offset_get():
+        v = r.get(offset_key)
+        try:
+            return int(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def offset_set(v):
+        r.set(offset_key, int(v))
+
+    allowed = get_radar_bot_allowed_users()
+    radar_user_id = get_radar_bot_radar_user_id()
+
+    async def add_channel(username):
+        from database.connection import AsyncSessionLocal
+        from modules.radar.sources.tg import resolve_source
+        from modules.radar.subscriptions import upsert_subscription
+
+        try:
+            meta = await resolve_source(username)
+        except Exception as e:  # noqa: BLE001 - канал недоступен/приватный
+            return {"status": "error", "error": str(e)[:160]}
+        async with AsyncSessionLocal() as session:
+            res = await upsert_subscription(
+                session, user_id=radar_user_id, source_type="tg", meta=meta
+            )
+        return {
+            "status": "added" if res["created"] else "exists",
+            "title": meta.get("title"),
+        }
+
+    from modules.radar.bot_intake import poll_radar_bot_once
+
+    return await poll_radar_bot_once(
+        token=token,
+        allowed_users=allowed,
+        add_channel=add_channel,
+        offset_get=offset_get,
+        offset_set=offset_set,
+    )
+
+
+@app.task(name="tasks.radar_tasks.poll_radar_bot")
+def poll_radar_bot():
+    """Intake-бот «Карман»: приём форвардов каналов (каждую минуту).
+
+    Гейт #008: no-op, пока не заданы RADAR_BOT_NAME + токен. Форвард поста канала
+    боту → канал добавляется в радар + подписка оператора (RADAR_BOT_RADAR_USER_ID).
+    """
+    try:
+        result = run_coro(_run_radar_bot())
+        if not result.get("skipped"):
+            logger.info("radar intake-bot: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"poll_radar_bot failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.radar_tasks.check_radar_poll_heartbeat")
 def check_radar_poll_heartbeat():
     """Watchdog: алёрт в Telegram, если поллер радара молчит при живых подписках."""

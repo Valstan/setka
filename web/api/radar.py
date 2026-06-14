@@ -129,39 +129,15 @@ async def create_subscription(body: SubscriptionCreateIn, request: Request):
         logger.error("radar source resolve failed: %s", e)
         raise HTTPException(status_code=503, detail="Источник временно нельзя проверить")
 
+    from modules.radar.subscriptions import upsert_subscription
+
     async with AsyncSessionLocal() as session:
-        source = (
-            await session.execute(
-                select(RadarSource).where(
-                    RadarSource.type == body.type, RadarSource.key == meta["key"]
-                )
-            )
-        ).scalar_one_or_none()
-        if source is None:
-            source = RadarSource(
-                type=body.type, key=meta["key"], title=meta["title"], url=meta["url"]
-            )
-            session.add(source)
-            await session.flush()
-        elif not source.is_active:
-            source.is_active = True  # реактивация: на источник снова подписались
-
-        existing = (
-            await session.execute(
-                select(RadarSubscription).where(
-                    RadarSubscription.user_id == user.id,
-                    RadarSubscription.source_id == source.id,
-                )
-            )
-        ).scalar_one_or_none()
-        if existing is not None:
-            return {"subscription_id": existing.id, "source": source.to_dict(), "created": False}
-
-        sub = RadarSubscription(user_id=user.id, source_id=source.id)
-        session.add(sub)
-        await session.commit()
-        await session.refresh(sub)
-        return {"subscription_id": sub.id, "source": source.to_dict(), "created": True}
+        res = await upsert_subscription(session, user_id=user.id, source_type=body.type, meta=meta)
+        return {
+            "subscription_id": res["subscription_id"],
+            "source": res["source"],
+            "created": res["created"],
+        }
 
 
 @router.delete("/subscriptions/{subscription_id}")

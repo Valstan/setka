@@ -1602,6 +1602,14 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute="*/10"),
         "options": {"expires": 540, "catchup": False},
     },
+    # Intake-бот «Карман» (приём форвардов каналов): каждую минуту getUpdates.
+    # No-op, пока не заданы RADAR_BOT_NAME + токен (#008). Форвард поста канала
+    # боту → канал в радар + подписка оператора.
+    "radar-intake-bot": {
+        "task": "tasks.radar_tasks.poll_radar_bot",
+        "schedule": crontab(minute="*"),
+        "options": {"expires": 55, "catchup": False},
+    },
     # Ретенция ленты радара: элементы старше 30 дней (RADAR_ITEMS_RETENTION_DAYS)
     # удаляются ночью в 03:20 (после cleanup-daily в 03:00). Сохранёнки —
     # снимки, не страдают (FK SET NULL).
