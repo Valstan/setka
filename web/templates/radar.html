@@ -37,7 +37,7 @@
                 </li>
                 <li class="nav-item"><a class="nav-link text-white" data-tab="saved" role="button">Архив</a></li>
                 <li class="nav-item"><a class="nav-link text-white" data-tab="sources" role="button">Источники</a></li>
-                <li class="nav-item"><a class="nav-link text-white" data-tab="outputs" role="button">Выводы</a></li>
+                <li class="nav-item"><a class="nav-link text-white" data-tab="outputs" role="button">Радиоточка</a></li>
             </ul>
             <ul class="navbar-nav flex-row gap-3">
                 <li class="nav-item d-none" id="push-li">
@@ -111,46 +111,89 @@
             <div id="sources-list"></div>
         </div>
 
-        <!-- Выводы: куда радар шлёт найденное -->
+        <!-- Радиоточка: куда радар присылает найденные новости -->
         <div id="tab-outputs" class="d-none">
-            <div class="card mb-3">
-                <div class="card-body">
-                    <h2 class="h6">Добавить канал вывода</h2>
-                    <p class="form-text mt-0">Куда отправлять найденное. «Лента радара» уже работает по умолчанию;
-                       добавьте свой Telegram или VK, чтобы получать туда же.</p>
-                    <div class="alert alert-danger d-none" id="output-error"></div>
-                    <form id="output-form" class="row g-2">
-                        <div class="col-12 col-sm-4">
-                            <select class="form-select" id="output-type">
-                                <option value="telegram">Telegram</option>
-                                <option value="vk">VK</option>
-                                <option value="feed">Лента радара</option>
-                            </select>
+            <p class="text-secondary mt-1">
+                Подключите свои аккаунты — и радар будет присылать найденные новости прямо в личку,
+                туда, где вам удобно. Лента радара работает всегда; остальное — на ваш выбор.
+            </p>
+            <div class="row g-2 mb-3" id="connect-cards">
+                <div class="col-6 col-md-3">
+                    <button class="btn btn-outline-primary w-100 h-100 py-3" data-connect="telegram">
+                        <i class="bi bi-telegram d-block" style="font-size: 1.6rem;"></i>
+                        Подключить<br>Telegram
+                    </button>
+                </div>
+                <div class="col-6 col-md-3">
+                    <button class="btn btn-outline-secondary w-100 h-100 py-3" data-connect="vk" disabled
+                            title="В личку ВКонтакте — скоро">
+                        <i class="bi bi-chat-square-text d-block" style="font-size: 1.6rem;"></i>
+                        ВКонтакте<br><span class="badge bg-secondary">скоро</span>
+                    </button>
+                </div>
+                <div class="col-6 col-md-3">
+                    <button class="btn btn-outline-secondary w-100 h-100 py-3" data-connect="email" disabled
+                            title="Дайджест на почту — скоро">
+                        <i class="bi bi-envelope d-block" style="font-size: 1.6rem;"></i>
+                        Эл. почта<br><span class="badge bg-secondary">скоро</span>
+                    </button>
+                </div>
+                <div class="col-6 col-md-3">
+                    <button class="btn btn-outline-secondary w-100 h-100 py-3" data-connect="max" disabled
+                            title="MAX — после проверки API">
+                        <i class="bi bi-chat-dots d-block" style="font-size: 1.6rem;"></i>
+                        MAX<br><span class="badge bg-secondary">скоро</span>
+                    </button>
+                </div>
+            </div>
+
+            <h2 class="h6">Подключённые каналы</h2>
+            <div id="outputs-list"></div>
+        </div>
+    </div>
+
+    <!-- Модалка подключения Telegram -->
+    <div class="modal fade" id="tg-connect-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-telegram"></i> Подключить Telegram</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger d-none" id="tg-connect-error"></div>
+                    <div id="tg-connect-loading" class="text-center py-3">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <p class="mt-2 mb-0">Готовим подключение…</p>
+                    </div>
+                    <div id="tg-connect-ready" class="d-none">
+                        <ol class="mb-3">
+                            <li>Откройте нашего бота кнопкой ниже (или найдите
+                                <strong id="tg-bot-name">бота</strong> в Telegram).</li>
+                            <li>Нажмите <strong>Start</strong> / отправьте код.</li>
+                            <li>Готово — бот ответит, что подключил вас.</li>
+                        </ol>
+                        <div class="d-grid gap-2 mb-3">
+                            <a class="btn btn-primary btn-lg" id="tg-deep-link" target="_blank" rel="noopener">
+                                <i class="bi bi-telegram"></i> Открыть бота и подключить
+                            </a>
                         </div>
-                        <div class="col-12 col-sm-5">
-                            <input class="form-control" id="output-target"
-                                   placeholder="TG: chat_id или @канал · VK: -123 (id сообщества)">
+                        <p class="text-secondary small mb-1">Если кнопка не открыла бота — отправьте ему этот код вручную:</p>
+                        <div class="input-group mb-2">
+                            <span class="input-group-text">/start</span>
+                            <input class="form-control fs-5 fw-bold text-center" id="tg-code" readonly>
+                            <button class="btn btn-outline-secondary" id="tg-code-copy" title="Скопировать">
+                                <i class="bi bi-clipboard"></i>
+                            </button>
                         </div>
-                        <div class="col-12 col-sm-3 d-grid">
-                            <button class="btn btn-primary" type="submit" id="output-add-btn">Добавить</button>
-                        </div>
-                        <div class="col-12 col-sm-6">
-                            <select class="form-select form-select-sm" id="output-mode">
-                                <option value="excerpt_link">Начало + ссылка (дёшево)</option>
-                                <option value="full">Целиком (с медиа в Telegram)</option>
-                            </select>
-                        </div>
-                        <div class="col-12 col-sm-6">
-                            <input class="form-control form-control-sm" id="output-bot"
-                                   placeholder="TG: имя бота (необязательно)">
-                        </div>
-                    </form>
-                    <div class="form-text" id="output-hint">
-                        Telegram: напишите боту, добавьте его в свой канал админом, укажите @канал или chat_id.
+                        <p class="text-secondary small mb-0">Код действует 15 минут. Это окно обновится само, когда вы подключитесь.</p>
+                    </div>
+                    <div id="tg-connect-done" class="d-none text-center py-3">
+                        <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                        <p class="mt-2 mb-0">Telegram подключён! Новости пойдут вам в личку.</p>
                     </div>
                 </div>
             </div>
-            <div id="outputs-list"></div>
         </div>
     </div>
 
@@ -159,6 +202,7 @@
             navigator.serviceWorker.register('/radar/sw.js', { scope: '/radar' }).catch(() => {});
         }
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/js/radar.js"></script>
 </body>
 </html>

@@ -647,3 +647,34 @@ async def test_output(output_id: int, request: Request):
     if not result.get("ok") and result.get("detail") == "Вывод не найден":
         raise HTTPException(status_code=404, detail="Вывод не найден")
     return result
+
+
+@router.post("/link/telegram")
+async def link_telegram_code(request: Request):
+    """Сгенерировать код привязки Telegram-лички + deep-link на бота.
+
+    Пользователь открывает `https://t.me/<bot>?start=<code>` → жмёт Start → бот
+    создаёт telegram-вывод с его chat_id (см. modules/radar/account_link +
+    bot_intake). Код одноразовый, TTL 15 мин.
+    """
+    user = _current_user(request)
+    from config.runtime import TELEGRAM_TOKENS, get_radar_bot_name
+    from modules.radar.account_link import generate_link_code, get_bot_username
+
+    bot_name = get_radar_bot_name()
+    token = TELEGRAM_TOKENS.get(bot_name) if bot_name else None
+    if not token:
+        raise HTTPException(status_code=503, detail="Telegram-бот радара не настроен на сервере")
+
+    code = generate_link_code(user.id, channel="telegram")
+    if not code:
+        raise HTTPException(status_code=503, detail="Хранилище кодов недоступно (Redis)")
+
+    username = get_bot_username(token)
+    deep_link = f"https://t.me/{username}?start={code}" if username else None
+    return {
+        "code": code,
+        "bot_username": username,
+        "deep_link": deep_link,
+        "expires_in": 900,
+    }

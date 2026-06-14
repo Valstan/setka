@@ -73,16 +73,26 @@ def build_reply(status: str, *, username: str = "", title: str = "", detail: str
     return ""
 
 
+def _display_name(from_user: Dict[str, Any]) -> str:
+    """Имя отправителя для метки вывода (first + last или username)."""
+    parts = [from_user.get("first_name"), from_user.get("last_name")]
+    name = " ".join(p for p in parts if p).strip()
+    return name or (from_user.get("username") or "")
+
+
 async def handle_message(
     message: Dict[str, Any],
     *,
     allowed_users: set,
     add_channel: Callable[[str], Any],
+    link_account: Optional[Callable[[str, int, str], Any]] = None,
 ) -> Optional[Tuple[int, str]]:
     """Обработать одно входящее сообщение → (chat_id, reply_text) или None (молчим).
 
     `add_channel(username)` — async callable, добавляет канал в радар и возвращает
-    {"status": "added"|"exists"|"error", "title": str, "error": str}."""
+    {"status": "added"|"exists"|"error", "title": str, "error": str}.
+    `link_account(code, chat_id, display_name)` — async callable привязки личного
+    аккаунта по `/start <код>` («Радиоточка»); {"status": "linked"|"exists"|"invalid"}."""
     if not isinstance(message, dict):
         return None
     chat = message.get("chat") or {}
@@ -91,6 +101,29 @@ async def handle_message(
         return None
     from_user = message.get("from") or {}
     from_id = from_user.get("id")
+
+    # Привязка личного аккаунта: `/start <код>` обрабатываем ДО allowlist — код сам
+    # авторизует (его знает только владелец кабинета). Голый `/start` без кода на
+    # общем боте игнорируем молча, чтобы не тревожить чужих пользователей.
+    text = (message.get("text") or "").strip()
+    if text.startswith("/start"):
+        parts = text.split(maxsplit=1)
+        code = parts[1].strip() if len(parts) > 1 else ""
+        if not code or link_account is None:
+            return None
+        res = await link_account(code, chat_id, _display_name(from_user))
+        status = (res or {}).get("status")
+        if status == "linked":
+            return chat_id, (
+                "✅ Подключено! Радар будет присылать сюда найденные новости.\n"
+                "Отключить можно в кабинете «Радиоточка»."
+            )
+        if status == "exists":
+            return chat_id, "ℹ️ Этот чат уже подключён к вашему радару."
+        return chat_id, (
+            "❌ Код не найден или истёк. Сгенерируйте новый в кабинете "
+            "«Радиоточка» → «Подключить Telegram»."
+        )
 
     # Авторизация: только allowlist. Чужим/рандомам — МОЛЧИМ (бот может быть общим
     # или публичным — как @malm_info_bot со входящим трафиком; не спамим его
@@ -136,10 +169,12 @@ async def poll_radar_bot_once(
     offset_get: Callable[[], Optional[int]],
     offset_set: Callable[[int], None],
     call: Optional[Callable[[str, str, Dict[str, Any]], Dict[str, Any]]] = None,
+    link_account: Optional[Callable[[str, int, str], Any]] = None,
 ) -> Dict[str, Any]:
     """Один тик приёмника: getUpdates → обработать → ответить → продвинуть offset.
 
-    `call(token, method, params)` инъектируется (тест/прод); по умолчанию — Bot API."""
+    `call(token, method, params)` инъектируется (тест/прод); по умолчанию — Bot API.
+    `link_account` — привязка личного аккаунта по `/start <код>` («Радиоточка»)."""
     call = call or _tg_call
     offset = offset_get()
     params: Dict[str, Any] = {"timeout": GETUPDATES_TIMEOUT, "allowed_updates": '["message"]'}
@@ -160,7 +195,10 @@ async def poll_radar_bot_once(
         processed += 1
         try:
             out = await handle_message(
-                message, allowed_users=allowed_users, add_channel=add_channel
+                message,
+                allowed_users=allowed_users,
+                add_channel=add_channel,
+                link_account=link_account,
             )
         except Exception:  # noqa: BLE001 - один битый апдейт не валит остальные
             logger.exception("radar-bot: handle_message failed")

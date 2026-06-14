@@ -107,6 +107,11 @@ async def _run_radar_bot():
             "title": meta.get("title"),
         }
 
+    async def link_account(code, chat_id, display_name):
+        from modules.radar.account_link import link_telegram
+
+        return await link_telegram(code, chat_id, display_name=display_name, bot_name=name)
+
     from modules.radar.bot_intake import poll_radar_bot_once
 
     return await poll_radar_bot_once(
@@ -115,6 +120,7 @@ async def _run_radar_bot():
         add_channel=add_channel,
         offset_get=offset_get,
         offset_set=offset_set,
+        link_account=link_account,
     )
 
 
