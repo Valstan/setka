@@ -139,8 +139,33 @@ async def test_fetch_new_without_relay_config(monkeypatch):
 async def test_resolve_source_dead_channel_is_value_error(_relay_env):
     response = _fake_response(status=302, headers={"x-relay-redirect": "https://t.me/x"})
     with patch("httpx.AsyncClient", return_value=_fake_client(response)):
-        with pytest.raises(ValueError, match="нет web-превью"):
+        with pytest.raises(ValueError, match="веб-превью"):
             await resolve_source("@deadchan")
+
+
+@pytest.mark.asyncio
+async def test_resolve_source_timeout_retries_then_clear_error(_relay_env):
+    import httpx
+
+    client = MagicMock()
+    client.get = AsyncMock(side_effect=httpx.ReadTimeout("timed out"))
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    with patch("httpx.AsyncClient", return_value=client):
+        with pytest.raises(ValueError, match="ещё раз"):
+            await resolve_source("@bigchannel")
+    # ретраил RELAY_RETRIES раз
+    assert client.get.await_count == tg_adapter.RELAY_RETRIES
+
+
+@pytest.mark.asyncio
+async def test_resolve_source_empty_feed_is_value_error(_relay_env):
+    # 200, но нет ни og:title, ни data-post → веб-превью пустое/выключено.
+    with patch(
+        "httpx.AsyncClient", return_value=_fake_client(_fake_response(text="<html></html>"))
+    ):
+        with pytest.raises(ValueError, match="нет доступной ленты"):
+            await resolve_source("@emptychan")
 
 
 @pytest.mark.asyncio
