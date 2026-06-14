@@ -463,6 +463,20 @@ def krugozor_digest_photos_enabled() -> bool:
     )
 
 
+def krugozor_promo_filter_enabled() -> bool:
+    """Пропускать рекламные/промо-посты источника (не лить их в районные паблики).
+
+    Дефолт — да (решение владельца 2026-06-14). Высокоточный фильтр: только
+    официальная VK-метка `marked_as_ads` + легальные маркеры (erid:/#реклама/
+    «на правах рекламы»), без commercial-scoring (тот ложно бьёт по научному тексту)."""
+    return (_getenv("KRUGOZOR_PROMO_FILTER", "1") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
 # --- LLM-курация дайджестов (shadow PoC, письмо brain 2026-06-07) -------------
 
 

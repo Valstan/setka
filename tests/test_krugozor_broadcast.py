@@ -12,6 +12,7 @@ from modules.krugozor_broadcast import (
     LIP_HISTORY_MAX,
     _assemble_digest,
     _clean_text,
+    _is_promo,
     _lead_photo,
     _make_block,
     _mark_seen,
@@ -121,6 +122,49 @@ def test_newest_unseen_skips_seen_and_old():
     posts = [_post(-100, 2, 60, now), _post(-100, 1, 120, now)]
     assert _newest_unseen(posts, {"100_2"}, 0, now)["id"] == 1
     assert _newest_unseen([_post(-100, 9, 10_000, now)], set(), 3600, now) is None
+
+
+def test_newest_unseen_reject_skips_to_next():
+    now = 1_000_000
+    posts = [_post(-100, 2, 60, now), _post(-100, 1, 120, now)]
+    # reject самый свежий (id=2) → берём следующий (id=1)
+    got = _newest_unseen(posts, set(), 0, now, reject=lambda p: p["id"] == 2)
+    assert got["id"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Анти-промо фильтр
+# --------------------------------------------------------------------------- #
+
+
+def test_is_promo_marked_as_ads():
+    assert _is_promo({"marked_as_ads": 1, "text": "наука"}) is True
+    assert _is_promo({"marked_as_ads": True}) is True
+
+
+def test_is_promo_legal_markers():
+    assert _is_promo({"text": "Интересный факт. erid: 2Vfnxy"}) is True
+    assert _is_promo({"text": "Партнёрский пост #реклама"}) is True
+    assert _is_promo({"text": "На правах рекламы: курс"}) is True
+
+
+def test_is_promo_clean_science_text_false():
+    # научный текст с «ценой/скидкой» НЕ должен ложно срабатывать (нет commercial-scoring)
+    assert (
+        _is_promo({"text": "Цена нефти влияет на климатические модели, скидка энтропии"}) is False
+    )
+    assert _is_promo({"text": "Учёные открыли новый вид жуков"}) is False
+
+
+def test_is_promo_non_dict():
+    assert _is_promo("not a dict") is False
+
+
+def test_promo_filter_config_default(monkeypatch):
+    monkeypatch.delenv("KRUGOZOR_PROMO_FILTER", raising=False)
+    from config.runtime import krugozor_promo_filter_enabled
+
+    assert krugozor_promo_filter_enabled() is True
 
 
 # --------------------------------------------------------------------------- #

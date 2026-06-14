@@ -45,13 +45,36 @@ def _empty_stats() -> Dict[str, int]:
     return {"sources": 0, "targets": 0, "items": 0, "published": 0}
 
 
+def _is_promo(post: Dict[str, Any]) -> bool:
+    """Высокоточная проверка «это реклама/промо». Чистая.
+
+    Только надёжные сигналы — официальная VK-метка `marked_as_ads` + легальные
+    рекламные маркеры (`erid:`/`#реклама`/«на правах рекламы»), переиспользуем
+    список из AdvertisementFilter. НАМЕРЕННО без commercial-scoring (цена/руб/
+    купить/скидка): он тюнингован под локальные объявления и ложно бил бы по
+    научному тексту. Консервативно: лучше пропустить редкий промо, чем выкинуть
+    научпоп из дайджеста."""
+    if not isinstance(post, dict):
+        return False
+    if post.get("marked_as_ads"):
+        return True
+    from modules.filters.ads_filter import AdvertisementFilter
+
+    text = (post.get("text") or "").lower()
+    return any(m.lower() in text for m in AdvertisementFilter.LEGAL_MARKERS)
+
+
 def _newest_unseen(
     posts: List[Dict[str, Any]],
     seen: Set[str],
     max_age_seconds: int,
     now_ts: int,
+    reject=None,
 ) -> Optional[Dict[str, Any]]:
-    """Самый свежий пост источника, которого ещё не рассылали и не протух. Чистая."""
+    """Самый свежий пост источника, которого ещё не рассылали и не протух. Чистая.
+
+    `reject` — опц. предикат (post) -> bool: True → пропустить этот пост (напр.
+    анти-промо фильтр) и взять следующий свежий."""
     from utils.post_utils import lip_of_post
 
     for p in sorted(posts, key=lambda x: x.get("date", 0), reverse=True):
@@ -63,6 +86,8 @@ def _newest_unseen(
             continue
         post_date = int(p.get("date") or 0)
         if max_age_seconds > 0 and now_ts - post_date > max_age_seconds:
+            continue
+        if reject is not None and reject(p):
             continue
         return p
     return None
@@ -199,6 +224,7 @@ async def execute_krugozor_broadcast(
         get_krugozor_text_budget,
         krugozor_broadcast_disabled,
         krugozor_digest_photos_enabled,
+        krugozor_promo_filter_enabled,
     )
     from database.models import Region
     from database.models_extended import WorkTable
@@ -256,6 +282,7 @@ async def execute_krugozor_broadcast(
 
     # Сбор кандидатов: идём ротацией, по одному свежему посту с каждого источника,
     # пока не наберём max_items (разных источников) или не обойдём всех.
+    reject = _is_promo if krugozor_promo_filter_enabled() else None
     candidates: List[Dict[str, Any]] = []
     last_read_idx = rr
     picked_lips: Set[str] = set()
@@ -267,7 +294,7 @@ async def execute_krugozor_broadcast(
         posts = await _read_wall(parse_tokens, int(src["owner_id"]))
         if not posts:
             continue
-        fresh = _newest_unseen(posts, seen | picked_lips, max_age, now_ts)
+        fresh = _newest_unseen(posts, seen | picked_lips, max_age, now_ts, reject=reject)
         if fresh is None:
             continue
         oid, pid = int(fresh.get("owner_id")), int(fresh["id"])
