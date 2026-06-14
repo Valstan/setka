@@ -173,6 +173,7 @@ app = Celery(
         "tasks.parsing_scheduler_tasks",  # Postopus migration
         "tasks.discovery_tasks",  # community discovery + weekly recheck
         "tasks.radar_tasks",  # content radar: fan-out source poller (Ф0.2)
+        "tasks.broadcast_tasks",  # сетевая рассылка: диспетчер-публикатор (brain 2026-06-14)
     ],
 )
 app.config_from_object("config.celery_config")
@@ -1631,6 +1632,21 @@ app.conf.beat_schedule = {
         "task": "tasks.parsing_scheduler_tasks.mirror_community_to_telegram",
         "schedule": crontab(minute="10,40", hour="7-23"),
         "options": {"expires": 1200, "catchup": False},
+    },
+    # Сетевая рассылка (директива brain 2026-06-14): диспетчер-публикатор раз в
+    # минуту публикует wall.post немедленно в назревшие кампании (НЕ в VK-отложку).
+    # No-op, пока нет запланированных кампаний или BROADCAST_DISABLED.
+    "broadcast-dispatch": {
+        "task": "tasks.broadcast_tasks.dispatch_broadcasts",
+        "schedule": crontab(minute="*"),
+        "options": {"expires": 55, "catchup": False},
+    },
+    # Watchdog рассылки (#018): раз в час на :22. Алёртит только если есть
+    # просроченные кампании, а диспетчер их не разослал (молча встал).
+    "broadcast-watchdog": {
+        "task": "tasks.broadcast_tasks.check_broadcast_heartbeat",
+        "schedule": crontab(minute=22),
+        "options": {"expires": 1800, "catchup": False},
     },
 }
 

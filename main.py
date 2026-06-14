@@ -24,6 +24,7 @@ from web.api import (
     ad_cabinet,
     ad_crm,
     auth,
+    broadcast,
     communities,
     discovery,
     filtration,
@@ -150,6 +151,7 @@ app.include_router(filtration.router, prefix="/api/filtration", tags=["Filtratio
 app.include_router(templates_api.router, prefix="/api/templates", tags=["Message Templates"])
 app.include_router(ad_cabinet.router, prefix="/api/ad-cabinet", tags=["Ad Cabinet"])
 app.include_router(ad_crm.router, prefix="/api/ad-crm", tags=["Ad CRM"])
+app.include_router(broadcast.router, prefix="/api/broadcast", tags=["Network Broadcast"])
 app.include_router(
     subscriber_growth.router, prefix="/api/subscriber-growth", tags=["Subscriber Growth"]
 )
@@ -219,6 +221,12 @@ async def templates_page(request: Request):
 async def ad_page(request: Request):
     """Единый рекламный кабинет (С1): инбокс, CRM, планировщик и статистика во вкладках."""
     return templates.TemplateResponse("ad.html", {"request": request})
+
+
+@app.get("/broadcast")
+async def broadcast_page(request: Request):
+    """Сетевая рассылка: композер кампании + цели + расписание/повтор + очередь."""
+    return templates.TemplateResponse("broadcast.html", {"request": request})
 
 
 @app.get("/ad-cabinet")

@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block title %}Сетевая рассылка — SETKA{% endblock %}
+{% block nav_section_system %}active{% endblock %}
+{% block nav_broadcast %}active{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h3 class="mb-0"><i class="bi bi-broadcast"></i> Сетевая рассылка</h3>
+    <button class="btn btn-outline-secondary btn-sm" onclick="resetForm()">
+      <i class="bi bi-file-earmark-plus"></i> Новая кампания
+    </button>
+  </div>
+  <p class="text-muted small">
+    Соберите пост, выберите паблики (по умолчанию — все), задайте время и повтор.
+    Публикует сам SARAFAN по расписанию (не в отложку VK), всё редактируется здесь.
+  </p>
+
+  <div class="row g-4">
+    <!-- Композер -->
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span id="form-title"><i class="bi bi-pencil-square"></i> Новая кампания</span>
+          <span id="form-status" class="badge bg-secondary">черновик</span>
+        </div>
+        <div class="card-body">
+          <input type="hidden" id="campaign-id">
+          <div class="mb-3">
+            <label class="form-label">Название (для себя)</label>
+            <input type="text" class="form-control" id="f-title" placeholder="например, Анонс ярмарки">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Текст поста</label>
+            <textarea class="form-control" id="f-body" rows="6" placeholder="Текст, который уйдёт во все выбранные паблики"></textarea>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label d-flex justify-content-between">
+              <span>Картинки</span>
+              <label class="btn btn-outline-primary btn-sm mb-0">
+                <i class="bi bi-upload"></i> Загрузить
+                <input type="file" accept=".jpg,.jpeg,.png" hidden onchange="uploadImage(this)">
+              </label>
+            </label>
+            <div id="img-gallery" class="d-flex flex-wrap gap-2"></div>
+            <div class="form-text">Отмеченные картинки попадут в пост (до 10). Заливаются один раз, переиспользуются во всех целях.</div>
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-sm-6">
+              <label class="form-label">Время первой публикации (МСК)</label>
+              <input type="datetime-local" class="form-control" id="f-scheduled">
+            </div>
+            <div class="col-sm-3">
+              <label class="form-label">Повторов</label>
+              <input type="number" class="form-control" id="f-repeat-count" value="1" min="1">
+            </div>
+            <div class="col-sm-3">
+              <label class="form-label">Интервал, ч</label>
+              <input type="number" class="form-control" id="f-repeat-interval" value="24" min="0" step="0.5">
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label d-flex justify-content-between align-items-center">
+              <span>Цели (паблики)</span>
+              <span class="small">
+                <a href="#" onclick="toggleAllTargets(true);return false">все</a> ·
+                <a href="#" onclick="toggleAllTargets(false);return false">снять</a>
+              </span>
+            </label>
+            <div id="targets-box" class="border rounded p-2" style="max-height:220px;overflow:auto"></div>
+            <div class="form-text"><span id="targets-count">0</span> выбрано.</div>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button class="btn btn-secondary" onclick="saveCampaign(false)">
+              <i class="bi bi-save"></i> Сохранить черновик
+            </button>
+            <button class="btn btn-success" onclick="saveCampaign(true)">
+              <i class="bi bi-send"></i> Сохранить и запланировать
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Per-target статусы текущей кампании -->
+      <div class="card mt-3" id="pubs-card" style="display:none">
+        <div class="card-header"><i class="bi bi-list-check"></i> Доставка по целям</div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Прогон</th><th>Паблик</th><th>Статус</th><th>Ссылка / ошибка</th></tr></thead>
+            <tbody id="pubs-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Очередь кампаний -->
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header"><i class="bi bi-collection"></i> Кампании</div>
+        <div class="card-body p-0">
+          <table class="table table-hover mb-0 align-middle">
+            <thead><tr><th>Кампания</th><th>Статус</th><th>Цели</th><th>Когда</th><th></th></tr></thead>
+            <tbody id="campaigns-body"><tr><td colspan="5" class="text-muted p-3">Загрузка…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const API = "/api/broadcast";
+let DEFAULT_TARGETS = [];
+let SELECTED_IMAGES = new Set();
+
+async function jget(u){ const r = await fetch(u, {credentials:"same-origin"}); if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status); return r.json(); }
+async function jsend(u, method, body){
+  const r = await fetch(u, {method, credentials:"same-origin", headers:{"Content-Type":"application/json"}, body: body?JSON.stringify(body):undefined});
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+  return r.json();
+}
+
+function statusBadge(s){
+  const map = {draft:"secondary", scheduled:"info", done:"success", cancelled:"dark"};
+  return `<span class="badge bg-${map[s]||'secondary'}">${s}</span>`;
+}
+
+// ---- Цели ----
+async function loadDefaultTargets(){
+  const data = await jget(`${API}/default-targets`);
+  DEFAULT_TARGETS = data.targets || [];
+  renderTargets(new Set(DEFAULT_TARGETS.map(t=>t.group_id)));
+}
+function renderTargets(selected){
+  const box = document.getElementById("targets-box");
+  box.innerHTML = DEFAULT_TARGETS.map(t=>`
+    <div class="form-check">
+      <input class="form-check-input target-cb" type="checkbox" value="${t.group_id}" id="t${t.group_id}"
+             ${selected.has(t.group_id)?"checked":""} onchange="updateTargetsCount()">
+      <label class="form-check-label" for="t${t.group_id}">${t.name||t.group_id}</label>
+    </div>`).join("") || '<span class="text-muted small">Нет активных пабликов с привязкой к VK</span>';
+  updateTargetsCount();
+}
+function selectedTargets(){ return [...document.querySelectorAll(".target-cb:checked")].map(c=>parseInt(c.value)); }
+function updateTargetsCount(){ document.getElementById("targets-count").textContent = selectedTargets().length; }
+function toggleAllTargets(on){ document.querySelectorAll(".target-cb").forEach(c=>c.checked=on); updateTargetsCount(); }
+
+// ---- Картинки ----
+async function loadImages(){
+  const data = await jget(`${API}/images`);
+  const g = document.getElementById("img-gallery");
+  g.innerHTML = (data.images||[]).map(im=>`
+    <div class="position-relative border rounded p-1 ${SELECTED_IMAGES.has(im.name)?'border-primary border-2':''}" style="width:84px" title="${im.name}">
+      <img src="${im.url}" style="width:74px;height:56px;object-fit:cover;cursor:pointer" onclick="toggleImage('${im.name}')">
+      <button class="btn btn-sm btn-link text-danger p-0 position-absolute top-0 end-0" onclick="deleteImage('${im.name}')" title="Удалить">&times;</button>
+    </div>`).join("") || '<span class="text-muted small">Нет загруженных картинок</span>';
+}
+function toggleImage(name){ SELECTED_IMAGES.has(name)?SELECTED_IMAGES.delete(name):SELECTED_IMAGES.add(name); loadImages(); }
+async function uploadImage(input){
+  if(!input.files||!input.files[0]) return;
+  const fd = new FormData(); fd.append("file", input.files[0]);
+  try{
+    const r = await fetch(`${API}/images`, {method:"POST", credentials:"same-origin", body:fd});
+    if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+    const im = await r.json(); SELECTED_IMAGES.add(im.name); await loadImages();
+  }catch(e){ alert("Ошибка загрузки: "+e.message); }
+  input.value="";
+}
+async function deleteImage(name){
+  if(!confirm("Удалить картинку "+name+"?")) return;
+  try{ await jsend(`${API}/images/${encodeURIComponent(name)}`, "DELETE"); SELECTED_IMAGES.delete(name); await loadImages(); }
+  catch(e){ alert("Ошибка: "+e.message); }
+}
+
+// ---- Кампании ----
+async function loadCampaigns(){
+  const data = await jget(`${API}/campaigns`);
+  const body = document.getElementById("campaigns-body");
+  if(!(data.campaigns||[]).length){ body.innerHTML = '<tr><td colspan="5" class="text-muted p-3">Пока нет кампаний</td></tr>'; return; }
+  body.innerHTML = data.campaigns.map(c=>`
+    <tr style="cursor:pointer" onclick="openCampaign(${c.id})">
+      <td><div class="fw-semibold">${c.title||('Кампания #'+c.id)}</div>
+          <div class="small text-muted">${(c.body||'').slice(0,40)}${(c.body||'').length>40?'…':''}</div></td>
+      <td>${statusBadge(c.status)}<div class="small text-muted">прогон ${c.runs_done}/${c.repeat_count}</div></td>
+      <td>${c.targets_count}<div class="small text-success">${c.published_count}✓</div>${c.error_count?`<div class="small text-danger">${c.error_count}✗</div>`:''}</td>
+      <td class="small">${c.next_run_at?fmt(c.next_run_at):'—'}</td>
+      <td onclick="event.stopPropagation()">${rowActions(c)}</td>
+    </tr>`).join("");
+}
+function rowActions(c){
+  let b = "";
+  if(c.status==="scheduled") b += `<button class="btn btn-sm btn-outline-dark me-1" onclick="cancelCampaign(${c.id})" title="Отменить"><i class="bi bi-pause"></i></button>`;
+  if(c.error_count) b += `<button class="btn btn-sm btn-outline-warning me-1" onclick="retryCampaign(${c.id})" title="Повторить ошибки"><i class="bi bi-arrow-repeat"></i></button>`;
+  b += `<button class="btn btn-sm btn-outline-danger" onclick="deleteCampaign(${c.id})" title="Удалить"><i class="bi bi-trash"></i></button>`;
+  return b;
+}
+function fmt(iso){ try{ return new Date(iso).toLocaleString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}); }catch(e){ return iso; } }
+function toLocalInput(iso){ if(!iso) return ""; const d=new Date(iso); const p=n=>String(n).padStart(2,"0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
+
+function resetForm(){
+  document.getElementById("campaign-id").value="";
+  document.getElementById("f-title").value="";
+  document.getElementById("f-body").value="";
+  document.getElementById("f-scheduled").value="";
+  document.getElementById("f-repeat-count").value="1";
+  document.getElementById("f-repeat-interval").value="24";
+  document.getElementById("form-title").innerHTML='<i class="bi bi-pencil-square"></i> Новая кампания';
+  document.getElementById("form-status").className="badge bg-secondary";
+  document.getElementById("form-status").textContent="черновик";
+  document.getElementById("pubs-card").style.display="none";
+  SELECTED_IMAGES = new Set();
+  renderTargets(new Set(DEFAULT_TARGETS.map(t=>t.group_id)));
+  loadImages();
+}
+
+async function openCampaign(id){
+  const {campaign:c} = await jget(`${API}/campaigns/${id}`);
+  document.getElementById("campaign-id").value=c.id;
+  document.getElementById("f-title").value=c.title||"";
+  document.getElementById("f-body").value=c.body||"";
+  document.getElementById("f-scheduled").value=toLocalInput(c.scheduled_at);
+  document.getElementById("f-repeat-count").value=c.repeat_count;
+  document.getElementById("f-repeat-interval").value=c.repeat_interval_hours;
+  document.getElementById("form-title").innerHTML=`<i class="bi bi-pencil-square"></i> Кампания #${c.id}`;
+  document.getElementById("form-status").className="badge bg-"+({draft:"secondary",scheduled:"info",done:"success",cancelled:"dark"}[c.status]||"secondary");
+  document.getElementById("form-status").textContent=c.status;
+  SELECTED_IMAGES = new Set(c.image_names||[]);
+  renderTargets(new Set((c.targets||[]).map(t=>t.group_id)));
+  loadImages();
+  renderPubs(c.publications||[], c.targets||[]);
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+function renderPubs(pubs, targets){
+  const card=document.getElementById("pubs-card"), body=document.getElementById("pubs-body");
+  if(!pubs.length){ card.style.display="none"; return; }
+  const name = {}; targets.forEach(t=>name[t.group_id]=t.name||t.group_id);
+  card.style.display="block";
+  body.innerHTML = pubs.map(p=>`
+    <tr><td>${p.run_index+1}</td><td class="small">${name[p.group_id]||p.group_id}</td>
+    <td>${({published:'<span class="text-success">✓ опубликован</span>',error:'<span class="text-danger">✗ ошибка</span>',pending:'<span class="text-muted">⏳ в работе</span>'}[p.status]||p.status)}</td>
+    <td class="small">${p.post_url?`<a href="${p.post_url}" target="_blank">пост</a>`:(p.error||'')}</td></tr>`).join("");
+}
+
+function formPayload(){
+  return {
+    title: document.getElementById("f-title").value,
+    body: document.getElementById("f-body").value,
+    image_names: [...SELECTED_IMAGES],
+    target_group_ids: selectedTargets(),
+    scheduled_at: document.getElementById("f-scheduled").value || null,
+    repeat_count: parseInt(document.getElementById("f-repeat-count").value)||1,
+    repeat_interval_hours: parseFloat(document.getElementById("f-repeat-interval").value)||0,
+  };
+}
+async function saveCampaign(schedule){
+  const id = document.getElementById("campaign-id").value;
+  const payload = formPayload();
+  if(schedule && !payload.scheduled_at){ alert("Укажите время первой публикации"); return; }
+  if(!payload.target_group_ids.length){ alert("Выберите хотя бы один паблик"); return; }
+  try{
+    let cid = id;
+    if(id){ await jsend(`${API}/campaigns/${id}`, "PUT", payload); }
+    else { const res = await jsend(`${API}/campaigns`, "POST", payload); cid = res.campaign.id; }
+    if(schedule){ await jsend(`${API}/campaigns/${cid}/schedule`, "POST", {scheduled_at: payload.scheduled_at}); }
+    await loadCampaigns();
+    if(cid) openCampaign(cid);
+    if(!schedule && !id) resetForm();
+  }catch(e){ alert("Ошибка: "+e.message); }
+}
+async function cancelCampaign(id){ if(!confirm("Отменить кампанию?"))return; try{ await jsend(`${API}/campaigns/${id}/cancel`,"POST"); await loadCampaigns(); }catch(e){ alert(e.message); } }
+async function retryCampaign(id){ try{ await jsend(`${API}/campaigns/${id}/retry`,"POST"); await loadCampaigns(); }catch(e){ alert(e.message); } }
+async function deleteCampaign(id){ if(!confirm("Удалить кампанию безвозвратно?"))return; try{ await jsend(`${API}/campaigns/${id}`,"DELETE"); resetForm(); await loadCampaigns(); }catch(e){ alert(e.message); } }
+
+(async function init(){
+  try{ await loadDefaultTargets(); }catch(e){ console.error(e); }
+  await loadImages();
+  await loadCampaigns();
+})();
+</script>
+{% endblock %}
