@@ -429,6 +429,40 @@ def get_krugozor_source_exclude_ids() -> Set[int]:
     return out
 
 
+def get_krugozor_digest_max_items() -> int:
+    """Сколько новостей max в одном научпоп-дайджесте (решение владельца: до 4)."""
+    try:
+        return max(1, int(_getenv("KRUGOZOR_DIGEST_MAX_ITEMS", "4") or "4"))
+    except ValueError:
+        return 4
+
+
+def get_krugozor_snippet_len() -> int:
+    """До скольких знаков укорачивать длинный пост-источник в дайджесте (анонс)."""
+    try:
+        return max(120, int(_getenv("KRUGOZOR_SNIPPET_LEN", "500") or "500"))
+    except ValueError:
+        return 500
+
+
+def get_krugozor_text_budget() -> int:
+    """Бюджет длины всего дайджеста («сколько влезёт») — добираем пункты до него."""
+    try:
+        return max(800, int(_getenv("KRUGOZOR_TEXT_BUDGET", "3500") or "3500"))
+    except ValueError:
+        return 3500
+
+
+def krugozor_digest_photos_enabled() -> bool:
+    """Прикладывать лид-фото каждого пункта (грид). Дефолт — да (решение владельца)."""
+    return (_getenv("KRUGOZOR_DIGEST_PHOTOS", "1") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
 # --- LLM-курация дайджестов (shadow PoC, письмо brain 2026-06-07) -------------
 
 
