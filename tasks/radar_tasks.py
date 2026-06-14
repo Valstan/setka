@@ -70,9 +70,9 @@ async def _run_radar_bot():
         # вовсе, чтобы зря не тревожить общий бот. Владелец задаёт свой tg-id.
         return {"skipped": "RADAR_BOT_ALLOWED_USERS empty"}
 
-    from modules.digest_heartbeat import _get_redis
+    from modules.digest_heartbeat import _redis
 
-    r = _get_redis()
+    r = _redis()
     if r is None:
         return {"skipped": "no redis (offset persistence required)"}
     offset_key = "setka:radar_bot_offset"
