@@ -73,7 +73,14 @@ export default {
             const headers = new Headers({ 'content-type': resp.headers.get('content-type') || 'text/html' });
             const loc = resp.headers.get('location');
             if (loc) headers.set('x-relay-redirect', loc);
-            return new Response(resp.body, { status: resp.status, headers });
+            // Тело БУФЕРИЗУЕМ (как /media), НЕ стримим: стриминг через CF по
+            // HTTP/1.1 подвешивает httpx-клиент на VPS до ReadTimeout. Для лёгких
+            // каналов маленькое тело проскакивало, но крупные (напр. @ASupersharij)
+            // ловили стрим-столл → таймаут relay. Воркер сам дочитывает ленту от
+            // t.me и отдаёт её одним куском (страница превью — сотни КБ, в 128 MB
+            // памяти воркера помещается с запасом).
+            const text = await resp.text();
+            return new Response(text, { status: resp.status, headers });
         }
 
         // /media?u=<url> — медиа только с телеграмных CDN.
