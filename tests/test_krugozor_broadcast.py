@@ -147,13 +147,28 @@ def test_newest_unseen_ignores_malformed():
 # --------------------------------------------------------------------------- #
 
 
-def test_footer_with_name():
-    assert _build_footer("SciTopus") == "\n\n🔭 SciTopus"
+def test_footer_name_and_link():
+    # ссылка идёт текстом (native copyright VK отбрасывает для vk.com)
+    assert (
+        _build_footer("SciTopus", "https://vk.com/wall-1_2")
+        == "\n\n📚 Источник: SciTopus\nhttps://vk.com/wall-1_2"
+    )
 
 
-def test_footer_empty_when_no_name():
-    assert _build_footer("") == ""
-    assert _build_footer("  ") == ""
+def test_footer_link_without_name():
+    assert (
+        _build_footer("", "https://vk.com/wall-1_2")
+        == "\n\n📚 Источник: оригинал\nhttps://vk.com/wall-1_2"
+    )
+
+
+def test_footer_name_only_when_no_url():
+    assert _build_footer("SciTopus", "") == "\n\n📚 Источник: SciTopus"
+
+
+def test_footer_empty_when_nothing():
+    assert _build_footer("", "") == ""
+    assert _build_footer("  ", "  ") == ""
 
 
 class _FakeWT:
