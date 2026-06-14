@@ -93,16 +93,6 @@ def clear_copy_history(post_data: Dict[str, Any]) -> Dict[str, Any]:
     return post_data
 
 
-def format_number(num: int) -> str:
-    """Format number for display (1K, 1M, etc.)"""
-    if num >= 1_000_000:
-        return f"{num / 1_000_000:.1f}M"
-    elif num >= 1_000:
-        return f"{num / 1_000:.1f}K"
-    else:
-        return str(num)
-
-
 def _vk_wiki_link(url: str, link_text: str) -> str:
     """
     Кликабельная подпись во ВКонтакте (разметка постов): [url|текст]
