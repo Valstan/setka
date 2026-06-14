@@ -108,6 +108,12 @@ const apiClient = {
         });
     },
 
+    async publishAdRequestNow(id) {
+        return this.request(`/ad-cabinet/requests/${id}/publish`, {
+            method: 'POST'
+        });
+    },
+
     async getAdTemplates() {
         return this.request('/templates/?include_inactive=0');
     },

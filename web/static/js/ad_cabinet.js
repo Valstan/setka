@@ -287,6 +287,10 @@ function renderCard(ar) {
                        </button>
                        <button class="btn btn-sm btn-outline-primary" onclick="scheduleFromRequest(${ar.id})">
                            <i class="bi bi-calendar-plus"></i> Запланировать
+                       </button>
+                       <button class="btn btn-sm btn-info" onclick="publishNow(${ar.id})"
+                               title="Опубликовать бесплатно СЕЙЧАС (для бытовых объявлений) и убрать карточку">
+                           <i class="bi bi-send-check"></i> Опубликовать
                        </button>`}
                 <button class="btn btn-sm btn-outline-success" onclick="markCard(${ar.id}, 'published')">
                     <i class="bi bi-check2"></i> Опубликовано
@@ -371,6 +375,22 @@ async function markCard(id, status) {
         setTimeout(loadAdRequests, 300);
     } catch (e) {
         _res(id, 'Ошибка смены статуса: ' + escapeHtml(e.message), 'danger');
+    }
+}
+
+// Опубликовать заявку бесплатно и сейчас (бытовые объявления) — пост в живой
+// паблик + снять оригинал + убрать карточку. Подтверждаем (наружу-действие).
+async function publishNow(id) {
+    if (!confirm('Опубликовать это объявление в сообществе сейчас (бесплатно) и убрать из входящих?')) {
+        return;
+    }
+    try {
+        const r = await apiClient.publishAdRequestNow(id);
+        const url = r && r.url ? ` (${escapeHtml(r.url)})` : '';
+        _res(id, 'Опубликовано' + url, 'success');
+        setTimeout(loadAdRequests, 500);
+    } catch (e) {
+        _res(id, 'Ошибка публикации: ' + escapeHtml(e.message), 'danger');
     }
 }
 
