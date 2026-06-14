@@ -15,6 +15,9 @@ per-post вердикт keep/drop и пишет его назад. Все нео
        {"id": 12, "tokens_estimate": 800,
         "verdicts": [{"lip": "123_45", "verdict": "drop", "reason": "перефраз-дубль"}]}
   --stats [--region CODE]               агрегат для ack brain'у (flag-rate и т.п.)
+  --flagged [--region CODE]            помеченные «drop» посты (text+url+причина) —
+                                        выгрузка для precision-спот-чека владельцем
+                                        (gate Фазы 2: ground-truth релевантности — он)
 """
 
 from __future__ import annotations
@@ -109,6 +112,54 @@ async def _apply(payload: dict) -> None:
     )
 
 
+def _flagged_from_run(candidates: list | None, verdicts: list | None) -> list[dict]:
+    """Сджойнить drop-вердикты с текстом кандидата по `lip`. Чистая (без БД) →
+    тестируемо. Пропавший кандидат (lip не нашёлся) деградирует в пустые поля,
+    но строку не теряем — drop остаётся видимым для ревью."""
+    by_lip = {c.get("lip"): c for c in (candidates or []) if isinstance(c, dict)}
+    out: list[dict] = []
+    for v in verdicts or []:
+        if not isinstance(v, dict) or v.get("verdict") != "drop":
+            continue
+        cand = by_lip.get(v.get("lip")) or {}
+        out.append(
+            {
+                "lip": v.get("lip"),
+                "url": cand.get("url"),
+                "reason": (v.get("reason") or "").strip(),
+                "text": cand.get("text") or "",
+                "has_media": bool(cand.get("has_media")),
+            }
+        )
+    return out
+
+
+async def _flagged(region: str | None) -> None:
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(DigestCurationRun)
+            .where(DigestCurationRun.status == "reviewed")
+            .order_by(DigestCurationRun.created_at.asc())
+        )
+        if region:
+            stmt = stmt.where(DigestCurationRun.region_code == region)
+        rows = (await session.execute(stmt)).scalars().all()
+
+        out = []
+        for r in rows:
+            for f in _flagged_from_run(r.candidates, r.verdicts):
+                out.append(
+                    {
+                        "run_id": r.id,
+                        "region_code": r.region_code,
+                        "theme": r.theme,
+                        "created_at": r.created_at.isoformat() if r.created_at else None,
+                        **f,
+                    }
+                )
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+
+
 async def _stats(region: str | None) -> None:
     async with AsyncSessionLocal() as session:
         stmt = select(DigestCurationRun).where(DigestCurationRun.status == "reviewed")
@@ -163,6 +214,9 @@ def main() -> None:
     g.add_argument("--list", action="store_true", help="pending-прогоны как JSON")
     g.add_argument("--apply", action="store_true", help="записать вердикты (JSON)")
     g.add_argument("--stats", action="store_true", help="агрегат измерения PoC")
+    g.add_argument(
+        "--flagged", action="store_true", help="drop-посты (text+url+причина) для спот-чека"
+    )
     ap.add_argument("--limit", type=int, default=20)
     ap.add_argument("--region", type=str, default=None)
     ap.add_argument("--file", type=str, default=None, help="JSON-файл для --apply (иначе stdin)")
@@ -172,6 +226,8 @@ def main() -> None:
         asyncio.run(_list(args.limit, args.region))
     elif args.stats:
         asyncio.run(_stats(args.region))
+    elif args.flagged:
+        asyncio.run(_flagged(args.region))
     elif args.apply:
         raw = open(args.file, encoding="utf-8").read() if args.file else sys.stdin.read()
         asyncio.run(_apply(json.loads(raw)))
