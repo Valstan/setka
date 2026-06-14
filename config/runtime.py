@@ -400,6 +400,48 @@ def get_krugozor_post_interval_seconds() -> float:
         return 5.0
 
 
+# --- Сетевая рассылка: внутренний планировщик-публикатор -----------------------
+# (директива brain 2026-06-14). Оператор собирает кампанию в SARAFAN и
+# планирует её; диспетчер-беат публикует wall.post немедленно в заданное время,
+# повтор N раз. В отличие от krugozor — НЕ авто-поток, а ручные кампании; гейт
+# не «off по умолчанию» (кампании не существуют, пока их не создали), но есть
+# аварийный kill-switch BROADCAST_DISABLED.
+
+
+def broadcast_disabled() -> bool:
+    """Аварийный стоп диспетчера рассылки (дефолт — ВКЛючён, т.е. работает).
+
+    BROADCAST_DISABLED=1/true/yes/on => диспетчер не публикует ничего (no-op),
+    даже если есть запланированные кампании. Безопасность по умолчанию держится
+    не этим флагом, а тем, что кампания должна быть явно создана и запланирована
+    оператором."""
+    return (_getenv("BROADCAST_DISABLED", "0") or "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def get_broadcast_post_interval_seconds() -> float:
+    """Пауза между публикациями по целям (анти-Captcha). Дефолт 5с.
+
+    Probe на живых данных krugozor: 16 wall.post @5с = 16/16 без капчи; бурст
+    @3с ловит капчу. 0 = без паузы (тесты)."""
+    try:
+        return max(0.0, float(_getenv("BROADCAST_POST_INTERVAL_SECONDS", "5") or "5"))
+    except ValueError:
+        return 5.0
+
+
+def get_broadcast_default_repeat_interval_hours() -> float:
+    """Дефолтный интервал между повторами кампании (часы), если не задан. 24ч."""
+    try:
+        return max(0.0, float(_getenv("BROADCAST_DEFAULT_REPEAT_INTERVAL_HOURS", "24") or "24"))
+    except ValueError:
+        return 24.0
+
+
 def get_krugozor_target_region_codes() -> Optional[Set[str]]:
     """Ограничить регионы-цели (коды через запятую); None = все активные.
 

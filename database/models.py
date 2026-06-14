@@ -1066,3 +1066,159 @@ class PublishSchedule(Base):
 
     def __repr__(self):
         return f"<PublishSchedule {self.category} at {self.hour}:{self.minute}>"
+
+
+class BroadcastCampaign(Base):
+    """Кампания сетевой рассылки (внутренний планировщик-публикатор). Миграция 044.
+
+    Канон владельца (директива brain 2026-06-14): собрать пост в SARAFAN →
+    разослать по выбранным сообществам (по умолчанию все паблики сети) → свой
+    беат публикует ``wall.post`` НЕМЕДЛЕННО в заданное время, повтор N раз. НЕ
+    кладём в VK-отложку — всё управление (текст/расписание/очередь) в программе.
+
+    Время: ``scheduled_at``/``next_run_at`` — МСК wall-clock naive (как
+    ``AdScheduledPost.publish_date``); диспетчер сравнивает с МСК-now.
+    """
+
+    __tablename__ = "broadcast_campaigns"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    title = Column(String(300), nullable=False, default="")
+    body = Column(Text, nullable=False, default="")
+    image_names = Column(JSON, nullable=True)  # имена загруженных картинок (до заливки)
+    attachments = Column(Text, nullable=True)  # кэш "photo<o>_<id>,…" после первой заливки
+
+    status = Column(
+        String(20), nullable=False, default="draft", index=True
+    )  # draft|scheduled|done|cancelled
+    scheduled_at = Column(DateTime, nullable=True)  # МСК wall-clock: первый запуск
+    repeat_count = Column(Integer, nullable=False, default=1)  # сколько раз разослать (≥1)
+    repeat_interval_hours = Column(Float, nullable=False, default=24)  # интервал между запусками
+    runs_done = Column(Integer, nullable=False, default=0)  # завершённых прогонов
+    next_run_at = Column(DateTime, nullable=True, index=True)  # МСК wall-clock: следующий запуск
+    vary_per_target = Column(Boolean, nullable=False, default=False)  # hook лёгкой вариации (off)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    targets = relationship(
+        "BroadcastTarget", back_populates="campaign", cascade="all, delete-orphan"
+    )
+    publications = relationship(
+        "BroadcastPublication", back_populates="campaign", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self):
+        return (
+            f"<BroadcastCampaign {self.id} {self.status} runs={self.runs_done}/{self.repeat_count}>"
+        )
+
+    def to_dict(self, *, targets=None, publications=None):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "body": self.body,
+            "image_names": self.image_names or [],
+            "attachments": self.attachments,
+            "status": self.status,
+            "scheduled_at": self.scheduled_at.isoformat() if self.scheduled_at else None,
+            "repeat_count": self.repeat_count,
+            "repeat_interval_hours": self.repeat_interval_hours,
+            "runs_done": self.runs_done,
+            "next_run_at": self.next_run_at.isoformat() if self.next_run_at else None,
+            "vary_per_target": self.vary_per_target,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "targets": [t.to_dict() for t in targets] if targets is not None else None,
+            "publications": (
+                [p.to_dict() for p in publications] if publications is not None else None
+            ),
+        }
+
+
+class BroadcastTarget(Base):
+    """Целевое сообщество кампании рассылки. Миграция 044.
+
+    ``group_id`` — owner_id группы VK (как ``regions.vk_group_id``). Уникален в
+    рамках кампании. ``name`` — снимок имени паблика/региона для UI.
+    """
+
+    __tablename__ = "broadcast_targets"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    campaign_id = Column(
+        BigInteger,
+        ForeignKey("broadcast_campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    group_id = Column(BigInteger, nullable=False)
+    name = Column(String(300), nullable=True)
+
+    campaign = relationship("BroadcastCampaign", back_populates="targets")
+
+    __table_args__ = (Index("uq_broadcast_target", "campaign_id", "group_id", unique=True),)
+
+    def __repr__(self):
+        return f"<BroadcastTarget c={self.campaign_id} g={self.group_id}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "campaign_id": self.campaign_id,
+            "group_id": self.group_id,
+            "name": self.name,
+        }
+
+
+class BroadcastPublication(Base):
+    """Per-(цель, прогон) публикация рассылки — защёлка идемпотентности. Миграция 044.
+
+    Уникум ``(campaign_id, group_id, run_index)``: диспетчер клеймит строку через
+    INSERT ... ON CONFLICT DO NOTHING ПЕРЕД публикацией, поэтому под конкурентным
+    беатом один пост уходит в одну цель один раз за прогон. ``status``:
+    ``pending`` (заклеймлено, публикуется) → ``published`` (+ vk_post_id/url) |
+    ``error`` (+ причина).
+    """
+
+    __tablename__ = "broadcast_publications"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    campaign_id = Column(
+        BigInteger,
+        ForeignKey("broadcast_campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    group_id = Column(BigInteger, nullable=False)
+    run_index = Column(Integer, nullable=False, default=0)
+    status = Column(String(20), nullable=False, default="pending")  # pending|published|error
+    vk_post_id = Column(BigInteger, nullable=True)
+    post_url = Column(String(300), nullable=True)
+    error = Column(Text, nullable=True)
+    published_at = Column(DateTime, default=datetime.utcnow)
+
+    campaign = relationship("BroadcastCampaign", back_populates="publications")
+
+    __table_args__ = (
+        Index("uq_broadcast_publication", "campaign_id", "group_id", "run_index", unique=True),
+    )
+
+    def __repr__(self):
+        return (
+            f"<BroadcastPublication c={self.campaign_id} g={self.group_id} "
+            f"run={self.run_index} {self.status}>"
+        )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "campaign_id": self.campaign_id,
+            "group_id": self.group_id,
+            "run_index": self.run_index,
+            "status": self.status,
+            "vk_post_id": self.vk_post_id,
+            "post_url": self.post_url,
+            "error": self.error,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+        }
