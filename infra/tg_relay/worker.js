@@ -66,7 +66,7 @@ export default {
             // httpx на VPS до ReadTimeout. AbortSignal не даёт зависшему соединению
             // съесть весь бюджет — некоторые гиганты (напр. @ASupersharij) отдают
             // AJAX-вариант заглушкой без ленты и держат сокет открытым.
-            const fetchVariant = async (useAjax) => {
+            const fetchVariant = async (useAjax, timeoutMs) => {
                 const headers = useAjax
                     ? { ...BROWSER_HEADERS, 'x-requested-with': 'XMLHttpRequest', 'content-length': '0' }
                     : { ...BROWSER_HEADERS };
@@ -74,7 +74,7 @@ export default {
                     method: useAjax ? 'POST' : 'GET',
                     headers,
                     redirect: 'manual', // редирект = «у канала нет web-превью»
-                    signal: AbortSignal.timeout(20000),
+                    signal: AbortSignal.timeout(timeoutMs),
                 });
                 const loc = resp.headers.get('location');
                 if (loc) return { status: resp.status, body: '', loc };
@@ -82,19 +82,21 @@ export default {
             };
             const hasFeed = (r) => r && (r.loc || /data-post="[A-Za-z0-9_]+\/\d+"/.test(r.body));
 
-            // AJAX даёт больше сообщений/страницу — пробуем первым. Если завис/
-            // отдал заглушку без ленты (и не редирект) — фолбэк на обычный GET:
-            // datacenter-IP получает деградированную, но РАБОЧУЮ страницу, свежих
-            // сообщений хватает для мониторинга «есть ли новое».
+            // AJAX даёт больше сообщений/страницу — пробуем первым, но с КОРОТКИМ
+            // таймаутом (6с): нормальные каналы отвечают мгновенно, а гиганты вроде
+            // @ASupersharij отдают заглушку и держат сокет — нет смысла ждать. Затем
+            // фолбэк на обычный GET (больше времени): datacenter-IP получает
+            // деградированную, но РАБОЧУЮ страницу (og:title + свежие сообщения —
+            // хватает, чтобы радар увидел «есть новое»).
             let result = null;
             try {
-                result = await fetchVariant(true);
+                result = await fetchVariant(true, 6000);
             } catch (e) {
                 result = null;
             }
             if (!hasFeed(result)) {
                 try {
-                    const g = await fetchVariant(false);
+                    const g = await fetchVariant(false, 25000);
                     if (hasFeed(g) || !result) result = g;
                 } catch (e) {
                     /* GET тоже не вышел — отдадим что есть от AJAX (или 504 ниже) */

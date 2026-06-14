@@ -30,7 +30,7 @@ from modules.radar.sources import FetchedItem
 
 logger = logging.getLogger(__name__)
 
-FETCH_TIMEOUT_SECONDS = 30
+FETCH_TIMEOUT_SECONDS = 45  # relay делает AJAX(6с)→GET(25с) фолбэк для тяжёлых каналов
 CHANNEL_RE = re.compile(r"^[A-Za-z0-9_]{3,64}$")
 
 _MSG_SPLIT_RE = re.compile(r'data-post="(?P<ch>[^/"]+)/(?P<id>\d+)"')
