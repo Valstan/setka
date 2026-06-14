@@ -145,20 +145,80 @@
         const icon = { vk: 'bi-chat-square-text', tg: 'bi-telegram' }[s.type] || 'bi-rss';
         const fail = s.fail_count > 0
             ? `<span class="badge bg-warning text-dark" title="${esc(s.last_error || '')}">ошибки: ${s.fail_count}</span>` : '';
+        const paused = sub.is_active === false;
+        const title = paused
+            ? `<span class="text-secondary text-decoration-line-through">${esc(s.title || s.key)}</span>`
+            : (s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || s.key)}</a>`
+                     : esc(s.title || s.key));
+        const pauseBtn = `<button class="btn btn-sm ${paused ? 'btn-outline-success' : 'btn-outline-secondary'}"
+              data-toggle-sub="${sub.id}" data-active="${paused ? '1' : '0'}"
+              title="${paused ? 'Возобновить' : 'Поставить на паузу'}">
+              <i class="bi ${paused ? 'bi-play-fill' : 'bi-pause-fill'}"></i></button>`;
         return `
-        <div class="card mb-2">
+        <div class="card mb-2 ${paused ? 'opacity-75' : ''}">
           <div class="card-body d-flex justify-content-between align-items-center py-2">
             <div>
               <i class="bi ${icon} me-1"></i>
-              ${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || s.key)}</a>`
-                      : esc(s.title || s.key)}
-              <span class="text-secondary small ms-2">${s.type}</span> ${fail}
+              ${title}
+              <span class="text-secondary small ms-2">${s.type}</span>
+              ${paused ? '<span class="badge bg-secondary ms-1">пауза</span>' : ''} ${fail}
             </div>
-            <button class="btn btn-sm btn-outline-danger" data-unsub="${sub.id}" title="Отписаться">
-              <i class="bi bi-x-lg"></i>
-            </button>
+            <div class="d-flex gap-2">
+              ${pauseBtn}
+              <button class="btn btn-sm btn-outline-danger" data-unsub="${sub.id}" title="Отписаться">
+                <i class="bi bi-x-lg"></i>
+              </button>
+            </div>
           </div>
         </div>`;
+    }
+
+    // ───────────── Выводы ─────────────
+
+    const OUTPUT_META = {
+        feed: { icon: 'bi-broadcast', label: 'Лента радара' },
+        telegram: { icon: 'bi-telegram', label: 'Telegram' },
+        vk: { icon: 'bi-chat-square-text', label: 'VK' },
+    };
+
+    function outputRow(o) {
+        const meta = OUTPUT_META[o.type] || { icon: 'bi-send', label: o.type };
+        const modeLabel = o.mode === 'full' ? 'целиком' : 'начало+ссылка';
+        const off = o.is_active === false;
+        const target = o.type === 'feed' ? '' : `<span class="text-secondary small ms-1">${esc(o.target || '')}</span>`;
+        const health = o.fail_count > 0
+            ? `<span class="badge bg-warning text-dark ms-1" title="${esc(o.last_error || '')}">ошибки: ${o.fail_count}</span>`
+            : '';
+        const testBtn = o.type === 'feed' ? '' :
+            `<button class="btn btn-sm btn-outline-info" data-test-output="${o.id}" title="Тест доставки">
+               <i class="bi bi-send-check"></i></button>`;
+        return `
+        <div class="card mb-2 ${off ? 'opacity-75' : ''}">
+          <div class="card-body d-flex justify-content-between align-items-center py-2">
+            <div>
+              <i class="bi ${meta.icon} me-1"></i>
+              <strong>${esc(o.title || meta.label)}</strong>${target}
+              <span class="badge bg-light text-dark border ms-1">${modeLabel}</span>
+              ${off ? '<span class="badge bg-secondary ms-1">выкл</span>' : ''} ${health}
+            </div>
+            <div class="d-flex gap-2">
+              ${testBtn}
+              <button class="btn btn-sm ${off ? 'btn-outline-success' : 'btn-outline-secondary'}"
+                  data-toggle-output="${o.id}" data-active="${off ? '1' : '0'}"
+                  title="${off ? 'Включить' : 'Выключить'}">
+                <i class="bi ${off ? 'bi-play-fill' : 'bi-pause-fill'}"></i></button>
+              <button class="btn btn-sm btn-outline-danger" data-del-output="${o.id}" title="Удалить">
+                <i class="bi bi-x-lg"></i></button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    async function loadOutputs() {
+        const data = await api('/api/radar/outputs');
+        $('outputs-list').innerHTML = data.outputs.length
+            ? data.outputs.map(outputRow).join('')
+            : '<p class="text-secondary text-center py-4">Каналов вывода пока нет. Лента радара работает по умолчанию.</p>';
     }
 
     async function loadSources() {
@@ -176,10 +236,11 @@
             document.querySelectorAll('#radar-tabs .nav-link').forEach((n) => n.classList.remove('active'));
             tab.classList.add('active');
             const name = tab.dataset.tab;
-            ['feed', 'saved', 'sources'].forEach((t) =>
+            ['feed', 'saved', 'sources', 'outputs'].forEach((t) =>
                 $('tab-' + t).classList.toggle('d-none', t !== name));
             if (name === 'saved' && !state.savedLoaded) loadSaved(false).catch(console.error);
             if (name === 'sources') loadSources().catch(console.error);
+            if (name === 'outputs') loadOutputs().catch(console.error);
             return;
         }
         const saveBtn = e.target.closest('[data-save]');
@@ -212,6 +273,51 @@
                 await api('/api/radar/subscriptions/' + unsubBtn.dataset.unsub, { method: 'DELETE' });
                 unsubBtn.closest('.card').remove();
             } catch (err) { alert('Не удалось отписаться: ' + err.message); }
+            return;
+        }
+        const toggleSub = e.target.closest('[data-toggle-sub]');
+        if (toggleSub) {
+            toggleSub.disabled = true;
+            try {
+                await api('/api/radar/subscriptions/' + toggleSub.dataset.toggleSub, {
+                    method: 'PATCH', body: JSON.stringify({ is_active: toggleSub.dataset.active === '1' }),
+                });
+                await loadSources();
+            } catch (err) { toggleSub.disabled = false; alert('Не удалось: ' + err.message); }
+            return;
+        }
+        const toggleOut = e.target.closest('[data-toggle-output]');
+        if (toggleOut) {
+            toggleOut.disabled = true;
+            try {
+                await api('/api/radar/outputs/' + toggleOut.dataset.toggleOutput, {
+                    method: 'PATCH', body: JSON.stringify({ is_active: toggleOut.dataset.active === '1' }),
+                });
+                await loadOutputs();
+            } catch (err) { toggleOut.disabled = false; alert('Не удалось: ' + err.message); }
+            return;
+        }
+        const delOut = e.target.closest('[data-del-output]');
+        if (delOut) {
+            if (!confirm('Удалить канал вывода?')) return;
+            try {
+                await api('/api/radar/outputs/' + delOut.dataset.delOutput, { method: 'DELETE' });
+                delOut.closest('.card').remove();
+            } catch (err) { alert('Не удалось удалить: ' + err.message); }
+            return;
+        }
+        const testOut = e.target.closest('[data-test-output]');
+        if (testOut) {
+            testOut.disabled = true;
+            const icon = testOut.querySelector('i');
+            const prev = icon ? icon.className : '';
+            if (icon) icon.className = 'bi bi-hourglass-split';
+            try {
+                const res = await api('/api/radar/outputs/' + testOut.dataset.testOutput + '/test', { method: 'POST' });
+                alert(res.detail || (res.ok ? 'Отправлено' : 'Не удалось'));
+            } catch (err) { alert('Ошибка теста: ' + err.message); }
+            finally { testOut.disabled = false; if (icon) icon.className = prev; }
+            return;
         }
     });
 
@@ -231,6 +337,30 @@
             });
             $('source-value').value = '';
             await loadSources();
+        } catch (err) {
+            errBox.textContent = err.message;
+            errBox.classList.remove('d-none');
+        } finally { btn.disabled = false; }
+    });
+
+    $('output-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const errBox = $('output-error');
+        errBox.classList.add('d-none');
+        const btn = $('output-add-btn');
+        btn.disabled = true;
+        try {
+            const payload = {
+                type: $('output-type').value,
+                target: $('output-target').value.trim(),
+                mode: $('output-mode').value,
+            };
+            const bot = $('output-bot').value.trim();
+            if (bot) payload.bot_name = bot;
+            await api('/api/radar/outputs', { method: 'POST', body: JSON.stringify(payload) });
+            $('output-target').value = '';
+            $('output-bot').value = '';
+            await loadOutputs();
         } catch (err) {
             errBox.textContent = err.message;
             errBox.classList.remove('d-none');

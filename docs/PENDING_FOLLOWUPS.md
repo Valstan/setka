@@ -75,6 +75,35 @@ Batrachospermum (-85330), Время-Вперёд (-65614662).
   `RADAR_BOT_NAME=AFONYA` + `RADAR_BOT_ALLOWED_USERS=352096813` (прод-правка вне git).
 - 🟢 **Браузер/TG-проверка владельцем:** форварднуть @malm_info_bot пост канала → канал в радаре.
 
+### 📻 Личный кабинет радара — выводы + CRUD источников (директива brain 2026-06-14 `radar-personal-cabinet`)
+
+`⏱ 2026-06-14 · snooze 0 · fresh`
+
+Дельта поверх Ф0/Ф1 (точка входа `/radar` + лента/архив/источники/push **уже были** —
+не переделывал, см. ответ brain `mailbox/to-brain/2026-06-14-radar-cabinet-and-delivery-probe.md`).
+
+- ✅ **Probe внешней доставки выполнен (#020):** **api.telegram.org ДОСТУПЕН с этого бокса**
+  (myjino: 302/0.2с, intake-бот getUpdates тикает, алёрты уходят) — **G63 здесь НЕ материализуется**,
+  TG-вывод текстом идёт напрямую через Bot API, relay для Bot API не нужен (relay только для
+  чтения t.me/s/ и CDN-медиа). VK `wall.post` — уже установлен probe-ами рассылки/обложек (16/16).
+  → оба внешних вывода buildable, построил сразу.
+- ✅ **Построено (ветка `feat/radar-cabinet-outputs`, PR #TBD):** миграция 045
+  (`radar_subscriptions.is_active` пауза + таблица `radar_outputs`); модель `RadarOutput`;
+  `modules/radar/delivery.py` (хук в поллере после web-push, под kill-switch
+  `RADAR_DELIVERY_DISABLED`; курсор at-most-once по `item.id`, старт с MAX(id) — без бэклог-флуда;
+  bounded 10/прогон; throttle 1с; per-output изоляция; fail_count/last_error для видимости #018);
+  API `/api/radar/outputs` CRUD + `/test` + `PATCH /subscriptions/{id}` (пауза); UI вкладка «Выводы»
+  (добавить TG/VK/лента, режим начало+ссылка/целиком, тест-кнопка, вкл/выкл) + пауза в «Источниках».
+  Типы вывода: `feed` (дефолт, no-op — лента сама) / `telegram` (бот sendMessage) / `vk` (wall.post,
+  текст+ссылка, медиа не рехостим — G64). +19 тестов (1400 зелёных).
+- ⏳ **Деплой:** миграция 045 (ADV: ADD COLUMN + CREATE TABLE, аддитивно) + restart web/worker/beat.
+- 🟢 **Браузер-верификация владельцем:** вкладка «Выводы» → добавить свой Telegram (бот в канал/чат) →
+  «тест доставки» → пришло; пауза источника убирает его из ленты.
+- 🟢 **Backlog (suggest-добавки директивы, по мере надобности):** instant vs дайджест per-вывод;
+  keyword-фильтр per-источник; индикатор «источник замолчал»; счётчик непрочитанного. Креды
+  внешних выводов для **не-владельца** radar-юзера (свой бот/VK-токен) — пока pilot=владелец
+  переиспользует общие; мультиюзер-креды = отдельная нитка.
+
 ### 🧩 Brain-директивы 2026-06-14 (recommend, probe-first)
 
 `⏱ 2026-06-14 · snooze 0 · fresh`

@@ -161,6 +161,21 @@ async def poll_all_sources() -> dict:
         except Exception as e:  # noqa: BLE001
             logger.warning("radar push hook failed: %s", e)
 
+        # Доставка во внешние выводы (кабинет, миграция 045) — тоже после коммита,
+        # best-effort и под аварийным kill-switch. Курсор at-most-once независим
+        # от new_by_source: модуль сам выбирает новые элементы по per-output курсору.
+        try:
+            from config.runtime import radar_delivery_disabled
+
+            if not radar_delivery_disabled():
+                from modules.radar.delivery import deliver_new_items
+
+                delivery_summary = await deliver_new_items()
+                if delivery_summary.get("delivered") or delivery_summary.get("failed"):
+                    logger.info("radar delivery: %s", delivery_summary)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("radar delivery hook failed: %s", e)
+
     # Heartbeat пишем и при 0 источников: «поллер жив» ≠ «есть что поллить».
     touch_heartbeat()
     logger.info("radar poll done: %s", summary)

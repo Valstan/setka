@@ -423,6 +423,20 @@ def broadcast_disabled() -> bool:
     )
 
 
+def radar_delivery_disabled() -> bool:
+    """Аварийный стоп доставки радара во внешние выводы (дефолт — ВКЛючена).
+
+    RADAR_DELIVERY_DISABLED=1/true/yes/on => хук доставки в TG/VK-выводы no-op
+    (лента/архив/push не затронуты). Безопасность по умолчанию держится тем, что
+    внешний вывод должен быть явно создан юзером в кабинете (off, пока не задан)."""
+    return (_getenv("RADAR_DELIVERY_DISABLED", "0") or "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def get_broadcast_post_interval_seconds() -> float:
     """Пауза между публикациями по целям (анти-Captcha). Дефолт 5с.
 

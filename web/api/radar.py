@@ -24,6 +24,7 @@ from database import models  # noqa: F401 - конфигурация маппе�
 from database.connection import AsyncSessionLocal
 from database.models_extended import (
     RadarItem,
+    RadarOutput,
     RadarPushSubscription,
     RadarSaved,
     RadarSource,
@@ -109,12 +110,37 @@ async def list_subscriptions(request: Request):
             "subscriptions": [
                 {
                     "id": s.id,
+                    "is_active": s.is_active,
                     "created_at": s.created_at.isoformat() if s.created_at else None,
                     "source": s.source.to_dict() if s.source else None,
                 }
                 for s in subs
             ]
         }
+
+
+class SubscriptionPatchIn(BaseModel):
+    is_active: bool
+
+
+@router.patch("/subscriptions/{subscription_id}")
+async def patch_subscription(subscription_id: int, body: SubscriptionPatchIn, request: Request):
+    """Пауза/возобновление источника без удаления (fan-out сохраняется)."""
+    user = _current_user(request)
+    async with AsyncSessionLocal() as session:
+        sub = (
+            await session.execute(
+                select(RadarSubscription).where(
+                    RadarSubscription.id == subscription_id,
+                    RadarSubscription.user_id == user.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if sub is None:
+            raise HTTPException(status_code=404, detail="Подписка не найдена")
+        sub.is_active = body.is_active
+        await session.commit()
+        return {"id": sub.id, "is_active": sub.is_active}
 
 
 @router.post("/subscriptions", status_code=201)
@@ -173,7 +199,12 @@ async def get_feed(
     """
     user = _current_user(request)
     async with AsyncSessionLocal() as session:
-        source_ids = select(RadarSubscription.source_id).where(RadarSubscription.user_id == user.id)
+        # Только активные подписки: поставленный на паузу источник уходит из ленты
+        # (но продолжает поллиться для других — fan-out).
+        source_ids = select(RadarSubscription.source_id).where(
+            RadarSubscription.user_id == user.id,
+            RadarSubscription.is_active.is_(True),
+        )
         stmt = (
             select(RadarItem, RadarSource)
             .join(RadarSource, RadarSource.id == RadarItem.source_id)
@@ -474,3 +505,145 @@ async def delete_push_subscription(body: PushUnsubscribeIn, request: Request):
             await session.delete(sub)
             await session.commit()
     return {"deleted": sub is not None}
+
+
+# ───────────────────── Целевые каналы вывода (кабинет, 045) ─────────────────────
+
+
+_OUTPUT_TYPES = ("feed", "telegram", "vk")
+_OUTPUT_MODES = ("excerpt_link", "full")
+
+
+class OutputCreateIn(BaseModel):
+    type: str = Field(..., pattern=r"^(feed|telegram|vk)$")
+    title: Optional[str] = Field(None, max_length=200)
+    target: Optional[str] = Field(None, max_length=512)
+    mode: str = Field("excerpt_link", pattern=r"^(excerpt_link|full)$")
+    bot_name: Optional[str] = Field(None, max_length=64)  # для telegram; пусто = радар-бот
+
+
+class OutputPatchIn(BaseModel):
+    title: Optional[str] = Field(None, max_length=200)
+    target: Optional[str] = Field(None, max_length=512)
+    mode: Optional[str] = Field(None, pattern=r"^(excerpt_link|full)$")
+    bot_name: Optional[str] = Field(None, max_length=64)
+    is_active: Optional[bool] = None
+
+
+@router.get("/outputs")
+async def list_outputs(request: Request):
+    """Целевые каналы вывода текущего юзера (куда радар шлёт найденное)."""
+    user = _current_user(request)
+    async with AsyncSessionLocal() as session:
+        outputs = (
+            (
+                await session.execute(
+                    select(RadarOutput)
+                    .where(RadarOutput.user_id == user.id)
+                    .order_by(RadarOutput.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return {"outputs": [o.to_dict() for o in outputs]}
+
+
+@router.post("/outputs", status_code=201)
+async def create_output(body: OutputCreateIn, request: Request):
+    """Добавить целевой канал вывода. Внешние (tg/vk) требуют target.
+
+    Курсор доставки стартует с текущего MAX(item.id) — новый вывод шлёт только
+    то, что пришло ПОСЛЕ подключения, не выстреливает накопленным бэклогом.
+    """
+    user = _current_user(request)
+    if body.type in ("telegram", "vk") and not (body.target or "").strip():
+        raise HTTPException(
+            status_code=400, detail="Для этого типа нужен адрес назначения (target)"
+        )
+    config = {"bot_name": body.bot_name.strip().upper()} if (body.bot_name or "").strip() else None
+
+    from modules.radar.delivery import max_item_id
+
+    async with AsyncSessionLocal() as session:
+        cursor = await max_item_id(session)
+        output = RadarOutput(
+            user_id=user.id,
+            type=body.type,
+            title=(body.title or "").strip() or None,
+            target=(body.target or "").strip() or None,
+            mode=body.mode,
+            config=config,
+            last_item_id=cursor,
+        )
+        session.add(output)
+        await session.commit()
+        await session.refresh(output)
+        return output.to_dict()
+
+
+@router.patch("/outputs/{output_id}")
+async def patch_output(output_id: int, body: OutputPatchIn, request: Request):
+    """Редактировать вывод: метка / адрес / режим / бот / вкл-выкл."""
+    user = _current_user(request)
+    async with AsyncSessionLocal() as session:
+        output = (
+            await session.execute(
+                select(RadarOutput).where(
+                    RadarOutput.id == output_id, RadarOutput.user_id == user.id
+                )
+            )
+        ).scalar_one_or_none()
+        if output is None:
+            raise HTTPException(status_code=404, detail="Вывод не найден")
+        if body.title is not None:
+            output.title = body.title.strip() or None
+        if body.target is not None:
+            output.target = body.target.strip() or None
+        if body.mode is not None:
+            output.mode = body.mode
+        if body.bot_name is not None:
+            cfg = dict(output.config or {})
+            name = body.bot_name.strip().upper()
+            if name:
+                cfg["bot_name"] = name
+            else:
+                cfg.pop("bot_name", None)
+            output.config = cfg or None
+        if body.is_active is not None:
+            output.is_active = body.is_active
+        await session.commit()
+        await session.refresh(output)
+        return output.to_dict()
+
+
+@router.delete("/outputs/{output_id}")
+async def delete_output(output_id: int, request: Request):
+    """Удалить целевой канал вывода (только свой)."""
+    user = _current_user(request)
+    async with AsyncSessionLocal() as session:
+        output = (
+            await session.execute(
+                select(RadarOutput).where(
+                    RadarOutput.id == output_id, RadarOutput.user_id == user.id
+                )
+            )
+        ).scalar_one_or_none()
+        if output is None:
+            raise HTTPException(status_code=404, detail="Вывод не найден")
+        await session.delete(output)
+        await session.commit()
+    return {"deleted": True}
+
+
+@router.post("/outputs/{output_id}/test")
+async def test_output(output_id: int, request: Request):
+    """Отправить тестовый элемент в канал — проверить доставку до того, как
+    положиться на вывод (probe на уровне пользователя)."""
+    user = _current_user(request)
+    from modules.radar.delivery import send_test_output
+
+    result = await send_test_output(output_id=output_id, user_id=user.id)
+    if not result.get("ok") and result.get("detail") == "Вывод не найден":
+        raise HTTPException(status_code=404, detail="Вывод не найден")
+    return result

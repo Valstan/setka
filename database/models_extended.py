@@ -474,6 +474,10 @@ class RadarSubscription(Base):
     source_id = Column(
         BigInteger, ForeignKey("radar_sources.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    # Per-user пауза источника без удаления (миграция 045, кабинет радара): fan-out
+    # не страдает — источник поллится, пока на него есть хоть одна подписка; пауза
+    # лишь убирает его из ленты/выводов этого юзера.
+    is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     source = relationship("RadarSource", lazy="joined")
@@ -591,3 +595,64 @@ class RadarPushSubscription(Base):
 
     def __repr__(self):
         return f"<RadarPushSubscription user={self.user_id} endpoint={self.endpoint[:40]}...>"
+
+
+class RadarOutput(Base):
+    """Целевой канал вывода радара — куда слать найденное (миграция 045, кабинет).
+
+    Ядро запроса владельца: пользователь сам набирает свой набор выводов.
+    Типы:
+      ``feed``     — внутренняя лента Ф0.4 (дефолт, всегда доступен, без внешних
+                     прав); доставка — no-op, лента наполняется поллером сама;
+      ``telegram`` — бот ``sendMessage`` в личку/канал юзера (``target`` —
+                     chat_id или @channel; ``config.bot_name`` — какой бот, дефолт
+                     радар-бот). api.telegram.org с этого бокса доступен (probe
+                     2026-06-14) — relay для Bot API не нужен;
+      ``vk``       — ``wall.post`` в стену/сообщество (``target`` — owner_id,
+                     отрицательный для сообщества). Текст+ссылка; медиа не
+                     рехостится (атрибуцию текстом — урок G64).
+
+    ``mode`` — режим пересылки: ``excerpt_link`` (начало+ссылка, дефолт, дёшево)
+    или ``full`` (целиком). ``last_item_id`` — курсор доставки (at-most-once по
+    монотонному ``radar_items.id``); при создании = текущий MAX(id), чтобы новый
+    вывод не выстрелил бэклогом.
+    """
+
+    __tablename__ = "radar_outputs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        BigInteger, ForeignKey("radar_users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    type = Column(String(16), nullable=False)  # feed|telegram|vk
+    title = Column(String(200), nullable=True)
+    target = Column(String(512), nullable=True)  # tg: chat_id/@channel; vk: owner_id; feed: NULL
+    mode = Column(String(16), nullable=False, default="excerpt_link")  # excerpt_link|full
+    config = Column(JSON, nullable=True)  # {bot_name?} и пр. (креды-ref в env)
+
+    is_active = Column(Boolean, nullable=False, default=True)
+    last_item_id = Column(BigInteger, nullable=False, default=0)  # курсор доставки
+    last_delivery_at = Column(DateTime, nullable=True)
+    fail_count = Column(Integer, nullable=False, default=0)
+    last_error = Column(String(512), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<RadarOutput user={self.user_id} type={self.type} active={self.is_active}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "type": self.type,
+            "title": self.title,
+            "target": self.target,
+            "mode": self.mode,
+            "config": self.config or {},
+            "is_active": self.is_active,
+            "last_delivery_at": (
+                self.last_delivery_at.isoformat() if self.last_delivery_at else None
+            ),
+            "fail_count": self.fail_count,
+            "last_error": self.last_error,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
