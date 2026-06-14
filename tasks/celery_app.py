@@ -1611,6 +1611,14 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute="*"),
         "options": {"expires": 55, "catchup": False},
     },
+    # VK-интейк (приём кодов привязки VK-лички через Bots Long Poll сообщества):
+    # каждую минуту. No-op, пока не задан RADAR_VK_COMMUNITY_ID + community-токен
+    # (#008). Юзер пишет код сообществу-точке → ловим vk_id → vk_dm-вывод в личку.
+    "radar-vk-intake": {
+        "task": "tasks.radar_tasks.poll_radar_vk_intake",
+        "schedule": crontab(minute="*"),
+        "options": {"expires": 55, "catchup": False},
+    },
     # Ретенция ленты радара: элементы старше 30 дней (RADAR_ITEMS_RETENTION_DAYS)
     # удаляются ночью в 03:20 (после cleanup-daily в 03:00). Сохранёнки —
     # снимки, не страдают (FK SET NULL).

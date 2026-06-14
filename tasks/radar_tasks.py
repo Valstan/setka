@@ -141,6 +141,93 @@ def poll_radar_bot():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+async def _run_vk_intake():
+    """Один тик VK-интейка: Bots Long Poll сообщества → привязка VK-лички по коду."""
+    import secrets
+
+    import httpx
+
+    from config.runtime import get_radar_vk_community_id
+
+    community_id = get_radar_vk_community_id()
+    if not community_id:
+        return {"skipped": "RADAR_VK_COMMUNITY_ID not set"}
+
+    from modules.vk_token_router import load_vk_routing
+
+    _user_token, community_tokens = await load_vk_routing()
+    token = (community_tokens or {}).get(community_id)
+    if not token:
+        return {"skipped": f"no community token for {community_id}"}
+
+    from modules.digest_heartbeat import _redis
+
+    r = _redis()
+    if r is None:
+        return {"skipped": "no redis (ts persistence required)"}
+    ts_key = "setka:radar_vk_intake_ts"
+
+    def ts_get():
+        v = r.get(ts_key)
+        if v is None:
+            return None
+        return v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
+
+    def ts_set(v):
+        if v is None:
+            r.delete(ts_key)
+        else:
+            r.set(ts_key, str(v))
+
+    async def link_account(code, vk_user_id, display_name):
+        from modules.radar.account_link import link_vk
+
+        return await link_vk(code, vk_user_id, display_name=display_name, group_id=community_id)
+
+    async def reply(peer_id, text):
+        async with httpx.AsyncClient() as client:
+            await client.get(
+                "https://api.vk.com/method/messages.send",
+                params={
+                    "user_id": peer_id,
+                    "message": text,
+                    "random_id": secrets.randbelow(2_000_000_000),
+                    "group_id": community_id,
+                    "access_token": token,
+                    "v": "5.199",
+                },
+                timeout=20,
+            )
+
+    from modules.radar.vk_intake import poll_vk_intake_once
+
+    return await poll_vk_intake_once(
+        token=token,
+        group_id=community_id,
+        link_account=link_account,
+        reply=reply,
+        ts_get=ts_get,
+        ts_set=ts_set,
+    )
+
+
+@app.task(name="tasks.radar_tasks.poll_radar_vk_intake")
+def poll_radar_vk_intake():
+    """VK-интейк радара: приём кодов привязки VK-лички (каждую минуту).
+
+    No-op, пока не задан RADAR_VK_COMMUNITY_ID + community-токен (#008). Юзер пишет
+    код сообществу-точке → ловим его vk_id через Bots Long Poll → vk_dm-вывод.
+    """
+    try:
+        result = run_coro(_run_vk_intake())
+        if not result.get("skipped"):
+            logger.info("radar vk-intake: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"poll_radar_vk_intake failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.radar_tasks.check_radar_poll_heartbeat")
 def check_radar_poll_heartbeat():
     """Watchdog: алёрт в Telegram, если поллер радара молчит при живых подписках."""

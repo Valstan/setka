@@ -527,6 +527,20 @@ def get_radar_bot_name() -> str:
     return (_getenv("RADAR_BOT_NAME", "") or "").strip().upper()
 
 
+def get_radar_vk_community_id() -> Optional[int]:
+    """ID VK-сообщества «точки радара» для лички (Bots Long Poll). 0/пусто = выкл (#008).
+
+    Владелец включает в админке сообщества Сообщения + Long Poll API (событие
+    message_new), затем env RADAR_VK_COMMUNITY_ID=<id> (положительный). Community-токен
+    берётся из БД-роутинга (load_vk_routing). Пока не задано — VK-интейк не поллится."""
+    raw = (_getenv("RADAR_VK_COMMUNITY_ID", "") or "").strip()
+    try:
+        gid = abs(int(raw))
+        return gid or None
+    except (TypeError, ValueError):
+        return None
+
+
 def get_radar_bot_allowed_users() -> Set[int]:
     """Telegram user-id, которым бот разрешает добавлять каналы (через запятую).
 

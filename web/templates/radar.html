@@ -125,10 +125,10 @@
                     </button>
                 </div>
                 <div class="col-6 col-md-3">
-                    <button class="btn btn-outline-secondary w-100 h-100 py-3" data-connect="vk" disabled
-                            title="В личку ВКонтакте — скоро">
+                    <button class="btn btn-outline-primary w-100 h-100 py-3" data-connect="vk"
+                            title="Новости в личку ВКонтакте">
                         <i class="bi bi-chat-square-text d-block" style="font-size: 1.6rem;"></i>
-                        ВКонтакте<br><span class="badge bg-secondary">скоро</span>
+                        Подключить<br>ВКонтакте
                     </button>
                 </div>
                 <div class="col-6 col-md-3">
@@ -191,6 +191,48 @@
                     <div id="tg-connect-done" class="d-none text-center py-3">
                         <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
                         <p class="mt-2 mb-0">Telegram подключён! Новости пойдут вам в личку.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка подключения ВКонтакте -->
+    <div class="modal fade" id="vk-connect-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-chat-square-text"></i> Подключить ВКонтакте</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger d-none" id="vk-connect-error"></div>
+                    <div id="vk-connect-loading" class="text-center py-3">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <p class="mt-2 mb-0">Готовим подключение…</p>
+                    </div>
+                    <div id="vk-connect-ready" class="d-none">
+                        <ol class="mb-3">
+                            <li>Откройте наше сообщество кнопкой ниже и нажмите
+                                <strong>«Написать сообщению»</strong>.</li>
+                            <li>Отправьте ему этот код:</li>
+                        </ol>
+                        <div class="input-group mb-2">
+                            <input class="form-control fs-5 fw-bold text-center" id="vk-code" readonly>
+                            <button class="btn btn-outline-secondary" id="vk-code-copy" title="Скопировать">
+                                <i class="bi bi-clipboard"></i>
+                            </button>
+                        </div>
+                        <div class="d-grid gap-2 mb-2">
+                            <a class="btn btn-primary btn-lg" id="vk-community-link" target="_blank" rel="noopener">
+                                <i class="bi bi-box-arrow-up-right"></i> Открыть сообщество <span id="vk-community-name"></span>
+                            </a>
+                        </div>
+                        <p class="text-secondary small mb-0">Код действует 15 минут. Окно обновится само, когда вы подключитесь.</p>
+                    </div>
+                    <div id="vk-connect-done" class="d-none text-center py-3">
+                        <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                        <p class="mt-2 mb-0">ВКонтакте подключён! Новости пойдут вам в личку.</p>
                     </div>
                 </div>
             </div>

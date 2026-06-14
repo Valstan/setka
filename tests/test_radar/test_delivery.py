@@ -175,6 +175,29 @@ async def test_delivery_routes_vk_to_vk_sender():
     assert tg_called == []
 
 
+@pytest.mark.asyncio
+async def test_delivery_routes_vk_dm_to_vk_dm_sender():
+    output = _output(otype="vk_dm", target="555", last_item_id=0)
+    fake = _FakeSession([output], [[_item_row(1)]])
+    dm_called = []
+
+    async def other(o, item, text):
+        return True
+
+    async def dm(o, item, text):
+        dm_called.append((o.target, item["id"]))
+        return True
+
+    await delivery.deliver_new_items(
+        session_factory=lambda: fake,
+        tg_sender=other,
+        vk_sender=other,
+        vk_dm_sender=dm,
+        throttle=0,
+    )
+    assert dm_called == [("555", 1)]
+
+
 # ─────────────────────────── send_test_output ───────────────────────────
 
 
