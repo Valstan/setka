@@ -122,3 +122,30 @@ async def test_link_telegram_reactivates_disabled_existing():
     assert res["status"] == "exists"
     assert existing.is_active is True
     assert fake.committed
+
+
+@pytest.mark.asyncio
+async def test_link_vk_creates_vk_dm_output():
+    fake = _LinkSession(existing=None)
+    with (
+        patch.object(account_link, "resolve_link_code", return_value=("vk", 7)),
+        patch("modules.radar.delivery.max_item_id", new=AsyncMock(return_value=99)),
+    ):
+        res = await account_link.link_vk(
+            "ABC123", 555, display_name="Пётр", group_id=137760500, session_factory=lambda: fake
+        )
+    assert res["status"] == "linked"
+    out = fake.added[0]
+    assert out.type == "vk_dm"
+    assert out.target == "555"
+    assert out.user_id == 7
+    assert out.config == {"group_id": 137760500}
+    assert out.last_item_id == 99
+
+
+@pytest.mark.asyncio
+async def test_link_vk_rejects_telegram_code():
+    # Код, выписанный для telegram, нельзя использовать для VK-привязки.
+    with patch.object(account_link, "resolve_link_code", return_value=("telegram", 7)):
+        res = await account_link.link_vk("ABC", 1, session_factory=lambda: _LinkSession())
+    assert res["status"] == "invalid"

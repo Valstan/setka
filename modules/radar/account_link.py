@@ -137,6 +137,105 @@ async def link_telegram(
         return {"status": "linked", "output_id": output.id}
 
 
+async def link_vk(
+    code: str,
+    vk_user_id: int,
+    *,
+    display_name: str = "",
+    group_id: int = 0,
+    session_factory=None,
+) -> dict:
+    """Привязать VK-личку к пользователю по коду → создать vk_dm-вывод.
+
+    ``target`` — vk_user_id (куда слать ``messages.send``), ``config.group_id`` —
+    через какое сообщество слать (его community-токен берёт delivery). Идемпотентно,
+    курсор с MAX(item.id). Зеркало link_telegram."""
+    resolved = resolve_link_code(code)
+    if resolved is None:
+        return {"status": "invalid"}
+    channel, user_id = resolved
+    if channel != "vk":
+        return {"status": "invalid"}
+
+    from sqlalchemy import select
+
+    from database import models  # noqa: F401 - конфигурация мапперов (PR #189)
+    from database.connection import AsyncSessionLocal
+    from database.models_extended import RadarOutput
+    from modules.radar.delivery import max_item_id
+
+    if session_factory is None:
+        session_factory = AsyncSessionLocal
+
+    target = str(int(vk_user_id))
+    async with session_factory() as session:
+        existing = (
+            await session.execute(
+                select(RadarOutput).where(
+                    RadarOutput.user_id == user_id,
+                    RadarOutput.type == "vk_dm",
+                    RadarOutput.target == target,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            if not existing.is_active:
+                existing.is_active = True
+                await session.commit()
+            return {"status": "exists", "output_id": existing.id}
+
+        cursor = await max_item_id(session)
+        title = "ВКонтакте"
+        if display_name:
+            title = f"ВКонтакте · {display_name}"[:200]
+        output = RadarOutput(
+            user_id=user_id,
+            type="vk_dm",
+            title=title,
+            target=target,
+            mode="excerpt_link",
+            config={"group_id": int(group_id)} if group_id else None,
+            last_item_id=cursor,
+        )
+        session.add(output)
+        await session.commit()
+        await session.refresh(output)
+        return {"status": "linked", "output_id": output.id}
+
+
+def get_vk_community_link(token: str, group_id: int) -> dict:
+    """{name, screen_name, url} сообщества-точки для UI (через groups.getById)."""
+    fallback = {"name": None, "screen_name": None, "url": f"https://vk.com/club{group_id}"}
+    if not token:
+        return fallback
+    try:
+        import httpx
+
+        resp = httpx.get(
+            "https://api.vk.com/method/groups.getById",
+            params={
+                "group_id": group_id,
+                "fields": "screen_name",
+                "access_token": token,
+                "v": "5.199",
+            },
+            timeout=15,
+        )
+        data = resp.json()
+        groups = (data.get("response") or {}).get("groups")
+        if isinstance(groups, list) and groups:
+            g = groups[0]
+            screen = g.get("screen_name")
+            return {
+                "name": g.get("name"),
+                "screen_name": screen,
+                "url": f"https://vk.com/{screen}" if screen else fallback["url"],
+            }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("radar link: groups.getById failed: %s", e)
+    return fallback
+
+
 def get_bot_username(token: str) -> Optional[str]:
     """@username бота через getMe (кэш в Redis). None при сбое — UI даст fallback."""
     client = _redis()

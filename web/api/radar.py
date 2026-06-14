@@ -678,3 +678,39 @@ async def link_telegram_code(request: Request):
         "deep_link": deep_link,
         "expires_in": 900,
     }
+
+
+@router.post("/link/vk")
+async def link_vk_code(request: Request):
+    """Сгенерировать код привязки VK-лички + ссылку на сообщество-точку.
+
+    Пользователь пишет код нашему сообществу → VK-интейк (Bots Long Poll) ловит
+    его vk_id → создаёт vk_dm-вывод (messages.send ему в личку). Токен юзера не
+    нужен — бот-паттерн (community-токен + захват id).
+    """
+    user = _current_user(request)
+    from config.runtime import get_radar_vk_community_id
+    from modules.radar.account_link import generate_link_code, get_vk_community_link
+
+    community_id = get_radar_vk_community_id()
+    if not community_id:
+        raise HTTPException(status_code=503, detail="VK-сообщество радара не настроено на сервере")
+
+    from modules.vk_token_router import load_vk_routing
+
+    _user_token, community_tokens = await load_vk_routing()
+    token = (community_tokens or {}).get(community_id)
+    if not token:
+        raise HTTPException(status_code=503, detail="Нет community-токена для VK-сообщества радара")
+
+    code = generate_link_code(user.id, channel="vk")
+    if not code:
+        raise HTTPException(status_code=503, detail="Хранилище кодов недоступно (Redis)")
+
+    community = get_vk_community_link(token, community_id)
+    return {
+        "code": code,
+        "community": community,
+        "message_link": f"{community['url']}",
+        "expires_in": 900,
+    }

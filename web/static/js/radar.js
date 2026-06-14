@@ -178,7 +178,8 @@
     const OUTPUT_META = {
         feed: { icon: 'bi-broadcast', label: 'Лента радара' },
         telegram: { icon: 'bi-telegram', label: 'Telegram' },
-        vk: { icon: 'bi-chat-square-text', label: 'VK' },
+        vk: { icon: 'bi-chat-square-text', label: 'VK (стена)' },
+        vk_dm: { icon: 'bi-chat-square-text', label: 'ВКонтакте' },
     };
 
     function outputRow(o) {
@@ -352,10 +353,11 @@
             $('tg-connect-' + s).classList.toggle('d-none', s !== name));
     }
 
-    async function countTelegramOutputs() {
+    async function countOutputsOfType(type) {
         const data = await api('/api/radar/outputs');
-        return data.outputs.filter((o) => o.type === 'telegram').length;
+        return data.outputs.filter((o) => o.type === type).length;
     }
+    const countTelegramOutputs = () => countOutputsOfType('telegram');
 
     async function connectTelegram() {
         const modalEl = $('tg-connect-modal');
@@ -400,15 +402,63 @@
         }, { once: true });
     }
 
+    let vkPoll = null;
+
+    function vkModalState(name) {
+        ['loading', 'ready', 'done'].forEach((s) =>
+            $('vk-connect-' + s).classList.toggle('d-none', s !== name));
+    }
+
+    async function connectVk() {
+        const modalEl = $('vk-connect-modal');
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        $('vk-connect-error').classList.add('d-none');
+        vkModalState('loading');
+        modal.show();
+        let before = 0;
+        try {
+            before = await countOutputsOfType('vk_dm');
+            const res = await api('/api/radar/link/vk', { method: 'POST' });
+            $('vk-code').value = res.code;
+            const url = (res.community && res.community.url) || res.message_link;
+            if (url) { $('vk-community-link').href = url; $('vk-community-link').classList.remove('disabled'); }
+            $('vk-community-name').textContent = (res.community && res.community.name) ? '«' + res.community.name + '»' : '';
+            vkModalState('ready');
+        } catch (err) {
+            $('vk-connect-error').textContent = err.message;
+            $('vk-connect-error').classList.remove('d-none');
+            vkModalState('ready');
+            return;
+        }
+        if (vkPoll) clearInterval(vkPoll);
+        vkPoll = setInterval(async () => {
+            try {
+                const now = await countOutputsOfType('vk_dm');
+                if (now > before) {
+                    clearInterval(vkPoll); vkPoll = null;
+                    vkModalState('done');
+                    await loadOutputs();
+                    setTimeout(() => bootstrap.Modal.getOrCreateInstance(modalEl).hide(), 2200);
+                }
+            } catch (e) { /* сеть моргнула — продолжаем */ }
+        }, 3000);
+        modalEl.addEventListener('hidden.bs.modal', () => {
+            if (vkPoll) { clearInterval(vkPoll); vkPoll = null; }
+        }, { once: true });
+    }
+
     document.addEventListener('click', (e) => {
         const connect = e.target.closest('[data-connect]');
         if (!connect || connect.disabled) return;
         if (connect.dataset.connect === 'telegram') connectTelegram().catch(console.error);
+        if (connect.dataset.connect === 'vk') connectVk().catch(console.error);
     });
 
     document.getElementById('tg-code-copy')?.addEventListener('click', () => {
-        const code = $('tg-code').value;
-        navigator.clipboard?.writeText(code).catch(() => {});
+        navigator.clipboard?.writeText($('tg-code').value).catch(() => {});
+    });
+    document.getElementById('vk-code-copy')?.addEventListener('click', () => {
+        navigator.clipboard?.writeText($('vk-code').value).catch(() => {});
     });
 
     // ───────────── Web-push (Ф0.5) ─────────────

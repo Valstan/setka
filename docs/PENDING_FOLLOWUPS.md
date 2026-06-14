@@ -112,14 +112,14 @@ Batrachospermum (-85330), Время-Вперёд (-65614662).
   (в проекте нет); MAX — probe API #020). +14 тестов (1412 зелёных).
 - 🟢 **Браузер-верификация владельцем (реальная доставка):** «Радиоточка» → «Подключить Telegram» →
   открыть бота, Start → бот ответил «подключено» → дождаться нового поста в источниках → пришло в личку.
-- ⏳ **VK-личка — probe сделан, ЖДЁТ настройки владельца** (запрос 2026-06-14): `scripts/probe_vk_messaging.py`
-  (прогон на проде 2026-06-14) → **long-poll выключен на всех сообществах** (`error 100: longpoll for this
-  group is not enabled`), `can_message: null`. VK-личка достижима бот-паттерном (как Telegram), но упирается
-  в **ручной тумблер в админке VK**. **Решение владельца: сообщество = Тестовый полигон (137760500)**, строить
-  **после** включения. **Что включить владельцу (веб-VK):** Управление → Сообщения → Включены; Настройки →
-  Работа с API → Long Poll API → Включить, версия 5.199, событие «Входящее сообщение» (message_new). Затем
-  re-probe (`long_poll: ok`) → строю `modules/radar/vk_intake.py` (Bots Long Poll, аналог `bot_intake`) +
-  `link_account` для VK + delivery `messages.send`. **НЕ строить до зелёного re-probe** (#020).
+- ✅ **VK-личка — ПОСТРОЕНА** (запрос 2026-06-14, PR #TBD): probe (`scripts/probe_vk_messaging.py`) →
+  владелец включил Long Poll + Сообщения на **Тестовом полигоне (137760500)** → re-probe `long_poll: ok` →
+  построил бот-паттерном (как Telegram). `modules/radar/vk_intake.py` (Bots Long Poll: getLongPollServer →
+  a_check → код из входящего сообщения → привязка; ts в Redis, failed-reinit); `account_link.link_vk` →
+  вывод типа `vk_dm` (target=vk_id, config.group_id); delivery `vk_dm` → `messages.send` community-токеном;
+  `POST /api/radar/link/vk` (код + ссылка на сообщество); beat `radar-vk-intake` раз в минуту; UI — кнопка
+  «Подключить ВКонтакте» активна + модалка (код + ссылка + авто-поллинг). +13 тестов (1425 зелёных).
+  **Деплой:** env `RADAR_VK_COMMUNITY_ID=137760500` + restart web/worker/beat (community-токен полигона в БД).
 - 📌 **Архитектурное решение: НЕ использовать пользовательские VK-токены** для чтения/пересылки (вопрос
   владельца 2026-06-14). Причины: (1) VK 2026 привязывает user-токен к IP выпуска → с нашего VPS `error 5
   access_token was given to another ip address` (тот же блокер, что ловили с VALSTAN — см. ~~блокер~~ выше);

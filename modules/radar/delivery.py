@@ -44,7 +44,7 @@ DELIVERY_THROTTLE_SECONDS = 1.0
 # Длина «начала» в режиме excerpt_link.
 EXCERPT_CHARS = 500
 
-EXTERNAL_TYPES = ("telegram", "vk")
+EXTERNAL_TYPES = ("telegram", "vk", "vk_dm")
 
 
 def format_item(item: Dict[str, Any], mode: str, *, source_title: Optional[str] = None) -> str:
@@ -137,7 +137,57 @@ def _make_default_vk_sender(session) -> Callable[[Any, Dict[str, Any], str], Awa
     return _send
 
 
-async def _deliver_one(output, item: Dict[str, Any], *, tg_sender, vk_sender) -> bool:
+def _make_default_vk_dm_sender() -> Callable[[Any, Dict[str, Any], str], Awaitable[bool]]:
+    """VK-личка: messages.send юзеру через community-токен сообщества-точки.
+
+    Токен берём из роутинга по ``output.config.group_id`` (сообщество, через которое
+    юзер подключился). Токен пользователя не нужен — это бот-паттерн."""
+    box: Dict[str, Any] = {}
+
+    async def _send(output, item: Dict[str, Any], text: str) -> bool:
+        import secrets
+
+        import httpx
+
+        if "tokens" not in box:
+            from modules.vk_token_router import load_vk_routing
+
+            _user, community = await load_vk_routing()
+            box["tokens"] = community or {}
+        group_id = int((output.config or {}).get("group_id") or 0)
+        token = box["tokens"].get(group_id)
+        if not token:
+            logger.warning(
+                "radar vk_dm: no community token for group %s (output %s)", group_id, output.id
+            )
+            return False
+        try:
+            user_id = int(str(output.target).strip())
+        except (TypeError, ValueError):
+            return False
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                "https://api.vk.com/method/messages.send",
+                params={
+                    "user_id": user_id,
+                    "message": text,
+                    "random_id": secrets.randbelow(2_000_000_000),
+                    "group_id": group_id,
+                    "access_token": token,
+                    "v": "5.199",
+                },
+                timeout=20,
+            )
+            data = r.json()
+        if "error" in data:
+            logger.warning("radar vk_dm messages.send error: %s", data["error"].get("error_msg"))
+            return False
+        return "response" in data
+
+    return _send
+
+
+async def _deliver_one(output, item: Dict[str, Any], *, tg_sender, vk_sender, vk_dm_sender) -> bool:
     """Отправить один элемент в один вывод по его типу/режиму. Не бросает."""
     text = format_item(item, output.mode, source_title=item.get("source_title"))
     if not text:
@@ -147,6 +197,8 @@ async def _deliver_one(output, item: Dict[str, Any], *, tg_sender, vk_sender) ->
             return await tg_sender(output, item, text)
         if output.type == "vk":
             return await vk_sender(output, item, text)
+        if output.type == "vk_dm":
+            return await vk_dm_sender(output, item, text)
     except Exception as e:  # noqa: BLE001 — per-output изоляция
         logger.warning("radar delivery send failed (output %s): %s", output.id, e)
         return False
@@ -186,6 +238,7 @@ async def deliver_new_items(
     session_factory: Optional[Callable] = None,
     tg_sender: Optional[Callable] = None,
     vk_sender: Optional[Callable] = None,
+    vk_dm_sender: Optional[Callable] = None,
     throttle: float = DELIVERY_THROTTLE_SECONDS,
 ) -> Dict[str, Any]:
     """Прогон доставки: разослать новые элементы по всем активным внешним выводам.
@@ -220,6 +273,8 @@ async def deliver_new_items(
             tg_sender = _default_tg_sender
         if vk_sender is None:
             vk_sender = _make_default_vk_sender(session)
+        if vk_dm_sender is None:
+            vk_dm_sender = _make_default_vk_dm_sender()
 
         for output in outputs:
             items = await _new_items_for_output(session, output)
@@ -231,7 +286,13 @@ async def deliver_new_items(
             for item in items:
                 if sent_any and throttle > 0:
                     await asyncio.sleep(throttle)
-                ok = await _deliver_one(output, item, tg_sender=tg_sender, vk_sender=vk_sender)
+                ok = await _deliver_one(
+                    output,
+                    item,
+                    tg_sender=tg_sender,
+                    vk_sender=vk_sender,
+                    vk_dm_sender=vk_dm_sender,
+                )
                 sent_any = True
                 if ok:
                     summary["delivered"] += 1
@@ -262,6 +323,7 @@ async def send_test_output(
     session_factory: Optional[Callable] = None,
     tg_sender: Optional[Callable] = None,
     vk_sender: Optional[Callable] = None,
+    vk_dm_sender: Optional[Callable] = None,
 ) -> Dict[str, Any]:
     """Кнопка «тест вывода»: отправить синтетический элемент в канал.
 
@@ -304,7 +366,11 @@ async def send_test_output(
             tg_sender = _default_tg_sender
         if vk_sender is None:
             vk_sender = _make_default_vk_sender(session)
-        ok = await _deliver_one(output, sample, tg_sender=tg_sender, vk_sender=vk_sender)
+        if vk_dm_sender is None:
+            vk_dm_sender = _make_default_vk_dm_sender()
+        ok = await _deliver_one(
+            output, sample, tg_sender=tg_sender, vk_sender=vk_sender, vk_dm_sender=vk_dm_sender
+        )
         # Тест тоже отражаем в здоровье вывода — чтобы кабинет не врал.
         if ok:
             output.fail_count = 0
