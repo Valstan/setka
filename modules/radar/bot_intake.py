@@ -64,11 +64,6 @@ def build_reply(status: str, *, username: str = "", title: str = "", detail: str
         )
     if status == "not_forward":
         return "Перешлите боту пост из канала — добавлю его в радар. (Обычное сообщение не канал.)"
-    if status == "unauthorized":
-        return (
-            f"🔒 Нет доступа. Ваш Telegram-id: {detail}. "
-            "Добавьте его в RADAR_BOT_ALLOWED_USERS, чтобы добавлять каналы."
-        )
     if status == "error":
         return f"❌ Не удалось добавить канал: {detail}"
     return ""
@@ -93,9 +88,13 @@ async def handle_message(
     from_user = message.get("from") or {}
     from_id = from_user.get("id")
 
-    # Авторизация: только allowlist. Чужому — вернуть его id (для самообнаружения).
+    # Авторизация: только allowlist. Чужим/рандомам — МОЛЧИМ (бот может быть общим
+    # или публичным — как @malm_info_bot со входящим трафиком; не спамим его
+    # пользователей и тихо проглатываем бэклог). Свой tg-id владелец узнаёт у
+    # @userinfobot. logger.debug — чтобы видеть «кто стучался», без ответа.
     if from_id not in allowed_users:
-        return chat_id, build_reply("unauthorized", detail=str(from_id))
+        logger.debug("radar-bot: ignored message from non-allowed user %s", from_id)
+        return None
 
     username, title = extract_forwarded_channel(message)
     # Не форвард из канала вообще?

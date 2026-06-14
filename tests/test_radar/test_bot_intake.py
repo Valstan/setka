@@ -52,7 +52,6 @@ def test_build_reply_variants():
     assert build_reply("exists", username="x").startswith("ℹ️")
     assert "приватный" in build_reply("private", title="Y")
     assert "Перешлите" in build_reply("not_forward")
-    assert "12345" in build_reply("unauthorized", detail="12345")
     assert build_reply("error", detail="boom").startswith("❌")
 
 
@@ -69,15 +68,15 @@ async def _exists(username):
     return {"status": "exists", "title": "Канал"}
 
 
-async def test_handle_unauthorized_returns_id():
+async def test_handle_unauthorized_silent():
+    # Чужому/рандому — молчим (None), чтобы не спамить общий/публичный бот.
     msg = {
         "chat": {"id": 99},
         "from": {"id": 777},
         "forward_from_chat": {"type": "channel", "username": "x"},
     }
-    out = await handle_message(msg, allowed_users=set(), add_channel=_added)
-    assert out[0] == 99
-    assert "777" in out[1] and "🔒" in out[1]
+    assert await handle_message(msg, allowed_users={1}, add_channel=_added) is None
+    assert await handle_message(msg, allowed_users=set(), add_channel=_added) is None
 
 
 async def test_handle_authorized_adds_channel():
