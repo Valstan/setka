@@ -61,26 +61,49 @@ export default {
             const target = new URL(`https://t.me/s/${sMatch[1]}`);
             const before = url.searchParams.get('before');
             if (before && /^\d+$/.test(before)) target.searchParams.set('before', before);
-            // AJAX-вариант t.me (POST + X-Requested-With) отдаёт полную ленту
-            // и datacenter-IP тоже; обычный GET для CF-IP деградирован до
-            // 1 сообщения (выяснено при деплое Ф0.3). Ответ — JSON-строка
-            // с HTML-фрагментом ленты; адаптер на VPS это учитывает.
-            const resp = await fetch(target, {
-                method: 'POST',
-                headers: { ...BROWSER_HEADERS, 'x-requested-with': 'XMLHttpRequest', 'content-length': '0' },
-                redirect: 'manual', // редирект = «у канала нет web-превью»
-            });
-            const headers = new Headers({ 'content-type': resp.headers.get('content-type') || 'text/html' });
-            const loc = resp.headers.get('location');
-            if (loc) headers.set('x-relay-redirect', loc);
-            // Тело БУФЕРИЗУЕМ (как /media), НЕ стримим: стриминг через CF по
-            // HTTP/1.1 подвешивает httpx-клиент на VPS до ReadTimeout. Для лёгких
-            // каналов маленькое тело проскакивало, но крупные (напр. @ASupersharij)
-            // ловили стрим-столл → таймаут relay. Воркер сам дочитывает ленту от
-            // t.me и отдаёт её одним куском (страница превью — сотни КБ, в 128 MB
-            // памяти воркера помещается с запасом).
-            const text = await resp.text();
-            return new Response(text, { status: resp.status, headers });
+            // Один вариант фетча t.me: буферизация + внутренний таймаут.
+            // Тело БУФЕРИЗУЕМ (как /media): стриминг через CF по HTTP/1.1 вешает
+            // httpx на VPS до ReadTimeout. AbortSignal не даёт зависшему соединению
+            // съесть весь бюджет — некоторые гиганты (напр. @ASupersharij) отдают
+            // AJAX-вариант заглушкой без ленты и держат сокет открытым.
+            const fetchVariant = async (useAjax) => {
+                const headers = useAjax
+                    ? { ...BROWSER_HEADERS, 'x-requested-with': 'XMLHttpRequest', 'content-length': '0' }
+                    : { ...BROWSER_HEADERS };
+                const resp = await fetch(target, {
+                    method: useAjax ? 'POST' : 'GET',
+                    headers,
+                    redirect: 'manual', // редирект = «у канала нет web-превью»
+                    signal: AbortSignal.timeout(20000),
+                });
+                const loc = resp.headers.get('location');
+                if (loc) return { status: resp.status, body: '', loc };
+                return { status: resp.status, body: await resp.text(), loc: null };
+            };
+            const hasFeed = (r) => r && (r.loc || /data-post="[A-Za-z0-9_]+\/\d+"/.test(r.body));
+
+            // AJAX даёт больше сообщений/страницу — пробуем первым. Если завис/
+            // отдал заглушку без ленты (и не редирект) — фолбэк на обычный GET:
+            // datacenter-IP получает деградированную, но РАБОЧУЮ страницу, свежих
+            // сообщений хватает для мониторинга «есть ли новое».
+            let result = null;
+            try {
+                result = await fetchVariant(true);
+            } catch (e) {
+                result = null;
+            }
+            if (!hasFeed(result)) {
+                try {
+                    const g = await fetchVariant(false);
+                    if (hasFeed(g) || !result) result = g;
+                } catch (e) {
+                    /* GET тоже не вышел — отдадим что есть от AJAX (или 504 ниже) */
+                }
+            }
+            if (!result) return deny(504, 'relay: t.me fetch timed out');
+            const headers = new Headers({ 'content-type': 'text/html' });
+            if (result.loc) headers.set('x-relay-redirect', result.loc);
+            return new Response(result.body, { status: result.status, headers });
         }
 
         // /media?u=<url> — медиа только с телеграмных CDN.
