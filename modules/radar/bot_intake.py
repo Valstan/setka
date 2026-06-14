@@ -24,6 +24,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Bot-токен светится в URL getUpdates/sendMessage — гасим httpx INFO-лог запросов,
+# иначе токен пишется в celery-worker.log каждую минуту (секрет-гигиена #008).
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 TG_API = "https://api.telegram.org"
 GETUPDATES_TIMEOUT = 0  # короткий poll внутри beat-тика (не long-poll)
 
