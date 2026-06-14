@@ -41,7 +41,6 @@ logger = logging.getLogger(__name__)
 WALL_FETCH_COUNT = 10
 LIP_HISTORY_MAX = 40
 PENDING_MAX_TRIES = 4
-SOURCE_FOOTER = "🔭 {name}"  # имя источника под текстом (native-ссылку даёт copyright)
 
 
 def _empty_stats() -> Dict[str, int]:
@@ -93,9 +92,16 @@ def _mark_seen(wt: Any, lip: str) -> None:
     wt.lip = prev[-LIP_HISTORY_MAX:]
 
 
-def _build_footer(name: str) -> str:
+def _build_footer(name: str, url: str) -> str:
+    """Футер атрибуции: имя источника + кликабельная ссылка (VK авто-линкует голый
+    URL в тексте). Native VK `copyright` для vk.com-источников НЕ работает — VK его
+    молча отбрасывает (проверено wall.getById 2026-06-14), поэтому ссылка — текстом."""
     name = (name or "").strip()
-    return ("\n\n" + SOURCE_FOOTER.format(name=name)) if name else ""
+    url = (url or "").strip()
+    if not url:
+        return ("\n\n📚 Источник: " + name) if name else ""
+    label = name or "оригинал"
+    return f"\n\n📚 Источник: {label}\n{url}"
 
 
 async def _get_krugozor_sources(session: AsyncSession) -> List[Dict[str, Any]]:
@@ -282,7 +288,7 @@ async def execute_krugozor_broadcast(
     body_text = (effective.get("text") or "").strip()
     att_dict = extract_vk_attachments(effective)
     copy_attachments = build_attachments_list(att_dict, max_items=10)
-    out_text = body_text + _build_footer(source_name)
+    out_text = body_text + _build_footer(source_name, source_url)
 
     publisher = await VKPublisher.create_with_policy(
         session, target_group_id=None, test_polygon_mode=test_mode
@@ -300,7 +306,6 @@ async def execute_krugozor_broadcast(
                 group_id=int(reg.vk_group_id),
                 text=out_text,
                 attachments=copy_attachments,
-                copyright_url=source_url,
             )
             if res.get("success"):
                 newly_done.add(reg.code)
