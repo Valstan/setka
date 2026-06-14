@@ -357,6 +357,78 @@ def get_copy_setka_post_interval_seconds() -> float:
         return 5.0
 
 
+# --- Поток «Кругозор»: научпоп/познавательное → веером на стены регионов -------
+# (решение владельца 2026-06-14: новости науки + оптимистичное «Время-Вперёд»
+# для расширения кругозора, разносол между местными новостями). Источники —
+# сообщества category='krugozor' (SciTopus, НауЧпок, Batrachospermum, Время-Вперёд),
+# уцелели в БД от Постопуса. Веер переиспользует кубики copy_setka, но отдельным
+# модулем (мульти-источник + ротация + копи-режим). OFF по умолчанию (#008).
+
+
+def krugozor_broadcast_disabled() -> bool:
+    """Поток «Кругозор» выключен (дефолт — ВЫКЛ, гейт владельца #008).
+
+    ON => beat-таска раз в день берёт свежий пост следующего по ротации
+    krugozor-источника и копирует его в нативный пост на стены целевых регионов
+    (с native-атрибуцией VK). Пока env не выставлен — рассылка не идёт."""
+    return (_getenv("KRUGOZOR_BROADCAST_DISABLED", "1") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def get_krugozor_source_category() -> str:
+    """Категория сообществ-источников научпопа (по умолчанию 'krugozor')."""
+    return (_getenv("KRUGOZOR_SOURCE_CATEGORY", "krugozor") or "krugozor").strip() or "krugozor"
+
+
+def get_krugozor_max_post_age_hours() -> float:
+    """Не рассылать посты старше N часов (свежесть научпопа). Дефолт 72ч."""
+    try:
+        return float(_getenv("KRUGOZOR_MAX_POST_AGE_HOURS", "72") or "72")
+    except ValueError:
+        return 72.0
+
+
+def get_krugozor_post_interval_seconds() -> float:
+    """Пауза между публикациями по регионам (анти-Captcha, как у copy_setka)."""
+    try:
+        return max(0.0, float(_getenv("KRUGOZOR_POST_INTERVAL_SECONDS", "5") or "5"))
+    except ValueError:
+        return 5.0
+
+
+def get_krugozor_target_region_codes() -> Optional[Set[str]]:
+    """Ограничить регионы-цели (коды через запятую); None = все активные.
+
+    Для smoke перед всей областью выставляется в 1 район, затем снимается."""
+    raw = _getenv("KRUGOZOR_TARGET_REGION_CODES")
+    if not raw or not str(raw).strip():
+        return None
+    return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
+
+
+def get_krugozor_source_exclude_ids() -> Set[int]:
+    """Исключить отдельные источники по vk_id (отрицательные), через запятую.
+
+    Напр. убрать «Время-Вперёд» из ротации, не трогая category в БД."""
+    raw = _getenv("KRUGOZOR_SOURCE_EXCLUDE_IDS")
+    if not raw or not str(raw).strip():
+        return set()
+    out: Set[int] = set()
+    for x in str(raw).split(","):
+        x = x.strip()
+        if not x:
+            continue
+        try:
+            out.add(int(x))
+        except ValueError:
+            continue
+    return out
+
+
 # --- LLM-курация дайджестов (shadow PoC, письмо brain 2026-06-07) -------------
 
 
