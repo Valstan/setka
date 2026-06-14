@@ -903,6 +903,108 @@ async def accept_request(
     }
 
 
+def _upload_request_photos(group_id: int, community_tokens, photo_urls) -> List[str]:
+    """Скачать фото заявки по CDN-URL и залить на стену группы → attachment-строки.
+
+    Best-effort: нет community-токена / фото / сети → пустой список (пост уйдёт
+    текстом). Грузим токеном целевой группы (владелец фото = группа)."""
+    urls = [u for u in (photo_urls or []) if isinstance(u, str) and u.startswith("http")]
+    if not urls:
+        return []
+    tok = (community_tokens or {}).get(abs(int(group_id)))
+    if not tok:
+        return []
+    try:
+        import httpx
+        import vk_api
+
+        from modules.publisher.vk_wall_photo_upload import upload_wall_images
+
+        images: List[bytes] = []
+        for u in urls[:10]:
+            try:
+                r = httpx.get(u, timeout=20)
+                if r.status_code == 200 and r.content:
+                    images.append(r.content)
+            except Exception:  # noqa: BLE001 - одно битое фото не валит остальные
+                continue
+        if not images:
+            return []
+        api = vk_api.VkApi(token=tok).get_api()
+        return upload_wall_images(api, images, group_id=group_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("publish-now image upload failed: %s", e)
+        return []
+
+
+@router.post("/requests/{request_id}/publish")
+async def publish_request_now(
+    request_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Опубликовать заявку из предложки СЕЙЧАС и бесплатно — для бытовых объявлений.
+
+    Когда с заявки дохода нет (продам огурцы, отдам котят): моментальный ``wall.post``
+    контента заявки (текст + её фото) в сообщество, снятие оригинала из предложки,
+    пометка ``published`` → карточка уходит из «Входящих». Отличие от ``/accept``
+    (платный пайплайн: клиент+цена+отложка) и ``/status`` (только смена статуса, без
+    реальной публикации). Идемпотентность: статус коммитим СРАЗУ после успешного
+    поста (защита от повторной публикации — иначе дубль на стене)."""
+    from modules.publisher.vk_publisher_extended import VKPublisher
+    from modules.vk_token_router import load_vk_routing
+
+    ar = await db.get(AdRequest, request_id)
+    if not ar:
+        raise HTTPException(status_code=404, detail="ad request not found")
+    if not ar.community_vk_id:
+        raise HTTPException(status_code=400, detail="у заявки нет сообщества для публикации")
+    if ar.status == "published":
+        return {"published": True, "already": True}
+    text = (ar.text_snapshot or "").strip()
+    photo_urls = ar.photo_urls_json or []
+    if not text and not photo_urls:
+        raise HTTPException(status_code=400, detail="Пустая заявка: нет ни текста, ни фото")
+
+    gid = int(ar.community_vk_id)
+    _user_token, community_tokens = await load_vk_routing()
+    attachments = _upload_request_photos(gid, community_tokens, photo_urls)
+
+    publisher = await VKPublisher.create_with_policy(db, target_group_id=gid)
+    res = await publisher.publish_digest(group_id=gid, text=text, attachments=attachments)
+    if not res.get("success"):
+        raise HTTPException(status_code=502, detail=f"Публикация не удалась: {res.get('error')}")
+
+    # Пометить published СРАЗУ (отдельный commit) — защита от повторной публикации.
+    ar.status = "published"
+    if not ar.contacted_at:
+        ar.contacted_at = datetime.utcnow()
+    await db.commit()
+
+    # Best-effort: снять оригинал из предложки + записать в таймлайн.
+    original_removed = False
+    if ar.vk_post_id:
+        rm = await publisher.delete_post(gid, int(ar.vk_post_id))
+        original_removed = bool(rm.get("success"))
+    try:
+        log_interaction(
+            db,
+            kind="published",
+            ad_request_id=ar.id,
+            summary=f"Опубликовано бесплатно в сообщество {gid}",
+            meta={"community_vk_id": gid, "free": True, "url": res.get("url")},
+        )
+        await db.commit()
+    except Exception as e:  # noqa: BLE001 - лог не критичен, пост уже опубликован
+        logger.warning("publish-now log_interaction failed: %s", e)
+
+    return {
+        "published": True,
+        "url": res.get("url"),
+        "original_removed": original_removed,
+        "attachments": len(attachments),
+    }
+
+
 @router.get("/scheduled")
 async def list_scheduled(
     community_vk_id: Optional[int] = None,
