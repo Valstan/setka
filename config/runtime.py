@@ -463,6 +463,41 @@ def krugozor_digest_photos_enabled() -> bool:
     )
 
 
+def get_radar_bot_name() -> str:
+    """Имя бота-приёмника каналов радара (ключ в TELEGRAM_TOKENS). Пусто = выкл (#008).
+
+    Владелец заводит бота «Карман» у @BotFather → env TELEGRAM_TOKEN_KARMAN=<token>
+    + RADAR_BOT_NAME=KARMAN. Пока не задано — приёмник не поллится."""
+    return (_getenv("RADAR_BOT_NAME", "") or "").strip().upper()
+
+
+def get_radar_bot_allowed_users() -> Set[int]:
+    """Telegram user-id, которым бот разрешает добавлять каналы (через запятую).
+
+    Пусто = никому (защита от чужих). Неавторизованному бот ответит его id, чтобы
+    владелец узнал свой и внёс сюда."""
+    raw = _getenv("RADAR_BOT_ALLOWED_USERS", "")
+    out: Set[int] = set()
+    for part in (raw or "").replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.add(int(part))
+        except ValueError:
+            continue
+    return out
+
+
+def get_radar_bot_radar_user_id() -> int:
+    """radar_users.id, кого подписывать на добавленные через бота каналы (дефолт 1 —
+    оператор valstan)."""
+    try:
+        return int(_getenv("RADAR_BOT_RADAR_USER_ID", "1") or "1")
+    except ValueError:
+        return 1
+
+
 def krugozor_promo_filter_enabled() -> bool:
     """Пропускать рекламные/промо-посты источника (не лить их в районные паблики).
 
