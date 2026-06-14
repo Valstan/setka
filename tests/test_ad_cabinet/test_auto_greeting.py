@@ -92,6 +92,34 @@ def test_disabled_when_allowlist_empty():
     assert not sent
 
 
+def test_allow_all_greets_any_community():
+    """allow_all=True (env ``*``) — приветствуем независимо от vk_id сообщества."""
+    sent = []
+    ar = _req(community_vk_id=-999)  # вне любого явного allowlist
+    session = _FakeSession([ar])
+    out = asyncio.run(
+        ag.run_auto_greeting(
+            session_factory=lambda: _FakeSessionCM(session),
+            send=lambda gid, pid, msg: sent.append((gid, pid, msg)) or {"success": True},
+            allow_all=True,
+            template_text="Здравствуйте, {author_name}!",
+            now=_NOW,
+        )
+    )
+    assert out == {"greeted": 1, "checked": 1}
+    assert sent == [(-999, 555, "Здравствуйте, Иван!")]
+
+
+def test_env_allow_all_parsing(monkeypatch):
+    monkeypatch.setenv("AD_AUTO_GREETING_COMMUNITIES", "*")
+    assert ag._env_allow_all() is True
+    monkeypatch.setenv("AD_AUTO_GREETING_COMMUNITIES", "  ALL ")
+    assert ag._env_allow_all() is True
+    monkeypatch.setenv("AD_AUTO_GREETING_COMMUNITIES", "-100,-200")
+    assert ag._env_allow_all() is False
+    assert ag._env_allowlist() == {-100, -200}
+
+
 def test_skips_group_author():
     sent = []
     ar = _req(author_is_group=True)
