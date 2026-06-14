@@ -133,16 +133,38 @@ def parse_messages(page_html: str) -> List[dict]:
     return messages
 
 
+RELAY_RETRIES = 2  # большой/медленный канал может не успеть с первого раза → ретрай
+
+
 async def _relay_fetch_page(
     channel: str, before: Optional[int] = None
 ) -> Tuple[str, Optional[str]]:
-    """Страница ленты через relay → (html, redirect_location|None)."""
+    """Страница ленты через relay → (html, redirect_location|None).
+
+    Ретраит транзиентные таймауты (тяжёлые каналы вроде новостных-гигантов
+    отдают большую AJAX-страницу — первый запрос через CF-relay может не успеть)."""
     base, secret = relay_config()
     params = {"before": str(before)} if before else None
-    async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS) as client:
-        response = await client.get(
-            f"{base}/s/{channel}", params=params, headers={"X-Relay-Secret": secret}
-        )
+    last_exc: Optional[Exception] = None
+    for attempt in range(RELAY_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS) as client:
+                response = await client.get(
+                    f"{base}/s/{channel}", params=params, headers={"X-Relay-Secret": secret}
+                )
+            break
+        except httpx.TimeoutException as e:
+            last_exc = e
+            logger.warning(
+                "radar tg relay timeout for %s (attempt %d/%d)", channel, attempt + 1, RELAY_RETRIES
+            )
+            continue
+    else:
+        raise TimeoutError(
+            f"relay не ответил за {FETCH_TIMEOUT_SECONDS}с ×{RELAY_RETRIES} "
+            "(канал большой/медленный)"
+        ) from last_exc
+
     redirect = response.headers.get("x-relay-redirect")
     if response.status_code in (301, 302) or redirect:
         return "", redirect or "?"
@@ -183,16 +205,31 @@ async def fetch_new(source) -> List[FetchedItem]:
 
 
 async def resolve_source(value: str) -> dict:
-    """Сырой ввод → {key, title, url}; ValueError если канал не живёт в превью."""
+    """Сырой ввод → {key, title, url}; ValueError с ВНЯТНОЙ причиной при отказе.
+
+    Причина важна: пользователь форвардит разные каналы, и «не получилось» без
+    объяснения бесполезно. Различаем таймаут (ретрай помог бы / большой канал),
+    HTTP-код relay, отсутствие веб-превью (его на канале выключили — мониторить
+    нельзя) и пустую ленту."""
     channel = parse_channel_value(value)
     try:
         page, redirect = await _relay_fetch_page(channel)
     except RuntimeError:
         raise  # relay не сконфигурирован — отдаём как есть (API превратит в 503)
-    except Exception as e:  # noqa: BLE001 - сеть → человекочитаемая причина
-        raise ValueError(f"Канал недоступен через relay: {e}") from e
+    except TimeoutError as e:
+        raise ValueError(
+            f"@{channel}: {e}. Попробуйте добавить ещё раз через минуту — "
+            "большие каналы relay тянет не всегда с первого раза."
+        ) from e
+    except httpx.HTTPStatusError as e:
+        raise ValueError(f"@{channel}: relay вернул {e.response.status_code}") from e
+    except Exception as e:  # noqa: BLE001 - сеть → repr, чтобы причина не была пустой
+        raise ValueError(f"@{channel} недоступен через relay: {e!r}") from e
     if redirect is not None:
-        raise ValueError(f"У t.me/{channel} нет web-превью (канал приватный или не существует)")
+        raise ValueError(
+            f"У @{channel} выключено веб-превью канала — Telegram не отдаёт его ленту по "
+            "t.me/s/, мониторить таким способом нельзя (это настройка самого канала)."
+        )
 
     title_match = _TITLE_RE.search(page)
     title = html_lib.unescape(title_match.group(1)) if title_match else None
@@ -202,4 +239,11 @@ async def resolve_source(value: str) -> dict:
             r'class="tgme_widget_message_owner_name"[^>]*>(?:<span[^>]*>)?([^<]+)', page
         )
         title = html_lib.unescape(owner.group(1)).strip() if owner else None
+
+    # 200, но в ленте ни одного сообщения и нет имени → веб-превью де-факто пустое
+    # (выключено/в канале нет постов). Добавлять смысла нет — поллер не увидит контента.
+    if not title and not _MSG_SPLIT_RE.search(page):
+        raise ValueError(
+            f"У @{channel} нет доступной ленты в web-превью (выключено или канал пуст)."
+        )
     return {"key": channel, "title": title or f"@{channel}", "url": f"https://t.me/{channel}"}
