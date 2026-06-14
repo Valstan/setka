@@ -343,28 +343,72 @@
         } finally { btn.disabled = false; }
     });
 
-    $('output-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const errBox = $('output-error');
-        errBox.classList.add('d-none');
-        const btn = $('output-add-btn');
-        btn.disabled = true;
+    // ───────────── Подключение аккаунтов (Радиоточка) ─────────────
+
+    let tgPoll = null;
+
+    function tgModalState(name) {
+        ['loading', 'ready', 'done'].forEach((s) =>
+            $('tg-connect-' + s).classList.toggle('d-none', s !== name));
+    }
+
+    async function countTelegramOutputs() {
+        const data = await api('/api/radar/outputs');
+        return data.outputs.filter((o) => o.type === 'telegram').length;
+    }
+
+    async function connectTelegram() {
+        const modalEl = $('tg-connect-modal');
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        $('tg-connect-error').classList.add('d-none');
+        tgModalState('loading');
+        modal.show();
+        let before = 0;
         try {
-            const payload = {
-                type: $('output-type').value,
-                target: $('output-target').value.trim(),
-                mode: $('output-mode').value,
-            };
-            const bot = $('output-bot').value.trim();
-            if (bot) payload.bot_name = bot;
-            await api('/api/radar/outputs', { method: 'POST', body: JSON.stringify(payload) });
-            $('output-target').value = '';
-            $('output-bot').value = '';
-            await loadOutputs();
+            before = await countTelegramOutputs();
+            const res = await api('/api/radar/link/telegram', { method: 'POST' });
+            $('tg-code').value = res.code;
+            if (res.deep_link) {
+                $('tg-deep-link').href = res.deep_link;
+                $('tg-deep-link').classList.remove('disabled');
+            } else {
+                $('tg-deep-link').classList.add('disabled');
+            }
+            $('tg-bot-name').textContent = res.bot_username ? '@' + res.bot_username : 'нашего бота';
+            tgModalState('ready');
         } catch (err) {
-            errBox.textContent = err.message;
-            errBox.classList.remove('d-none');
-        } finally { btn.disabled = false; }
+            $('tg-connect-error').textContent = err.message;
+            $('tg-connect-error').classList.remove('d-none');
+            tgModalState('ready');
+            return;
+        }
+        // Поллим появление нового telegram-вывода (пользователь нажал Start у бота).
+        if (tgPoll) clearInterval(tgPoll);
+        tgPoll = setInterval(async () => {
+            try {
+                const now = await countTelegramOutputs();
+                if (now > before) {
+                    clearInterval(tgPoll); tgPoll = null;
+                    tgModalState('done');
+                    await loadOutputs();
+                    setTimeout(() => bootstrap.Modal.getOrCreateInstance(modalEl).hide(), 2200);
+                }
+            } catch (e) { /* сеть моргнула — продолжаем поллить */ }
+        }, 3000);
+        modalEl.addEventListener('hidden.bs.modal', () => {
+            if (tgPoll) { clearInterval(tgPoll); tgPoll = null; }
+        }, { once: true });
+    }
+
+    document.addEventListener('click', (e) => {
+        const connect = e.target.closest('[data-connect]');
+        if (!connect || connect.disabled) return;
+        if (connect.dataset.connect === 'telegram') connectTelegram().catch(console.error);
+    });
+
+    document.getElementById('tg-code-copy')?.addEventListener('click', () => {
+        const code = $('tg-code').value;
+        navigator.clipboard?.writeText(code).catch(() => {});
     });
 
     // ───────────── Web-push (Ф0.5) ─────────────

@@ -1,7 +1,7 @@
 /* Service worker Радара: оболочка PWA + сетевой приоритет (Ф0.4) +
  * web-push (Ф0.5). Контент всегда свежий (network-first), офлайн отдаём
  * закэшированную оболочку страницы. */
-const CACHE = 'radar-shell-v3';
+const CACHE = 'radar-shell-v4';
 const SHELL = ['/radar'];
 
 self.addEventListener('install', (event) => {

@@ -121,6 +121,59 @@ async def test_handle_no_chat_id_none():
 
 
 # --------------------------------------------------------------------------- #
+# Привязка личного аккаунта /start <код> (Радиоточка)
+# --------------------------------------------------------------------------- #
+
+
+async def _link(status):
+    async def _fn(code, chat_id, display_name):
+        return {"status": status}
+
+    return _fn
+
+
+async def test_handle_start_code_links_account():
+    # /start <код> от НЕ-allowlisted юзера всё равно обрабатывается (код авторизует).
+    msg = {"chat": {"id": 42}, "from": {"id": 999}, "text": "/start ABC123"}
+    out = await handle_message(
+        msg, allowed_users={1}, add_channel=_added, link_account=await _link("linked")
+    )
+    assert out[0] == 42
+    assert out[1].startswith("✅") and "Подключено" in out[1]
+
+
+async def test_handle_start_code_already_exists():
+    msg = {"chat": {"id": 42}, "from": {"id": 1}, "text": "/start ABC123"}
+    out = await handle_message(
+        msg, allowed_users={1}, add_channel=_added, link_account=await _link("exists")
+    )
+    assert out[1].startswith("ℹ️")
+
+
+async def test_handle_start_code_invalid():
+    msg = {"chat": {"id": 42}, "from": {"id": 1}, "text": "/start BADCODE"}
+    out = await handle_message(
+        msg, allowed_users={1}, add_channel=_added, link_account=await _link("invalid")
+    )
+    assert out[1].startswith("❌") and "Код не найден" in out[1]
+
+
+async def test_handle_bare_start_silent():
+    # Голый /start без кода на общем боте — молчим (не тревожим чужих).
+    msg = {"chat": {"id": 42}, "from": {"id": 999}, "text": "/start"}
+    out = await handle_message(
+        msg, allowed_users={1}, add_channel=_added, link_account=await _link("linked")
+    )
+    assert out is None
+
+
+async def test_handle_start_without_link_account_silent():
+    msg = {"chat": {"id": 42}, "from": {"id": 999}, "text": "/start ABC123"}
+    out = await handle_message(msg, allowed_users={1}, add_channel=_added)
+    assert out is None
+
+
+# --------------------------------------------------------------------------- #
 # poll_radar_bot_once
 # --------------------------------------------------------------------------- #
 
