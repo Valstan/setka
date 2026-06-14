@@ -37,6 +37,7 @@
                 </li>
                 <li class="nav-item"><a class="nav-link text-white" data-tab="saved" role="button">Архив</a></li>
                 <li class="nav-item"><a class="nav-link text-white" data-tab="sources" role="button">Источники</a></li>
+                <li class="nav-item"><a class="nav-link text-white" data-tab="outputs" role="button">Выводы</a></li>
             </ul>
             <ul class="navbar-nav flex-row gap-3">
                 <li class="nav-item d-none" id="push-li">
@@ -108,6 +109,48 @@
                 </div>
             </div>
             <div id="sources-list"></div>
+        </div>
+
+        <!-- Выводы: куда радар шлёт найденное -->
+        <div id="tab-outputs" class="d-none">
+            <div class="card mb-3">
+                <div class="card-body">
+                    <h2 class="h6">Добавить канал вывода</h2>
+                    <p class="form-text mt-0">Куда отправлять найденное. «Лента радара» уже работает по умолчанию;
+                       добавьте свой Telegram или VK, чтобы получать туда же.</p>
+                    <div class="alert alert-danger d-none" id="output-error"></div>
+                    <form id="output-form" class="row g-2">
+                        <div class="col-12 col-sm-4">
+                            <select class="form-select" id="output-type">
+                                <option value="telegram">Telegram</option>
+                                <option value="vk">VK</option>
+                                <option value="feed">Лента радара</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-sm-5">
+                            <input class="form-control" id="output-target"
+                                   placeholder="TG: chat_id или @канал · VK: -123 (id сообщества)">
+                        </div>
+                        <div class="col-12 col-sm-3 d-grid">
+                            <button class="btn btn-primary" type="submit" id="output-add-btn">Добавить</button>
+                        </div>
+                        <div class="col-12 col-sm-6">
+                            <select class="form-select form-select-sm" id="output-mode">
+                                <option value="excerpt_link">Начало + ссылка (дёшево)</option>
+                                <option value="full">Целиком (с медиа в Telegram)</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-sm-6">
+                            <input class="form-control form-control-sm" id="output-bot"
+                                   placeholder="TG: имя бота (необязательно)">
+                        </div>
+                    </form>
+                    <div class="form-text" id="output-hint">
+                        Telegram: напишите боту, добавьте его в свой канал админом, укажите @канал или chat_id.
+                    </div>
+                </div>
+            </div>
+            <div id="outputs-list"></div>
         </div>
     </div>
 
