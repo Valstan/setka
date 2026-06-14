@@ -111,6 +111,14 @@ modules/vk_token_router.py::get_publish_candidates_for_group  # dead — не в
 
 # ── monitoring / scripts / tasks ────────────────────────────────────────────
 monitoring/metrics.py::db_connections_active  # alive — multiproc-gauge, проверяется test_metrics_multiproc
+monitoring/metrics.py::api_requests_in_progress  # alive — inc/dec в middleware/metrics_middleware.py
+monitoring/metrics.py::system_info  # alive — Info, оставлен для import-compat (multiproc-stub, см. metrics.py:180)
+monitoring/metrics.py::vk_api_request_duration_seconds  # sleeping — Prometheus-метрика без продьюсера (экспортится пустой)
+monitoring/metrics.py::db_queries_total  # sleeping — Prometheus-метрика без продьюсера (экспортится пустой)
+monitoring/metrics.py::db_query_duration_seconds  # sleeping — Prometheus-метрика без продьюсера (экспортится пустой)
+monitoring/metrics.py::posts_processed_total  # sleeping — Prometheus-метрика без продьюсера (экспортится пустой)
+monitoring/metrics.py::posts_published_total  # sleeping — Prometheus-метрика без продьюсера (экспортится пустой)
+modules/radar/auth.py::verify_session_token  # alive — вызывается в middleware/auth_gate.py:127
 scripts/migrate_mongodb_config.py::CATEGORY_MAPPING  # dead — one-shot Mongo-миграция, маппинг не читается
 scripts/probe_community_dm_capabilities.py::unread_peers  # dead — локальная переменная probe-скрипта
 tasks/parsing_tasks.py::VIDEO_REPORT_PATH  # dead — константа без потребителей

@@ -46,7 +46,7 @@
 │   ├── static/                 # Static files (CSS, JS)
 │   └── templates/              # Jinja2 templates (UI страницы)
 ├── core/                       # Core exceptions
-├── utils/                      # Утилиты (cache, retry, text_utils, image_utils...)
+├── utils/                      # Утилиты (cache, retry, text_utils, post_utils...)
 ├── middleware/                 # ASGI middleware (metrics, rate_limiter)
 ├── monitoring/                 # Prometheus metrics
 ├── scripts/                    # Админ-скрипты и тест-скрипты
