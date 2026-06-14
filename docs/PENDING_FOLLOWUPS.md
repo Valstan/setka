@@ -74,6 +74,16 @@ Batrachospermum (-85330), Время-Вперёд (-65614662).
   `radar-intake-bot` раз в минуту, offset в redis. **На AFONYA** (@malm_info_bot): env
   `RADAR_BOT_NAME=AFONYA` + `RADAR_BOT_ALLOWED_USERS=352096813` (прод-правка вне git).
 - 🟢 **Браузер/TG-проверка владельцем:** форварднуть @malm_info_bot пост канала → канал в радаре.
+- ✅ **TG-relay устойчив к тяжёлым/сопротивляющимся каналам** (отчёт владельца 2026-06-14: `@ASupersharij`
+  не добавлялся, `@pezduza` — да). Корень-цепочка: (1) `resolve_source` подставлял `str(e)` — у httpx
+  ReadTimeout текст пустой → бесполезная ошибка ([#255](https://github.com/Valstan/setka/pull/255));
+  (2) relay-маршрут `/s/` **стримил** тело (не буферизовал, в отличие от `/media`) → стрим-столл httpx
+  ([#256](https://github.com/Valstan/setka/pull/256)); (3) t.me отдаёт AJAX-вариант превью гигантов
+  заглушкой без ленты и держит сокет → **фолбэк AJAX(6с)→GET(25с) с AbortSignal**
+  ([#257](https://github.com/Valstan/setka/pull/257)/[#258](https://github.com/Valstan/setka/pull/258)),
+  VPS-таймаут 30→45с. **Проверено на проде:** `resolve_source(ASupersharij)` 2.2с, `fetch_new` 15 постов
+  за 2.6с. Внятные ошибки (таймаут/HTTP/нет-превью/пустая-лента) + ретрай. Урок для GOTCHAS (брайн): curl
+  по HTTP/1.1 врёт (ждёт EOF на незакрытом сокете) — мерить relay реальным httpx (HTTP/2).
 
 ### 📻 Личный кабинет радара — выводы + CRUD источников (директива brain 2026-06-14 `radar-personal-cabinet`)
 
