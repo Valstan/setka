@@ -34,6 +34,7 @@
           <div class="mb-3">
             <label class="form-label">Текст поста</label>
             <textarea class="form-control" id="f-body" rows="6" placeholder="Текст, который уйдёт во все выбранные паблики"></textarea>
+            <div class="form-text">Ссылки вида <code>https://…</code> станут кликабельными в VK автоматически — указывайте полный адрес с <code>https://</code> (короткое <code>site.ru</code> без префикса VK ссылкой не сделает).</div>
           </div>
 
           <div class="mb-3">
@@ -45,7 +46,7 @@
               </label>
             </label>
             <div id="img-gallery" class="d-flex flex-wrap gap-2"></div>
-            <div class="form-text">Отмеченные картинки попадут в пост (до 10). Заливаются один раз, переиспользуются во всех целях.</div>
+            <div class="form-text">Клик по картинке — прикрепить/открепить от поста (рамка + «в посте»). Красный <i class="bi bi-x-lg"></i> — удалить из библиотеки навсегда. В пост попадут только отмеченные (до 10), заливаются один раз и переиспользуются во всех целях.</div>
           </div>
 
           <div class="row g-2 mb-3">
@@ -156,11 +157,20 @@ function toggleAllTargets(on){ document.querySelectorAll(".target-cb").forEach(c
 async function loadImages(){
   const data = await jget(`${API}/images`);
   const g = document.getElementById("img-gallery");
-  g.innerHTML = (data.images||[]).map(im=>`
-    <div class="position-relative border rounded p-1 ${SELECTED_IMAGES.has(im.name)?'border-primary border-2':''}" style="width:84px" title="${im.name}">
-      <img src="${im.url}" style="width:74px;height:56px;object-fit:cover;cursor:pointer" onclick="toggleImage('${im.name}')">
-      <button class="btn btn-sm btn-link text-danger p-0 position-absolute top-0 end-0" onclick="deleteImage('${im.name}')" title="Удалить">&times;</button>
-    </div>`).join("") || '<span class="text-muted small">Нет загруженных картинок</span>';
+  g.innerHTML = (data.images||[]).map(im=>{
+    const sel = SELECTED_IMAGES.has(im.name);
+    return `
+    <div class="position-relative border rounded ${sel?'border-primary border-3':'border-secondary'}" style="width:96px" title="${im.name}">
+      <img src="${im.url}" style="width:94px;height:64px;object-fit:cover;cursor:pointer;border-radius:.25rem"
+           onclick="toggleImage('${im.name}')" title="Нажмите, чтобы прикрепить/открепить от поста">
+      ${sel?'<span class="badge bg-primary position-absolute bottom-0 start-0 m-1" style="font-size:.6rem">в посте</span>':''}
+      <button type="button" class="btn btn-danger position-absolute top-0 end-0 d-flex align-items-center justify-content-center p-0"
+              style="width:22px;height:22px;border-radius:50%;line-height:1;transform:translate(35%,-35%)"
+              onclick="deleteImage('${im.name}')" title="Удалить картинку из библиотеки навсегда">
+        <i class="bi bi-x-lg" style="font-size:.65rem"></i>
+      </button>
+    </div>`;
+  }).join("") || '<span class="text-muted small">Нет загруженных картинок</span>';
 }
 function toggleImage(name){ SELECTED_IMAGES.has(name)?SELECTED_IMAGES.delete(name):SELECTED_IMAGES.add(name); loadImages(); }
 async function uploadImage(input){
@@ -168,7 +178,10 @@ async function uploadImage(input){
   const fd = new FormData(); fd.append("file", input.files[0]);
   try{
     const r = await fetch(`${API}/images`, {method:"POST", credentials:"same-origin", body:fd});
-    if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+    if(!r.ok){
+      if(r.status===413) throw new Error("файл слишком большой для загрузки — уменьшите размер картинки");
+      throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+    }
     const im = await r.json(); SELECTED_IMAGES.add(im.name); await loadImages();
   }catch(e){ alert("Ошибка загрузки: "+e.message); }
   input.value="";
