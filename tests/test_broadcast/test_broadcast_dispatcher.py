@@ -126,6 +126,96 @@ def test_reschedule_last_run_done():
 # ---- dispatch_campaign ----
 
 
+# ---- _parse_attachments_map (чистая) ----
+
+
+def test_parse_attachments_map_json():
+    raw = '{"100": "photo-100_1,photo-100_2", "200": "photo-200_9"}'
+    assert d._parse_attachments_map(raw) == {
+        100: "photo-100_1,photo-100_2",
+        200: "photo-200_9",
+    }
+
+
+def test_parse_attachments_map_empty_and_legacy():
+    assert d._parse_attachments_map(None) == {}
+    assert d._parse_attachments_map("") == {}
+    assert d._parse_attachments_map("{}") == {}
+    # legacy-формат (одна строка attachment'ов, старый кэш) → игнорируем
+    assert d._parse_attachments_map("photo-100_1,photo-100_2") == {}
+    # пустые значения в карте отбрасываем (текст-онли для этой цели)
+    assert d._parse_attachments_map('{"100": "", "200": "photo-200_1"}') == {200: "photo-200_1"}
+
+
+# ---- per-target media (фикс бага: картинки шли только текстом) ----
+
+
+def test_per_target_attachments_built_and_cached():
+    """Картинки грузятся ПО КАЖДОЙ цели; каждая получает свою attachment-строку,
+    карта кэшируется в campaign.attachments (JSON)."""
+    sent = []
+    camp = _camp(image_names=["a.jpg"])
+
+    async def _build(campaign, targets):
+        # имитируем per-group заливку: у каждой цели свой owner-photo
+        return {abs(int(t.group_id)): f"photo{t.group_id}_1" for t in targets}
+
+    fake = _FakeSession(targets=_targets(-100, -200), claim_rowcounts=[1, 1])
+    out = asyncio.run(
+        d.dispatch_campaign(
+            fake, camp, publish=_ok_publish(sent), build_attachments=_build, interval=0, now=_NOW
+        )
+    )
+    assert out["published"] == 2 and out["complete"] is True
+    by_gid = {gid: atts for gid, _t, atts in sent}
+    assert by_gid[-100] == ["photo-100_1"]
+    assert by_gid[-200] == ["photo-200_1"]
+    # кэш — JSON-карта per-group, пригодная к повторным прогонам
+    assert d._parse_attachments_map(camp.attachments) == {
+        100: "photo-100_1",
+        200: "photo-200_1",
+    }
+
+
+def test_empty_build_cached_as_text_only():
+    """Заливка вернула пусто (нет токена/сбой) → кэшируем '{}' и шлём текстом, не
+    дёргая заливку каждый прогон."""
+    sent = []
+    camp = _camp(image_names=["a.jpg"])
+
+    async def _build(campaign, targets):
+        return {}
+
+    fake = _FakeSession(targets=_targets(-100), claim_rowcounts=[1])
+    asyncio.run(
+        d.dispatch_campaign(
+            fake, camp, publish=_ok_publish(sent), build_attachments=_build, interval=0, now=_NOW
+        )
+    )
+    assert sent[0][2] is None  # текст-онли
+    assert camp.attachments == "{}"
+
+
+def test_cached_attachments_not_rebuilt():
+    """attachments уже закэшированы (не None) → build_attachments не вызывается."""
+    sent = []
+    camp = _camp(image_names=["a.jpg"], attachments='{"100": "photo-100_7"}')
+    called = {"n": 0}
+
+    async def _build(campaign, targets):
+        called["n"] += 1
+        return {}
+
+    fake = _FakeSession(targets=_targets(-100), claim_rowcounts=[1])
+    asyncio.run(
+        d.dispatch_campaign(
+            fake, camp, publish=_ok_publish(sent), build_attachments=_build, interval=0, now=_NOW
+        )
+    )
+    assert called["n"] == 0
+    assert sent[0][2] == ["photo-100_7"]
+
+
 def test_publishes_all_targets_and_completes():
     sent = []
     camp = _camp()

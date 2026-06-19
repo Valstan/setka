@@ -163,6 +163,18 @@ Batrachospermum (-85330), Время-Вперёд (-65614662).
   проверено по реальному пути (2/8 МБ → не 413). Шаблон: явная красная кнопка удаления + бейдж «в посте»
   + подсказка про `https://`-префикс (VK сам линкует). 🟢 _Остаток:_ подтверждение владельцем, что
   >1 МБ грузится; если ВСЁ ЕЩЁ 413 — лимит на edge-прокси myjino (вне nginx), копать отдельно.
+- ✅ **Починка: рассылка слала ТОЛЬКО текст, картинки терялись 2026-06-19** (PR #TBD). Корень из
+  лога worker: диспетчер грузил фото **community-токеном** → VK `[27] method is unavailable with
+  group auth` (тот же барьер #27, что у `wall.edit`/`stats.get` — brain GOTCHAS) → `upload_wall_photo`
+  возвращал None по каждой → пустая attachment-строка кэшировалась → все посты текстом (текст шёл, т.к.
+  `wall.post` фолбэчит на user-токен). **Probe** `scripts/probe_wall_upload_token.py` (read-only,
+  `getWallUploadServer`): **16/16 целей заливаются user-токеном, 0/16 community** (все [27]). **Фикс:**
+  грузим **user-токеном** админа + **по каждой целевой группе отдельно** (owner фото = эта группа; одну
+  строку на все цели нельзя — owner-mismatch, VK дропает); кэш `campaign.attachments` стал JSON-картой
+  `{gid: 'photo..'}`. Тот же латентный баг (community-токен на стену) исправлен в `ad_cabinet`
+  (`_build_wall_attachment`/`_upload_request_photos`, 0 публикаций → не проявлялся) + поправлен docstring
+  `vk_wall_photo_upload`. +новые тесты (per-target attach, parse-map, text-only/no-rebuild). 🟢 _Остаток:_
+  деплой (без миграции, restart worker/web) + браузер-проверка владельцем (картинка в опубликованном посте).
 - ⏳ **Генератор обложек сообществ** (`...2026-06-14-community-cover-template-generator.md`): шаблон-сборщик
   cover'ов (фон от владельца → название+брендинг → upload), пилот Верхошижемье. **Probe cover-API выполнен
   2026-06-14** ([#244](https://github.com/Valstan/setka/pull/244), `scripts/probe_cover_api.py`, ответ brain
