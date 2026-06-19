@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -92,6 +93,31 @@ def compute_reschedule(
         return new_runs, "done", next_run_at
     base = next_run_at or now
     return new_runs, "scheduled", base + timedelta(hours=float(interval_hours or 0))
+
+
+def _parse_attachments_map(raw: Optional[str]) -> Dict[int, str]:
+    """Распарсить кэш ``campaign.attachments`` → ``{abs(group_id): 'photo..,photo..'}``.
+
+    Формат — JSON-map (per-group: у каждой цели свои attachment'ы, владелец фото =
+    эта группа). Пустая / legacy-строка (старый формат «одна строка на все») / битый
+    JSON → ``{}`` (картинки перельются при следующей правке кампании, сбрасывающей
+    кэш). Значение ``"{}"`` (заливка не дала ничего) тоже даёт ``{}`` — текст-онли."""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: Dict[int, str] = {}
+    for k, v in data.items():
+        try:
+            if v:
+                out[abs(int(k))] = str(v)
+        except (ValueError, TypeError):
+            continue
+    return out
 
 
 async def _maybe_await(value):
@@ -206,16 +232,18 @@ async def dispatch_campaign(
     done_groups = {int(p.group_id) for p in existing}
     terminal_groups = {int(p.group_id) for p in existing if p.status in TERMINAL}
 
-    # Медиа: залить один раз, кэшировать строку attachment'ов (krugozor-модель —
-    # одну строку переиспользуем на все цели). "" кэшируем тоже, чтобы не дёргать
-    # заливку каждый прогон при отсутствии токена.
+    # Медиа: залить картинки ПО КАЖДОЙ цели (владелец фото = эта группа) и
+    # кэшировать карту {gid: 'photo..'} в JSON. Переиспользовать одну строку на все
+    # цели НЕЛЬЗЯ — owner-mismatch, VK дропает вложение (см.
+    # vk_wall_photo_upload). Грузим user-токеном: community-токен → error 27. "{}"
+    # (пустую карту) кэшируем тоже, чтобы не дёргать заливку каждый прогон.
     if campaign.attachments is None and (campaign.image_names or []):
-        built = ""
+        built: Dict[int, str] = {}
         if build_attachments is not None:
-            built = await _maybe_await(build_attachments(campaign, targets)) or ""
-        campaign.attachments = built
+            built = await _maybe_await(build_attachments(campaign, targets)) or {}
+        campaign.attachments = json.dumps({str(k): v for k, v in built.items()})
         await session.commit()
-    attachments = campaign.attachments.split(",") if campaign.attachments else None
+    att_map = _parse_attachments_map(campaign.attachments)
     text = campaign.body or ""
 
     published = 0
@@ -231,6 +259,8 @@ async def dispatch_campaign(
         if posted_any and interval > 0:
             await asyncio.sleep(interval)  # throttle между реальными постами
         posted_any = True
+        att_str = att_map.get(abs(gid))
+        attachments = att_str.split(",") if att_str else None
         try:
             res = await _maybe_await(publish(gid, text, attachments))
         except Exception as e:  # noqa: BLE001 — per-target изоляция
@@ -279,41 +309,49 @@ async def _default_publisher(session) -> Callable[[int, str, Optional[List[str]]
     return _pub
 
 
-async def _default_build_attachments(campaign, targets) -> str:
-    """Залить картинки кампании ОДИН раз и вернуть строку attachment'ов.
+async def _default_build_attachments(campaign, targets) -> Dict[int, str]:
+    """Залить картинки кампании на стену КАЖДОЙ цели → ``{abs(group_id): 'photo..'}``.
 
-    krugozor-модель: одну строку фото переиспользуем на все цели. Грузим
-    community-токеном первой цели, у которой он есть (иначе пост уйдёт текстом —
-    graceful degrade)."""
+    Грузим **user-токеном** (владелец-админ): VK запрещает
+    ``photos.getWallUploadServer`` под community-auth (error 27 — probe
+    ``scripts/probe_wall_upload_token.py`` 2026-06-19: 16/16 user-ok, 0/16
+    community). Фото грузится в контекст КАЖДОЙ группы (owner = эта группа) — одну
+    строку на все цели переиспользовать нельзя (owner-mismatch → VK дропает фото).
+    Per-target изоляция: сбой заливки в одну цель не валит остальные (та уйдёт
+    текстом — graceful degrade)."""
     from modules.broadcast.service import broadcast_image_paths
 
     paths = broadcast_image_paths(campaign.image_names or [])
     if not paths:
-        return ""
+        return {}
     try:
         from modules.vk_token_router import load_vk_routing
 
-        _user_token, community_tokens = await load_vk_routing()
-        community_tokens = community_tokens or {}
+        user_token, _community_tokens = await load_vk_routing()
     except Exception as e:  # pragma: no cover - инфраструктурный сбой
         logger.warning("broadcast: load_vk_routing failed: %s", e)
-        return ""
-    gid = next(
-        (abs(int(t.group_id)) for t in targets if abs(int(t.group_id)) in community_tokens), None
-    )
-    if gid is None:
-        return ""  # нет community-токена для заливки → текстом
-    try:
-        import vk_api
+        return {}
+    if not user_token:
+        logger.warning("broadcast: нет user-токена для заливки → посты уйдут текстом")
+        return {}
 
-        from modules.publisher.vk_wall_photo_upload import upload_wall_images
+    import vk_api
 
-        api = vk_api.VkApi(token=community_tokens[gid]).get_api()
-        images = [p.read_bytes() for p in paths]
-        return ",".join(upload_wall_images(api, images, group_id=gid))
-    except Exception as e:  # pragma: no cover - сеть/VK
-        logger.warning("broadcast attachment build failed: %s", e)
-        return ""
+    from modules.publisher.vk_wall_photo_upload import upload_wall_images
+
+    api = vk_api.VkApi(token=user_token).get_api()
+    images = [p.read_bytes() for p in paths]
+    out: Dict[int, str] = {}
+    for t in targets:
+        gid = abs(int(t.group_id))
+        try:
+            atts = upload_wall_images(api, images, group_id=gid)
+        except Exception as e:  # pragma: no cover - сеть/VK; per-target изоляция
+            logger.warning("broadcast attachment build failed g=%s: %s", gid, e)
+            continue
+        if atts:
+            out[gid] = ",".join(atts)
+    return out
 
 
 async def run_broadcast_dispatch(
