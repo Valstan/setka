@@ -332,8 +332,8 @@ class RegionResponse(BaseModel):
 
 
 class DigestTemplateSettingsModel(BaseModel):
-    title: str = Field(..., description="Заголовок дайджеста")
-    footer: str = Field("", description="Подвал дайджеста")
+    title: str = Field(..., description="Заголовок сводки")
+    footer: str = Field("", description="Подвал сводки")
     include_source_links: bool = Field(
         True, description="Показывать кликабельный источник под новостью"
     )

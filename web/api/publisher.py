@@ -32,7 +32,7 @@ class PublishRequest(BaseModel):
     """Запрос на публикацию"""
 
     region_code: str = Field(..., description="Код региона (mi, nolinsk, etc)")
-    max_posts: int = Field(5, ge=1, le=10, description="Максимальное количество постов в дайджесте")
+    max_posts: int = Field(5, ge=1, le=10, description="Максимальное количество постов в сводке")
     publish_mode: str = Field("test", description="Режим публикации: test или production")
     custom_text: Optional[str] = Field(None, description="Кастомный текст для поста")
     hashtags: Optional[List[str]] = Field(None, description="Дополнительные хештеги")

@@ -83,8 +83,8 @@ async def filtration_meta():
         "themes": POSTOPUS_DIGEST_THEMES,
         "default_pipeline": DEFAULT_PIPELINE,
         "description": {
-            "max_post_age_hours": "Макс. возраст поста (часы) для отбора в дайджест",
-            "max_posts_per_digest": "Сколько новостей максимум в одном посте-дайджесте",
+            "max_post_age_hours": "Макс. возраст поста (часы) для отбора в сводку",
+            "max_posts_per_digest": "Сколько новостей максимум в одном посте-сводке",
             "min_rafinad_len_core_dedup": "Мин. длина «rafinad»-текста для дедупа по «ядру»",
             "posts_per_community_fetch": (
                 "Сколько последних постов запрашивать с каждого сообщества"

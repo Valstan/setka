@@ -20,7 +20,7 @@
     <div class="alert alert-info small">
         <strong>Прогон без публикации.</strong>
         Парсит сообщества региона по выбранной теме, прогоняет через фильтры и
-        собирает дайджест — но <strong>ничего не публикует</strong> в VK/Telegram
+        собирает сводку — но <strong>ничего не публикует</strong> в VK/Telegram
         и не пишет в БД. Видно, сколько постов отфильтровалось и что попало бы в
         выпуск. Реальный VK-парсинг — может занять до минуты.
     </div>
@@ -63,7 +63,7 @@
 
     <div id="result" style="display:none;">
         <div class="row g-2 mb-3" id="stats-row"></div>
-        <h5 class="mb-2">Попало бы в дайджест</h5>
+        <h5 class="mb-2">Попало бы в сводку</h5>
         <div id="previews"></div>
     </div>
 </div>
@@ -114,7 +114,7 @@ function renderResult(res) {
     const wp = res.would_publish || [];
     if (!wp.length) {
         previews.innerHTML = `<div class="alert alert-warning small">
-            Дайджест пуст — после фильтров ничего бы не опубликовалось.</div>`;
+            Сводка пуста — после фильтров ничего бы не опубликовалось.</div>`;
     } else {
         wp.forEach((p) => {
             const card = document.createElement("div");

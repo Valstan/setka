@@ -119,12 +119,12 @@
         </div>
     </div>
 
-    <!-- Heartbeat дайджестов (#018) + Liveness Celery -->
+    <!-- Heartbeat сводок (#018) + Liveness Celery -->
     <div class="row mb-4">
         <div class="col-lg-7 mb-3 mb-lg-0">
             <div class="card border-info h-100">
                 <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center flex-wrap gap-2">
-                    <h5 class="mb-0">💓 Heartbeat дайджестов</h5>
+                    <h5 class="mb-0">💓 Heartbeat сводок</h5>
                     <span id="heartbeat-watchdog-badge" class="badge bg-secondary">novost: загрузка…</span>
                 </div>
                 <div class="card-body p-0">
@@ -188,7 +188,7 @@
         <div class="col-12">
             <div class="card border-info">
                 <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center flex-wrap gap-2">
-                    <h5 class="mb-0">📊 Состояние дайджестов</h5>
+                    <h5 class="mb-0">📊 Состояние сводок</h5>
                     <div class="d-flex gap-2 align-items-center flex-wrap" id="digests-summary-badges">
                         <span class="badge bg-secondary">Загрузка…</span>
                     </div>
@@ -199,7 +199,7 @@
                 <div class="card-body p-0">
                     <div id="digests-status-loading" class="text-center py-3 text-muted">
                         <div class="spinner-border spinner-border-sm"></div>
-                        Загрузка состояния дайджестов…
+                        Загрузка состояния сводок…
                     </div>
                     <div id="digests-status-content" style="display:none;"></div>
                     <div id="digests-status-error" class="alert alert-warning m-3" style="display:none;"></div>
@@ -456,12 +456,12 @@ async function loadDigestsStatus() {
     } catch (e) {
         loading.style.display = 'none';
         errorEl.style.display = 'block';
-        errorEl.textContent = 'Не удалось загрузить состояние дайджестов: ' + e.message;
+        errorEl.textContent = 'Не удалось загрузить состояние сводок: ' + e.message;
     }
 }
 
 // --------------------------------------------------------------------------- //
-// Heartbeat дайджестов (#018) + Liveness Celery + ручное управление
+// Heartbeat сводок (#018) + Liveness Celery + ручное управление
 // --------------------------------------------------------------------------- //
 
 function _agoFromSeconds(sec) {
@@ -580,7 +580,7 @@ function controlScanRegion() {
     const code = sel ? sel.value : '';
     if (!code) { showError('Сначала выберите регион'); return; }
     if (!confirm('Запустить реальный workflow региона "' + code + '" сейчас?\n'
-        + 'Он соберёт и опубликует дайджесты вне расписания.')) return;
+        + 'Он соберёт и опубликует сводки вне расписания.')) return;
     const btn = document.getElementById('control-scan-btn');
     btn.disabled = true;
     fetch('/api/test-workflow/scan-region/' + encodeURIComponent(code), { method: 'POST' })
@@ -611,7 +611,7 @@ async function loadAllMonitoringData() {
     try {
         console.log('Loading all monitoring data...');
 
-        // Виджет дайджестов не должен блокировать остальные данные — fire-and-forget
+        // Виджет сводок не должен блокировать остальные данные — fire-and-forget
         loadDigestsStatus().catch(e => console.warn('digests status failed:', e));
         loadHeartbeat().catch(e => console.warn('heartbeat failed:', e));
         loadLiveness().catch(e => console.warn('liveness failed:', e));
