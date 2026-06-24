@@ -17,7 +17,7 @@
 
 | # | Канон | Как проверить |
 |---|---|---|
-| C1 | **Gate-eligible** — регион попадает в тематические волны | есть активный пул `communities` (после [PR #108](https://github.com/Valstan/setka/pull/108) этого достаточно) ИЛИ `region_configs` ИЛИ `digest_mode='communities'` |
+| C1 | **Gate-eligible** — регион попадает в тематические волны | есть активный пул `communities` (после [PR #108](https://github.com/Valstan/setka/pull/108) этого достаточно) ИЛИ `region_configs` ИЛИ `bulletin_mode='communities'` |
 | C2 | **Брендинг** — строка `region_configs` с человекочитаемыми `zagolovki`/`heshteg`/`heshteg_local.raicentr` | `SELECT * FROM region_configs WHERE region_code=…` |
 | C3 | **Локалитеты** — `regions.config.localities` (для discovery) + `region_configs.localities` (для RegionalRelevanceFilter) | непустой список сёл района |
 | C4 | **Покрытие тем** — пул покрывает канон-темы района: `novost, reklama, kultura, sport, admin, union, detsad, sosed` | нет «тонких»/пустых тем (особенно novost/admin) |

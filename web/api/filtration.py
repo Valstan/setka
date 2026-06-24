@@ -16,7 +16,7 @@ from database.models import Region
 from database.models_extended import RegionConfig
 from modules.bulletin_pipeline_settings import (
     DEFAULT_PIPELINE,
-    POSTOPUS_DIGEST_THEMES,
+    POSTOPUS_BULLETIN_THEMES,
     empty_bulletin_filters_template,
     get_effective_pipeline_settings,
 )
@@ -80,7 +80,7 @@ def _normalize_localities(raw: Optional[List[str]]) -> List[str]:
 async def filtration_meta():
     """Справочник тем и дефолтов для UI."""
     return {
-        "themes": POSTOPUS_DIGEST_THEMES,
+        "themes": POSTOPUS_BULLETIN_THEMES,
         "default_pipeline": DEFAULT_PIPELINE,
         "description": {
             "max_post_age_hours": "Макс. возраст поста (часы) для отбора в сводку",
@@ -127,7 +127,7 @@ async def get_filtration(region_code: str, session: AsyncSession = Depends(get_d
         )
 
     df = _normalize_bulletin_filters(cfg.bulletin_filters)
-    preview = {t: get_effective_pipeline_settings(cfg, t) for t in POSTOPUS_DIGEST_THEMES}
+    preview = {t: get_effective_pipeline_settings(cfg, t) for t in POSTOPUS_BULLETIN_THEMES}
 
     return {
         "region_code": region.code,
@@ -187,7 +187,7 @@ async def put_filtration(
     await session.refresh(cfg)
 
     df = _normalize_bulletin_filters(cfg.bulletin_filters)
-    preview = {t: get_effective_pipeline_settings(cfg, t) for t in POSTOPUS_DIGEST_THEMES}
+    preview = {t: get_effective_pipeline_settings(cfg, t) for t in POSTOPUS_BULLETIN_THEMES}
 
     return {
         "success": True,

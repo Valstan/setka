@@ -386,9 +386,9 @@ class SystemStatusNotifier:
                         operation_names.append(f"{region_icon}Сбор постов в {region}")
                     elif op_type == "post_sorting":
                         operation_names.append(f"{region_icon}Сортировка постов в {region}")
-                    elif op_type == "digest_creation":
+                    elif op_type == "bulletin_creation":
                         operation_names.append(f"{region_icon}Создание сводки для {region}")
-                    elif op_type == "digest_publishing":
+                    elif op_type == "bulletin_publishing":
                         operation_names.append(f"{region_icon}Публикация сводки в {region}")
                     else:
                         operation_names.append(f"{region_icon}Операция в {region}")

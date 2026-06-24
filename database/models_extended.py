@@ -126,7 +126,7 @@ class RegionConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     region_code = Column(String(50), unique=True, nullable=False, index=True)  # mi, vp, ur, etc
 
-    # Digest configuration
+    # Bulletin configuration
     zagolovki = Column(JSON, nullable=True)  # {"novost": "Header", "kultura": "...", ...}
     heshteg = Column(JSON, nullable=True)  # {"novost": "новости", "kultura": "культура", ...}
     heshteg_local = Column(JSON, nullable=True)  # {"raicentr": "малмыж", ...}
@@ -267,10 +267,10 @@ class ScheduledPublication(Base):
     # Scheduled time
     scheduled_for = Column(DateTime, nullable=False, index=True)
 
-    # Content (prepared digest)
-    content = Column(Text, nullable=True)  # prepared digest text
+    # Content (prepared bulletin)
+    content = Column(Text, nullable=True)  # prepared bulletin text
     attachments = Column(JSON, nullable=True)  # prepared attachments
-    post_ids = Column(JSON, nullable=True)  # [post_id1, post_id2, ...] included in digest
+    post_ids = Column(JSON, nullable=True)  # [post_id1, post_id2, ...] included in bulletin
 
     # Status
     status = Column(

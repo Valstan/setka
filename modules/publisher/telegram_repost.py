@@ -1,5 +1,5 @@
 """
-Telegram repost: mirror VK digests / community walls to Telegram channels.
+Telegram repost: mirror VK bulletins / community walls to Telegram channels.
 
 Transport uses the raw Telegram Bot API over HTTP (``requests`` in a worker
 thread), consistent with ``modules.notifications.telegram_notifier`` and the
@@ -14,7 +14,7 @@ DB or repo. The DB stores only the channel and the bot NAME (e.g. "AFONYA").
 
 Design notes:
 - Text is rebuilt clean from source-post texts (no VK source links, no VK
-  hashtags) rather than regex-stripping the VK-formatted digest text.
+  hashtags) rather than regex-stripping the VK-formatted bulletin text.
 - Only directly-sendable ``*.mp4`` video URLs are attached; VK embed/player
   pages are dropped (Telegram cannot upload them by URL).
 - Any send failure degrades gracefully and never raises into the caller — a
@@ -413,7 +413,7 @@ async def mirror_bulletin_to_telegram(
     test_mode: bool = False,
 ) -> Dict[str, Any]:
     """
-    Flow A helper: render a digest (header + the source posts that made it in)
+    Flow A helper: render a bulletin (header + the source posts that made it in)
     into one clean Telegram message with media (capped at 10 items total),
     then send it.
     """

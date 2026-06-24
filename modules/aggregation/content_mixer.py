@@ -53,7 +53,7 @@ class ContentMixer:
             return []
 
         logger.info(
-            f"Creating balanced digest from {len(posts)} posts "
+            f"Creating balanced bulletin from {len(posts)} posts "
             f"(max: {max_posts}, slot: {time_slot})"
         )
 
@@ -72,7 +72,7 @@ class ContentMixer:
         # Оптимизировать порядок
         optimized = self._optimize_order(balanced)
 
-        logger.info(f"Created digest with {len(optimized)} posts")
+        logger.info(f"Created bulletin with {len(optimized)} posts")
 
         return optimized
 
@@ -291,20 +291,20 @@ if __name__ == "__main__":
 
     mixer = ContentMixer()
 
-    # Test balanced digest
-    print("\n1. Creating balanced digest (max 5 posts)...")
-    digest = mixer.create_balanced_bulletin(test_posts, max_posts=5, time_slot="afternoon")
+    # Test balanced bulletin
+    print("\n1. Creating balanced bulletin (max 5 posts)...")
+    bulletin = mixer.create_balanced_bulletin(test_posts, max_posts=5, time_slot="afternoon")
 
-    print(f"\n   Selected {len(digest)} posts:")
-    for i, post in enumerate(digest, 1):
+    print(f"\n   Selected {len(bulletin)} posts:")
+    for i, post in enumerate(bulletin, 1):
         print(
             f"   {i}. {post.ai_category} "
             f"(score: {post.ai_score}, sentiment: {post.sentiment_label})"
         )
 
     # Test stats
-    print("\n2. Digest stats:")
-    stats = mixer.get_bulletin_stats(digest)
+    print("\n2. Bulletin stats:")
+    stats = mixer.get_bulletin_stats(bulletin)
     print(f"   Total: {stats['total_posts']}")
     print(f"   Categories: {stats['categories']}")
     print(f"   Sentiment: {stats['sentiment_distribution']}")

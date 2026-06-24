@@ -2,7 +2,7 @@
 
 Покрывают:
 - чистую функцию решения «каскад vs пул» ``_use_cascade_bulletin``;
-- расширенную таксономию тем (POSTOPUS_DIGEST_THEMES + заголовки).
+- расширенную таксономию тем (POSTOPUS_BULLETIN_THEMES + заголовки).
 
 NB: ``_use_cascade_bulletin`` импортируется ЛЕНИВО внутри тестов, а не на уровне
 модуля. Иначе collection-time импорт ``tasks.parsing_scheduler_tasks`` с настоящим
@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from modules.bulletin_pipeline_settings import POSTOPUS_DIGEST_THEMES
+from modules.bulletin_pipeline_settings import POSTOPUS_BULLETIN_THEMES
 from modules.publisher.postopus_bulletin_headers import resolve_bulletin_header
 
 NEW_OBLAST_THEMES = [
@@ -36,7 +36,7 @@ def test_raion_never_cascades():
     from tasks.parsing_scheduler_tasks import _use_cascade_bulletin
 
     assert _use_cascade_bulletin("raion", None) is False
-    assert _use_cascade_bulletin("raion", {"digest_mode": "communities"}) is False
+    assert _use_cascade_bulletin("raion", {"bulletin_mode": "communities"}) is False
     assert _use_cascade_bulletin(None, None) is False
 
 
@@ -46,16 +46,16 @@ def test_oblast_default_is_cascade():
 
     assert _use_cascade_bulletin("oblast", None) is True
     assert _use_cascade_bulletin("oblast", {}) is True
-    assert _use_cascade_bulletin("oblast", {"digest_mode": "cascade"}) is True
+    assert _use_cascade_bulletin("oblast", {"bulletin_mode": "cascade"}) is True
     assert _use_cascade_bulletin("strana", None) is True
 
 
 def test_oblast_communities_mode_skips_cascade():
-    """digest_mode='communities' → область собирает из своего пула, как район."""
+    """bulletin_mode='communities' → область собирает из своего пула, как район."""
     from tasks.parsing_scheduler_tasks import _use_cascade_bulletin
 
-    assert _use_cascade_bulletin("oblast", {"digest_mode": "communities"}) is False
-    assert _use_cascade_bulletin("strana", {"digest_mode": "communities"}) is False
+    assert _use_cascade_bulletin("oblast", {"bulletin_mode": "communities"}) is False
+    assert _use_cascade_bulletin("strana", {"bulletin_mode": "communities"}) is False
 
 
 def test_non_dict_config_is_cascade():
@@ -71,7 +71,7 @@ def test_non_dict_config_is_cascade():
 
 @pytest.mark.parametrize("theme", NEW_OBLAST_THEMES)
 def test_new_themes_registered(theme):
-    assert theme in POSTOPUS_DIGEST_THEMES
+    assert theme in POSTOPUS_BULLETIN_THEMES
 
 
 @pytest.mark.parametrize("theme", NEW_OBLAST_THEMES)

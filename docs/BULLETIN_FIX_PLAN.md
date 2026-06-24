@@ -4,7 +4,7 @@
 
 ### 1. Обрезание постов на полуслове
 **Симптом:** Сводка обрывается `"лет.В детс..."` — пост обрезан по лимиту 4096 символов на полуслове.
-**Причина:** `DigestBuilder._available_length()` резервирует место, но `truncate_text()` режет по символам без учёта границ предложений.
+**Причина:** `BulletinBuilder._available_length()` резервирует место, но `truncate_text()` режет по символам без учёта границ предложений.
 **Решение:** НЕ добавлять пост если он целиком не влезает. Если post + attribution + spacing > available_length — пропустить пост, оставить на следующую итерацию.
 
 ### 2. Публикация не тем токеном
@@ -53,7 +53,7 @@
   - Группировать: `mourning` (скорбь), `positive`, `neutral`, `negative_other`
   - Формировать **отдельные сводки** для mourning новостей
 
-#### 4b. Создание `MourningDigestBuilder`
+#### 4b. Создание `MourningBulletinBuilder`
 - Отдельный билдер для траурных новостей
 - Формат:
 ```
@@ -90,18 +90,18 @@ https://vk.com/wall-... (source)
 3. В `VKPublisher` — валидация что токен из publish-списка
 
 ### Этап 2: Форматирование сводки (эмодзи-разделители)
-**Файлы:** `modules/publisher/digest_builder.py`, `utils/post_utils.py`
+**Файлы:** `modules/publisher/bulletin_builder.py`, `utils/post_utils.py`
 1. Добавить `✍ ` перед каждым постом
 2. Порядок: `✍ текст` → пустая строка → `@url (source)` → пустая строка
 3. Убрать `truncate_text` — НЕ обрезать посты, пропускать если не влезают
 4. `_available_length()` — проверять полный пост + overhead
 
 ### Этап 3: Sentiment-анализ и разделение сводок
-**Файлы:** `modules/ai_analyzer/sentiment_analyzer.py`, `modules/publisher/digest_builder.py`
+**Файлы:** `modules/ai_analyzer/sentiment_analyzer.py`, `modules/publisher/bulletin_builder.py`
 1. Расширить `NEGATIVE_WORDS` и `SADNESS_MARKERS` для новостей о смерти
 2. Добавить новый label `mourning` (скорбь) в `SentimentAnalyzer`
-3. Создать `MourningDigestBuilder` для отдельных траурных постов
-4. Добавить `DigestSplitter` — разделяет посты по sentiment перед билдингом
+3. Создать `MourningBulletinBuilder` для отдельных траурных постов
+4. Добавить `BulletinSplitter` — разделяет посты по sentiment перед билдингом
 
 ### Этап 4: (Опционально) Qwen API интеграция
 **Файлы:** новый `modules/ai_analyzer/qwen_sentiment.py`

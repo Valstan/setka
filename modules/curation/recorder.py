@@ -9,12 +9,12 @@
   * **Изолированная сессия.** Recorder открывает СВОЮ `AsyncSessionLocal()`,
     не трогает транзакцию публикации — его падение не откатит и не заблокирует
     уже отправленный в VK сводка.
-  * **Never raises.** Любое исключение глушится в WARNING (как track_digest_*).
+  * **Never raises.** Любое исключение глушится в WARNING (как track_bulletin_*).
     Сбой курации = публикация всё равно прошла (current behavior).
   * **Gated.** OFF по умолчанию (`BULLETIN_CURATION_SHADOW_ENABLED`), плюс
     allowlist регионов (`BULLETIN_CURATION_REGION_CODES`) — для PoC 1 регион.
 
-Гранулярность — per-post: паркуем ровно `digest.posts_included` (посты, реально
+Гранулярность — per-post: паркуем ровно `bulletin.posts_included` (посты, реально
 попавшие в опубликованная сводка). Каждый из них уже прошёл все алгоритм-
 фильтры, поэтому любой LLM-`drop` = чистая дельта над текущим алгоритмом.
 """

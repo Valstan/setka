@@ -194,7 +194,7 @@ class SmartScheduler:
 
     async def schedule_publication(
         self,
-        digest_id: int,
+        bulletin_id: int,
         region_code: str,
         category: str = "novost",
         scheduled_time: Optional[datetime] = None,
@@ -203,7 +203,7 @@ class SmartScheduler:
         Запланировать публикацию сводки
 
         Args:
-            digest_id: ID сводки
+            bulletin_id: ID сводки
             region_code: Код региона
             category: Категория
             scheduled_time: Желаемое время (если None, определится автоматически)
@@ -227,12 +227,12 @@ class SmartScheduler:
         # (когда она будет создана)
 
         logger.info(
-            f"Scheduled digest {digest_id} for {region_code} "
+            f"Scheduled bulletin {bulletin_id} for {region_code} "
             f"at {scheduled_time.strftime('%Y-%m-%d %H:%M')}"
         )
 
         return {
-            "digest_id": digest_id,
+            "bulletin_id": bulletin_id,
             "region_code": region_code,
             "category": category,
             "scheduled_time": scheduled_time.isoformat(),

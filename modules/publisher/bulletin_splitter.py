@@ -1,5 +1,5 @@
 """
-Digest Splitter — разделяет посты по тональности перед построением сводки
+Bulletin Splitter — разделяет посты по тональности перед построением сводки
 
 Разделяет посты на:
 - mourning (траурные новости: смерть, гибель)
@@ -59,7 +59,7 @@ class BulletinSplitter:
                 regular_posts.append(post)
 
         logger.info(
-            f"Digest split: {len(mourning_posts)} mourning, "
+            f"Bulletin split: {len(mourning_posts)} mourning, "
             f"{len(regular_posts)} regular (total: {len(posts)})"
         )
 

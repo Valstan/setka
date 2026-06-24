@@ -2,7 +2,7 @@
 Flow B: mirror a single VK community wall to a Telegram channel, post-by-post.
 
 Owner request: «Гоньба - жемчужина Вятки» VK wall (vk_id -218688001) → Telegram
-channel @gonba_life via bot VALSTANBOT. Unlike Flow A (digest mirror), this is a
+channel @gonba_life via bot VALSTANBOT. Unlike Flow A (bulletin mirror), this is a
 1:1 wall mirror: each new community post is reposted with its media, ad-filtered.
 
 Patterned on ``modules.copy_setka_network`` (VK→VK wall mirror): same

@@ -369,7 +369,7 @@ async def get_region_bulletin_template(
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Get digest template configuration for region, merged with defaults.
+    Get bulletin template configuration for region, merged with defaults.
     """
     result = await db.execute(select(Region).where(Region.code == region_code))
     region = result.scalar_one_or_none()
@@ -420,7 +420,7 @@ async def put_region_bulletin_template(
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Save digest template overrides into Region.config.bulletin_template.
+    Save bulletin template overrides into Region.config.bulletin_template.
     """
     result = await db.execute(select(Region).where(Region.code == region_code))
     region = result.scalar_one_or_none()
@@ -457,7 +457,7 @@ async def reset_region_bulletin_template(
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Reset digest template override for whole region to defaults.
+    Reset bulletin template override for whole region to defaults.
     """
     result = await db.execute(select(Region).where(Region.code == region_code))
     region = result.scalar_one_or_none()
@@ -488,7 +488,7 @@ async def reset_region_bulletin_template_topic(
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Reset digest template override for a single topic (removes by_topic[topic]).
+    Reset bulletin template override for a single topic (removes by_topic[topic]).
     """
     result = await db.execute(select(Region).where(Region.code == region_code))
     region = result.scalar_one_or_none()

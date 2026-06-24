@@ -45,7 +45,7 @@ def test_publish_result_label_none_is_failed():
 
 
 @pytest.fixture(autouse=True)
-def _reset_digest_metrics():
+def _reset_bulletin_metrics():
     """Сбрасываем prometheus_client регистры между тестами.
 
     prometheus_client держит state в process-wide singletones, поэтому

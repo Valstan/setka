@@ -2,7 +2,7 @@
 
 Foundation for the subscriber-growth chart (owner-request 2026-06-05). We track
 **only** the main INFO group of each active region (``regions.vk_group_id`` —
-where digests are published), NOT the whole source pool: snapshotting all ~840
+where bulletins are published), NOT the whole source pool: snapshotting all ~840
 communities daily burned VK API for groups we don't compare. This module's daily
 beat task fetches ``groups.getById(fields=members_count)`` for active regions
 (~16 groups, one batch) and records one immutable row per (region, day) into

@@ -251,7 +251,7 @@ def create_daily_bulletin():
     готовит к публикации.
     """
     logger.info("=" * 80)
-    logger.info("Creating daily digest...")
+    logger.info("Creating daily bulletin...")
     logger.info("=" * 80)
 
     try:
@@ -268,11 +268,11 @@ def create_daily_bulletin():
                 regions = list(result.scalars())
 
                 aggregator = NewsAggregator(session)
-                digests = []
+                bulletins = []
 
                 # Создаем сводка для каждого региона
                 for region in regions:
-                    logger.info(f"Creating digest for {region.name}...")
+                    logger.info(f"Creating bulletin for {region.name}...")
 
                     # Получаем посты за последние 24 часа
                     cutoff_time = datetime.now() - timedelta(hours=24)
@@ -295,33 +295,34 @@ def create_daily_bulletin():
                         continue
 
                     # Создаем сводка
-                    digest = await aggregator.create_bulletin(
+                    bulletin = await aggregator.create_bulletin(
                         posts=posts, region=region, max_posts=5
                     )
 
-                    if digest:
-                        digests.append(
+                    if bulletin:
+                        bulletins.append(
                             {
                                 "region": region.name,
-                                "posts_count": len(digest.source_posts),
-                                "total_views": digest.total_views,
-                                "text_length": len(digest.aggregated_text),
+                                "posts_count": len(bulletin.source_posts),
+                                "total_views": bulletin.total_views,
+                                "text_length": len(bulletin.aggregated_text),
                             }
                         )
                         logger.info(
-                            f"Digest created for {region.name}: {len(digest.source_posts)} posts"
+                            f"Bulletin created for {region.name}: "
+                            f"{len(bulletin.source_posts)} posts"
                         )
 
-                return digests
+                return bulletins
 
-        digests = run_coro(create_bulletin())
+        bulletins = run_coro(create_bulletin())
 
-        logger.info(f"Daily digest completed! Created {len(digests)} digests")
+        logger.info(f"Daily bulletin completed! Created {len(bulletins)} bulletins")
 
-        return {"success": True, "timestamp": datetime.now().isoformat(), "digests": digests}
+        return {"success": True, "timestamp": datetime.now().isoformat(), "bulletins": bulletins}
 
     except Exception as e:
-        logger.error(f"Daily digest failed: {e}", exc_info=True)
+        logger.error(f"Daily bulletin failed: {e}", exc_info=True)
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
@@ -1031,7 +1032,7 @@ def check_bulletin_heartbeat():
             chat_id=chat_id,
             dashboard_url=f"https://{domain}/",
         )
-        logger.info("digest heartbeat watchdog: %s", status)
+        logger.info("bulletin heartbeat watchdog: %s", status)
         return {"success": True, "status": status, "timestamp": datetime.now().isoformat()}
     except Exception as e:
         logger.error(f"check_bulletin_heartbeat failed: {e}", exc_info=True)
@@ -1199,7 +1200,7 @@ app.conf.beat_schedule = {
         },
     },
     # Дневная сводка в 18:00
-    "digest-daily": {
+    "bulletin-daily": {
         "task": "tasks.celery_app.create_daily_bulletin",
         "schedule": crontab(hour=18, minute=0),  # 18:00 каждый день
         "options": {
@@ -1268,7 +1269,7 @@ app.conf.beat_schedule = {
     # с непустым Region.neighbors репостит #Новости с главных групп соседей.
     # Это НЕ тема "sosed" выше (та — парсинг сообществ category="sosed" внутри
     # региона). Движок — modules.cascaded_bulletin.run_neighbor_bulletin.
-    "digest-share-neighbors-daily": {
+    "bulletin-share-neighbors-daily": {
         "task": "tasks.parsing_scheduler_tasks.run_all_regions_neighbor_share",
         "schedule": crontab(minute=30, hour=8),
         "options": {"expires": 3600},

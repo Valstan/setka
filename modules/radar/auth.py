@@ -9,7 +9,7 @@
 
 - **Сессии** — stateless HMAC-подписанный токен в httponly-cookie, без таблицы
   сессий: ``b64url(json payload).b64url(hmac_sha256(secret, payload))``.
-  В payload входит ``pf`` — фрагмент digest'а password_hash: смена пароля
+  В payload входит ``pf`` — фрагмент bulletin'а password_hash: смена пароля
   автоматически инвалидирует все выданные сессии (middleware сверяет pf с
   актуальным хэшем из БД на каждом запросе — БД-lookup по PK, трафик мал).
 
@@ -77,7 +77,7 @@ def _secret() -> bytes:
 def hash_password(password: str) -> str:
     """scrypt-хэш пароля в self-describing формате (параметры в строке)."""
     salt = secrets.token_bytes(16)
-    digest = hashlib.scrypt(
+    bulletin = hashlib.scrypt(
         password.encode(),
         salt=salt,
         n=_SCRYPT_N,
@@ -85,7 +85,7 @@ def hash_password(password: str) -> str:
         p=_SCRYPT_P,
         dklen=_SCRYPT_DKLEN,
     )
-    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${_b64e(salt)}${_b64e(digest)}"
+    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${_b64e(salt)}${_b64e(bulletin)}"
 
 
 def verify_password(password: str, stored: str) -> bool:

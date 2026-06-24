@@ -227,7 +227,7 @@ async function loadFiltration() {
     }
 }
 
-function collectDigestFiltersFromForm() {
+function collectBulletinFiltersFromForm() {
     const defaults = {};
     const v = (id) => {
         const el = document.getElementById(id);
@@ -260,7 +260,7 @@ function collectDigestFiltersFromForm() {
 async function saveFiltration() {
     const code = document.getElementById('regionSelect').value;
     if (!code) return;
-    let bulletin_filters = collectDigestFiltersFromForm();
+    let bulletin_filters = collectBulletinFiltersFromForm();
     try {
         const raw = document.getElementById('bulletin_filters_raw').value.trim();
         if (raw && raw !== '{}') {

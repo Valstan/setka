@@ -55,7 +55,7 @@ def _stub_post(post_id: int, text: str, *, owner_id: int = -100) -> dict:
     }
 
 
-def test_all_posts_empty_text_yields_empty_digest():
+def test_all_posts_empty_text_yields_empty_bulletin():
     """Whitespace-only text → empty BulletinResult, no header/hashtag leak."""
     posts = [_stub_post(1, "   "), _stub_post(2, ""), _stub_post(3, "\n\n")]
     b = BulletinBuilder(
@@ -74,8 +74,8 @@ def test_all_posts_empty_text_yields_empty_digest():
     assert "#спортМалмыж" not in r.text
 
 
-def test_no_posts_fit_yields_empty_digest():
-    """All candidate posts individually exceed max_text_length → empty digest, not header-only."""
+def test_no_posts_fit_yields_empty_bulletin():
+    """All candidate posts individually exceed max_text_length → empty bulletin, not header-only."""
     long = "Очень длинный текст. " * 200  # ~4000 chars × 3 posts > 4096 each + header
     posts = [_stub_post(i, long) for i in range(1, 4)]
     b = BulletinBuilder(
@@ -91,7 +91,7 @@ def test_no_posts_fit_yields_empty_digest():
     assert "#новости" not in r.text
 
 
-def test_at_least_one_post_fits_produces_normal_digest():
+def test_at_least_one_post_fits_produces_normal_bulletin():
     """Sanity: when at least one post fits, header/hashtag/body are all present."""
     posts = [_stub_post(1, "Короткий валидный текст")]
     b = BulletinBuilder(

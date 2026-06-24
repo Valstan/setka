@@ -1,11 +1,11 @@
 """Tests for utils.text_utils.truncate_text.
 
 Восстановленный F821-импорт (2026-05-22): `from utils.text_utils import
-truncate_text` в modules/publisher/digest_builder.py пропал при автоматической
+truncate_text` в modules/publisher/bulletin_builder.py пропал при автоматической
 legacy-зачистке. В отличие от других F821, эта ветка ЖИВАЯ — вызывается
 из BulletinBuilder.build_bulletin при превышении max_text_length.
 
-Тесты фиксируют contract truncate_text. Существующий test_digest_builder.py
+Тесты фиксируют contract truncate_text. Существующий test_bulletin_builder.py
 не покрывает truncation-ветку (`max_text_length=4096` — никогда не достигается
 тестовыми данными).
 """
@@ -45,8 +45,8 @@ def test_truncate_text_custom_suffix():
     assert len(result) == 20
 
 
-def test_truncate_text_used_by_digest_builder_bezfoto_branch():
-    """Integration: вызов truncate_text из digest_builder.py:434 — это
+def test_truncate_text_used_by_bulletin_builder_bezfoto_branch():
+    """Integration: вызов truncate_text из bulletin_builder.py:434 — это
     `TextOnlyBulletinBuilder.build_bezfoto_bulletin`, активный метод publisher'а
     (используется для рекламных сводок, migrated from old_postopus
     `post_bezfoto()`). Длинные text_items + маленький max_text_length →

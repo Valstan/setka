@@ -70,7 +70,7 @@ DEFAULT_LOOKBACK_HOURS = 72.0
 WORK_TABLE_LIP_LIMIT = 1000
 WORK_TABLE_HASH_LIMIT = 5000
 
-_BANNED_DIGEST_MARKERS = (
+_BANNED_BULLETIN_MARKERS = (
     "реклама",
     "объявлен",
     "дополнительно",
@@ -129,7 +129,7 @@ def _is_religious_text(text: str) -> bool:
 
 def _has_banned_marker(text: str) -> bool:
     low = (text or "").lower()
-    return any(marker in low for marker in _BANNED_DIGEST_MARKERS)
+    return any(marker in low for marker in _BANNED_BULLETIN_MARKERS)
 
 
 async def _resolve_child_regions(
@@ -279,7 +279,7 @@ async def run_cascaded_bulletin(
         return {
             "success": False,
             "error": (
-                f"Region {region_code} kind={region.kind!r} — cascaded digest "
+                f"Region {region_code} kind={region.kind!r} — cascaded bulletin "
                 "is for oblast/strana only"
             ),
         }
@@ -361,7 +361,7 @@ async def run_cascaded_bulletin(
             "success": True,
             "message": no_sources_msg,
             "posts_published": 0,
-            "digests_count": 0,
+            "bulletins_count": 0,
             "stats": {},
         }
 
@@ -408,7 +408,7 @@ async def run_cascaded_bulletin(
         region_lips.update(extract_source_lips_from_target_group_posts(target_group_posts))
     except Exception as e:
         logger.warning(
-            "Cascaded digest %s: failed to load target group history: %s",
+            "Cascaded bulletin %s: failed to load target group history: %s",
             region_code,
             e,
         )
@@ -421,7 +421,7 @@ async def run_cascaded_bulletin(
             wall_posts = await asyncio.to_thread(vk.get_wall_posts, owner, posts_per_child, 0)
         except Exception as e:
             logger.warning(
-                "Cascaded digest %s: wall.get failed for child %s: %s",
+                "Cascaded bulletin %s: wall.get failed for child %s: %s",
                 region_code,
                 child.code,
                 e,
@@ -444,7 +444,7 @@ async def run_cascaded_bulletin(
             "success": True,
             "message": "no fresh posts collected from children",
             "posts_published": 0,
-            "digests_count": 0,
+            "bulletins_count": 0,
             "stats": {},
             "debug": debug_counters,
         }
@@ -512,16 +512,16 @@ async def run_cascaded_bulletin(
             repost_mode=region_config.setka_regim_repost,
             max_posts_per_bulletin=pipeline_eff.get("max_posts_per_bulletin"),
         )
-        digest = builder.build_bulletin(regular_posts, group_names=group_names)
-        if digest.post_count == 0 or not digest.text.strip():
+        bulletin = builder.build_bulletin(regular_posts, group_names=group_names)
+        if bulletin.post_count == 0 or not bulletin.text.strip():
             logger.warning(
-                "Cascaded digest %s: empty regular digest, skipping publish "
+                "Cascaded bulletin %s: empty regular bulletin, skipping publish "
                 "(theme=%s candidates=%d)",
                 region.code,
                 theme,
                 len(regular_posts),
             )
-            debug_counters["filtered_posts_empty_digest"] = len(regular_posts)
+            debug_counters["filtered_posts_empty_bulletin"] = len(regular_posts)
         else:
             selected_by_lip.update(
                 {
@@ -544,13 +544,13 @@ async def run_cascaded_bulletin(
                     "would_publish": [
                         {
                             "kind": "regular",
-                            "post_count": digest.post_count,
-                            "char_count": len(digest.text or ""),
-                            "attachments_count": len(digest.attachments_list or []),
-                            "text_preview": (digest.text or "")[:1500],
+                            "post_count": bulletin.post_count,
+                            "char_count": len(bulletin.text or ""),
+                            "attachments_count": len(bulletin.attachments_list or []),
+                            "text_preview": (bulletin.text or "")[:1500],
                         }
                     ],
-                    "digests_count": 1,
+                    "bulletins_count": 1,
                     "stats": parser_stats,
                     "children_scanned": debug_counters["children_scanned"],
                     "candidate_posts": len(candidate_posts),
@@ -563,10 +563,10 @@ async def run_cascaded_bulletin(
             )
             pub = await vk_pub.publish_bulletin(
                 group_id=region.vk_group_id,
-                text=digest.text,
-                attachments=digest.attachments_list,
+                text=bulletin.text,
+                attachments=bulletin.attachments_list,
             )
-            results.append(("regular", digest, pub))
+            results.append(("regular", bulletin, pub))
             try:
                 from monitoring.metrics import publish_result_label, track_digest_published
 
@@ -647,7 +647,7 @@ async def run_cascaded_bulletin(
         "posts_published": total_published,
         "published_url": first_url,
         "regular_posts": len(regular_posts),
-        "digests_count": len(results),
+        "bulletins_count": len(results),
         "stats": parser_stats,
         "children_scanned": debug_counters["children_scanned"],
         "candidate_posts": len(candidate_posts),

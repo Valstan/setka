@@ -350,9 +350,9 @@ async def get_regions_status(db: AsyncSession = Depends(get_db_session)):
 #   dead    — last_run > STALE_HOURS назад (или вообще нет за 30 дней)
 #   broken  — формально run был свежим, но последние N подряд failed
 #             (success=false), что значит beat жив, а pipeline валится
-_DIGEST_STATUS_FRESH_HOURS = 12
-_DIGEST_STATUS_STALE_HOURS = 24
-_DIGEST_STATUS_BROKEN_MIN_FAILED_RUNS = 3
+_BULLETIN_STATUS_FRESH_HOURS = 12
+_BULLETIN_STATUS_STALE_HOURS = 24
+_BULLETIN_STATUS_BROKEN_MIN_FAILED_RUNS = 3
 
 
 def _classify_bulletin_row(
@@ -365,17 +365,17 @@ def _classify_bulletin_row(
         return "dead"
     age_hours = (now_utc - last_run_at).total_seconds() / 3600.0
     if (
-        consecutive_failed >= _DIGEST_STATUS_BROKEN_MIN_FAILED_RUNS
-        and age_hours <= _DIGEST_STATUS_STALE_HOURS
+        consecutive_failed >= _BULLETIN_STATUS_BROKEN_MIN_FAILED_RUNS
+        and age_hours <= _BULLETIN_STATUS_STALE_HOURS
     ):
         # Beat запускает таску регулярно, но она падает — это «broken», не «dead».
         return "broken"
     if last_success_at is None:
         return "dead"
     success_age_hours = (now_utc - last_success_at).total_seconds() / 3600.0
-    if success_age_hours <= _DIGEST_STATUS_FRESH_HOURS:
+    if success_age_hours <= _BULLETIN_STATUS_FRESH_HOURS:
         return "fresh"
-    if success_age_hours <= _DIGEST_STATUS_STALE_HOURS:
+    if success_age_hours <= _BULLETIN_STATUS_STALE_HOURS:
         return "stale"
     return "dead"
 
@@ -564,9 +564,9 @@ async def get_bulletins_status(db: AsyncSession = Depends(get_db_session)):
                 "total_pairs": len(rows),
             },
             "thresholds": {
-                "fresh_hours": _DIGEST_STATUS_FRESH_HOURS,
-                "stale_hours": _DIGEST_STATUS_STALE_HOURS,
-                "broken_min_failed_runs": _DIGEST_STATUS_BROKEN_MIN_FAILED_RUNS,
+                "fresh_hours": _BULLETIN_STATUS_FRESH_HOURS,
+                "stale_hours": _BULLETIN_STATUS_STALE_HOURS,
+                "broken_min_failed_runs": _BULLETIN_STATUS_BROKEN_MIN_FAILED_RUNS,
             },
             "as_of": now_utc.isoformat() + "Z",
         },
@@ -715,7 +715,7 @@ async def get_system_status():
 # Heartbeat сводок (#018) + liveness воркеров/beat
 #
 # Heartbeat — Redis-ключи `setka:digest_last_published:<topic>` (см.
-# modules/digest_heartbeat). Watchdog шлёт Telegram-алёрт при протухании
+# modules/bulletin_heartbeat). Watchdog шлёт Telegram-алёрт при протухании
 # `novost` (порог 6ч), но НИГДЕ не виден в UI — этот эндпоинт выводит его на
 # дашборд (idea brain #018: «дашборд показывает liveness»).
 # ──────────────────────────────────────────────────────────────────────────
@@ -748,21 +748,21 @@ async def get_bulletin_heartbeat():
     """Redis-heartbeat последних публикаций по темам (#018) + статус watchdog.
 
     Возвращает по каждой теме время последней успешной публикации (из
-    ``digest_heartbeat``), возраст и статус (fresh/stale/unknown), плюс
+    ``bulletin_heartbeat``), возраст и статус (fresh/stale/unknown), плюс
     отдельный блок ``watchdog`` — статус ``novost`` против строгого 6ч-порога,
     ровно того, по которому beat шлёт Telegram-алёрт. Темы без heartbeat
     показываются как ``unknown`` (никогда не публиковались / свежий деплой).
     """
     try:
         from modules import bulletin_heartbeat as dh
-        from modules.bulletin_pipeline_settings import POSTOPUS_DIGEST_THEMES
+        from modules.bulletin_pipeline_settings import POSTOPUS_BULLETIN_THEMES
 
         now_ts = time.time()
         hb = dh.all_heartbeats()  # topic -> unix-ts (best-effort)
 
         # Объединяем канонический список тем с тем, что реально есть в Redis
         # (на случай тем вне списка), сохраняя порядок и убирая дубли.
-        topics: List[str] = list(dict.fromkeys(list(POSTOPUS_DIGEST_THEMES) + sorted(hb.keys())))
+        topics: List[str] = list(dict.fromkeys(list(POSTOPUS_BULLETIN_THEMES) + sorted(hb.keys())))
 
         rows = []
         for topic in topics:
@@ -812,7 +812,7 @@ async def get_bulletin_heartbeat():
             },
         }
     except Exception as e:
-        logger.error(f"Error getting digest heartbeat: {e}")
+        logger.error(f"Error getting bulletin heartbeat: {e}")
         return {"success": False, "error": str(e)}
 
 

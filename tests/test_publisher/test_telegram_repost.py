@@ -217,7 +217,7 @@ async def test_repost_docs_sent_separately(monkeypatch):
 # --------------------------------------------------------------------------- #
 # mirror_bulletin_to_telegram (integration)
 # --------------------------------------------------------------------------- #
-async def test_mirror_digest_builds_clean_message(monkeypatch):
+async def test_mirror_bulletin_builds_clean_message(monkeypatch):
     monkeypatch.setattr(runtime, "TELEGRAM_TOKENS", {"AFONYA": "tok"})
     poster = _RecordingPost()
     monkeypatch.setattr("requests.post", poster)

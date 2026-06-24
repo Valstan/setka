@@ -142,16 +142,16 @@
                 </div>
             </div>
 
-            <!-- Region Digest -->
+            <!-- Region Bulletin -->
             <div class="col-md-6 mb-4">
                 <div class="card publisher-card h-100">
                     <div class="card-header">
                         <h5 class="mb-0">
-                            <i class="fas fa-newspaper me-2"></i>Region Digest
+                            <i class="fas fa-newspaper me-2"></i>Region Bulletin
                         </h5>
                     </div>
                     <div class="card-body">
-                        <form id="region-digest-form">
+                        <form id="region-bulletin-form">
                             <div class="mb-3">
                                 <label for="region-code" class="form-label">Region</label>
                                 <select class="form-select" id="region-code" required>
@@ -177,7 +177,7 @@
                                 <div class="form-text">Separate hashtags with spaces</div>
                             </div>
                             <button type="submit" class="btn btn-success w-100">
-                                <i class="fas fa-newspaper me-2"></i>Publish Digest
+                                <i class="fas fa-newspaper me-2"></i>Publish Bulletin
                             </button>
                         </form>
                         <div id="region-result" class="mt-3"></div>
@@ -290,7 +290,7 @@
         // Setup event listeners
         function setupEventListeners() {
             document.getElementById('simple-post-form').addEventListener('submit', handleSimplePost);
-            document.getElementById('region-digest-form').addEventListener('submit', handleRegionDigest);
+            document.getElementById('region-bulletin-form').addEventListener('submit', handleRegionBulletin);
         }
 
         // Load publisher status
@@ -460,8 +460,8 @@
             }
         }
 
-        // Handle region digest submission
-        async function handleRegionDigest(event) {
+        // Handle region bulletin submission
+        async function handleRegionBulletin(event) {
             event.preventDefault();
             
             const hashtags = document.getElementById('hashtags').value
@@ -491,24 +491,24 @@
                 const result = await response.json();
                 
                 if (result.success) {
-                    let digestInfo = '';
-                    if (result.digest_info) {
-                        digestInfo = `
+                    let bulletinInfo = '';
+                    if (result.bulletin_info) {
+                        bulletinInfo = `
                             <hr>
-                            <h6>Digest Information:</h6>
-                            <p class="mb-1"><strong>Sources:</strong> ${result.digest_info.sources_count}</p>
-                            <p class="mb-1"><strong>Total Views:</strong> ${result.digest_info.total_views}</p>
-                            <p class="mb-1"><strong>Total Likes:</strong> ${result.digest_info.total_likes}</p>
-                            <p class="mb-0"><strong>Total Reposts:</strong> ${result.digest_info.total_reposts}</p>
+                            <h6>Bulletin Information:</h6>
+                            <p class="mb-1"><strong>Sources:</strong> ${result.bulletin_info.sources_count}</p>
+                            <p class="mb-1"><strong>Total Views:</strong> ${result.bulletin_info.total_views}</p>
+                            <p class="mb-1"><strong>Total Likes:</strong> ${result.bulletin_info.total_likes}</p>
+                            <p class="mb-0"><strong>Total Reposts:</strong> ${result.bulletin_info.total_reposts}</p>
                         `;
                     }
                     
                     resultDiv.innerHTML = `
                         <div class="alert alert-success">
-                            <h6><i class="fas fa-check-circle me-2"></i>Digest Published Successfully!</h6>
+                            <h6><i class="fas fa-check-circle me-2"></i>Bulletin Published Successfully!</h6>
                             <p class="mb-1"><strong>Post ID:</strong> ${result.post_id}</p>
                             <p class="mb-1"><strong>URL:</strong> <a href="${result.post_url}" target="_blank">${result.post_url}</a></p>
-                            ${digestInfo}
+                            ${bulletinInfo}
                         </div>
                     `;
                 } else {

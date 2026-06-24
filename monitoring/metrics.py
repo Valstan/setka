@@ -250,7 +250,7 @@ def track_digest_published(region: str, topic: str, result: str = "success") -> 
 
             mark_published(topic)
         except Exception:  # pragma: no cover - наблюдаемость не должна валить публикацию
-            logger.warning("digest heartbeat write failed (topic=%s)", topic, exc_info=True)
+            logger.warning("bulletin heartbeat write failed (topic=%s)", topic, exc_info=True)
 
     # ── Prometheus — best-effort, отдельно: его сбой больше не трогает heartbeat ─
     try:
@@ -258,7 +258,7 @@ def track_digest_published(region: str, topic: str, result: str = "success") -> 
         if result == "success":
             digest_last_published_timestamp.labels(region=region, topic=topic).set(time.time())
     except Exception:  # pragma: no cover - метрики никогда не должны валить публикацию
-        logger.warning("prometheus digest metric failed (topic=%s)", topic, exc_info=True)
+        logger.warning("prometheus bulletin metric failed (topic=%s)", topic, exc_info=True)
 
 
 def track_error(component: str, error_type: str):

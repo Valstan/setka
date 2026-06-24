@@ -63,7 +63,7 @@
     </div>
 </div>
 
-<!-- Digests Status (compact widget) -->
+<!-- Bulletins Status (compact widget) -->
 <div class="row mb-4">
     <div class="col-12">
         <div class="card border-info">
@@ -72,7 +72,7 @@
                     <i class="bi bi-bar-chart"></i> Состояние сводок (за 24 часа)
                 </h5>
                 <div class="d-flex gap-2 align-items-center flex-wrap">
-                    <span id="home-digests-badges">
+                    <span id="home-bulletins-badges">
                         <span class="badge bg-secondary">Загрузка…</span>
                     </span>
                     <a href="/monitoring" class="btn btn-sm btn-outline-info">
@@ -84,11 +84,11 @@
                 </div>
             </div>
             <div class="card-body p-0">
-                <div id="home-digests-loading" class="text-center py-3 text-muted small">
+                <div id="home-bulletins-loading" class="text-center py-3 text-muted small">
                     <div class="spinner-border spinner-border-sm"></div>
                 </div>
-                <div id="home-digests-broken" class="p-3" style="display:none;"></div>
-                <div id="home-digests-allgood" class="alert alert-success m-3" style="display:none;">
+                <div id="home-bulletins-broken" class="p-3" style="display:none;"></div>
+                <div id="home-bulletins-allgood" class="alert alert-success m-3" style="display:none;">
                     <i class="bi bi-check-circle"></i> Все сводки в норме — нет broken/dead за последние 24 часа.
                 </div>
             </div>
@@ -97,7 +97,7 @@
 </div>
 
 <style>
-.home-digest-broken-row {
+.home-bulletin-broken-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -105,16 +105,16 @@
     border-bottom: 1px solid #f1f3f5;
     font-size: 0.88rem;
 }
-.home-digest-broken-row:last-child { border-bottom: none; }
-.home-digest-broken-row .badge { font-size: 0.72rem; }
+.home-bulletin-broken-row:last-child { border-bottom: none; }
+.home-bulletin-broken-row .badge { font-size: 0.72rem; }
 </style>
 
 <script>
-async function loadHomeDigestsStatus() {
-    const loading = document.getElementById('home-digests-loading');
-    const brokenEl = document.getElementById('home-digests-broken');
-    const allgood = document.getElementById('home-digests-allgood');
-    const badges = document.getElementById('home-digests-badges');
+async function loadHomeBulletinsStatus() {
+    const loading = document.getElementById('home-bulletins-loading');
+    const brokenEl = document.getElementById('home-bulletins-broken');
+    const allgood = document.getElementById('home-bulletins-allgood');
+    const badges = document.getElementById('home-bulletins-badges');
     try {
         const resp = await fetch('/api/monitoring/bulletins-status');
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -148,7 +148,7 @@ async function loadHomeDigestsStatus() {
                 ? new Date(r.last_success_date).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
                 : 'никогда';
             return `
-                <div class="home-digest-broken-row">
+                <div class="home-bulletin-broken-row">
                     <div>${statusBadge} <strong>${esc(r.region_name)}</strong> / <code>${esc(r.theme)}</code>${consecutive}</div>
                     <small class="text-muted">последний успех: ${lastSuccess}</small>
                 </div>
@@ -158,11 +158,11 @@ async function loadHomeDigestsStatus() {
     } catch (e) {
         loading.style.display = 'none';
         badges.innerHTML = '<span class="badge bg-warning">недоступно</span>';
-        console.warn('home digests status failed:', e);
+        console.warn('home bulletins status failed:', e);
     }
 }
 
-document.addEventListener('DOMContentLoaded', loadHomeDigestsStatus);
+document.addEventListener('DOMContentLoaded', loadHomeBulletinsStatus);
 </script>
 
 <!-- System Monitoring Section -->

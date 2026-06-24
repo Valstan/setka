@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 # Темы Celery/Postopus (для UI и переопределений)
-POSTOPUS_DIGEST_THEMES: List[str] = [
+POSTOPUS_BULLETIN_THEMES: List[str] = [
     "novost",
     "kultura",
     "sport",

@@ -5,7 +5,7 @@ Migrated from old_postopus bin/control/parser.py
 Core parsing logic with full filtering pipeline.
 
 This is the heart of the parsing system - fetches posts from VK communities,
-applies all filters, and returns cleaned posts ready for digest building.
+applies all filters, and returns cleaned posts ready for bulletin building.
 """
 
 import logging
@@ -44,7 +44,7 @@ _TEXT_SIMILARITY_THRESHOLD = 0.90
 _SIMHASH_BUCKET_SIZE = 20
 
 # Сводки: не брать посты старше 72 часов с момента публикации (оригинала при репосте)
-DIGEST_MAX_POST_AGE_HOURS = 72
+BULLETIN_MAX_POST_AGE_HOURS = 72
 
 
 def _post_age_hours_utc(
@@ -73,7 +73,7 @@ class AdvancedVKParser:
     2. Фильтры black_id, реклама, blacklist, вложения, темы
     3. Дедуп текста и медиа внутри одного прогона
 
-    Returns filtered posts ready for digest building.
+    Returns filtered posts ready for bulletin building.
     """
 
     def __init__(self, vk_client: VKClient):
@@ -82,7 +82,7 @@ class AdvancedVKParser:
             vk_client: VK API client instance
         """
         self.vk_client = vk_client
-        self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
+        self._max_post_age_hours = float(BULLETIN_MAX_POST_AGE_HOURS)
         self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
         self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
         # near-dup параметры из env (дефолты = прежние хардкоды → нулевая регрессия)
@@ -171,14 +171,14 @@ class AdvancedVKParser:
         self._batch_token_sets = []
 
         if pipeline_settings is None:
-            self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
+            self._max_post_age_hours = float(BULLETIN_MAX_POST_AGE_HOURS)
             self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
             self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
             self._text_similarity_threshold = float(self._env_similarity_threshold)
             effective_count = count_per_community
         else:
             self._max_post_age_hours = float(
-                pipeline_settings.get("max_post_age_hours", DIGEST_MAX_POST_AGE_HOURS)
+                pipeline_settings.get("max_post_age_hours", BULLETIN_MAX_POST_AGE_HOURS)
             )
             self._min_rafinad_core = int(
                 pipeline_settings.get("min_rafinad_len_core_dedup", _MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
@@ -293,13 +293,13 @@ class AdvancedVKParser:
         self._batch_token_sets = []
 
         if pipeline_settings is None:
-            self._max_post_age_hours = float(DIGEST_MAX_POST_AGE_HOURS)
+            self._max_post_age_hours = float(BULLETIN_MAX_POST_AGE_HOURS)
             self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
             self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
             self._text_similarity_threshold = float(self._env_similarity_threshold)
         else:
             self._max_post_age_hours = float(
-                pipeline_settings.get("max_post_age_hours", DIGEST_MAX_POST_AGE_HOURS)
+                pipeline_settings.get("max_post_age_hours", BULLETIN_MAX_POST_AGE_HOURS)
             )
             self._min_rafinad_core = int(
                 pipeline_settings.get("min_rafinad_len_core_dedup", _MIN_RAFINAD_LEN_FOR_CORE_DEDUP)

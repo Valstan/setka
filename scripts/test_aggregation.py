@@ -50,23 +50,23 @@ async def test_aggregation():
 
         # Агрегировать
         print("\n⚙️  Агрегация...")
-        digest = await aggregator.aggregate(
+        bulletin = await aggregator.aggregate(
             posts, title="📰 НОВОСТИ ДНЯ", hashtags=["#НовостиМалмыж", "#Малмыж"]
         )
 
-        if digest:
+        if bulletin:
             print("\n✅ Создан сводка!")
             print("=" * 70)
-            print(digest.aggregated_text)
+            print(bulletin.aggregated_text)
             print("=" * 70)
 
             print("\n📊 Статистика сводки:")
-            print(f"  Постов объединено: {digest.sources_count}")
-            print(f"  Якорь: Post ID {digest.anchor_post.id}")
-            print(f"  Дополнительных: {len(digest.additional_posts)}")
-            print(f"  Всего просмотров: {digest.total_views}")
-            print(f"  Всего лайков: {digest.total_likes}")
-            print(f"  Категории: {', '.join(digest.categories)}")
+            print(f"  Постов объединено: {bulletin.sources_count}")
+            print(f"  Якорь: Post ID {bulletin.anchor_post.id}")
+            print(f"  Дополнительных: {len(bulletin.additional_posts)}")
+            print(f"  Всего просмотров: {bulletin.total_views}")
+            print(f"  Всего лайков: {bulletin.total_likes}")
+            print(f"  Категории: {', '.join(bulletin.categories)}")
 
         # Тест кластеризации
         print(f"\n\n{'='*70}")
@@ -88,16 +88,16 @@ async def test_aggregation():
         print("🧪 Тест агрегации по категориям")
         print("=" * 70)
 
-        digests = await aggregator.aggregate_by_category(posts, max_digests=3)
+        bulletins = await aggregator.aggregate_by_category(posts, max_bulletins=3)
 
-        print(f"\n✅ Создано сводок: {len(digests)}")
+        print(f"\n✅ Создано сводок: {len(bulletins)}")
 
-        for i, digest in enumerate(digests, 1):
+        for i, bulletin in enumerate(bulletins, 1):
             print(f"\nСводка {i}:")
-            print(f"  Категории: {', '.join(digest.categories)}")
-            print(f"  Постов: {digest.sources_count}")
-            print(f"  Просмотров: {digest.total_views}")
-            print(f"  Длина текста: {len(digest.aggregated_text)} символов")
+            print(f"  Категории: {', '.join(bulletin.categories)}")
+            print(f"  Постов: {bulletin.sources_count}")
+            print(f"  Просмотров: {bulletin.total_views}")
+            print(f"  Длина текста: {len(bulletin.aggregated_text)} символов")
 
         print(f"\n{'='*70}")
         print("✅ Тест агрегации завершен!")

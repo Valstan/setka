@@ -150,7 +150,7 @@ def run_smoke(
     log(
         "[smoke] OK: "
         f"posts_parsed={result.get('posts_parsed')}, "
-        f"would_publish={result.get('digests_count')}, "
+        f"would_publish={result.get('bulletins_count')}, "
         f"communities={result.get('communities_count')}"
     )
     return 0

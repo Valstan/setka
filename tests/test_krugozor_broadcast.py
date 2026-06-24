@@ -60,7 +60,7 @@ def test_source_exclude_ids_parse(monkeypatch):
     assert get_krugozor_source_exclude_ids() == {-65614662, -85330}
 
 
-def test_digest_config_defaults(monkeypatch):
+def test_bulletin_config_defaults(monkeypatch):
     for k in (
         "KRUGOZOR_BULLETIN_MAX_ITEMS",
         "KRUGOZOR_SNIPPET_LEN",

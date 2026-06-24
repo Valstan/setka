@@ -344,7 +344,7 @@ class ProductionWorkflow:
 
                 # 6. Создать агрегацию (опционально)
                 if len(filtered_posts) >= 3:
-                    logger.info("\n🔍 Step 6: Creating aggregated digest...")
+                    logger.info("\n🔍 Step 6: Creating aggregated bulletin...")
 
                     # Сортировать по ai_score
                     sorted_posts = sorted(
@@ -356,21 +356,21 @@ class ProductionWorkflow:
                         max_posts_per_bulletin=5, max_text_length=4000, max_media_items=10
                     )
 
-                    digest = await aggregator.aggregate(
+                    bulletin = await aggregator.aggregate(
                         posts=top_posts,
                         title=f"📰 Новости | {region.name}",
                         hashtags=[f"#{region_code}", "#новости"],
                     )
 
-                    if digest:
+                    if bulletin:
                         logger.info(
-                            f"✅ Created digest with {len(digest.additional_posts) + 1} posts"
+                            f"✅ Created bulletin with {len(bulletin.additional_posts) + 1} posts"
                         )
-                        logger.info(f"   Total views: {digest.total_views}")
-                        categories_str = ", ".join(filter(None, digest.categories))
+                        logger.info(f"   Total views: {bulletin.total_views}")
+                        categories_str = ", ".join(filter(None, bulletin.categories))
                         logger.info(f"   Categories: {categories_str}")
                     else:
-                        logger.info("ℹ️ Could not create digest")
+                        logger.info("ℹ️ Could not create bulletin")
 
                 logger.info(f"\n✅ Region {region_code} processing complete!")
                 notify_region_processing(region_code, "Обработка завершена")
@@ -568,11 +568,11 @@ class ProductionWorkflow:
                             title = f"📰 НОВОСТИ {region.name.upper()}"
                             hashtags = [f"#Новости{region_code.upper()}"]
 
-                            digest = await aggregator.aggregate(
+                            bulletin = await aggregator.aggregate(
                                 posts=posts, title=title, hashtags=hashtags
                             )
 
-                            if digest:
+                            if bulletin:
                                 # Публикация в VK
                                 from modules.publisher.vk_publisher_extended import VKPublisher
 
@@ -582,13 +582,13 @@ class ProductionWorkflow:
                                 )
 
                                 publish_result = await publisher.publish_aggregated_post(
-                                    digest, target_group
+                                    bulletin, target_group
                                 )
 
                                 if publish_result["success"]:
                                     posts_published = 1
                                     logger.info(
-                                        f"✅ Published digest to VK: {publish_result['url']}"
+                                        f"✅ Published bulletin to VK: {publish_result['url']}"
                                     )
 
                                     # Уведомляем о завершении публикации
@@ -610,7 +610,7 @@ class ProductionWorkflow:
                                         notifier = get_telegram_notifier()
                                         if notifier:
                                             error_msg = (
-                                                f"Failed to publish digest for region "
+                                                f"Failed to publish bulletin for region "
                                                 f"{region_code}: {publish_error}"
                                             )
                                             await notifier.send_error_notification(
@@ -623,7 +623,7 @@ class ProductionWorkflow:
                                     except Exception as e:
                                         logger.error(f"Failed to send Telegram notification: {e}")
                             else:
-                                logger.warning("Failed to create digest")
+                                logger.warning("Failed to create bulletin")
                         else:
                             logger.error(f"Region {region_code} not found")
                     else:

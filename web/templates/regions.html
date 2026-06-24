@@ -193,26 +193,26 @@
     </div>
 </div>
 
-<!-- Digest Template Modal -->
-<div class="modal fade" id="digestTemplateModal" tabindex="-1">
+<!-- Bulletin Template Modal -->
+<div class="modal fade" id="bulletinTemplateModal" tabindex="-1">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">
                     <i class="bi bi-layout-text-window-reverse"></i>
-                    Внешний вид сводок: <span id="digestTemplateRegionName"></span>
+                    Внешний вид сводок: <span id="bulletinTemplateRegionName"></span>
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <div id="digestTemplateLoading" class="text-center py-4">
+                <div id="bulletinTemplateLoading" class="text-center py-4">
                     <div class="spinner-border text-primary" role="status"></div>
                     <div class="text-muted mt-2">Загрузка настроек…</div>
                 </div>
 
-                <div id="digestTemplateError" class="alert alert-danger d-none"></div>
+                <div id="bulletinTemplateError" class="alert alert-danger d-none"></div>
 
-                <div id="digestTemplateContent" class="d-none">
+                <div id="bulletinTemplateContent" class="d-none">
                     <div class="alert alert-info">
                         <i class="bi bi-info-circle"></i>
                         Настройки применяются по схеме: <code>глобальные дефолты → дефолты региона → переопределение темы</code>.
@@ -262,10 +262,10 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-outline-danger" onclick="resetDigestTemplateAll()">
+                <button type="button" class="btn btn-outline-danger" onclick="resetBulletinTemplateAll()">
                     <i class="bi bi-arrow-counterclockwise"></i> Сбросить всё к умолчанию
                 </button>
-                <button type="button" class="btn btn-primary" onclick="saveDigestTemplateAll()">
+                <button type="button" class="btn btn-primary" onclick="saveBulletinTemplateAll()">
                     <i class="bi bi-save"></i> Сохранить всё
                 </button>
             </div>
@@ -278,9 +278,9 @@
 {% block extra_scripts %}
 <script>
 let currentRegions = [];
-let digestTemplateRegionCode = null;
-let digestTemplateData = null; // last fetched payload
-let digestTemplateListenersAttached = false;
+let bulletinTemplateRegionCode = null;
+let bulletinTemplateData = null; // last fetched payload
+let bulletinTemplateListenersAttached = false;
 
 // Load regions
 async function loadRegions() {
@@ -428,7 +428,7 @@ function renderRegionCard(region) {
                                 <li><a class="dropdown-item" href="#" onclick="editRegion(${region.id})">
                                     <i class="bi bi-pencil"></i> Редактировать
                                 </a></li>
-                                <li><a class="dropdown-item" href="#" onclick="openDigestTemplateEditor('${region.code}', '${region.name}')">
+                                <li><a class="dropdown-item" href="#" onclick="openBulletinTemplateEditor('${region.code}', '${region.name}')">
                                     <i class="bi bi-layout-text-window-reverse"></i> Внешний вид сводок
                                 </a></li>
                                 <li><a class="dropdown-item" href="/regions/${region.code}/diagnostics">
@@ -567,39 +567,39 @@ async function refreshDiscovery(regionId, regionCode) {
     }
 }
 
-function _setDigestTemplateError(msg) {
-    const el = document.getElementById('digestTemplateError');
+function _setBulletinTemplateError(msg) {
+    const el = document.getElementById('bulletinTemplateError');
     el.textContent = msg;
     el.classList.remove('d-none');
 }
 
-function _clearDigestTemplateError() {
-    const el = document.getElementById('digestTemplateError');
+function _clearBulletinTemplateError() {
+    const el = document.getElementById('bulletinTemplateError');
     el.textContent = '';
     el.classList.add('d-none');
 }
 
-function _toggleDigestTemplateLoading(isLoading) {
-    document.getElementById('digestTemplateLoading').style.display = isLoading ? 'block' : 'none';
-    document.getElementById('digestTemplateContent').classList.toggle('d-none', isLoading);
+function _toggleBulletinTemplateLoading(isLoading) {
+    document.getElementById('bulletinTemplateLoading').style.display = isLoading ? 'block' : 'none';
+    document.getElementById('bulletinTemplateContent').classList.toggle('d-none', isLoading);
 }
 
-function openDigestTemplateEditor(regionCode, regionName) {
-    digestTemplateRegionCode = regionCode;
-    document.getElementById('digestTemplateRegionName').textContent = `${regionName} (${regionCode})`;
-    _clearDigestTemplateError();
-    _toggleDigestTemplateLoading(true);
+function openBulletinTemplateEditor(regionCode, regionName) {
+    bulletinTemplateRegionCode = regionCode;
+    document.getElementById('bulletinTemplateRegionName').textContent = `${regionName} (${regionCode})`;
+    _clearBulletinTemplateError();
+    _toggleBulletinTemplateLoading(true);
 
-    const modal = new bootstrap.Modal(document.getElementById('digestTemplateModal'));
+    const modal = new bootstrap.Modal(document.getElementById('bulletinTemplateModal'));
     modal.show();
 
-    loadDigestTemplate(regionCode);
+    loadBulletinTemplate(regionCode);
 }
 
-async function loadDigestTemplate(regionCode) {
+async function loadBulletinTemplate(regionCode) {
     try {
         const data = await apiClient.request(`/regions/${regionCode}/bulletin-template`);
-        digestTemplateData = data;
+        bulletinTemplateData = data;
 
         // Fill defaults
         const d = data.effective_defaults;
@@ -641,7 +641,7 @@ async function loadDigestTemplate(regionCode) {
                             <label class="form-check-label" for="${topicId}-override">Переопределить для этой темы</label>
                         </div>
                         <div>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="resetDigestTemplateTopic('${topic}')">
+                            <button class="btn btn-sm btn-outline-secondary" onclick="resetBulletinTemplateTopic('${topic}')">
                                 <i class="bi bi-arrow-counterclockwise"></i> Сбросить тему
                             </button>
                         </div>
@@ -682,22 +682,22 @@ async function loadDigestTemplate(regionCode) {
         // Apply override toggles (disable inputs if not overridden)
         (data.topics || []).forEach((_, idx) => toggleTopicOverride(`dt-topic-${idx}`));
 
-        updateDigestTemplatePreview();
-        _toggleDigestTemplateLoading(false);
+        updateBulletinTemplatePreview();
+        _toggleBulletinTemplateLoading(false);
 
         // Update preview when changing any input (attach once)
-        if (!digestTemplateListenersAttached) {
-            digestTemplateListenersAttached = true;
-            const modalEl = document.getElementById('digestTemplateModal');
-            modalEl.addEventListener('input', updateDigestTemplatePreview);
-            modalEl.addEventListener('change', updateDigestTemplatePreview);
+        if (!bulletinTemplateListenersAttached) {
+            bulletinTemplateListenersAttached = true;
+            const modalEl = document.getElementById('bulletinTemplateModal');
+            modalEl.addEventListener('input', updateBulletinTemplatePreview);
+            modalEl.addEventListener('change', updateBulletinTemplatePreview);
         }
     } catch (err) {
-        _setDigestTemplateError(
+        _setBulletinTemplateError(
             (err && err.message ? err.message : 'Ошибка загрузки') +
             '\\n\\nЕсли вы только что обновили код на сервере — перезапустите backend (uvicorn/systemd), чтобы новые API-роуты появились.'
         );
-        _toggleDigestTemplateLoading(false);
+        _toggleBulletinTemplateLoading(false);
     }
 }
 
@@ -707,12 +707,12 @@ function toggleTopicOverride(topicId) {
         const el = document.getElementById(`${topicId}-${suffix}`);
         if (el) el.disabled = !enabled;
     });
-    updateDigestTemplatePreview();
+    updateBulletinTemplatePreview();
 }
 
-function updateDigestTemplatePreview() {
-    if (!digestTemplateData) return;
-    const topics = digestTemplateData.topics || [];
+function updateBulletinTemplatePreview() {
+    if (!bulletinTemplateData) return;
+    const topics = bulletinTemplateData.topics || [];
     const firstTopicId = 'dt-topic-0';
     const title = document.getElementById(`${firstTopicId}-title`)?.value || document.getElementById('dtDefaultsTitle').value || '';
     const footer = document.getElementById(`${firstTopicId}-footer`)?.value || '';
@@ -732,11 +732,11 @@ function updateDigestTemplatePreview() {
     document.getElementById('dtPreview').textContent = preview.join('\n');
 }
 
-async function saveDigestTemplateAll() {
-    if (!digestTemplateRegionCode || !digestTemplateData) return;
-    _clearDigestTemplateError();
+async function saveBulletinTemplateAll() {
+    if (!bulletinTemplateRegionCode || !bulletinTemplateData) return;
+    _clearBulletinTemplateError();
     try {
-        const saveBtn = document.querySelector('#digestTemplateModal .modal-footer .btn.btn-primary');
+        const saveBtn = document.querySelector('#bulletinTemplateModal .modal-footer .btn.btn-primary');
         if (saveBtn) {
             saveBtn.disabled = true;
             saveBtn.dataset._oldHtml = saveBtn.innerHTML;
@@ -753,7 +753,7 @@ async function saveDigestTemplateAll() {
         };
 
         const by_topic = {};
-        (digestTemplateData.topics || []).forEach((topic, idx) => {
+        (bulletinTemplateData.topics || []).forEach((topic, idx) => {
             const tid = `dt-topic-${idx}`;
             const enabled = document.getElementById(`${tid}-override`).checked;
             if (!enabled) return;
@@ -768,21 +768,21 @@ async function saveDigestTemplateAll() {
         });
 
         const payload = { defaults, by_topic };
-        const saved = await apiClient.request(`/regions/${digestTemplateRegionCode}/bulletin-template`, {
+        const saved = await apiClient.request(`/regions/${bulletinTemplateRegionCode}/bulletin-template`, {
             method: 'PUT',
             body: JSON.stringify(payload)
         });
-        digestTemplateData = saved;
+        bulletinTemplateData = saved;
         showToast('Настройки сводок сохранены', 'success');
 
         // Close modal for clear feedback
-        const modalEl = document.getElementById('digestTemplateModal');
+        const modalEl = document.getElementById('bulletinTemplateModal');
         const instance = bootstrap.Modal.getInstance(modalEl);
         if (instance) instance.hide();
     } catch (err) {
-        _setDigestTemplateError(err.message || 'Ошибка сохранения');
+        _setBulletinTemplateError(err.message || 'Ошибка сохранения');
     } finally {
-        const saveBtn = document.querySelector('#digestTemplateModal .modal-footer .btn.btn-primary');
+        const saveBtn = document.querySelector('#bulletinTemplateModal .modal-footer .btn.btn-primary');
         if (saveBtn) {
             saveBtn.disabled = false;
             if (saveBtn.dataset._oldHtml) {
@@ -793,34 +793,34 @@ async function saveDigestTemplateAll() {
     }
 }
 
-async function resetDigestTemplateAll() {
-    if (!digestTemplateRegionCode) return;
-    _clearDigestTemplateError();
+async function resetBulletinTemplateAll() {
+    if (!bulletinTemplateRegionCode) return;
+    _clearBulletinTemplateError();
     try {
-        const data = await apiClient.request(`/regions/${digestTemplateRegionCode}/bulletin-template/reset`, {
+        const data = await apiClient.request(`/regions/${bulletinTemplateRegionCode}/bulletin-template/reset`, {
             method: 'POST'
         });
-        digestTemplateData = data;
+        bulletinTemplateData = data;
         showToast('Сброшено к умолчанию', 'success');
-        await loadDigestTemplate(digestTemplateRegionCode);
+        await loadBulletinTemplate(bulletinTemplateRegionCode);
     } catch (err) {
-        _setDigestTemplateError(err.message || 'Ошибка сброса');
+        _setBulletinTemplateError(err.message || 'Ошибка сброса');
     }
 }
 
-async function resetDigestTemplateTopic(topic) {
-    if (!digestTemplateRegionCode) return;
-    _clearDigestTemplateError();
+async function resetBulletinTemplateTopic(topic) {
+    if (!bulletinTemplateRegionCode) return;
+    _clearBulletinTemplateError();
     try {
-        const data = await apiClient.request(`/regions/${digestTemplateRegionCode}/bulletin-template/reset-topic`, {
+        const data = await apiClient.request(`/regions/${bulletinTemplateRegionCode}/bulletin-template/reset-topic`, {
             method: 'POST',
             body: JSON.stringify({ topic })
         });
-        digestTemplateData = data;
+        bulletinTemplateData = data;
         showToast(`Тема "${topic}" сброшена`, 'success');
-        await loadDigestTemplate(digestTemplateRegionCode);
+        await loadBulletinTemplate(bulletinTemplateRegionCode);
     } catch (err) {
-        _setDigestTemplateError(err.message || 'Ошибка сброса темы');
+        _setBulletinTemplateError(err.message || 'Ошибка сброса темы');
     }
 }
 
@@ -871,7 +871,7 @@ function wireKindChangeHandler(kindSelectEl, parentSelectEl, parentWrapEl, selfI
 // Заполняет список чекбоксов «Соседи» всеми активными регионами (по коду), кроме
 // самого региона (selfCode). selectedCsv — текущее Region.neighbors
 // (запятая-список кодов) для пометки выбранных. Соседи — равные регионы, чьи
-// #Новости репостятся (см. neighbor-обмен, modules/cascaded_digest).
+// #Новости репостятся (см. neighbor-обмен, modules/cascaded_bulletin).
 function populateNeighborsSelect(selectEl, selectedCsv, selfCode) {
     selectEl.innerHTML = '';
     const selected = new Set(

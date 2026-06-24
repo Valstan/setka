@@ -217,7 +217,7 @@ async def test_copy_setka_reports_when_no_token_can_read(monkeypatch):
     publisher.publish_bulletin.assert_not_called()
 
 
-def _digest_side_effect(captcha_gids):
+def _bulletin_side_effect(captcha_gids):
     """Фабрика side_effect для publish_bulletin: капча на заданных gid."""
 
     def _se(*, group_id, text=None, attachments=None):
@@ -241,7 +241,7 @@ async def test_copy_setka_partial_then_retries_tail_next_tick(monkeypatch):
 
     # --- Тик 1: MI ловит капчу ---
     pub1 = AsyncMock()
-    pub1.publish_bulletin.side_effect = _digest_side_effect({MI})
+    pub1.publish_bulletin.side_effect = _bulletin_side_effect({MI})
     with ExitStack() as stack:
         _patch_copy_setka_deps(
             stack,
@@ -261,7 +261,7 @@ async def test_copy_setka_partial_then_retries_tail_next_tick(monkeypatch):
 
     # --- Тик 2: капчи нет, добираем MI ---
     pub2 = AsyncMock()
-    pub2.publish_bulletin.side_effect = _digest_side_effect(set())
+    pub2.publish_bulletin.side_effect = _bulletin_side_effect(set())
     with ExitStack() as stack:
         _patch_copy_setka_deps(
             stack,
@@ -295,7 +295,7 @@ async def test_copy_setka_gives_up_after_max_tries(monkeypatch):
     UR, MI = -168170215, -158787639
 
     pub = AsyncMock()
-    pub.publish_bulletin.side_effect = _digest_side_effect({UR, MI})  # обе в капче
+    pub.publish_bulletin.side_effect = _bulletin_side_effect({UR, MI})  # обе в капче
     with ExitStack() as stack:
         _patch_copy_setka_deps(
             stack,

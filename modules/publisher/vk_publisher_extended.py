@@ -1,5 +1,5 @@
 """
-VK Publisher - Publishes digest posts to VK groups
+VK Publisher - Publishes bulletin posts to VK groups
 
 Migrated from old_postopus bin/rw/post_msg.py and bin/rw/posting_post.py publishing logic.
 Handles VK API wall.post with proper error handling and token rotation.
@@ -231,7 +231,7 @@ class VKPublisher:
         signed: bool = False,
     ) -> Dict[str, Any]:
         """
-        Publish digest post to VK group.
+        Publish bulletin post to VK group.
 
         Args:
             group_id: VK group ID (negative number)
@@ -242,7 +242,7 @@ class VKPublisher:
             publish_date: Unix timestamp (seconds). When set (>0), VK schedules
                 the post into the community's "Отложенные записи" (postponed) and
                 publishes it automatically at that time. ``None`` → publish now
-                (default; digests are unaffected — zero regression).
+                (default; bulletins are unaffected — zero regression).
             signed: True → add "подпись автора" (VK ``signed=1``); only meaningful
                 together with ``from_group``.
 
@@ -805,25 +805,25 @@ class VKPublisher:
         return RegionConfigManager.get_main_group_id(region_code)
 
     async def publish_aggregated_post(
-        self, digest: "AggregatedPost", group_id: int
+        self, bulletin: "AggregatedPost", group_id: int
     ) -> Dict[str, Any]:
         """Publish an ``AggregatedPost`` produced by NewsAggregator.
 
-        Thin wrapper over ``publish_bulletin`` that pulls ``digest.aggregated_text``
+        Thin wrapper over ``publish_bulletin`` that pulls ``bulletin.aggregated_text``
         and emits a couple of useful log lines. Attachments are not extracted —
         ``publish_bulletin`` accepts them explicitly if a caller needs media.
         """
         try:
-            text = digest.aggregated_text
+            text = bulletin.aggregated_text
         except AttributeError as e:
-            return {"success": False, "error": f"digest missing aggregated_text: {e}"}
+            return {"success": False, "error": f"bulletin missing aggregated_text: {e}"}
 
         logger.info(
             "Publishing aggregated post to %s (sources=%s, views=%s, likes=%s)",
             group_id,
-            getattr(digest, "sources_count", "?"),
-            getattr(digest, "total_views", "?"),
-            getattr(digest, "total_likes", "?"),
+            getattr(bulletin, "sources_count", "?"),
+            getattr(bulletin, "total_views", "?"),
+            getattr(bulletin, "total_likes", "?"),
         )
 
         return await self.publish_bulletin(group_id=group_id, text=text)

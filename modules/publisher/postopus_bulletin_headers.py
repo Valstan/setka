@@ -132,6 +132,6 @@ def resolve_bulletin_hashtags(
 
 def resolve_mourning_bulletin_format() -> Tuple[str, List[str], str]:
     """
-    Mourning-digest must be published without any header and hashtags.
+    Mourning-bulletin must be published without any header and hashtags.
     """
     return "", [], ""

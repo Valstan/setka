@@ -34,14 +34,14 @@
 
 ## Как работает каскадная сводка
 
-Beat-таски `postopus-kirov-oblast-*` (`tasks/celery_app.py`) вызывают `parse_and_publish_theme(region_code="kirov_obl", theme="oblast")`. Special-case в `tasks/parsing_scheduler_tasks.py` ловит регионы с `kind in ('oblast','strana')` и делегирует в `modules.cascaded_digest.run_cascaded_digest`. Шаги:
+Beat-таски `postopus-kirov-oblast-*` (`tasks/celery_app.py`) вызывают `parse_and_publish_theme(region_code="kirov_obl", theme="oblast")`. Special-case в `tasks/parsing_scheduler_tasks.py` ловит регионы с `kind in ('oblast','strana')` и делегирует в `modules.cascaded_bulletin.run_cascaded_bulletin`. Шаги:
 
 1. Загружаем `region` из БД, проверяем `kind in ('oblast','strana')` и наличие `vk_group_id`.
 2. Резолвим **детей**: либо явный override `RegionConfig.bulletin_filters.defaults.cascade_source_region_codes` (список кодов), либо все активные регионы с `parent_region_id = region.id`.
 3. Для каждого ребёнка читаем **`cascade_posts_per_child`** свежих постов со стены `child.vk_group_id` (default `5`). Слишком старые (старше `cascade_lookback_hours`, default `72ч`) — отсекаем.
 4. Прогоняем собранные посты через общий `AdvancedVKParser.filter_posts_list` — дубли, реклама, повторы по `lip`/`hash`.
-5. Hard-exclude'им рекламу/addons/религию (маркеры в `_BANNED_DIGEST_MARKERS` и `_RELIGIOUS_MARKERS`).
-6. Собираем сводка через `DigestBuilder` и публикуем в `region.vk_group_id` через `VKPublisher.create_with_policy` (с авто-fallback по политике токенов).
+5. Hard-exclude'им рекламу/addons/религию (маркеры в `_BANNED_BULLETIN_MARKERS` и `_RELIGIOUS_MARKERS`).
+6. Собираем сводка через `BulletinBuilder` и публикуем в `region.vk_group_id` через `VKPublisher.create_with_policy` (с авто-fallback по политике токенов).
 7. Обновляем `WorkTable.lip` и `WorkTable.hash` — чтобы следующий выпуск не повторил эти посты.
 8. Записываем метрику `setka_digest_published_total{region,topic,result}`.
 
@@ -67,8 +67,8 @@ Beat-таски `postopus-kirov-oblast-*` (`tasks/celery_app.py`) вызываю
 
 * **Источник соседей** — поле `Region.neighbors` (запятая-список кодов). Задаётся галочками в UI добавления/редактирования региона (multi-select существующих регионов) — адреса групп вводить не нужно, берётся `vk_group_id` каждого соседа.
 * **Гейт** — в кандидаты попадают только посты с хэштегом `#Новости` (по умолчанию; override через `region.config['neighbor_hashtag']`). Реклама/детсады/прочее без хэштега не репостятся.
-* **Движок** — тот же `modules/cascaded_digest.run_cascaded_digest` с `source_mode="neighbors"`, `theme="neighbors"` (тонкая обёртка `run_neighbor_digest`). **Без дублирования**: тот же сбор/фильтр/дедуп/публикация, что у каскадной сводки. Старый `modules/publisher/neighbor_sharing.py` удалён.
-* **Расписание** — beat `digest-share-neighbors-daily` (раз в сутки, 8:30) → `run_all_regions_neighbor_share` → `share_neighbor_news(region_code)` по всем регионам с непустым `neighbors`.
+* **Движок** — тот же `modules/cascaded_bulletin.run_cascaded_bulletin` с `source_mode="neighbors"`, `theme="neighbors"` (тонкая обёртка `run_neighbor_bulletin`). **Без дублирования**: тот же сбор/фильтр/дедуп/публикация, что у каскадной сводки. Старый `modules/publisher/neighbor_sharing.py` удалён.
+* **Расписание** — beat `bulletin-share-neighbors-daily` (раз в сутки, 8:30) → `run_all_regions_neighbor_share` → `share_neighbor_news(region_code)` по всем регионам с непустым `neighbors`.
 * **Не путать с темой `sosed`** — та парсит сообщества с `category="sosed"` *внутри* одного региона (тема контента), это не cross-region обмен.
 
 ---

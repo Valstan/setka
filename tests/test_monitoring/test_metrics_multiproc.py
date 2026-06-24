@@ -27,7 +27,7 @@ def test_is_multiproc_reads_env(monkeypatch):
     assert metrics._is_multiproc() is True
 
 
-def test_digest_timestamp_gauge_uses_max_mode():
+def test_bulletin_timestamp_gauge_uses_max_mode():
     from monitoring.metrics import digest_last_published_timestamp
 
     assert digest_last_published_timestamp._multiprocess_mode == "max"

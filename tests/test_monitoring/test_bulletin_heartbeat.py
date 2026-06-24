@@ -1,4 +1,4 @@
-"""Тесты Redis-heartbeat сводок + watchdog-алёрт (modules/digest_heartbeat).
+"""Тесты Redis-heartbeat сводок + watchdog-алёрт (modules/bulletin_heartbeat).
 
 Redis и Telegram замоканы: ``_redis_client`` подменяется in-memory фейком,
 ``requests.post`` — заглушкой. Сети нет.

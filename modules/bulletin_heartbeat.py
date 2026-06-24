@@ -60,7 +60,7 @@ def _redis():
             _redis_client = NotificationsStorage().redis_client
             _redis_pid = pid
         except Exception:  # pragma: no cover - инфраструктурный сбой
-            logger.warning("redis init failed for digest heartbeat", exc_info=True)
+            logger.warning("redis init failed for bulletin heartbeat", exc_info=True)
             _redis_client = None
             return None
     return _redis_client
@@ -78,7 +78,7 @@ def mark_published(topic: str, *, ts: Optional[float] = None) -> None:
         if client is None:
             # Громко (WARNING): немой `return` здесь скрывал, что heartbeat не
             # пишется, хотя публикация прошла (инцидент 2026-06-05).
-            logger.warning("digest heartbeat skipped: redis unavailable (topic=%s)", topic)
+            logger.warning("bulletin heartbeat skipped: redis unavailable (topic=%s)", topic)
             return
         client.setex(
             f"{KEY_PREFIX}:{topic}",
@@ -88,7 +88,7 @@ def mark_published(topic: str, *, ts: Optional[float] = None) -> None:
     except Exception:  # pragma: no cover - наблюдаемость не должна ломать публикацию
         # WARNING (не debug): на проде LOG_LEVEL=INFO глушил debug, из-за чего
         # «heartbeat не пишется» оставалось незамеченным (инцидент 2026-06-05).
-        logger.warning("digest heartbeat write failed (%s)", topic, exc_info=True)
+        logger.warning("bulletin heartbeat write failed (%s)", topic, exc_info=True)
 
 
 def last_published_ts(topic: str) -> Optional[int]:
@@ -100,7 +100,7 @@ def last_published_ts(topic: str) -> Optional[int]:
         val = client.get(f"{KEY_PREFIX}:{topic}")
         return int(val) if val else None
     except Exception:
-        logger.debug("digest heartbeat read failed (%s)", topic, exc_info=True)
+        logger.debug("bulletin heartbeat read failed (%s)", topic, exc_info=True)
         return None
 
 
@@ -135,7 +135,7 @@ def all_heartbeats() -> dict[str, int]:
             except (TypeError, ValueError):
                 continue
     except Exception:  # pragma: no cover - инфраструктурный сбой
-        logger.debug("digest heartbeat scan failed", exc_info=True)
+        logger.debug("bulletin heartbeat scan failed", exc_info=True)
     return out
 
 
@@ -204,12 +204,12 @@ def maybe_alert_stale_bulletin(
             timeout=15,
         )
         if resp.status_code != 200:
-            logger.warning("stale-digest alert failed: %s %s", resp.status_code, resp.text[:200])
+            logger.warning("stale-bulletin alert failed: %s %s", resp.status_code, resp.text[:200])
             return "error:http-" + str(resp.status_code)
         if client is not None:
             client.setex(cooldown_key, ALERT_COOLDOWN_SECONDS, "1")
-        logger.info("Sent stale-digest alert for topic=%s age=%.1fh", topic, hours)
+        logger.info("Sent stale-bulletin alert for topic=%s age=%.1fh", topic, hours)
         return "alert-sent"
     except Exception as exc:
-        logger.error("Failed to send stale-digest alert: %s", exc)
+        logger.error("Failed to send stale-bulletin alert: %s", exc)
         return "error:" + str(exc)

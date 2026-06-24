@@ -1,8 +1,8 @@
 """
-Utilities for digest history deduplication.
+Utilities for bulletin history deduplication.
 
 - Region-wide LIP/hash aggregation across all themes
-- LIP extraction from published digest texts in target region wall
+- LIP extraction from published bulletin texts in target region wall
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def build_region_dedup_sets(work_tables: Iterable[Any]) -> Tuple[Set[str], Set[s
 
 def extract_source_lips_from_target_group_posts(posts: Iterable[dict]) -> Set[str]:
     """
-    Extract source post LIPs from digest texts published in target region group.
+    Extract source post LIPs from bulletin texts published in target region group.
     """
     out: Set[str] = set()
     for post in posts or []:

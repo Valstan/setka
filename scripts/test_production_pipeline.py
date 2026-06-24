@@ -131,7 +131,7 @@ async def main():
         mourning_posts, regular_posts = splitter.split_posts(posts)
         print(f"📊 Split: {len(mourning_posts)} mourning, {len(regular_posts)} regular")
 
-        # 6. Build and publish digests
+        # 6. Build and publish bulletins
         header = resolve_bulletin_header(region_config, theme, region_obj)
         theme_tags, local_hashtag = resolve_bulletin_hashtags(region_config, theme)
 
@@ -142,7 +142,7 @@ async def main():
 
         results = []
 
-        # Regular digest
+        # Regular bulletin
         if regular_posts:
             builder = BulletinBuilder(
                 header=header,
@@ -151,19 +151,21 @@ async def main():
                 max_text_length=region_config.text_post_maxsize_simbols or 4096,
                 repost_mode=region_config.setka_regim_repost,
             )
-            digest = builder.build_bulletin(regular_posts, group_names=group_names)
-            print(f"\n📝 Regular digest: {digest.post_count} posts, {digest.total_length} chars")
+            bulletin = builder.build_bulletin(regular_posts, group_names=group_names)
+            print(
+                f"\n📝 Regular bulletin: {bulletin.post_count} posts, {bulletin.total_length} chars"
+            )
 
             vk_publisher = VKPublisher(test_polygon_mode=test_mode)
             publish_result = await vk_publisher.publish_bulletin(
                 group_id=region_obj.vk_group_id,
-                text=digest.text,
-                attachments=digest.attachments_list,
+                text=bulletin.text,
+                attachments=bulletin.attachments_list,
             )
             print(f"   Publish: {publish_result}")
-            results.append(("regular", digest, publish_result))
+            results.append(("regular", bulletin, publish_result))
 
-        # Mourning digest
+        # Mourning bulletin
         if mourning_posts:
             mourning_header, mourning_tags, mourning_local_hashtag = (
                 resolve_mourning_bulletin_format()
@@ -174,22 +176,22 @@ async def main():
                 local_hashtag=mourning_local_hashtag,
                 max_text_length=region_config.text_post_maxsize_simbols or 4096,
             )
-            mourning_digest = mourning_builder.build_bulletin(
+            mourning_bulletin = mourning_builder.build_bulletin(
                 mourning_posts, group_names=group_names
             )
             print(
-                f"\nMourning digest: {mourning_digest.post_count} posts, "
-                f"{mourning_digest.total_length} chars"
+                f"\nMourning bulletin: {mourning_bulletin.post_count} posts, "
+                f"{mourning_bulletin.total_length} chars"
             )
 
             vk_pub_m = VKPublisher(test_polygon_mode=test_mode)
             mourning_pub = await vk_pub_m.publish_bulletin(
                 group_id=region_obj.vk_group_id,
-                text=mourning_digest.text,
-                attachments=mourning_digest.attachments_list,
+                text=mourning_bulletin.text,
+                attachments=mourning_bulletin.attachments_list,
             )
             print(f"   Publish: {mourning_pub}")
-            results.append(("mourning", mourning_digest, mourning_pub))
+            results.append(("mourning", mourning_bulletin, mourning_pub))
 
         # Update work table
         all_included = []

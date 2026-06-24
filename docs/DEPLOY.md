@@ -148,7 +148,7 @@ All crontab entries from old_postopus are now Celery Beat schedules:
 **Plus existing SETKA tasks:**
 - Hourly workflow (at :05)
 - Notifications checks (8:00-22:00 at :15, :16, :17)
-- Daily digest (18:00)
+- Daily bulletin (18:00)
 - Daily cleanup (03:00)
 
 ---
