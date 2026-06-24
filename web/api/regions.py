@@ -355,7 +355,7 @@ class BulletinTemplateResponse(BaseModel):
     region_code: str
     region_name: str
     topics: List[str]
-    # Raw override stored in Region.config.digest_template (may be empty)
+    # Raw override stored in Region.config.bulletin_template (may be empty)
     raw_override: Dict[str, Any]
     # Effective merged settings per topic
     effective_by_topic: Dict[str, BulletinTemplateSettingsModel]
@@ -363,8 +363,8 @@ class BulletinTemplateResponse(BaseModel):
     effective_defaults: BulletinTemplateSettingsModel
 
 
-@router.get("/{region_code}/digest-template", response_model=BulletinTemplateResponse)
-async def get_region_digest_template(
+@router.get("/{region_code}/bulletin-template", response_model=BulletinTemplateResponse)
+async def get_region_bulletin_template(
     region_code: str,
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -413,14 +413,14 @@ async def get_region_digest_template(
     )
 
 
-@router.put("/{region_code}/digest-template", response_model=BulletinTemplateResponse)
-async def put_region_digest_template(
+@router.put("/{region_code}/bulletin-template", response_model=BulletinTemplateResponse)
+async def put_region_bulletin_template(
     region_code: str,
     payload: BulletinTemplatePayload,
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Save digest template overrides into Region.config.digest_template.
+    Save digest template overrides into Region.config.bulletin_template.
     """
     result = await db.execute(select(Region).where(Region.code == region_code))
     region = result.scalar_one_or_none()
@@ -437,9 +437,9 @@ async def put_region_digest_template(
 
     # If nothing is set, remove override entirely
     if not new_dt["defaults"] and not new_dt["by_topic"]:
-        cfg.pop("digest_template", None)
+        cfg.pop("bulletin_template", None)
     else:
-        cfg["digest_template"] = new_dt
+        cfg["bulletin_template"] = new_dt
 
     region.config = cfg
     region.updated_at = datetime.utcnow()
@@ -448,11 +448,11 @@ async def put_region_digest_template(
     await invalidate_cache("regions:*")
 
     # Return fresh merged view
-    return await get_region_digest_template(region_code=region_code, db=db)
+    return await get_region_bulletin_template(region_code=region_code, db=db)
 
 
-@router.post("/{region_code}/digest-template/reset", response_model=BulletinTemplateResponse)
-async def reset_region_digest_template(
+@router.post("/{region_code}/bulletin-template/reset", response_model=BulletinTemplateResponse)
+async def reset_region_bulletin_template(
     region_code: str,
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -465,22 +465,24 @@ async def reset_region_digest_template(
         raise HTTPException(status_code=404, detail="Region not found")
 
     cfg: Dict[str, Any] = region.config if isinstance(region.config, dict) else {}
-    cfg.pop("digest_template", None)
+    cfg.pop("bulletin_template", None)
     region.config = cfg
     region.updated_at = datetime.utcnow()
     await db.commit()
 
     await invalidate_cache("regions:*")
 
-    return await get_region_digest_template(region_code=region_code, db=db)
+    return await get_region_bulletin_template(region_code=region_code, db=db)
 
 
 class ResetBulletinTemplateTopicRequest(BaseModel):
     topic: str = Field(..., description="Тема для сброса (например, 'Культура')")
 
 
-@router.post("/{region_code}/digest-template/reset-topic", response_model=BulletinTemplateResponse)
-async def reset_region_digest_template_topic(
+@router.post(
+    "/{region_code}/bulletin-template/reset-topic", response_model=BulletinTemplateResponse
+)
+async def reset_region_bulletin_template_topic(
     region_code: str,
     request: ResetBulletinTemplateTopicRequest,
     db: AsyncSession = Depends(get_db_session),
@@ -495,19 +497,19 @@ async def reset_region_digest_template_topic(
 
     cfg: Dict[str, Any] = region.config if isinstance(region.config, dict) else {}
     dt: Dict[str, Any] = (
-        cfg.get("digest_template") if isinstance(cfg.get("digest_template"), dict) else {}
+        cfg.get("bulletin_template") if isinstance(cfg.get("bulletin_template"), dict) else {}
     )
     by_topic: Dict[str, Any] = dt.get("by_topic") if isinstance(dt.get("by_topic"), dict) else {}
 
     by_topic.pop(request.topic, None)
     dt["by_topic"] = by_topic
 
-    # If nothing left, remove whole digest_template
+    # If nothing left, remove whole bulletin_template
     defaults = dt.get("defaults") if isinstance(dt.get("defaults"), dict) else {}
     if not defaults and not by_topic:
-        cfg.pop("digest_template", None)
+        cfg.pop("bulletin_template", None)
     else:
-        cfg["digest_template"] = dt
+        cfg["bulletin_template"] = dt
 
     region.config = cfg
     region.updated_at = datetime.utcnow()
@@ -515,7 +517,7 @@ async def reset_region_digest_template_topic(
 
     await invalidate_cache("regions:*")
 
-    return await get_region_digest_template(region_code=region_code, db=db)
+    return await get_region_bulletin_template(region_code=region_code, db=db)
 
 
 # ──────────────────────────────────────────────────────────────────────────

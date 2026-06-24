@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Добавить колонку region_configs.digest_filters (идемпотентно)."""
+"""Добавить колонку region_configs.bulletin_filters (идемпотентно)."""
 import asyncio
 import os
 import sys
@@ -19,11 +19,11 @@ async def main() -> None:
         await conn.execute(
             text(
                 "ALTER TABLE region_configs "
-                "ADD COLUMN IF NOT EXISTS digest_filters JSONB DEFAULT NULL"
+                "ADD COLUMN IF NOT EXISTS bulletin_filters JSONB DEFAULT NULL"
             )
         )
     await eng.dispose()
-    print("OK: digest_filters column")
+    print("OK: bulletin_filters column")
 
 
 if __name__ == "__main__":

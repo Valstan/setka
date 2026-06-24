@@ -92,7 +92,7 @@ async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode
         # Создаем сводка
         logger.info("\n📰 Создание сводки...")
 
-        aggregator = NewsAggregator(max_posts_per_digest=max_posts)
+        aggregator = NewsAggregator(max_posts_per_bulletin=max_posts)
 
         title = f"📰 НОВОСТИ {region.name.upper()}"
         hashtags = [f"#Новости{region.code.upper()}", "#SETKA"]

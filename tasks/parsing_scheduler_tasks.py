@@ -173,7 +173,7 @@ def parse_and_publish_theme(
                     filter_group_by_region_words={},
                     text_post_maxsize_simbols=4096,
                     setka_regim_repost=False,
-                    digest_filters=None,
+                    bulletin_filters=None,
                 )
 
             # 2. Get work table
@@ -329,7 +329,7 @@ def parse_and_publish_theme(
                     local_hashtag=local_hashtag,
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
                     repost_mode=region_config.setka_regim_repost,
-                    max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
+                    max_posts_per_bulletin=pipeline_eff.get("max_posts_per_bulletin"),
                 )
                 digest = builder.build_bulletin(regular_posts, group_names=group_names)
                 if digest.post_count == 0 or not digest.text.strip():
@@ -393,7 +393,7 @@ def parse_and_publish_theme(
                     hashtags=mourning_tags,
                     local_hashtag=mourning_local_hashtag,
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
-                    max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
+                    max_posts_per_bulletin=pipeline_eff.get("max_posts_per_bulletin"),
                 )
                 mourning_digest = mourning_builder.build_bulletin(
                     mourning_posts, group_names=group_names

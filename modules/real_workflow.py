@@ -14,10 +14,10 @@ from database.connection import AsyncSessionLocal
 from database.models import Community, Post, Region
 from modules.ai_analyzer.analyzer import PostAnalyzer
 from modules.service_activity_notifier import (
-    notify_digest_creation_complete,
-    notify_digest_creation_start,
-    notify_digest_publishing_complete,
-    notify_digest_publishing_start,
+    notify_bulletin_creation_complete,
+    notify_bulletin_creation_start,
+    notify_bulletin_publishing_complete,
+    notify_bulletin_publishing_start,
     notify_post_collection_complete,
     notify_post_collection_start,
     notify_post_sorting_complete,
@@ -166,7 +166,7 @@ class RealWorkflowManager:
                         )
 
                         # Уведомляем о начале создания сводки
-                        notify_digest_creation_start(
+                        notify_bulletin_creation_start(
                             region.name, self.current_topic, len(approved_posts)
                         )
 
@@ -177,19 +177,19 @@ class RealWorkflowManager:
 
                         # Уведомляем о завершении создания сводки
                         digest_time = 0.8  # Примерное время создания
-                        notify_digest_creation_complete(
+                        notify_bulletin_creation_complete(
                             region.name, self.current_topic, len(digest_text), digest_time
                         )
 
                         # Уведомляем о начале публикации
-                        notify_digest_publishing_start(region.name, self.current_topic, "VK")
+                        notify_bulletin_publishing_start(region.name, self.current_topic, "VK")
 
                         # Реальная публикация (пока только логируем)
                         await self.publish_post(best_post, region)
 
                         # Уведомляем о завершении публикации
                         publish_time = 1.2  # Примерное время публикации
-                        notify_digest_publishing_complete(
+                        notify_bulletin_publishing_complete(
                             region.name, self.current_topic, "VK", "", publish_time
                         )
                     else:

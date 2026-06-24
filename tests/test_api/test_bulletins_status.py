@@ -1,4 +1,4 @@
-"""Tests for /api/monitoring/digests-status — состояние сводок из parsing_stats.
+"""Tests for /api/monitoring/bulletins-status — состояние сводок из parsing_stats.
 
 В основном — pure-function проверки на `_classify_bulletin_row` (логика
 fresh/stale/broken/dead). Это самая важная часть для регрессий — если

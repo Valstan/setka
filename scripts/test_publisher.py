@@ -119,7 +119,7 @@ async def test_digest_creation():
             # Создаем сводка
             from modules.aggregation.aggregator import NewsAggregator
 
-            aggregator = NewsAggregator(max_posts_per_digest=5)
+            aggregator = NewsAggregator(max_posts_per_bulletin=5)
 
             # Определяем заголовок для региона
             title = f"📰 НОВОСТИ {region.name.upper()}"
@@ -188,7 +188,7 @@ async def test_full_workflow():
             # Создаем сводка
             from modules.aggregation.aggregator import NewsAggregator
 
-            aggregator = NewsAggregator(max_posts_per_digest=5)
+            aggregator = NewsAggregator(max_posts_per_bulletin=5)
 
             # Определяем заголовок для региона
             title = f"📰 НОВОСТИ {region.name.upper()}"

@@ -216,14 +216,14 @@ async def execute_krugozor_broadcast(
     test_mode: bool = False,
 ) -> Dict[str, Any]:
     from config.runtime import (
-        get_krugozor_digest_max_items,
+        get_krugozor_bulletin_max_items,
         get_krugozor_max_post_age_hours,
         get_krugozor_post_interval_seconds,
         get_krugozor_snippet_len,
         get_krugozor_target_region_codes,
         get_krugozor_text_budget,
         krugozor_broadcast_disabled,
-        krugozor_digest_photos_enabled,
+        krugozor_bulletin_photos_enabled,
         krugozor_promo_filter_enabled,
     )
     from database.models import Region
@@ -276,7 +276,7 @@ async def execute_krugozor_broadcast(
     rr = int(state.get("rr", -1))
     seen: Set[str] = set(wt.lip or [])
 
-    max_items = get_krugozor_digest_max_items()
+    max_items = get_krugozor_bulletin_max_items()
     max_age = int(get_krugozor_max_post_age_hours() * 3600)
     now_ts = int(time.time())
 
@@ -322,7 +322,7 @@ async def execute_krugozor_broadcast(
         snippet_len=get_krugozor_snippet_len(),
         text_budget=get_krugozor_text_budget(),
         max_items=max_items,
-        photos_enabled=krugozor_digest_photos_enabled(),
+        photos_enabled=krugozor_bulletin_photos_enabled(),
     )
     selected = [candidates[i] for i in used]
 

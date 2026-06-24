@@ -37,7 +37,7 @@
 Beat-таски `postopus-kirov-oblast-*` (`tasks/celery_app.py`) вызывают `parse_and_publish_theme(region_code="kirov_obl", theme="oblast")`. Special-case в `tasks/parsing_scheduler_tasks.py` ловит регионы с `kind in ('oblast','strana')` и делегирует в `modules.cascaded_digest.run_cascaded_digest`. Шаги:
 
 1. Загружаем `region` из БД, проверяем `kind in ('oblast','strana')` и наличие `vk_group_id`.
-2. Резолвим **детей**: либо явный override `RegionConfig.digest_filters.defaults.cascade_source_region_codes` (список кодов), либо все активные регионы с `parent_region_id = region.id`.
+2. Резолвим **детей**: либо явный override `RegionConfig.bulletin_filters.defaults.cascade_source_region_codes` (список кодов), либо все активные регионы с `parent_region_id = region.id`.
 3. Для каждого ребёнка читаем **`cascade_posts_per_child`** свежих постов со стены `child.vk_group_id` (default `5`). Слишком старые (старше `cascade_lookback_hours`, default `72ч`) — отсекаем.
 4. Прогоняем собранные посты через общий `AdvancedVKParser.filter_posts_list` — дубли, реклама, повторы по `lip`/`hash`.
 5. Hard-exclude'им рекламу/addons/религию (маркеры в `_BANNED_DIGEST_MARKERS` и `_RELIGIOUS_MARKERS`).
@@ -49,7 +49,7 @@ Beat-таски `postopus-kirov-oblast-*` (`tasks/celery_app.py`) вызываю
 
 ## Параметры
 
-В `RegionConfig.digest_filters.defaults` для регионов `oblast` / `strana`:
+В `RegionConfig.bulletin_filters.defaults` для регионов `oblast` / `strana`:
 
 | Поле | Default | Диапазон | Что делает |
 |---|---|---|---|

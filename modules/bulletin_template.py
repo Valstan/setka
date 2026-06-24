@@ -3,7 +3,7 @@ Digest template management (defaults + per-region + per-topic overrides).
 
 Stored in Region.config (JSON) as:
 {
-  "digest_template": {
+  "bulletin_template": {
     "defaults": {...},
     "by_topic": {
       "Администрация": {...},
@@ -158,7 +158,7 @@ def _get_bulletin_template_override(region: Region) -> Dict[str, Any]:
     cfg = region.config or {}
     if not isinstance(cfg, dict):
         return {}
-    dt = cfg.get("digest_template") or {}
+    dt = cfg.get("bulletin_template") or {}
     return dt if isinstance(dt, dict) else {}
 
 
@@ -167,7 +167,7 @@ def compute_effective_bulletin_settings(
     topic: str,
 ) -> Tuple[BulletinTemplateSettings, Dict[str, Any]]:
     """
-    Returns (effective_settings, raw_override_digest_template)
+    Returns (effective_settings, raw_override_bulletin_template)
     """
     base = _default_settings()
     raw = _get_bulletin_template_override(region)

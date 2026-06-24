@@ -405,7 +405,7 @@ def _reclassify_retired(rows: List[Dict]) -> None:
             r["status"] = "retired"
 
 
-@router.get("/digests-status", response_model=Dict)
+@router.get("/bulletins-status", response_model=Dict)
 @cache(ttl=60, key_prefix="monitoring")
 async def get_bulletins_status(db: AsyncSession = Depends(get_db_session)):
     """Свод состояния сводок по (region_code, theme) из ``parsing_stats``.

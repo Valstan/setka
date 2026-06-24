@@ -6,7 +6,7 @@
 ON CONFLICT DO NOTHING по uniq (source_id, external_id) — повторный фетч
 того же поста = no-op, курсоры не нужны.
 
-Liveness — по паттерну ``modules/digest_heartbeat.py`` (pool #018,
+Liveness — по паттерну ``modules/bulletin_heartbeat.py`` (pool #018,
 retired≠dead R6): успешный прогон пишет unix-ts в Redis
 ``setka:radar_last_polled``; watchdog алёртит ТОЛЬКО если есть активные
 подписанные источники, а heartbeat протух — «нечего поллить» не считается
