@@ -71,7 +71,7 @@ class BulletinBuilder:
         local_hashtag: str = "",
         max_text_length: int = MAX_TEXT_LENGTH,
         repost_mode: bool = False,
-        max_posts_per_digest: Optional[int] = None,
+        max_posts_per_bulletin: Optional[int] = None,
     ):
         """
         Args:
@@ -80,7 +80,7 @@ class BulletinBuilder:
             local_hashtag: Local region hashtag
             max_text_length: Maximum text length
             repost_mode: True = VK repost, False = copy with attribution
-            max_posts_per_digest: Сколько новостей максимум в одном сводке (из настроек региона)
+            max_posts_per_bulletin: Сколько новостей максимум в одном сводке (из настроек региона)
         """
         # Пустая строка = без заголовка (например траурная сводка); None = дефолтный заголовок
         if header is None:
@@ -91,12 +91,12 @@ class BulletinBuilder:
         self.local_hashtag = local_hashtag
         self.max_text_length = max_text_length
         self.repost_mode = repost_mode
-        self.max_posts_per_digest = (
-            int(max_posts_per_digest)
-            if max_posts_per_digest is not None
+        self.max_posts_per_bulletin = (
+            int(max_posts_per_bulletin)
+            if max_posts_per_bulletin is not None
             else self.MAX_POSTS_PER_DIGEST
         )
-        self.max_posts_per_digest = max(1, min(self.max_posts_per_digest, 10))
+        self.max_posts_per_bulletin = max(1, min(self.max_posts_per_bulletin, 10))
 
     def build_bulletin(
         self,
@@ -151,7 +151,7 @@ class BulletinBuilder:
 
         for post_data in sorted_posts:
             # Stop if we've reached max posts
-            if len(posts_included) >= self.max_posts_per_digest:
+            if len(posts_included) >= self.max_posts_per_bulletin:
                 break
 
             # Extract post info
@@ -368,7 +368,7 @@ class BulletinBuilder:
         posts_by_attachments = self.MAX_ATTACHMENTS // max(avg_attachments, 1)
 
         # Take minimum
-        return min(posts_by_text, posts_by_attachments, self.max_posts_per_digest)
+        return min(posts_by_text, posts_by_attachments, self.max_posts_per_bulletin)
 
 
 class TextOnlyBulletinBuilder(BulletinBuilder):

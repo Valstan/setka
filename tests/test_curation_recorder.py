@@ -22,20 +22,20 @@ from modules.curation.recorder import _build_candidates, record_curation_run, sh
 
 
 def test_should_record_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("DIGEST_CURATION_SHADOW_ENABLED", raising=False)
+    monkeypatch.delenv("BULLETIN_CURATION_SHADOW_ENABLED", raising=False)
     assert should_record("mi") is False
 
 
 def test_should_record_enabled_no_allowlist(monkeypatch):
-    monkeypatch.setenv("DIGEST_CURATION_SHADOW_ENABLED", "1")
-    monkeypatch.delenv("DIGEST_CURATION_REGION_CODES", raising=False)
+    monkeypatch.setenv("BULLETIN_CURATION_SHADOW_ENABLED", "1")
+    monkeypatch.delenv("BULLETIN_CURATION_REGION_CODES", raising=False)
     assert should_record("mi") is True
     assert should_record("ANY") is True
 
 
 def test_should_record_respects_allowlist(monkeypatch):
-    monkeypatch.setenv("DIGEST_CURATION_SHADOW_ENABLED", "1")
-    monkeypatch.setenv("DIGEST_CURATION_REGION_CODES", "mi, ur")
+    monkeypatch.setenv("BULLETIN_CURATION_SHADOW_ENABLED", "1")
+    monkeypatch.setenv("BULLETIN_CURATION_REGION_CODES", "mi, ur")
     assert should_record("mi") is True
     assert should_record("MI") is True  # case-insensitive
     assert should_record("sovetsk") is False
@@ -95,7 +95,7 @@ def _patch_session(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_record_noop_when_disabled(monkeypatch):
-    monkeypatch.delenv("DIGEST_CURATION_SHADOW_ENABLED", raising=False)
+    monkeypatch.delenv("BULLETIN_CURATION_SHADOW_ENABLED", raising=False)
     _, fake_factory = _patch_session(monkeypatch)
     await record_curation_run(
         region_code="mi",
@@ -110,8 +110,8 @@ async def test_record_noop_when_disabled(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_record_persists_when_enabled(monkeypatch):
-    monkeypatch.setenv("DIGEST_CURATION_SHADOW_ENABLED", "1")
-    monkeypatch.delenv("DIGEST_CURATION_REGION_CODES", raising=False)
+    monkeypatch.setenv("BULLETIN_CURATION_SHADOW_ENABLED", "1")
+    monkeypatch.delenv("BULLETIN_CURATION_REGION_CODES", raising=False)
     session, _ = _patch_session(monkeypatch)
     await record_curation_run(
         region_code="mi",
@@ -135,7 +135,7 @@ async def test_record_persists_when_enabled(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_record_noop_when_no_candidates(monkeypatch):
-    monkeypatch.setenv("DIGEST_CURATION_SHADOW_ENABLED", "1")
+    monkeypatch.setenv("BULLETIN_CURATION_SHADOW_ENABLED", "1")
     _, fake_factory = _patch_session(monkeypatch)
     await record_curation_run(
         region_code="mi",
@@ -150,7 +150,7 @@ async def test_record_noop_when_no_candidates(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_record_never_raises_on_db_error(monkeypatch):
-    monkeypatch.setenv("DIGEST_CURATION_SHADOW_ENABLED", "1")
+    monkeypatch.setenv("BULLETIN_CURATION_SHADOW_ENABLED", "1")
     import database.connection as conn
 
     def _boom():

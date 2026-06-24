@@ -5,7 +5,7 @@ Celery Application
 
 Tasks:
 - run_vk_monitoring: Запуск production workflow каждый час
-- create_daily_digest: Создание сводки за день (18:00)
+- create_daily_bulletin: Создание сводки за день (18:00)
 - cleanup_old_posts: Очистка старых постов (03:00)
 
 Запуск:
@@ -241,8 +241,8 @@ def run_vk_monitoring():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
-@app.task(name="tasks.celery_app.create_daily_digest")
-def create_daily_digest():
+@app.task(name="tasks.celery_app.create_daily_bulletin")
+def create_daily_bulletin():
     """
     Создание дневной сводки для всех регионов.
 
@@ -261,7 +261,7 @@ def create_daily_digest():
         from database.models import Post, Region
         from modules.aggregation.aggregator import NewsAggregator
 
-        async def create_digest():
+        async def create_bulletin():
             async with AsyncSessionLocal() as session:
                 # Получаем все активные регионы
                 result = await session.execute(select(Region).where(Region.is_active.is_(True)))
@@ -295,7 +295,9 @@ def create_daily_digest():
                         continue
 
                     # Создаем сводка
-                    digest = await aggregator.create_digest(posts=posts, region=region, max_posts=5)
+                    digest = await aggregator.create_bulletin(
+                        posts=posts, region=region, max_posts=5
+                    )
 
                     if digest:
                         digests.append(
@@ -312,7 +314,7 @@ def create_daily_digest():
 
                 return digests
 
-        digests = run_coro(create_digest())
+        digests = run_coro(create_bulletin())
 
         logger.info(f"Daily digest completed! Created {len(digests)} digests")
 
@@ -1005,8 +1007,8 @@ def check_recent_comments():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
-@app.task(name="tasks.celery_app.check_digest_heartbeat")
-def check_digest_heartbeat():
+@app.task(name="tasks.celery_app.check_bulletin_heartbeat")
+def check_bulletin_heartbeat():
     """Watchdog «давно нет сводок»: алёрт, если novost давно не публиковался.
 
     Читает Redis-heartbeat (пишется из ``track_digest_published`` на всех путях
@@ -1032,7 +1034,7 @@ def check_digest_heartbeat():
         logger.info("digest heartbeat watchdog: %s", status)
         return {"success": True, "status": status, "timestamp": datetime.now().isoformat()}
     except Exception as e:
-        logger.error(f"check_digest_heartbeat failed: {e}", exc_info=True)
+        logger.error(f"check_bulletin_heartbeat failed: {e}", exc_info=True)
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
@@ -1198,7 +1200,7 @@ app.conf.beat_schedule = {
     },
     # Дневная сводка в 18:00
     "digest-daily": {
-        "task": "tasks.celery_app.create_daily_digest",
+        "task": "tasks.celery_app.create_daily_bulletin",
         "schedule": crontab(hour=18, minute=0),  # 18:00 каждый день
         "options": {
             "expires": 3000,
@@ -1218,8 +1220,8 @@ app.conf.beat_schedule = {
     # novost не публиковалась дольше порога (6ч в самой задаче) — Telegram-алёрт
     # (с 6ч-cooldown). novost-волны идут 6×/сутки (макс дневной зазор ~5ч), порог
     # 6ч с запасом. Ночью не гоняем — простой 20:40→6:40 легитимен.
-    "digest-heartbeat-watchdog": {
-        "task": "tasks.celery_app.check_digest_heartbeat",
+    "bulletin-heartbeat-watchdog": {
+        "task": "tasks.celery_app.check_bulletin_heartbeat",
         "schedule": crontab(minute=5, hour="10-22"),
         "options": {
             "expires": 1800,

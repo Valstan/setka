@@ -17,7 +17,7 @@ from database.models_extended import RegionConfig
 from modules.bulletin_pipeline_settings import (
     DEFAULT_PIPELINE,
     POSTOPUS_DIGEST_THEMES,
-    empty_digest_filters_template,
+    empty_bulletin_filters_template,
     get_effective_pipeline_settings,
 )
 
@@ -25,9 +25,9 @@ router = APIRouter()
 
 
 class FiltrationPutBody(BaseModel):
-    """Тело сохранения: digest_filters целиком с фронта + прочие поля RegionConfig."""
+    """Тело сохранения: bulletin_filters целиком с фронта + прочие поля RegionConfig."""
 
-    digest_filters: Optional[Dict[str, Any]] = None
+    bulletin_filters: Optional[Dict[str, Any]] = None
     black_id: Optional[List[int]] = None
     delete_msg_blacklist: Optional[List[str]] = None
     filter_group_by_region_words: Optional[Dict[str, Any]] = None
@@ -42,9 +42,9 @@ class FiltrationPutBody(BaseModel):
     localities: Optional[List[str]] = None
 
 
-def _normalize_digest_filters(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _normalize_bulletin_filters(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not data or not isinstance(data, dict):
-        return empty_digest_filters_template()
+        return empty_bulletin_filters_template()
     defaults = {**DEFAULT_PIPELINE, **(data.get("defaults") or {})}
     by_topic = data.get("by_topic") if isinstance(data.get("by_topic"), dict) else {}
     return {"defaults": defaults, "by_topic": by_topic}
@@ -84,7 +84,7 @@ async def filtration_meta():
         "default_pipeline": DEFAULT_PIPELINE,
         "description": {
             "max_post_age_hours": "Макс. возраст поста (часы) для отбора в сводку",
-            "max_posts_per_digest": "Сколько новостей максимум в одном посте-сводке",
+            "max_posts_per_bulletin": "Сколько новостей максимум в одном посте-сводке",
             "min_rafinad_len_core_dedup": "Мин. длина «rafinad»-текста для дедупа по «ядру»",
             "posts_per_community_fetch": (
                 "Сколько последних постов запрашивать с каждого сообщества"
@@ -126,13 +126,13 @@ async def get_filtration(region_code: str, session: AsyncSession = Depends(get_d
             detail="RegionConfig not found — выполните миграцию/скрипт region_configs",
         )
 
-    df = _normalize_digest_filters(cfg.digest_filters)
+    df = _normalize_bulletin_filters(cfg.bulletin_filters)
     preview = {t: get_effective_pipeline_settings(cfg, t) for t in POSTOPUS_DIGEST_THEMES}
 
     return {
         "region_code": region.code,
         "region_name": region.name,
-        "digest_filters": df,
+        "bulletin_filters": df,
         "effective_pipeline_preview": preview,
         "black_id": cfg.black_id or [],
         "delete_msg_blacklist": cfg.delete_msg_blacklist or [],
@@ -163,8 +163,8 @@ async def put_filtration(
     if not cfg:
         raise HTTPException(status_code=404, detail="RegionConfig not found")
 
-    if payload.digest_filters is not None:
-        cfg.digest_filters = _normalize_digest_filters(payload.digest_filters)
+    if payload.bulletin_filters is not None:
+        cfg.bulletin_filters = _normalize_bulletin_filters(payload.bulletin_filters)
 
     if payload.black_id is not None:
         cfg.black_id = payload.black_id
@@ -186,12 +186,12 @@ async def put_filtration(
     await session.commit()
     await session.refresh(cfg)
 
-    df = _normalize_digest_filters(cfg.digest_filters)
+    df = _normalize_bulletin_filters(cfg.bulletin_filters)
     preview = {t: get_effective_pipeline_settings(cfg, t) for t in POSTOPUS_DIGEST_THEMES}
 
     return {
         "success": True,
         "region_code": region_code,
-        "digest_filters": df,
+        "bulletin_filters": df,
         "effective_pipeline_preview": preview,
     }

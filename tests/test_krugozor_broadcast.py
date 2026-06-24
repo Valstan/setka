@@ -62,25 +62,25 @@ def test_source_exclude_ids_parse(monkeypatch):
 
 def test_digest_config_defaults(monkeypatch):
     for k in (
-        "KRUGOZOR_DIGEST_MAX_ITEMS",
+        "KRUGOZOR_BULLETIN_MAX_ITEMS",
         "KRUGOZOR_SNIPPET_LEN",
         "KRUGOZOR_TEXT_BUDGET",
-        "KRUGOZOR_DIGEST_PHOTOS",
+        "KRUGOZOR_BULLETIN_PHOTOS",
         "KRUGOZOR_MAX_POST_AGE_HOURS",
     ):
         monkeypatch.delenv(k, raising=False)
     from config.runtime import (
-        get_krugozor_digest_max_items,
+        get_krugozor_bulletin_max_items,
         get_krugozor_max_post_age_hours,
         get_krugozor_snippet_len,
         get_krugozor_text_budget,
-        krugozor_digest_photos_enabled,
+        krugozor_bulletin_photos_enabled,
     )
 
-    assert get_krugozor_digest_max_items() == 4
+    assert get_krugozor_bulletin_max_items() == 4
     assert get_krugozor_snippet_len() == 500
     assert get_krugozor_text_budget() == 3500
-    assert krugozor_digest_photos_enabled() is True
+    assert krugozor_bulletin_photos_enabled() is True
     assert get_krugozor_max_post_age_hours() == 72.0
 
 

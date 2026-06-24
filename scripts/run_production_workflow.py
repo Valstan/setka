@@ -353,7 +353,7 @@ class ProductionWorkflow:
                     top_posts = sorted_posts[:5]
 
                     aggregator = NewsAggregator(
-                        max_posts_per_digest=5, max_text_length=4000, max_media_items=10
+                        max_posts_per_bulletin=5, max_text_length=4000, max_media_items=10
                     )
 
                     digest = await aggregator.aggregate(
@@ -555,7 +555,7 @@ class ProductionWorkflow:
                         notify_publish_started(region_code, len(posts))
 
                         # Создать сводка
-                        aggregator = NewsAggregator(max_posts_per_digest=5)
+                        aggregator = NewsAggregator(max_posts_per_bulletin=5)
 
                         # Получить информацию о регионе
                         async with AsyncSessionLocal() as session:

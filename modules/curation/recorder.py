@@ -2,7 +2,7 @@
 
 Фаза 1 — измеряем качество LLM-фильтра БЕЗ влияния на публикацию. После того
 как сводка опубликован текущим детерминированным путём, его вошедшие посты
-паркуются в `digest_curation_runs` (status=pending). Slash-команда /curate
+паркуются в `bulletin_curation_runs` (status=pending). Slash-команда /curate
 (Claude Code /loop) читает pending-прогоны и ставит per-post вердикт keep/drop.
 
 Инварианты безопасности (fail-open by design):
@@ -11,8 +11,8 @@
     уже отправленный в VK сводка.
   * **Never raises.** Любое исключение глушится в WARNING (как track_digest_*).
     Сбой курации = публикация всё равно прошла (current behavior).
-  * **Gated.** OFF по умолчанию (`DIGEST_CURATION_SHADOW_ENABLED`), плюс
-    allowlist регионов (`DIGEST_CURATION_REGION_CODES`) — для PoC 1 регион.
+  * **Gated.** OFF по умолчанию (`BULLETIN_CURATION_SHADOW_ENABLED`), плюс
+    allowlist регионов (`BULLETIN_CURATION_REGION_CODES`) — для PoC 1 регион.
 
 Гранулярность — per-post: паркуем ровно `digest.posts_included` (посты, реально
 попавшие в опубликованная сводка). Каждый из них уже прошёл все алгоритм-
@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from config.runtime import digest_curation_shadow_enabled, get_digest_curation_region_codes
+from config.runtime import bulletin_curation_shadow_enabled, get_bulletin_curation_region_codes
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +35,9 @@ _MAX_CANDIDATE_TEXT = 3000
 
 def should_record(region_code: str) -> bool:
     """Дёшево решить, паркуем ли регион (флаг + allowlist) — без сборки payload."""
-    if not digest_curation_shadow_enabled():
+    if not bulletin_curation_shadow_enabled():
         return False
-    allow = get_digest_curation_region_codes()
+    allow = get_bulletin_curation_region_codes()
     if allow is not None and (region_code or "").strip().lower() not in allow:
         return False
     return True
@@ -94,7 +94,7 @@ async def record_curation_run(
         # Импорты внутри — чтобы модуль не тянул БД/ORM при простом импорте
         # (и чтобы гейт `should_record` отрабатывал без побочных эффектов).
         from database.connection import AsyncSessionLocal
-        from database.models_extended import DigestCurationRun
+        from database.models_extended import BulletinCurationRun
 
         pub = publish_result or {}
         published_post_id = pub.get("post_id")
@@ -105,7 +105,7 @@ async def record_curation_run(
 
         async with AsyncSessionLocal() as session:
             session.add(
-                DigestCurationRun(
+                BulletinCurationRun(
                     region_code=region_code,
                     theme=theme,
                     kind=kind,

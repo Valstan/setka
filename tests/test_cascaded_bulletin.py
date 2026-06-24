@@ -23,7 +23,7 @@ from modules.cascaded_bulletin import (
 def test_postopus_themes_includes_oblast():
     """Backward-compat: тема `oblast` всё ещё в списке POSTOPUS_DIGEST_THEMES,
     чтобы существующие beat-таски `postopus-kirov-oblast-*` находили
-    `RegionConfig.digest_template.by_topic.oblast`."""
+    `RegionConfig.bulletin_template.by_topic.oblast`."""
     assert "oblast" in POSTOPUS_DIGEST_THEMES
 
 
@@ -60,10 +60,10 @@ def test_banned_marker_detection():
 
 
 def test_defaults_dict_empty_and_nested():
-    assert _defaults_dict(SimpleNamespace(digest_filters=None)) == {}
-    assert _defaults_dict(SimpleNamespace(digest_filters="bad")) == {}
+    assert _defaults_dict(SimpleNamespace(bulletin_filters=None)) == {}
+    assert _defaults_dict(SimpleNamespace(bulletin_filters="bad")) == {}
     assert _defaults_dict(
-        SimpleNamespace(digest_filters={"defaults": {"cascade_posts_per_child": 7}})
+        SimpleNamespace(bulletin_filters={"defaults": {"cascade_posts_per_child": 7}})
     ) == {"cascade_posts_per_child": 7}
 
 
@@ -79,7 +79,7 @@ async def test_resolve_child_regions_explicit_override_excludes_self():
     ]
     session.execute = AsyncMock(return_value=mock_result)
     cfg = SimpleNamespace(
-        digest_filters={
+        bulletin_filters={
             "defaults": {"cascade_source_region_codes": ["mi", "ur", "kirov_obl", "  "]}
         }
     )
@@ -100,7 +100,7 @@ async def test_resolve_child_regions_uses_parent_id_when_no_override():
         SimpleNamespace(code="mi", vk_group_id=-100, is_active=True),
     ]
     session.execute = AsyncMock(return_value=mock_result)
-    cfg = SimpleNamespace(digest_filters={"defaults": {}})
+    cfg = SimpleNamespace(bulletin_filters={"defaults": {}})
     out = await _resolve_child_regions(
         session, region_id=42, region_code="kirov_obl", region_config=cfg
     )
@@ -114,7 +114,7 @@ async def test_resolve_child_regions_override_empty_returns_empty():
     session = AsyncMock()
     session.execute = AsyncMock()
     cfg = SimpleNamespace(
-        digest_filters={"defaults": {"cascade_source_region_codes": ["kirov_obl", "   "]}}
+        bulletin_filters={"defaults": {"cascade_source_region_codes": ["kirov_obl", "   "]}}
     )
     out = await _resolve_child_regions(
         session, region_id=1, region_code="kirov_obl", region_config=cfg

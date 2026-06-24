@@ -27,10 +27,10 @@ class ServiceActivityType(Enum):
     POST_SORTING_START = "post_sorting_start"
     POST_SORTING_PROGRESS = "post_sorting_progress"
     POST_SORTING_COMPLETE = "post_sorting_complete"
-    DIGEST_CREATION_START = "digest_creation_start"
-    DIGEST_CREATION_COMPLETE = "digest_creation_complete"
-    DIGEST_PUBLISHING_START = "digest_publishing_start"
-    DIGEST_PUBLISHING_COMPLETE = "digest_publishing_complete"
+    BULLETIN_CREATION_START = "bulletin_creation_start"
+    BULLETIN_CREATION_COMPLETE = "bulletin_creation_complete"
+    BULLETIN_PUBLISHING_START = "bulletin_publishing_start"
+    BULLETIN_PUBLISHING_COMPLETE = "bulletin_publishing_complete"
     VK_NOTIFICATIONS_CHECK_START = "vk_notifications_check_start"
     VK_NOTIFICATIONS_CHECK_COMPLETE = "vk_notifications_check_complete"
     HEALTH_CHECK_START = "health_check_start"
@@ -225,12 +225,12 @@ class ServiceActivityNotifier:
         if operation_id in self.active_operations:
             del self.active_operations[operation_id]
 
-    def notify_digest_creation_start(self, region_name: str, topic: str, posts_count: int):
+    def notify_bulletin_creation_start(self, region_name: str, topic: str, posts_count: int):
         """Уведомление о начале создания сводки"""
         message = f"📝 Создаю сводку по теме '{topic}' для {region_name} ({posts_count} постов)"
 
         self._add_notification(
-            ServiceActivityType.DIGEST_CREATION_START,
+            ServiceActivityType.BULLETIN_CREATION_START,
             message,
             region=region_name,
             details={"topic": topic, "posts_count": posts_count},
@@ -246,7 +246,7 @@ class ServiceActivityNotifier:
             "posts_count": posts_count,
         }
 
-    def notify_digest_creation_complete(
+    def notify_bulletin_creation_complete(
         self, region_name: str, topic: str, digest_length: int, processing_time: float = 0
     ):
         """Уведомление о завершении создания сводки"""
@@ -257,7 +257,7 @@ class ServiceActivityNotifier:
         message += ")"
 
         self._add_notification(
-            ServiceActivityType.DIGEST_CREATION_COMPLETE,
+            ServiceActivityType.BULLETIN_CREATION_COMPLETE,
             message,
             region=region_name,
             details={
@@ -272,12 +272,12 @@ class ServiceActivityNotifier:
         if operation_id in self.active_operations:
             del self.active_operations[operation_id]
 
-    def notify_digest_publishing_start(self, region_name: str, topic: str, channel: str = "VK"):
+    def notify_bulletin_publishing_start(self, region_name: str, topic: str, channel: str = "VK"):
         """Уведомление о начале публикации сводки"""
         message = f"📤 Публикую сводку от {topic} {region_name} в {channel}"
 
         self._add_notification(
-            ServiceActivityType.DIGEST_PUBLISHING_START,
+            ServiceActivityType.BULLETIN_PUBLISHING_START,
             message,
             region=region_name,
             details={"topic": topic, "channel": channel},
@@ -293,7 +293,7 @@ class ServiceActivityNotifier:
             "channel": channel,
         }
 
-    def notify_digest_publishing_complete(
+    def notify_bulletin_publishing_complete(
         self,
         region_name: str,
         topic: str,
@@ -309,7 +309,7 @@ class ServiceActivityNotifier:
             message += f" (время: {processing_time:.1f}с)"
 
         self._add_notification(
-            ServiceActivityType.DIGEST_PUBLISHING_COMPLETE,
+            ServiceActivityType.BULLETIN_PUBLISHING_COMPLETE,
             message,
             region=region_name,
             details={
@@ -539,26 +539,26 @@ def notify_post_sorting_complete(
     )
 
 
-def notify_digest_creation_start(region_name: str, topic: str, posts_count: int):
+def notify_bulletin_creation_start(region_name: str, topic: str, posts_count: int):
     """Начать создание сводки"""
-    service_activity_notifier.notify_digest_creation_start(region_name, topic, posts_count)
+    service_activity_notifier.notify_bulletin_creation_start(region_name, topic, posts_count)
 
 
-def notify_digest_creation_complete(
+def notify_bulletin_creation_complete(
     region_name: str, topic: str, digest_length: int, processing_time: float = 0
 ):
     """Завершить создание сводки"""
-    service_activity_notifier.notify_digest_creation_complete(
+    service_activity_notifier.notify_bulletin_creation_complete(
         region_name, topic, digest_length, processing_time
     )
 
 
-def notify_digest_publishing_start(region_name: str, topic: str, channel: str = "VK"):
+def notify_bulletin_publishing_start(region_name: str, topic: str, channel: str = "VK"):
     """Начать публикацию сводки"""
-    service_activity_notifier.notify_digest_publishing_start(region_name, topic, channel)
+    service_activity_notifier.notify_bulletin_publishing_start(region_name, topic, channel)
 
 
-def notify_digest_publishing_complete(
+def notify_bulletin_publishing_complete(
     region_name: str,
     topic: str,
     channel: str = "VK",
@@ -566,7 +566,7 @@ def notify_digest_publishing_complete(
     processing_time: float = 0,
 ):
     """Завершить публикацию сводки"""
-    service_activity_notifier.notify_digest_publishing_complete(
+    service_activity_notifier.notify_bulletin_publishing_complete(
         region_name, topic, channel, post_url, processing_time
     )
 
@@ -597,11 +597,11 @@ if __name__ == "__main__":
     notify_post_sorting_start("Кильмезский район", "Администрация", 12)
     notify_post_sorting_complete("Кильмезский район", "Администрация", 8, 4, 2.1)
 
-    notify_digest_creation_start("Кильмезский район", "Администрация", 8)
-    notify_digest_creation_complete("Кильмезский район", "Администрация", 1200, 1.8)
+    notify_bulletin_creation_start("Кильмезский район", "Администрация", 8)
+    notify_bulletin_creation_complete("Кильмезский район", "Администрация", 1200, 1.8)
 
-    notify_digest_publishing_start("Кильмезский район", "Администрация", "VK")
-    notify_digest_publishing_complete(
+    notify_bulletin_publishing_start("Кильмезский район", "Администрация", "VK")
+    notify_bulletin_publishing_complete(
         "Кильмезский район", "Администрация", "VK", "https://vk.com/wall-123456_789", 0.9
     )
 

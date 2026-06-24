@@ -213,7 +213,7 @@ async def publish_region_bulletin(
             )
 
         # Создаем сводка
-        aggregator = NewsAggregator(max_posts_per_digest=request.max_posts)
+        aggregator = NewsAggregator(max_posts_per_bulletin=request.max_posts)
 
         # Получаем регион для заголовка
         result = await session.execute(select(Region).where(Region.code == request.region_code))

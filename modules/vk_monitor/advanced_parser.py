@@ -14,11 +14,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
 from config.runtime import (
-    digest_jaccard_dedup_enabled,
-    get_digest_jaccard_min_tokens,
-    get_digest_jaccard_threshold,
-    get_digest_simhash_bucket_gate,
-    get_digest_similarity_threshold,
+    bulletin_jaccard_dedup_enabled,
+    get_bulletin_jaccard_min_tokens,
+    get_bulletin_jaccard_threshold,
+    get_bulletin_simhash_bucket_gate,
+    get_bulletin_similarity_threshold,
 )
 from modules.deduplication.fingerprints import (
     create_media_fingerprint,
@@ -86,11 +86,11 @@ class AdvancedVKParser:
         self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
         self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
         # near-dup параметры из env (дефолты = прежние хардкоды → нулевая регрессия)
-        self._env_similarity_threshold = get_digest_similarity_threshold()
-        self._simhash_bucket_gate = get_digest_simhash_bucket_gate()
-        self._jaccard_enabled = digest_jaccard_dedup_enabled()
-        self._jaccard_threshold = get_digest_jaccard_threshold()
-        self._jaccard_min_tokens = get_digest_jaccard_min_tokens()
+        self._env_similarity_threshold = get_bulletin_similarity_threshold()
+        self._simhash_bucket_gate = get_bulletin_simhash_bucket_gate()
+        self._jaccard_enabled = bulletin_jaccard_dedup_enabled()
+        self._jaccard_threshold = get_bulletin_jaccard_threshold()
+        self._jaccard_min_tokens = get_bulletin_jaccard_min_tokens()
         self._text_similarity_threshold = float(self._env_similarity_threshold)
         self._max_simhash_hamming = self._compute_max_simhash_hamming(
             self._text_similarity_threshold
@@ -146,7 +146,7 @@ class AdvancedVKParser:
             recent_text_fingerprints: Recent text fingerprints (for dedup)
             count_per_community: Posts to fetch per community
             shuffle_communities: Randomize community order
-            pipeline_settings: Слитые настройки из digest_filters (возраст, дедуп, лимит fetch)
+            pipeline_settings: Слитые настройки из bulletin_filters (возраст, дедуп, лимит fetch)
 
         Returns:
             List of filtered post data dicts

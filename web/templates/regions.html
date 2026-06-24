@@ -598,7 +598,7 @@ function openDigestTemplateEditor(regionCode, regionName) {
 
 async function loadDigestTemplate(regionCode) {
     try {
-        const data = await apiClient.request(`/regions/${regionCode}/digest-template`);
+        const data = await apiClient.request(`/regions/${regionCode}/bulletin-template`);
         digestTemplateData = data;
 
         // Fill defaults
@@ -768,7 +768,7 @@ async function saveDigestTemplateAll() {
         });
 
         const payload = { defaults, by_topic };
-        const saved = await apiClient.request(`/regions/${digestTemplateRegionCode}/digest-template`, {
+        const saved = await apiClient.request(`/regions/${digestTemplateRegionCode}/bulletin-template`, {
             method: 'PUT',
             body: JSON.stringify(payload)
         });
@@ -797,7 +797,7 @@ async function resetDigestTemplateAll() {
     if (!digestTemplateRegionCode) return;
     _clearDigestTemplateError();
     try {
-        const data = await apiClient.request(`/regions/${digestTemplateRegionCode}/digest-template/reset`, {
+        const data = await apiClient.request(`/regions/${digestTemplateRegionCode}/bulletin-template/reset`, {
             method: 'POST'
         });
         digestTemplateData = data;
@@ -812,7 +812,7 @@ async function resetDigestTemplateTopic(topic) {
     if (!digestTemplateRegionCode) return;
     _clearDigestTemplateError();
     try {
-        const data = await apiClient.request(`/regions/${digestTemplateRegionCode}/digest-template/reset-topic`, {
+        const data = await apiClient.request(`/regions/${digestTemplateRegionCode}/bulletin-template/reset-topic`, {
             method: 'POST',
             body: JSON.stringify({ topic })
         });

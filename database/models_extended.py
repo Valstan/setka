@@ -146,8 +146,8 @@ class RegionConfig(Base):
         JSON, nullable=True
     )  # {"hard": 86400, "medium": 172800, "light": 604800}
 
-    # Пайплайн сводки: defaults + by_topic (см. modules/digest_pipeline_settings.py)
-    digest_filters = Column(JSON, nullable=True)
+    # Пайплайн сводки: defaults + by_topic (см. modules/bulletin_pipeline_settings.py)
+    bulletin_filters = Column(JSON, nullable=True)
 
     # Post limits
     text_post_maxsize_simbols = Column(Integer, default=4096)
@@ -191,7 +191,7 @@ class RegionConfig(Base):
             "localities": self.localities,
             "only_main_news": self.only_main_news,
             "time_old_post": self.time_old_post,
-            "digest_filters": self.digest_filters,
+            "bulletin_filters": self.bulletin_filters,
             "text_post_maxsize_simbols": self.text_post_maxsize_simbols,
             "delete_msg_blacklist": self.delete_msg_blacklist,
             "fast_del_msg_blacklist": self.fast_del_msg_blacklist,
@@ -314,7 +314,7 @@ class ScheduledPublication(Base):
         }
 
 
-class DigestCurationRun(Base):
+class BulletinCurationRun(Base):
     """Shadow-журнал LLM-курации сводок (PoC, миграция 035).
 
     Один прогон = одна опубликованная порция сводки. После публикации
@@ -323,7 +323,7 @@ class DigestCurationRun(Base):
     recorder изолирован (отдельная сессия, best-effort). См.
     modules/curation/recorder.py и письмо brain 2026-06-07."""
 
-    __tablename__ = "digest_curation_runs"
+    __tablename__ = "bulletin_curation_runs"
 
     id = Column(Integer, primary_key=True, index=True)
     region_code = Column(String(50), nullable=False, index=True)
@@ -349,7 +349,7 @@ class DigestCurationRun(Base):
 
     def __repr__(self):
         return (
-            f"<DigestCurationRun {self.region_code}/{self.theme} "
+            f"<BulletinCurationRun {self.region_code}/{self.theme} "
             f"status={self.status} n={self.total_count}>"
         )
 

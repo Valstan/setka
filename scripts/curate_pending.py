@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CLI для shadow LLM-курации сводок (PoC, письмо brain 2026-06-07).
 
-Мост между БД (`digest_curation_runs`) и slash-командой /curate: команда
+Мост между БД (`bulletin_curation_runs`) и slash-командой /curate: команда
 (Claude Code /loop) забирает pending-прогоны, по рубрике релевантности ставит
 per-post вердикт keep/drop и пишет его назад. Все необратимые действия — за
 детерминированным кодом (тут только UPDATE verdicts), черту #025/#027 не трогаем.
@@ -34,19 +34,19 @@ from sqlalchemy import select
 # иначе конфигурация мапперов падает на relationship ScheduledPublication.region.
 from database import models  # noqa: F401
 from database.connection import AsyncSessionLocal
-from database.models_extended import DigestCurationRun
+from database.models_extended import BulletinCurationRun
 
 
 async def _list(limit: int, region: str | None) -> None:
     async with AsyncSessionLocal() as session:
         stmt = (
-            select(DigestCurationRun)
-            .where(DigestCurationRun.status == "pending")
-            .order_by(DigestCurationRun.created_at.asc())
+            select(BulletinCurationRun)
+            .where(BulletinCurationRun.status == "pending")
+            .order_by(BulletinCurationRun.created_at.asc())
             .limit(limit)
         )
         if region:
-            stmt = stmt.where(DigestCurationRun.region_code == region)
+            stmt = stmt.where(BulletinCurationRun.region_code == region)
         rows = (await session.execute(stmt)).scalars().all()
         out = [
             {
@@ -89,7 +89,7 @@ async def _apply(payload: dict) -> None:
         row = (
             (
                 await session.execute(
-                    select(DigestCurationRun).where(DigestCurationRun.id == int(run_id))
+                    select(BulletinCurationRun).where(BulletinCurationRun.id == int(run_id))
                 )
             )
             .scalars()
@@ -137,12 +137,12 @@ def _flagged_from_run(candidates: list | None, verdicts: list | None) -> list[di
 async def _flagged(region: str | None) -> None:
     async with AsyncSessionLocal() as session:
         stmt = (
-            select(DigestCurationRun)
-            .where(DigestCurationRun.status == "reviewed")
-            .order_by(DigestCurationRun.created_at.asc())
+            select(BulletinCurationRun)
+            .where(BulletinCurationRun.status == "reviewed")
+            .order_by(BulletinCurationRun.created_at.asc())
         )
         if region:
-            stmt = stmt.where(DigestCurationRun.region_code == region)
+            stmt = stmt.where(BulletinCurationRun.region_code == region)
         rows = (await session.execute(stmt)).scalars().all()
 
         out = []
@@ -162,9 +162,9 @@ async def _flagged(region: str | None) -> None:
 
 async def _stats(region: str | None) -> None:
     async with AsyncSessionLocal() as session:
-        stmt = select(DigestCurationRun).where(DigestCurationRun.status == "reviewed")
+        stmt = select(BulletinCurationRun).where(BulletinCurationRun.status == "reviewed")
         if region:
-            stmt = stmt.where(DigestCurationRun.region_code == region)
+            stmt = stmt.where(BulletinCurationRun.region_code == region)
         rows = (await session.execute(stmt)).scalars().all()
 
         runs = len(rows)
@@ -182,7 +182,7 @@ async def _stats(region: str | None) -> None:
         pending = (
             (
                 await session.execute(
-                    select(DigestCurationRun).where(DigestCurationRun.status == "pending")
+                    select(BulletinCurationRun).where(BulletinCurationRun.status == "pending")
                 )
             )
             .scalars()

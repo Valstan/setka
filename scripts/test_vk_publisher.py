@@ -127,7 +127,7 @@ async def test_digest_publishing():
         logger.info(f"📊 Найдено {len(posts)} постов для сводки")
 
         # Создаем сводка
-        aggregator = NewsAggregator(max_posts_per_digest=3)
+        aggregator = NewsAggregator(max_posts_per_bulletin=3)
 
         digest = await aggregator.aggregate(
             posts=posts[:3],
@@ -198,7 +198,7 @@ async def test_region_publishing():
 
         logger.info(f"📊 Найдено {len(posts)} постов для региона mi")
 
-        aggregator = NewsAggregator(max_posts_per_digest=3)
+        aggregator = NewsAggregator(max_posts_per_bulletin=3)
         digest = await aggregator.aggregate(
             posts=posts[:3],
             title="📰 НОВОСТИ МАЛМЫЖА",

@@ -197,12 +197,12 @@
                     </a>
                 </div>
                 <div class="card-body p-0">
-                    <div id="digests-status-loading" class="text-center py-3 text-muted">
+                    <div id="bulletins-status-loading" class="text-center py-3 text-muted">
                         <div class="spinner-border spinner-border-sm"></div>
                         Загрузка состояния сводок…
                     </div>
-                    <div id="digests-status-content" style="display:none;"></div>
-                    <div id="digests-status-error" class="alert alert-warning m-3" style="display:none;"></div>
+                    <div id="bulletins-status-content" style="display:none;"></div>
+                    <div id="bulletins-status-error" class="alert alert-warning m-3" style="display:none;"></div>
                 </div>
                 <div class="card-footer bg-white small text-muted">
                     <i class="bi bi-info-circle"></i>
@@ -291,11 +291,11 @@
 .digests-table th { font-weight: 500; color: #6c757d; font-size: 0.78rem; text-transform: uppercase; }
 .digests-table td { vertical-align: middle; }
 .digests-table .badge { font-size: 0.72rem; font-weight: 500; }
-.digests-status-fresh  { background: #d1e7dd; color: #0a3622; }
-.digests-status-stale  { background: #fff3cd; color: #664d03; }
-.digests-status-broken { background: #f8d7da; color: #58151c; }
-.digests-status-dead   { background: #e2e3e5; color: #41464b; }
-.digests-status-retired { background: #f1f3f5; color: #868e96; }
+.bulletins-status-fresh  { background: #d1e7dd; color: #0a3622; }
+.bulletins-status-stale  { background: #fff3cd; color: #664d03; }
+.bulletins-status-broken { background: #f8d7da; color: #58151c; }
+.bulletins-status-dead   { background: #e2e3e5; color: #41464b; }
+.bulletins-status-retired { background: #f1f3f5; color: #868e96; }
 .digests-row-broken td { background: rgba(220, 53, 69, 0.06); }
 .digests-row-dead   td { background: rgba(108, 117, 125, 0.06); }
 </style>
@@ -370,20 +370,20 @@ function _humanAgo(iso) {
 }
 
 const _DIGEST_STATUS_TEXT = {
-    fresh:  { label: 'свежо',  cls: 'digests-status-fresh',  icon: 'bi-check-circle-fill' },
-    stale:  { label: 'устаревает', cls: 'digests-status-stale',  icon: 'bi-clock-history' },
-    broken: { label: 'сломано', cls: 'digests-status-broken', icon: 'bi-exclamation-triangle-fill' },
-    dead:   { label: 'мёртво', cls: 'digests-status-dead',   icon: 'bi-x-circle' },
-    retired:{ label: 'снят', cls: 'digests-status-retired', icon: 'bi-archive' },
+    fresh:  { label: 'свежо',  cls: 'bulletins-status-fresh',  icon: 'bi-check-circle-fill' },
+    stale:  { label: 'устаревает', cls: 'bulletins-status-stale',  icon: 'bi-clock-history' },
+    broken: { label: 'сломано', cls: 'bulletins-status-broken', icon: 'bi-exclamation-triangle-fill' },
+    dead:   { label: 'мёртво', cls: 'bulletins-status-dead',   icon: 'bi-x-circle' },
+    retired:{ label: 'снят', cls: 'bulletins-status-retired', icon: 'bi-archive' },
 };
 
 async function loadDigestsStatus() {
-    const loading = document.getElementById('digests-status-loading');
-    const content = document.getElementById('digests-status-content');
-    const errorEl = document.getElementById('digests-status-error');
+    const loading = document.getElementById('bulletins-status-loading');
+    const content = document.getElementById('bulletins-status-content');
+    const errorEl = document.getElementById('bulletins-status-error');
     const badges  = document.getElementById('digests-summary-badges');
     try {
-        const resp = await fetch('/api/monitoring/digests-status');
+        const resp = await fetch('/api/monitoring/bulletins-status');
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const json = await resp.json();
         if (!json.success || !json.data) throw new Error('API ответил без данных');

@@ -58,9 +58,12 @@ class NewsAggregator:
     """
 
     def __init__(
-        self, max_posts_per_digest: int = 5, max_text_length: int = 4000, max_media_items: int = 10
+        self,
+        max_posts_per_bulletin: int = 5,
+        max_text_length: int = 4000,
+        max_media_items: int = 10,
     ):
-        self.max_posts_per_digest = max_posts_per_digest
+        self.max_posts_per_bulletin = max_posts_per_bulletin
         self.max_text_length = max_text_length
         self.max_media_items = max_media_items
 
@@ -116,7 +119,7 @@ class NewsAggregator:
 
         # Добавляем остальные посты пока есть место
         for post in posts[1:]:
-            if len(additional) >= self.max_posts_per_digest - 1:
+            if len(additional) >= self.max_posts_per_bulletin - 1:
                 break
 
             post_text_length = len(getattr(post, "text", "") or "")

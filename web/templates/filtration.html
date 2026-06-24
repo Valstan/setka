@@ -7,7 +7,7 @@
 {% block content %}
 <div class="container-fluid py-3">
     <h1 class="mb-3"><i class="bi bi-funnel"></i> Фильтрация</h1>
-    <p class="text-muted">Настройки отбора постов в сводки по регионам и темам. Изменения сохраняются в <code>region_configs</code> (поле <code>digest_filters</code> и связанные списки).</p>
+    <p class="text-muted">Настройки отбора постов в сводки по регионам и темам. Изменения сохраняются в <code>region_configs</code> (поле <code>bulletin_filters</code> и связанные списки).</p>
 
     <div class="row g-3 mb-3">
         <div class="col-md-4">
@@ -118,8 +118,8 @@
                 </div>
             </div>
             <div class="tab-pane fade" id="tab-json">
-                <label class="form-label">digest_filters (сырой JSON)</label>
-                <textarea class="form-control font-monospace small" id="digest_filters_raw" rows="18"></textarea>
+                <label class="form-label">bulletin_filters (сырой JSON)</label>
+                <textarea class="form-control font-monospace small" id="bulletin_filters_raw" rows="18"></textarea>
                 <p class="small text-muted mt-2">После правки здесь нажмите «Сохранить» — объект будет отправлен как есть (с нормализацией defaults на сервере).</p>
             </div>
         </div>
@@ -188,10 +188,10 @@ async function loadFiltration() {
         if (!r.ok) throw new Error(await r.text());
         currentData = await r.json();
 
-        const df = currentData.digest_filters || { defaults: {}, by_topic: {} };
+        const df = currentData.bulletin_filters || { defaults: {}, by_topic: {} };
         const d = df.defaults || {};
         document.getElementById('def_max_age').value = d.max_post_age_hours ?? '';
-        document.getElementById('def_max_posts').value = d.max_posts_per_digest ?? '';
+        document.getElementById('def_max_posts').value = d.max_posts_per_bulletin ?? '';
         document.getElementById('def_min_rafinad').value = d.min_rafinad_len_core_dedup ?? '';
         document.getElementById('def_fetch').value = d.posts_per_community_fetch ?? '';
 
@@ -200,7 +200,7 @@ async function loadFiltration() {
             const row = document.querySelector(`.bt-age[data-theme="${t}"]`);
             if (!row) return;
             document.querySelector(`.bt-age[data-theme="${t}"]`).value = ov.max_post_age_hours ?? '';
-            document.querySelector(`.bt-posts[data-theme="${t}"]`).value = ov.max_posts_per_digest ?? '';
+            document.querySelector(`.bt-posts[data-theme="${t}"]`).value = ov.max_posts_per_bulletin ?? '';
             document.querySelector(`.bt-raf[data-theme="${t}"]`).value = ov.min_rafinad_len_core_dedup ?? '';
             document.querySelector(`.bt-fetch[data-theme="${t}"]`).value = ov.posts_per_community_fetch ?? '';
         });
@@ -216,7 +216,7 @@ async function loadFiltration() {
         document.getElementById('text_post_maxsize').value = currentData.text_post_maxsize_simbols ?? 4096;
         document.getElementById('setka_regim_repost').checked = !!currentData.setka_regim_repost;
         document.getElementById('filter_group_json').value = JSON.stringify(currentData.filter_group_by_region_words || {}, null, 2);
-        document.getElementById('digest_filters_raw').value = JSON.stringify(df, null, 2);
+        document.getElementById('bulletin_filters_raw').value = JSON.stringify(df, null, 2);
 
         document.getElementById('previewJson').textContent = JSON.stringify(currentData.effective_pipeline_preview || {}, null, 2);
         document.getElementById('filtrationForm').style.display = 'block';
@@ -237,7 +237,7 @@ function collectDigestFiltersFromForm() {
         return Number.isFinite(n) ? n : undefined;
     };
     const a = v('def_max_age'); if (a !== undefined) defaults.max_post_age_hours = a;
-    const b = v('def_max_posts'); if (b !== undefined) defaults.max_posts_per_digest = Math.round(b);
+    const b = v('def_max_posts'); if (b !== undefined) defaults.max_posts_per_bulletin = Math.round(b);
     const c = v('def_min_rafinad'); if (c !== undefined) defaults.min_rafinad_len_core_dedup = Math.round(c);
     const f = v('def_fetch'); if (f !== undefined) defaults.posts_per_community_fetch = Math.round(f);
 
@@ -249,7 +249,7 @@ function collectDigestFiltersFromForm() {
         const x3 = document.querySelector(`.bt-raf[data-theme="${t}"]`).value.trim();
         const x4 = document.querySelector(`.bt-fetch[data-theme="${t}"]`).value.trim();
         if (x1 !== '') o.max_post_age_hours = Number(x1);
-        if (x2 !== '') o.max_posts_per_digest = Math.round(Number(x2));
+        if (x2 !== '') o.max_posts_per_bulletin = Math.round(Number(x2));
         if (x3 !== '') o.min_rafinad_len_core_dedup = Math.round(Number(x3));
         if (x4 !== '') o.posts_per_community_fetch = Math.round(Number(x4));
         if (Object.keys(o).length) by_topic[t] = o;
@@ -260,12 +260,12 @@ function collectDigestFiltersFromForm() {
 async function saveFiltration() {
     const code = document.getElementById('regionSelect').value;
     if (!code) return;
-    let digest_filters = collectDigestFiltersFromForm();
+    let bulletin_filters = collectDigestFiltersFromForm();
     try {
-        const raw = document.getElementById('digest_filters_raw').value.trim();
+        const raw = document.getElementById('bulletin_filters_raw').value.trim();
         if (raw && raw !== '{}') {
             const parsed = JSON.parse(raw);
-            if (parsed && typeof parsed === 'object') digest_filters = parsed;
+            if (parsed && typeof parsed === 'object') bulletin_filters = parsed;
         }
     } catch (e) {
         showAlert('danger', 'Неверный JSON на вкладке «JSON»: ' + e.message);
@@ -285,7 +285,7 @@ async function saveFiltration() {
     }
 
     const body = {
-        digest_filters,
+        bulletin_filters,
         black_id,
         delete_msg_blacklist,
         repost_words_blacklist: repost_words,
@@ -311,7 +311,7 @@ async function saveFiltration() {
         const out = await r.json();
         showAlert('success', 'Сохранено');
         document.getElementById('previewJson').textContent = JSON.stringify(out.effective_pipeline_preview || {}, null, 2);
-        document.getElementById('digest_filters_raw').value = JSON.stringify(out.digest_filters || {}, null, 2);
+        document.getElementById('bulletin_filters_raw').value = JSON.stringify(out.bulletin_filters || {}, null, 2);
     } catch (e) {
         showAlert('danger', 'Ошибка: ' + e.message);
     } finally {

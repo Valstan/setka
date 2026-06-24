@@ -485,10 +485,10 @@ def get_krugozor_source_exclude_ids() -> Set[int]:
     return out
 
 
-def get_krugozor_digest_max_items() -> int:
+def get_krugozor_bulletin_max_items() -> int:
     """Сколько новостей max в одном научпоп-сводкае (решение владельца: до 4)."""
     try:
-        return max(1, int(_getenv("KRUGOZOR_DIGEST_MAX_ITEMS", "4") or "4"))
+        return max(1, int(_getenv("KRUGOZOR_BULLETIN_MAX_ITEMS", "4") or "4"))
     except ValueError:
         return 4
 
@@ -509,9 +509,9 @@ def get_krugozor_text_budget() -> int:
         return 3500
 
 
-def krugozor_digest_photos_enabled() -> bool:
+def krugozor_bulletin_photos_enabled() -> bool:
     """Прикладывать лид-фото каждого пункта (грид). Дефолт — да (решение владельца)."""
-    return (_getenv("KRUGOZOR_DIGEST_PHOTOS", "1") or "1").strip().lower() not in (
+    return (_getenv("KRUGOZOR_BULLETIN_PHOTOS", "1") or "1").strip().lower() not in (
         "0",
         "false",
         "no",
@@ -585,13 +585,13 @@ def krugozor_promo_filter_enabled() -> bool:
 # --- LLM-курация сводок (shadow PoC, письмо brain 2026-06-07) -------------
 
 
-def digest_curation_shadow_enabled() -> bool:
+def bulletin_curation_shadow_enabled() -> bool:
     """Включить shadow-журнал LLM-курации сводок (Фаза 1).
 
     OFF по умолчанию — нулевая регрессия. ON => после публикации сводки его
-    посты паркуются в `digest_curation_runs` для пост-фактум LLM-вердикта
+    посты паркуются в `bulletin_curation_runs` для пост-фактум LLM-вердикта
     (/curate). Публикация при этом НЕ затрагивается (shadow)."""
-    return (_getenv("DIGEST_CURATION_SHADOW_ENABLED", "0") or "0").strip().lower() in (
+    return (_getenv("BULLETIN_CURATION_SHADOW_ENABLED", "0") or "0").strip().lower() in (
         "1",
         "true",
         "yes",
@@ -599,12 +599,12 @@ def digest_curation_shadow_enabled() -> bool:
     )
 
 
-def get_digest_curation_region_codes() -> Optional[Set[str]]:
+def get_bulletin_curation_region_codes() -> Optional[Set[str]]:
     """Ограничить shadow-курацию списком кодов регионов (через запятую).
 
     None / пусто = все регионы (но для PoC brain рекомендует 1 регион, см.
     письмо 2026-06-07 — задаём явный allowlist в `/etc/setka/setka.env`)."""
-    raw = _getenv("DIGEST_CURATION_REGION_CODES")
+    raw = _getenv("BULLETIN_CURATION_REGION_CODES")
     if not raw or not str(raw).strip():
         return None
     return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
@@ -616,28 +616,28 @@ def get_digest_curation_region_codes() -> Optional[Set[str]]:
 # который новый и включён консервативно).
 
 
-def get_digest_similarity_threshold() -> float:
+def get_bulletin_similarity_threshold() -> float:
     """Порог near-dup по SimHash (доля схожести). Дефолт 0.90 (как было)."""
     try:
-        v = float(_getenv("DIGEST_SIMILARITY_THRESHOLD", "0.90") or "0.90")
+        v = float(_getenv("BULLETIN_SIMILARITY_THRESHOLD", "0.90") or "0.90")
     except ValueError:
         return 0.90
     return min(1.0, max(0.0, v))
 
 
-def get_digest_simhash_bucket_gate() -> int:
+def get_bulletin_simhash_bucket_gate() -> int:
     """Насколько соседние длины-корзины сравнивать (|Δbucket| ≤ gate). Дефолт 1."""
     try:
-        return max(0, int(_getenv("DIGEST_SIMHASH_BUCKET_GATE", "1") or "1"))
+        return max(0, int(_getenv("BULLETIN_SIMHASH_BUCKET_GATE", "1") or "1"))
     except ValueError:
         return 1
 
 
-def digest_jaccard_dedup_enabled() -> bool:
+def bulletin_jaccard_dedup_enabled() -> bool:
     """Включить intra-batch Jaccard near-dup (ловит переставленные/переписанные
     дубли в пределах одной сводки). ON по умолчанию, консервативный порог;
     мгновенно отключается env при ложных срабатываниях."""
-    return (_getenv("DIGEST_JACCARD_DEDUP_ENABLED", "1") or "1").strip().lower() in (
+    return (_getenv("BULLETIN_JACCARD_DEDUP_ENABLED", "1") or "1").strip().lower() in (
         "1",
         "true",
         "yes",
@@ -645,20 +645,20 @@ def digest_jaccard_dedup_enabled() -> bool:
     )
 
 
-def get_digest_jaccard_threshold() -> float:
+def get_bulletin_jaccard_threshold() -> float:
     """Порог Jaccard по множеству слов (|A∩B|/|A∪B|). Дефолт 0.85 (консервативно —
     переписанный пересказ той же новости делит ~0.7–0.9 слов, разные ~0.2–0.4)."""
     try:
-        v = float(_getenv("DIGEST_JACCARD_THRESHOLD", "0.85") or "0.85")
+        v = float(_getenv("BULLETIN_JACCARD_THRESHOLD", "0.85") or "0.85")
     except ValueError:
         return 0.85
     return min(1.0, max(0.0, v))
 
 
-def get_digest_jaccard_min_tokens() -> int:
+def get_bulletin_jaccard_min_tokens() -> int:
     """Минимум слов в множестве, чтобы вообще применять Jaccard (короткие тексты
     дают ложные совпадения по шаблонным словам). Дефолт 10."""
     try:
-        return max(1, int(_getenv("DIGEST_JACCARD_MIN_TOKENS", "10") or "10"))
+        return max(1, int(_getenv("BULLETIN_JACCARD_MIN_TOKENS", "10") or "10"))
     except ValueError:
         return 10

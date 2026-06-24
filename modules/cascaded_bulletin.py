@@ -33,7 +33,7 @@
     5. Складываем итоговая сводка через ``BulletinBuilder`` и публикуем
        в ``region.vk_group_id`` через ``VKPublisher.create_with_policy``.
 
-Параметры в ``RegionConfig.digest_filters.defaults``
+Параметры в ``RegionConfig.bulletin_filters.defaults``
 ====================================================
 
 * ``cascade_posts_per_child`` — сколько свежих постов брать с каждого ребёнка
@@ -96,7 +96,7 @@ _RELIGIOUS_MARKERS = (
 
 
 def _defaults_dict(region_config: Any) -> Dict[str, Any]:
-    df = getattr(region_config, "digest_filters", None) or {}
+    df = getattr(region_config, "bulletin_filters", None) or {}
     if not isinstance(df, dict):
         return {}
     d = df.get("defaults") or {}
@@ -141,7 +141,7 @@ async def _resolve_child_regions(
     """Возвращает список ребёнков-регионов (Region objects) с непустым ``vk_group_id``.
 
     Приоритет:
-    1. ``RegionConfig.digest_filters.defaults.cascade_source_region_codes`` —
+    1. ``RegionConfig.bulletin_filters.defaults.cascade_source_region_codes`` —
        явный override (список кодов).
     2. Иначе — все active regions с ``parent_region_id = region_id``
        и ``vk_group_id IS NOT NULL``.
@@ -299,7 +299,7 @@ async def run_cascaded_bulletin(
             filter_group_by_region_words={},
             text_post_maxsize_simbols=4096,
             setka_regim_repost=False,
-            digest_filters=None,
+            bulletin_filters=None,
         )
 
     wt_result = await session.execute(
@@ -510,7 +510,7 @@ async def run_cascaded_bulletin(
             local_hashtag=local_hashtag,
             max_text_length=region_config.text_post_maxsize_simbols or 4096,
             repost_mode=region_config.setka_regim_repost,
-            max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
+            max_posts_per_bulletin=pipeline_eff.get("max_posts_per_bulletin"),
         )
         digest = builder.build_bulletin(regular_posts, group_names=group_names)
         if digest.post_count == 0 or not digest.text.strip():
