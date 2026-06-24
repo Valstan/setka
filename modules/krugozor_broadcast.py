@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 WALL_FETCH_COUNT = 10
 LIP_HISTORY_MAX = 60
-HEADER = "🔭 Научпоп-дайджест"
+HEADER = "🔭 Научпоп-сводка"
 
 
 def _empty_stats() -> Dict[str, int]:

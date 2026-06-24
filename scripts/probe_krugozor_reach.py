@@ -37,6 +37,10 @@ MAX_WINDOW_DAYS = 21  # не смотреть посты старше — «rece
 MIN_AGE_HOURS = 24  # сравнивать только дозревшие посты (просмотры набраны)
 WALL_FETCH = 100  # постов на регион (max wall.get) — хватает покрыть окно
 BASELINE_SAMPLE = 12  # сколько локальных постов брать на baseline региона
+# Префикс заголовка научпоп-постов «Кругозора». Намеренно по префиксу, а не по полному
+# заголовку: ловит и старый «🔭 Научпоп-дайджест», и новый «🔭 Научпоп-сводка» (рефактор
+# терминологии 2026-06-24) — замер не рвётся на границе переименования.
+KRUGOZOR_HEADER_PREFIX = "🔭 Научпоп-"
 MEANINGFUL_BASELINE = 20  # регион с медианой локальных просмотров ниже — мёртвая/крошечная
 #                           стена: её ratio шумит (5 просмотров = 100%), в типичный
 #                           показатель не берём.
@@ -155,7 +159,6 @@ async def _target_regions(session) -> List[Dict[str, Any]]:
 
 
 async def main() -> None:
-    from modules.krugozor_broadcast import HEADER
     from modules.vk_monitor.vk_client import VKClient
     from modules.vk_token_router import load_vk_routing
 
@@ -196,7 +199,7 @@ async def main() -> None:
             if ts < window_floor or ts > mature_ceiling:
                 continue  # вне окна / ещё не дозрел
             m = _metrics(p)
-            if _is_digest(p, HEADER):
+            if _is_digest(p, KRUGOZOR_HEADER_PREFIX):
                 d_views.append(m["views"])
                 d_likes.append(m["likes"])
                 d_reposts.append(m["reposts"])
