@@ -1,7 +1,7 @@
-"""Тесты потока «Кругозор» (научпоп-ДАЙДЖЕСТ веером на стены регионов).
+"""Тесты потока «Кругозор» (научпоп-СВОДКА веером на стены регионов).
 
 Покрывают конфиг и чистую логику движка: ротацию источников, выбор свежего,
-сборку дайджеста (бюджет/max_items/грид фото), формат пункта, лид-фото, дедуп-cap.
+сборку сводки (бюджет/max_items/грид фото), формат пункта, лид-фото, дедуп-cap.
 БД/VK-функции (execute_krugozor_broadcast) — интеграционные, тут не трогаем.
 """
 
@@ -10,7 +10,7 @@ import database.models_extended  # noqa: F401
 from modules.krugozor_broadcast import (
     HEADER,
     LIP_HISTORY_MAX,
-    _assemble_digest,
+    _assemble_bulletin,
     _clean_text,
     _is_promo,
     _lead_photo,
@@ -168,7 +168,7 @@ def test_promo_filter_config_default(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Формат пункта дайджеста
+# Формат пункта сводки
 # --------------------------------------------------------------------------- #
 
 
@@ -213,7 +213,7 @@ def test_lead_photo_none_when_no_photo():
 
 
 # --------------------------------------------------------------------------- #
-# Сборка дайджеста
+# Сборка сводки
 # --------------------------------------------------------------------------- #
 
 
@@ -235,7 +235,7 @@ def test_assemble_all_fit_under_budget():
         {"name": "B", "url": "u2", "text": "t2", "photo": "photoB"},
         {"name": "C", "url": "u3", "text": "t3", "photo": None},
     ]
-    text, att, used = _assemble_digest(
+    text, att, used = _assemble_bulletin(
         items, snippet_len=500, text_budget=3500, max_items=4, photos_enabled=True
     )
     assert used == [0, 1, 2]
@@ -245,7 +245,7 @@ def test_assemble_all_fit_under_budget():
 
 
 def test_assemble_respects_max_items():
-    text, att, used = _assemble_digest(
+    text, att, used = _assemble_bulletin(
         _items(5), snippet_len=500, text_budget=3500, max_items=2, photos_enabled=True
     )
     assert used == [0, 1]
@@ -253,7 +253,7 @@ def test_assemble_respects_max_items():
 
 
 def test_assemble_photos_disabled():
-    _t, att, _u = _assemble_digest(
+    _t, att, _u = _assemble_bulletin(
         _items(3), snippet_len=500, text_budget=3500, max_items=4, photos_enabled=False
     )
     assert att == []
@@ -265,7 +265,7 @@ def test_assemble_budget_caps_items():
         {"name": "B", "url": "u", "text": "y" * 1000, "photo": None},
     ]
     # бюджет вмещает только первый пункт (snippet_len велик, оба блока ~1000)
-    _t, _a, used = _assemble_digest(
+    _t, _a, used = _assemble_bulletin(
         big, snippet_len=1000, text_budget=1100, max_items=4, photos_enabled=True
     )
     assert used == [0]
@@ -273,7 +273,7 @@ def test_assemble_budget_caps_items():
 
 def test_assemble_first_item_always_included_even_if_over_budget():
     huge = [{"name": "A", "url": "u", "text": "z" * 5000, "photo": None}]
-    _t, _a, used = _assemble_digest(
+    _t, _a, used = _assemble_bulletin(
         huge, snippet_len=5000, text_budget=100, max_items=4, photos_enabled=True
     )
     assert used == [0]  # первый — всегда

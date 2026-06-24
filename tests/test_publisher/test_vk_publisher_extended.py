@@ -28,11 +28,11 @@ def test_normalize_group_owner_id():
 
 
 @pytest.mark.asyncio
-async def test_publish_digest_normalizes_positive_group_id():
+async def test_publish_bulletin_normalizes_positive_group_id():
     vk = _DummyVkClient()
     publisher = VKPublisher(vk_client=vk)
 
-    result = await publisher.publish_digest(
+    result = await publisher.publish_bulletin(
         group_id=12345,
         text="digest text",
         attachments=[],
@@ -218,7 +218,7 @@ def test_get_target_group_id_unknown_region_returns_none(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# publish_aggregated_post — wrapper над publish_digest
+# publish_aggregated_post — wrapper над publish_bulletin
 # --------------------------------------------------------------------------- #
 
 
@@ -228,7 +228,7 @@ async def test_publish_aggregated_post_publishes_digest_text():
     publisher = VKPublisher(vk_client=vk)
 
     digest = SimpleNamespace(
-        aggregated_text="📰 Дайджест дня",
+        aggregated_text="📰 Сводка дня",
         sources_count=3,
         total_views=100,
         total_likes=10,
@@ -241,7 +241,7 @@ async def test_publish_aggregated_post_publishes_digest_text():
     method, params = vk.calls[0]
     assert method == "wall.post"
     assert params["owner_id"] == -555
-    assert params["message"] == "📰 Дайджест дня"
+    assert params["message"] == "📰 Сводка дня"
 
 
 @pytest.mark.asyncio

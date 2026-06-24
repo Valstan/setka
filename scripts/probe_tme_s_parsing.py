@@ -38,7 +38,7 @@ UA = (
     "(KHTML, like Gecko) Chrome/125.0 Safari/537.36"
 )
 
-# Каналы по умолчанию: свои (malmyzh_info — туда же зеркалим дайджесты mi,
+# Каналы по умолчанию: свои (malmyzh_info — туда же зеркалим сводки mi,
 # gonba_life — поток B) + высокочастотный публичный + заведомо несуществующий.
 DEFAULT_CHANNELS = ["malmyzh_info", "gonba_life", "tass_agency", "no_such_channel_zzz_404"]
 

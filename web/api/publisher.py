@@ -1,7 +1,7 @@
 """
 VK Publisher API endpoints
 
-Предоставляет REST API для публикации дайджестов в VK группы.
+Предоставляет REST API для публикации сводок в VK группы.
 Использует extended VKPublisher (`modules.publisher.vk_publisher_extended`),
 который поддерживает community-tokens с fallback на publish-token и
 глобальный rate-limit против VK captcha.
@@ -159,7 +159,7 @@ async def publish_simple_post(request: SimplePublishRequest):
 
         group_id = request.group_id or VK_TEST_GROUP_ID
 
-        result = await publisher.publish_digest(
+        result = await publisher.publish_bulletin(
             group_id=group_id, text=request.text, from_group=request.from_group
         )
 
@@ -185,12 +185,12 @@ async def publish_simple_post(request: SimplePublishRequest):
 
 
 @router.post("/publish/region", response_model=PublishResponse)
-async def publish_region_digest(
+async def publish_region_bulletin(
     request: PublishRequest,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db_session),
 ):
-    """Публикация дайджеста для региона"""
+    """Публикация сводки для региона"""
     try:
         publisher = await get_vk_publisher()
 
@@ -212,7 +212,7 @@ async def publish_region_digest(
                 detail=f"No target group configured for region '{request.region_code}'",
             )
 
-        # Создаем дайджест
+        # Создаем сводка
         aggregator = NewsAggregator(max_posts_per_digest=request.max_posts)
 
         # Получаем регион для заголовка
@@ -272,10 +272,10 @@ async def publish_region_digest(
 
 
 @router.post("/publish/custom", response_model=PublishResponse)
-async def publish_custom_digest(
+async def publish_custom_bulletin(
     request: PublishRequest, session: AsyncSession = Depends(get_db_session)
 ):
-    """Публикация кастомного дайджеста"""
+    """Публикация кастомной сводки"""
     try:
         publisher = await get_vk_publisher()
 
@@ -291,7 +291,7 @@ async def publish_custom_digest(
             )
 
         # Публикуем кастомный текст
-        result = await publisher.publish_digest(
+        result = await publisher.publish_bulletin(
             group_id=target_group_id, text=request.custom_text, from_group=True
         )
 

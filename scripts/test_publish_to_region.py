@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Тест публикации дайджестов в главные группы регионов
+Тест публикации сводок в главные группы регионов
 
-Создает дайджест для региона и публикует в его главную группу VK.
+Создает сводка для региона и публикует в его главную группу VK.
 """
 import argparse
 import asyncio
@@ -23,15 +23,15 @@ logger = logging.getLogger(__name__)
 
 async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode: bool = True):
     """
-    Тест публикации дайджеста в главную группу региона
+    Тест публикации сводки в главную группу региона
 
     Args:
         region_code: Код региона (например, 'mi')
-        max_posts: Максимальное количество постов в дайджесте
+        max_posts: Максимальное количество постов в сводке
         test_mode: Если True, не публикует реально, только показывает превью
     """
     logger.info("=" * 80)
-    logger.info(f"ТЕСТ ПУБЛИКАЦИИ ДАЙДЖЕСТА ДЛЯ РЕГИОНА: {region_code.upper()}")
+    logger.info(f"ТЕСТ ПУБЛИКАЦИИ СВОДКАА ДЛЯ РЕГИОНА: {region_code.upper()}")
     logger.info("=" * 80)
 
     async with AsyncSessionLocal() as session:
@@ -89,8 +89,8 @@ async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode
 
         logger.info(f"✅ Найдено постов: {len(posts)}")
 
-        # Создаем дайджест
-        logger.info("\n📰 Создание дайджеста...")
+        # Создаем сводка
+        logger.info("\n📰 Создание сводки...")
 
         aggregator = NewsAggregator(max_posts_per_digest=max_posts)
 
@@ -100,10 +100,10 @@ async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode
         digest = await aggregator.aggregate(posts=posts[:max_posts], title=title, hashtags=hashtags)
 
         if not digest:
-            logger.error("❌ Не удалось создать дайджест")
+            logger.error("❌ Не удалось создать сводка")
             return False
 
-        logger.info("✅ Дайджест создан!")
+        logger.info("✅ Сводка создан!")
         logger.info(f"   Постов: {digest.sources_count}")
         logger.info(f"   Просмотров: {digest.total_views}")
         logger.info(f"   Лайков: {digest.total_likes}")
@@ -111,7 +111,7 @@ async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode
 
         # Показываем превью
         logger.info("\n" + "=" * 80)
-        logger.info("ПРЕВЬЮ ДАЙДЖЕСТА:")
+        logger.info("ПРЕВЬЮ СВОДКАА:")
         logger.info("=" * 80)
         preview = digest.aggregated_text[:500]
         logger.info(preview + ("..." if len(digest.aggregated_text) > 500 else ""))
@@ -146,12 +146,10 @@ async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode
 
 async def main():
     """Главная функция"""
-    parser = argparse.ArgumentParser(
-        description="Тест публикации дайджеста в главную группу региона"
-    )
+    parser = argparse.ArgumentParser(description="Тест публикации сводки в главную группу региона")
     parser.add_argument("--region", required=True, help="Код региона (например, mi)")
     parser.add_argument(
-        "--max-posts", type=int, default=5, help="Максимум постов в дайджесте (default: 5)"
+        "--max-posts", type=int, default=5, help="Максимум постов в сводке (default: 5)"
     )
     parser.add_argument(
         "--publish", action="store_true", help="Реально опубликовать (без флага - только превью)"

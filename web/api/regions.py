@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
 from database.models import Community, CommunityCandidate, Post, Region
-from modules.digest_template import (
+from modules.bulletin_template import (
     STANDARD_TOPICS,
-    compute_effective_digest_settings,
+    compute_effective_bulletin_settings,
     topic_to_default_hashtag,
 )
 from modules.geo.geocoder import geocode, haversine_km
@@ -72,7 +72,7 @@ def _region_label_variants(name: str | None, center: str | None) -> set[str]:
 async def _normalize_neighbor_codes(db: AsyncSession, raw: str | None, self_code: str) -> List[str]:
     """Привести список соседей к валидным кодам регионов.
 
-    Движок соседского обмена (``modules.cascaded_digest.run_neighbor_digest``)
+    Движок соседского обмена (``modules.cascaded_bulletin.run_neighbor_bulletin``)
     матчит соседей по ``Region.code.in_(codes)`` — поэтому в ``Region.neighbors``
     должны лежать именно **коды** регионов (латиница), а не русские названия.
     Исторически часть данных была забита названиями («кукмор», «балтаси»,
@@ -331,7 +331,7 @@ class RegionResponse(BaseModel):
         from_attributes = True
 
 
-class DigestTemplateSettingsModel(BaseModel):
+class BulletinTemplateSettingsModel(BaseModel):
     title: str = Field(..., description="Заголовок сводки")
     footer: str = Field("", description="Подвал сводки")
     include_source_links: bool = Field(
@@ -346,24 +346,24 @@ class DigestTemplateSettingsModel(BaseModel):
     )
 
 
-class DigestTemplatePayload(BaseModel):
-    defaults: Optional[DigestTemplateSettingsModel] = None
-    by_topic: Optional[Dict[str, DigestTemplateSettingsModel]] = None
+class BulletinTemplatePayload(BaseModel):
+    defaults: Optional[BulletinTemplateSettingsModel] = None
+    by_topic: Optional[Dict[str, BulletinTemplateSettingsModel]] = None
 
 
-class DigestTemplateResponse(BaseModel):
+class BulletinTemplateResponse(BaseModel):
     region_code: str
     region_name: str
     topics: List[str]
     # Raw override stored in Region.config.digest_template (may be empty)
     raw_override: Dict[str, Any]
     # Effective merged settings per topic
-    effective_by_topic: Dict[str, DigestTemplateSettingsModel]
+    effective_by_topic: Dict[str, BulletinTemplateSettingsModel]
     # Effective defaults (after applying region defaults override)
-    effective_defaults: DigestTemplateSettingsModel
+    effective_defaults: BulletinTemplateSettingsModel
 
 
-@router.get("/{region_code}/digest-template", response_model=DigestTemplateResponse)
+@router.get("/{region_code}/digest-template", response_model=BulletinTemplateResponse)
 async def get_region_digest_template(
     region_code: str,
     db: AsyncSession = Depends(get_db_session),
@@ -379,8 +379,8 @@ async def get_region_digest_template(
     topics = STANDARD_TOPICS
 
     # Compute effective defaults by merging base + region defaults (no topic override)
-    base_settings, raw = compute_effective_digest_settings(region, topic="")
-    effective_defaults = DigestTemplateSettingsModel(
+    base_settings, raw = compute_effective_bulletin_settings(region, topic="")
+    effective_defaults = BulletinTemplateSettingsModel(
         title=base_settings.title,
         footer=base_settings.footer,
         include_source_links=base_settings.include_source_links,
@@ -389,12 +389,12 @@ async def get_region_digest_template(
         topic_hashtag_override=base_settings.topic_hashtag_override,
     )
 
-    effective_by_topic: Dict[str, DigestTemplateSettingsModel] = {}
+    effective_by_topic: Dict[str, BulletinTemplateSettingsModel] = {}
     for t in topics:
-        s, _ = compute_effective_digest_settings(region, topic=t)
+        s, _ = compute_effective_bulletin_settings(region, topic=t)
         # Provide a sensible default hashtag if none configured
         hashtag_override = s.topic_hashtag_override or topic_to_default_hashtag(t)
-        effective_by_topic[t] = DigestTemplateSettingsModel(
+        effective_by_topic[t] = BulletinTemplateSettingsModel(
             title=s.title,
             footer=s.footer,
             include_source_links=s.include_source_links,
@@ -403,7 +403,7 @@ async def get_region_digest_template(
             topic_hashtag_override=hashtag_override,
         )
 
-    return DigestTemplateResponse(
+    return BulletinTemplateResponse(
         region_code=region.code,
         region_name=region.name,
         topics=topics,
@@ -413,10 +413,10 @@ async def get_region_digest_template(
     )
 
 
-@router.put("/{region_code}/digest-template", response_model=DigestTemplateResponse)
+@router.put("/{region_code}/digest-template", response_model=BulletinTemplateResponse)
 async def put_region_digest_template(
     region_code: str,
-    payload: DigestTemplatePayload,
+    payload: BulletinTemplatePayload,
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -451,7 +451,7 @@ async def put_region_digest_template(
     return await get_region_digest_template(region_code=region_code, db=db)
 
 
-@router.post("/{region_code}/digest-template/reset", response_model=DigestTemplateResponse)
+@router.post("/{region_code}/digest-template/reset", response_model=BulletinTemplateResponse)
 async def reset_region_digest_template(
     region_code: str,
     db: AsyncSession = Depends(get_db_session),
@@ -475,14 +475,14 @@ async def reset_region_digest_template(
     return await get_region_digest_template(region_code=region_code, db=db)
 
 
-class ResetDigestTemplateTopicRequest(BaseModel):
+class ResetBulletinTemplateTopicRequest(BaseModel):
     topic: str = Field(..., description="Тема для сброса (например, 'Культура')")
 
 
-@router.post("/{region_code}/digest-template/reset-topic", response_model=DigestTemplateResponse)
+@router.post("/{region_code}/digest-template/reset-topic", response_model=BulletinTemplateResponse)
 async def reset_region_digest_template_topic(
     region_code: str,
-    request: ResetDigestTemplateTopicRequest,
+    request: ResetBulletinTemplateTopicRequest,
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -520,7 +520,7 @@ async def reset_region_digest_template_topic(
 
 # ──────────────────────────────────────────────────────────────────────────
 # Diagnostics — «прогон пайплайна без публикации» (dry_run).
-# Парсит/фильтрует/собирает дайджест региона+темы, НИЧЕГО не публикуя и не
+# Парсит/фильтрует/собирает сводка региона+темы, НИЧЕГО не публикуя и не
 # записывая в БД (см. parse_and_publish_theme(dry_run=True)). Длинная операция
 # (реальный VK-парсинг), поэтому ставится в Celery и опрашивается по task_id —
 # как discovery (/api/discovery/trigger-async + /task/{id}).
@@ -571,7 +571,7 @@ async def run_region_diagnostics(
 
     Возвращает ``{task_id, state}``; UI опрашивает
     ``/diagnostics/task/{task_id}/status`` до ``ready``. Результат содержит
-    ``would_publish`` (что попало бы в дайджест) + статистику фильтрации.
+    ``would_publish`` (что попало бы в сводка) + статистику фильтрации.
     """
     # Проверяем, что регион существует — ранний 404 вместо «висящей» задачи.
     exists = await db.execute(select(Region.id).where(Region.code == region_code))

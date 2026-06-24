@@ -1,5 +1,5 @@
 """
-Страница «Фильтрация»: настройки конвейера дайджестов и связанные поля RegionConfig.
+Страница «Фильтрация»: настройки конвейера сводок и связанные поля RegionConfig.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.connection import get_db_session
 from database.models import Region
 from database.models_extended import RegionConfig
-from modules.digest_pipeline_settings import (
+from modules.bulletin_pipeline_settings import (
     DEFAULT_PIPELINE,
     POSTOPUS_DIGEST_THEMES,
     empty_digest_filters_template,

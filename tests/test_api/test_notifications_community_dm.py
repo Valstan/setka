@@ -30,7 +30,7 @@ def _dm(**kw):
         author_vk_id=42,
         author_name="Иван",
         author_is_group=False,
-        text_snapshot="привет, когда дайджест?",
+        text_snapshot="привет, когда сводка?",
         status="new",
         handling_status="new",
         last_message_id=555,
@@ -49,7 +49,7 @@ async def test_community_dm_inbox_serializes_unhandled():
     assert msg["id"] == 10
     assert msg["route"] == "notifications"
     assert msg["handling_status"] == "new"
-    assert msg["text_snapshot"] == "привет, когда дайджест?"
+    assert msg["text_snapshot"] == "привет, когда сводка?"
     # deeplink на диалог сообщества для ответа в VK
     assert msg["dialog_url"] == "https://vk.com/gim100?sel=42"
 

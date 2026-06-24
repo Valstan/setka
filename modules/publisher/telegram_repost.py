@@ -402,7 +402,7 @@ async def repost_to_telegram(
     return {"success": success, "degraded": media.degraded}
 
 
-async def mirror_digest_to_telegram(
+async def mirror_bulletin_to_telegram(
     bot_name: str,
     channel: str,
     header: Optional[str],

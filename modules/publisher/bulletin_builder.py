@@ -14,7 +14,7 @@ from utils.vk_attachments import build_attachments_list, extract_vk_attachments
 
 
 @dataclass
-class DigestPost:
+class BulletinPost:
     """A single post included in the digest"""
 
     post_data: Dict[str, Any]
@@ -26,7 +26,7 @@ class DigestPost:
 
 
 @dataclass
-class DigestResult:
+class BulletinResult:
     """Result of digest building"""
 
     text: str
@@ -38,7 +38,7 @@ class DigestResult:
     max_attachments_exceeded: bool = False
 
 
-class DigestBuilder:
+class BulletinBuilder:
     """
     Builds digest posts from multiple source posts.
 
@@ -80,9 +80,9 @@ class DigestBuilder:
             local_hashtag: Local region hashtag
             max_text_length: Maximum text length
             repost_mode: True = VK repost, False = copy with attribution
-            max_posts_per_digest: Сколько новостей максимум в одном дайджесте (из настроек региона)
+            max_posts_per_digest: Сколько новостей максимум в одном сводке (из настроек региона)
         """
-        # Пустая строка = без заголовка (например траурный дайджест); None = дефолтный заголовок
+        # Пустая строка = без заголовка (например траурная сводка); None = дефолтный заголовок
         if header is None:
             self.header = self.DEFAULT_HEADER
         else:
@@ -98,11 +98,11 @@ class DigestBuilder:
         )
         self.max_posts_per_digest = max(1, min(self.max_posts_per_digest, 10))
 
-    def build_digest(
+    def build_bulletin(
         self,
         posts: List[Dict[str, Any]],
         group_names: Dict[str, str] = None,
-    ) -> DigestResult:
+    ) -> BulletinResult:
         """
         Build digest from list of posts.
 
@@ -127,7 +127,7 @@ class DigestBuilder:
             group_names: Dict mapping community_vk_id -> group display name
 
         Returns:
-            DigestResult with formatted text and attachments
+            BulletinResult with formatted text and attachments
         """
         if group_names is None:
             group_names = {}
@@ -211,7 +211,7 @@ class DigestBuilder:
         # never publish a "digest" that's just a header + hashtags. All filtering
         # paths (no text, doesn't fit, attachments don't fit) end up here.
         if not posts_included:
-            return DigestResult(
+            return BulletinResult(
                 text="",
                 attachments_list=[],
                 post_count=0,
@@ -234,7 +234,7 @@ class DigestBuilder:
 
         max_attachments_exceeded = len(flat_attachments) > self.MAX_ATTACHMENTS
 
-        return DigestResult(
+        return BulletinResult(
             text=full_text,
             attachments_list=flat_attachments[: self.MAX_ATTACHMENTS],
             post_count=len(posts_included),
@@ -371,7 +371,7 @@ class DigestBuilder:
         return min(posts_by_text, posts_by_attachments, self.max_posts_per_digest)
 
 
-class TextOnlyDigestBuilder(DigestBuilder):
+class TextOnlyBulletinBuilder(BulletinBuilder):
     """
     Builds text-only digest (no media attachments).
 
@@ -379,14 +379,14 @@ class TextOnlyDigestBuilder(DigestBuilder):
     Used for advertising digests where images aren't needed.
     """
 
-    def build_digest(
+    def build_bulletin(
         self,
         posts: List[Dict[str, Any]],
         group_names: Dict[str, str] = None,
-    ) -> DigestResult:
+    ) -> BulletinResult:
         """Build text-only digest."""
         # Use parent build but strip attachments
-        result = super().build_digest(posts, group_names)
+        result = super().build_bulletin(posts, group_names)
 
         # Clear attachments
         result.attachments_list = []
@@ -394,12 +394,12 @@ class TextOnlyDigestBuilder(DigestBuilder):
 
         return result
 
-    def build_bezfoto_digest(
+    def build_bezfoto_bulletin(
         self,
         text_items: List[str],
         header: str = "",
         hashtag: str = "",
-    ) -> DigestResult:
+    ) -> BulletinResult:
         """
         Build digest from text-only items (bezfoto).
 
@@ -409,7 +409,7 @@ class TextOnlyDigestBuilder(DigestBuilder):
             hashtag: Single hashtag for digest
 
         Returns:
-            DigestResult
+            BulletinResult
         """
         parts = []
 
@@ -433,7 +433,7 @@ class TextOnlyDigestBuilder(DigestBuilder):
         if len(full_text) > self.max_text_length:
             full_text = truncate_text(full_text, self.max_text_length, "\n\n...")
 
-        return DigestResult(
+        return BulletinResult(
             text=full_text,
             attachments_list=[],
             post_count=len(text_items[:15]),

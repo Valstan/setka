@@ -1,6 +1,6 @@
 """
 Content Mixer - умное смешивание категорий контента
-Создаёт сбалансированные дайджесты с оптимальным миксом новостей
+Создаёт сбалансированные сводки с оптимальным миксом новостей
 """
 
 import logging
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 class ContentMixer:
     """
-    Умное смешивание контента для создания engaging дайджестов
+    Умное смешивание контента для создания engaging сводок
 
     Правила:
     1. Разнообразие категорий (не все новости одной категории)
@@ -35,19 +35,19 @@ class ContentMixer:
         "negative": 0.20,  # 20% негативных
     }
 
-    def create_balanced_digest(
+    def create_balanced_bulletin(
         self, posts: List, max_posts: int = 10, time_slot: str = "afternoon"
     ) -> List:
         """
-        Создать сбалансированный дайджест
+        Создать сбалансированная сводка
 
         Args:
             posts: Список доступных постов
-            max_posts: Максимум постов в дайджесте
+            max_posts: Максимум постов в сводке
             time_slot: Время суток ('morning', 'afternoon', 'evening')
 
         Returns:
-            Отсортированный список постов для дайджеста
+            Отсортированный список постов для сводки
         """
         if not posts:
             return []
@@ -229,12 +229,12 @@ class ContentMixer:
         # Выбрать с максимальным score
         return max(scores, key=lambda x: x[1])[0]
 
-    def get_digest_stats(self, posts: List) -> Dict:
+    def get_bulletin_stats(self, posts: List) -> Dict:
         """
-        Статистика дайджеста
+        Статистика сводки
 
         Args:
-            posts: Список постов в дайджесте
+            posts: Список постов в сводке
 
         Returns:
             Dict со статистикой
@@ -293,7 +293,7 @@ if __name__ == "__main__":
 
     # Test balanced digest
     print("\n1. Creating balanced digest (max 5 posts)...")
-    digest = mixer.create_balanced_digest(test_posts, max_posts=5, time_slot="afternoon")
+    digest = mixer.create_balanced_bulletin(test_posts, max_posts=5, time_slot="afternoon")
 
     print(f"\n   Selected {len(digest)} posts:")
     for i, post in enumerate(digest, 1):
@@ -304,7 +304,7 @@ if __name__ == "__main__":
 
     # Test stats
     print("\n2. Digest stats:")
-    stats = mixer.get_digest_stats(digest)
+    stats = mixer.get_bulletin_stats(digest)
     print(f"   Total: {stats['total_posts']}")
     print(f"   Categories: {stats['categories']}")
     print(f"   Sentiment: {stats['sentiment_distribution']}")

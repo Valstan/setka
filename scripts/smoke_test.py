@@ -3,7 +3,7 @@
 
 После рестарта сервисов (`/reliz` Шаг 8) полезно за один шаг убедиться, что
 пайплайн региона жив: токены валидны, VK отвечает, парсинг → фильтр → сборка
-дайджеста проходят. Старый ручной способ — открыть `/regions/<code>/diagnostics`
+сводки проходят. Старый ручной способ — открыть `/regions/<code>/diagnostics`
 в браузере. Этот скрипт делает то же из CLI и возвращает exit-код, пригодный
 для автоматической проверки в `/reliz`.
 
@@ -162,7 +162,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--base-url", default=DEFAULT_BASE_URL, help="API base (default prod local)"
     )
     parser.add_argument("--region", default=DEFAULT_REGION, help="код эталонного региона")
-    parser.add_argument("--theme", default=DEFAULT_THEME, help="тема дайджеста")
+    parser.add_argument("--theme", default=DEFAULT_THEME, help="тема сводки")
     parser.add_argument(
         "--min-posts",
         type=int,

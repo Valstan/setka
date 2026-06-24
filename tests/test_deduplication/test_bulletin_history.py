@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from modules.deduplication.digest_history import (
+from modules.deduplication.bulletin_history import (
     append_unique_limited,
     build_region_dedup_sets,
     extract_source_lips_from_target_group_posts,

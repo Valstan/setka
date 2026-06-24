@@ -131,7 +131,7 @@ def _make_default_vk_sender(session) -> Callable[[Any, Dict[str, Any], str], Awa
                 "radar delivery: bad vk target %r on output %s", output.target, output.id
             )
             return False
-        res = await publisher_box["p"].publish_digest(group_id=owner_id, text=text)
+        res = await publisher_box["p"].publish_bulletin(group_id=owner_id, text=text)
         return bool(res.get("success") or res.get("post_id"))
 
     return _send

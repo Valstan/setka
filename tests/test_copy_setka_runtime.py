@@ -171,7 +171,7 @@ async def test_copy_setka_skips_nonmember_token_and_uses_member(monkeypatch):
 
     fresh_post = {"owner_id": -167381590, "id": 555, "date": 999_990, "text": "новость"}
     publisher = AsyncMock()
-    publisher.publish_digest.return_value = {"success": True, "url": "https://vk.com/wall-1_1"}
+    publisher.publish_bulletin.return_value = {"success": True, "url": "https://vk.com/wall-1_1"}
 
     session = _FakeSession([[_WorkTable()], [_Region("ur", -168170215)]])
 
@@ -189,7 +189,7 @@ async def test_copy_setka_skips_nonmember_token_and_uses_member(monkeypatch):
     assert out["success"] is True
     assert out["posts_published"] == 1
     assert out["mode"] == "wall.post copy"
-    publisher.publish_digest.assert_awaited_once()
+    publisher.publish_bulletin.assert_awaited_once()
 
 
 async def test_copy_setka_reports_when_no_token_can_read(monkeypatch):
@@ -214,11 +214,11 @@ async def test_copy_setka_reports_when_no_token_can_read(monkeypatch):
     assert out["success"] is True
     assert out["posts_published"] == 0
     assert out["message"] == "no posts on source wall"
-    publisher.publish_digest.assert_not_called()
+    publisher.publish_bulletin.assert_not_called()
 
 
 def _digest_side_effect(captcha_gids):
-    """Фабрика side_effect для publish_digest: капча на заданных gid."""
+    """Фабрика side_effect для publish_bulletin: капча на заданных gid."""
 
     def _se(*, group_id, text=None, attachments=None):
         if group_id in captcha_gids:
@@ -241,7 +241,7 @@ async def test_copy_setka_partial_then_retries_tail_next_tick(monkeypatch):
 
     # --- Тик 1: MI ловит капчу ---
     pub1 = AsyncMock()
-    pub1.publish_digest.side_effect = _digest_side_effect({MI})
+    pub1.publish_bulletin.side_effect = _digest_side_effect({MI})
     with ExitStack() as stack:
         _patch_copy_setka_deps(
             stack,
@@ -261,7 +261,7 @@ async def test_copy_setka_partial_then_retries_tail_next_tick(monkeypatch):
 
     # --- Тик 2: капчи нет, добираем MI ---
     pub2 = AsyncMock()
-    pub2.publish_digest.side_effect = _digest_side_effect(set())
+    pub2.publish_bulletin.side_effect = _digest_side_effect(set())
     with ExitStack() as stack:
         _patch_copy_setka_deps(
             stack,
@@ -279,7 +279,7 @@ async def test_copy_setka_partial_then_retries_tail_next_tick(monkeypatch):
     assert wt.hash == []  # pending снят
     assert wt.lip == ["-167381590_555"]  # пост помечен полностью разосланным
     # UR не дёргали повторно на тике 2
-    assert pub2.publish_digest.await_count == 1
+    assert pub2.publish_bulletin.await_count == 1
 
 
 async def test_copy_setka_gives_up_after_max_tries(monkeypatch):
@@ -295,7 +295,7 @@ async def test_copy_setka_gives_up_after_max_tries(monkeypatch):
     UR, MI = -168170215, -158787639
 
     pub = AsyncMock()
-    pub.publish_digest.side_effect = _digest_side_effect({UR, MI})  # обе в капче
+    pub.publish_bulletin.side_effect = _digest_side_effect({UR, MI})  # обе в капче
     with ExitStack() as stack:
         _patch_copy_setka_deps(
             stack,

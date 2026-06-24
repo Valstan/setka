@@ -1,7 +1,7 @@
 """Тесты seam'а планировщика: publish_date (отложка), signed, комментарии.
 
-Покрывает аддитивные параметры :meth:`VKPublisher.publish_digest` и метод
-:meth:`VKPublisher.set_post_comments`. Гарантия — обычные дайджесты
+Покрывает аддитивные параметры :meth:`VKPublisher.publish_bulletin` и метод
+:meth:`VKPublisher.set_post_comments`. Гарантия — обычные сводки
 (без ``publish_date``/``signed``) не меняют поведение (zero regression).
 """
 
@@ -24,12 +24,12 @@ class _DummyVkClient:
 
 
 @pytest.mark.asyncio
-async def test_publish_digest_without_publish_date_is_immediate():
-    """Дайджест без publish_date → нет параметра, postponed=False (регресс-гард)."""
+async def test_publish_bulletin_without_publish_date_is_immediate():
+    """Сводка без publish_date → нет параметра, postponed=False (регресс-гард)."""
     vk = _DummyVkClient()
     publisher = VKPublisher(vk_client=vk)
 
-    result = await publisher.publish_digest(group_id=-100, text="digest")
+    result = await publisher.publish_bulletin(group_id=-100, text="digest")
 
     assert result["success"] is True
     assert result["postponed"] is False
@@ -39,11 +39,13 @@ async def test_publish_digest_without_publish_date_is_immediate():
 
 
 @pytest.mark.asyncio
-async def test_publish_digest_with_publish_date_schedules_postponed():
+async def test_publish_bulletin_with_publish_date_schedules_postponed():
     vk = _DummyVkClient()
     publisher = VKPublisher(vk_client=vk)
 
-    result = await publisher.publish_digest(group_id=-100, text="ad post", publish_date=1900000000)
+    result = await publisher.publish_bulletin(
+        group_id=-100, text="ad post", publish_date=1900000000
+    )
 
     assert result["success"] is True
     assert result["postponed"] is True
@@ -58,7 +60,7 @@ async def test_publish_date_zero_is_treated_as_immediate():
     vk = _DummyVkClient()
     publisher = VKPublisher(vk_client=vk)
 
-    result = await publisher.publish_digest(group_id=-100, text="x", publish_date=0)
+    result = await publisher.publish_bulletin(group_id=-100, text="x", publish_date=0)
 
     assert result["postponed"] is False
     _method, params = vk.calls[0]
@@ -70,7 +72,7 @@ async def test_signed_param_adds_author_signature():
     vk = _DummyVkClient()
     publisher = VKPublisher(vk_client=vk)
 
-    await publisher.publish_digest(group_id=-100, text="x", signed=True)
+    await publisher.publish_bulletin(group_id=-100, text="x", signed=True)
 
     _method, params = vk.calls[0]
     assert params["signed"] == 1

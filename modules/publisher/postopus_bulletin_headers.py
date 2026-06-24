@@ -1,5 +1,5 @@
 """
-Заголовки и хештеги дайджестов Postopus/SETKA (как в old_postopus Mongo).
+Заголовки и хештеги сводок Postopus/SETKA (как в old_postopus Mongo).
 
 Если в RegionConfig уже заданы zagolovki / heshteg — они имеют приоритет.
 Иначе подставляются русские шаблоны по теме и названию региона.
@@ -77,9 +77,9 @@ def region_display_name(region: Any, heshteg_local: Optional[dict]) -> str:
     return str(code) or "Регион"
 
 
-def resolve_digest_header(region_config: Any, theme: str, region: Any) -> str:
+def resolve_bulletin_header(region_config: Any, theme: str, region: Any) -> str:
     """
-    Заголовок дайджеста: из zagolovki[theme], иначе русский шаблон по теме и региону.
+    Заголовок сводки: из zagolovki[theme], иначе русский шаблон по теме и региону.
     """
     z = getattr(region_config, "zagolovki", None) or {}
     if isinstance(z, dict) and theme in z:
@@ -96,7 +96,7 @@ def resolve_digest_header(region_config: Any, theme: str, region: Any) -> str:
     return f"📰 {theme} {rlabel}:"
 
 
-def resolve_digest_hashtags(
+def resolve_bulletin_hashtags(
     region_config: Any,
     theme: str,
 ) -> Tuple[List[str], str]:
@@ -130,7 +130,7 @@ def resolve_digest_hashtags(
     return tags, local_hashtag
 
 
-def resolve_mourning_digest_format() -> Tuple[str, List[str], str]:
+def resolve_mourning_bulletin_format() -> Tuple[str, List[str], str]:
     """
     Mourning-digest must be published without any header and hashtags.
     """

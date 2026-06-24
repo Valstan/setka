@@ -6,7 +6,7 @@
 Проверяет:
 1. Инициализацию VK Publisher
 2. Публикацию тестового поста
-3. Создание и публикацию дайджеста
+3. Создание и публикацию сводки
 4. Интеграцию с Production Workflow
 """
 import asyncio
@@ -76,7 +76,7 @@ async def test_simple_post_publishing():
 
 #Тест #SETKA #Автоматизация"""
 
-        result = await publisher.publish_digest(
+        result = await publisher.publish_bulletin(
             group_id=VK_TEST_GROUP_ID, text=test_text, from_group=True
         )
 
@@ -95,9 +95,9 @@ async def test_simple_post_publishing():
 
 
 async def test_digest_publishing():
-    """Тест 3: Создание и публикация дайджеста"""
+    """Тест 3: Создание и публикация сводки"""
     logger.info("\n" + "=" * 60)
-    logger.info("🧪 ТЕСТ 3: Создание и публикация дайджеста")
+    logger.info("🧪 ТЕСТ 3: Создание и публикация сводки")
     logger.info("=" * 60)
 
     try:
@@ -121,37 +121,37 @@ async def test_digest_publishing():
             posts = list(result.scalars().all())
 
         if not posts:
-            logger.warning("⚠️ Нет постов для создания дайджеста")
+            logger.warning("⚠️ Нет постов для создания сводки")
             return False
 
-        logger.info(f"📊 Найдено {len(posts)} постов для дайджеста")
+        logger.info(f"📊 Найдено {len(posts)} постов для сводки")
 
-        # Создаем дайджест
+        # Создаем сводка
         aggregator = NewsAggregator(max_posts_per_digest=3)
 
         digest = await aggregator.aggregate(
             posts=posts[:3],
-            title="🧪 ТЕСТОВЫЙ ДАЙДЖЕСТ SETKA",
-            hashtags=["#Тест", "#SETKA", "#Дайджест"],
+            title="🧪 ТЕСТОВЫЙ СВОДКА SETKA",
+            hashtags=["#Тест", "#SETKA", "#Сводка"],
         )
 
         if not digest:
-            logger.error("❌ Не удалось создать дайджест")
+            logger.error("❌ Не удалось создать сводка")
             return False
 
-        logger.info(f"✅ Дайджест создан: {digest}")
+        logger.info(f"✅ Сводка создан: {digest}")
         logger.info(f"📝 Текст: {digest.aggregated_text[:100]}...")
 
-        # Публикуем дайджест
+        # Публикуем сводка
         result = await publisher.publish_aggregated_post(digest=digest, group_id=VK_TEST_GROUP_ID)
 
         if result["success"]:
-            logger.info("✅ Дайджест опубликован успешно!")
+            logger.info("✅ Сводка опубликован успешно!")
             logger.info(f"📝 Post ID: {result['post_id']}")
             logger.info(f"🔗 URL: {result['url']}")
             return True
         else:
-            logger.error(f"❌ Ошибка публикации дайджеста: {result['error']}")
+            logger.error(f"❌ Ошибка публикации сводки: {result['error']}")
             return False
 
     except Exception as e:
@@ -205,18 +205,18 @@ async def test_region_publishing():
             hashtags=["#НовостиMI"],
         )
         if not digest:
-            logger.error("❌ Не удалось создать дайджест")
+            logger.error("❌ Не удалось создать сводка")
             return False
 
         result = await publisher.publish_aggregated_post(digest, VK_TEST_GROUP_ID)
 
         if result["success"]:
-            logger.info("✅ Региональный дайджест опубликован успешно!")
+            logger.info("✅ Региональная сводка опубликована успешно!")
             logger.info(f"📝 Post ID: {result['post_id']}")
             logger.info(f"🔗 URL: {result['url']}")
             return True
         else:
-            logger.error(f"❌ Ошибка публикации регионального дайджеста: {result.get('error')}")
+            logger.error(f"❌ Ошибка публикации региональной сводки: {result.get('error')}")
             return False
 
     except Exception as e:
@@ -270,7 +270,7 @@ async def main():
     tests = [
         ("Инициализация VK Publisher", test_vk_publisher_initialization),
         ("Публикация простого поста", test_simple_post_publishing),
-        ("Создание и публикация дайджеста", test_digest_publishing),
+        ("Создание и публикация сводки", test_digest_publishing),
         ("Публикация для региона", test_region_publishing),
         ("Интеграция с Production Workflow", test_publisher_integration),
     ]

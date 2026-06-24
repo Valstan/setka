@@ -5,7 +5,7 @@ Celery Application
 
 Tasks:
 - run_vk_monitoring: Запуск production workflow каждый час
-- create_daily_digest: Создание дайджеста за день (18:00)
+- create_daily_digest: Создание сводки за день (18:00)
 - cleanup_old_posts: Очистка старых постов (03:00)
 
 Запуск:
@@ -218,7 +218,7 @@ def run_vk_monitoring():
 
     Выполняется каждый час в :05 минут.
     Сканирует все активные регионы, применяет фильтры,
-    делает AI scoring и создает дайджесты.
+    делает AI scoring и создает сводки.
     """
     logger.info("=" * 80)
     logger.info("Starting VK monitoring workflow...")
@@ -244,10 +244,10 @@ def run_vk_monitoring():
 @app.task(name="tasks.celery_app.create_daily_digest")
 def create_daily_digest():
     """
-    Создание дневного дайджеста для всех регионов.
+    Создание дневной сводки для всех регионов.
 
     Выполняется каждый день в 18:00.
-    Собирает топ-посты за день, создает дайджесты,
+    Собирает топ-посты за день, создает сводки,
     готовит к публикации.
     """
     logger.info("=" * 80)
@@ -270,7 +270,7 @@ def create_daily_digest():
                 aggregator = NewsAggregator(session)
                 digests = []
 
-                # Создаем дайджест для каждого региона
+                # Создаем сводка для каждого региона
                 for region in regions:
                     logger.info(f"Creating digest for {region.name}...")
 
@@ -294,7 +294,7 @@ def create_daily_digest():
                         logger.warning(f"No posts found for {region.name}")
                         continue
 
-                    # Создаем дайджест
+                    # Создаем сводка
                     digest = await aggregator.create_digest(posts=posts, region=region, max_posts=5)
 
                     if digest:
@@ -698,7 +698,7 @@ def collect_member_snapshots():
 
     Тянет `groups.getById(fields=members_count)` по `regions.vk_group_id` и пишет
     по строке на (регион, день) в `region_member_snapshots` — фундамент графика
-    роста подписчиков. Только главные группы (куда выпускаем дайджесты), не весь
+    роста подписчиков. Только главные группы (куда выпускаем сводки), не весь
     пул источников — экономия VK API. Идемпотентно за день (upsert).
     """
     logger.info("Collecting region member-count snapshots...")
@@ -1007,23 +1007,23 @@ def check_recent_comments():
 
 @app.task(name="tasks.celery_app.check_digest_heartbeat")
 def check_digest_heartbeat():
-    """Watchdog «давно нет дайджестов»: алёрт, если novost давно не публиковался.
+    """Watchdog «давно нет сводок»: алёрт, если novost давно не публиковался.
 
     Читает Redis-heartbeat (пишется из ``track_digest_published`` на всех путях
     публикации). Если тема ``novost`` протухла дольше порога — Telegram-алёрт
-    с собственным cooldown (см. ``modules.digest_heartbeat``). Beat гоняет днём
+    с собственным cooldown (см. ``modules.bulletin_heartbeat``). Beat гоняет днём
     (10:00–22:00); ночью простой 20:40→6:40 легитимен и не проверяется.
     """
     try:
         from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
-        from modules.digest_heartbeat import maybe_alert_stale_digest
+        from modules.bulletin_heartbeat import maybe_alert_stale_bulletin
 
         token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
         chat_id = TELEGRAM_ALERT_CHAT_ID
         domain = (
             SERVER.get("domain") or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
         )
-        status = maybe_alert_stale_digest(
+        status = maybe_alert_stale_bulletin(
             topic="novost",
             telegram_token=token,
             chat_id=chat_id,
@@ -1196,7 +1196,7 @@ app.conf.beat_schedule = {
             "catchup": False,
         },
     },
-    # Дневной дайджест в 18:00
+    # Дневная сводка в 18:00
     "digest-daily": {
         "task": "tasks.celery_app.create_daily_digest",
         "schedule": crontab(hour=18, minute=0),  # 18:00 каждый день
@@ -1214,7 +1214,7 @@ app.conf.beat_schedule = {
             "catchup": False,
         },
     },
-    # Watchdog «давно нет дайджестов»: раз в час 10:00–22:00 на :05. Если тема
+    # Watchdog «давно нет сводок»: раз в час 10:00–22:00 на :05. Если тема
     # novost не публиковалась дольше порога (6ч в самой задаче) — Telegram-алёрт
     # (с 6ч-cooldown). novost-волны идут 6×/сутки (макс дневной зазор ~5ч), порог
     # 6ч с запасом. Ночью не гоняем — простой 20:40→6:40 легитимен.
@@ -1265,7 +1265,7 @@ app.conf.beat_schedule = {
     # Соседский обмен новостями (cross-region): раз в сутки утром. Каждый регион
     # с непустым Region.neighbors репостит #Новости с главных групп соседей.
     # Это НЕ тема "sosed" выше (та — парсинг сообществ category="sosed" внутри
-    # региона). Движок — modules.cascaded_digest.run_neighbor_digest.
+    # региона). Движок — modules.cascaded_bulletin.run_neighbor_bulletin.
     "digest-share-neighbors-daily": {
         "task": "tasks.parsing_scheduler_tasks.run_all_regions_neighbor_share",
         "schedule": crontab(minute=30, hour=8),
@@ -1310,8 +1310,8 @@ app.conf.beat_schedule = {
     },
     # ───────────────────────────────────────────────────────────────────────
     # Областные тематические волны (community-mode oblast, 2026-05).
-    # kirov_obl перешёл с каскада (дайджест-дайджестов из районов) на свой пул
-    # communities по темам — публикует тематические дайджесты как район.
+    # kirov_obl перешёл с каскада (сводка-сводок из районов) на свой пул
+    # communities по темам — публикует тематические сводки как район.
     # Базовые темы (novost/sport/kultura/admin) область получает на ОБЩИХ волнах
     # postopus-<theme>-* (после снятия хардкод-исключения kirov_obl). Ниже —
     # волны под расширенную областную повестку. strict=True: волна берёт только
@@ -1420,7 +1420,7 @@ app.conf.beat_schedule = {
         "kwargs": {"theme": "priroda", "strict": True},
         "options": {"expires": 3600},
     },
-    # Татарстан (областной каскадный дайджест из главных групп bal/kukmor).
+    # Татарстан (областной каскадная сводка из главных групп bal/kukmor).
     # Детей всего 2 — 2 слота/сутки достаточно (чаще = повторы). minute=45 как
     # у kirov-oblast (после волн novost :40). Публикует при наличии
     # community-токена COMM_239149826 (см. миграцию 016).

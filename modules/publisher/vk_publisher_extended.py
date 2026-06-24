@@ -220,7 +220,7 @@ class VKPublisher:
             self._community_clients[cid] = cli
         return cli, True
 
-    async def publish_digest(
+    async def publish_bulletin(
         self,
         group_id: int,
         text: str,
@@ -282,7 +282,7 @@ class VKPublisher:
             params["signed"] = 1
 
         # publish_date — отложенный пост (VK «Отложенные записи»). Передаём только
-        # положительный unix-timestamp; 0/None → публикация сразу (дайджесты).
+        # положительный unix-timestamp; 0/None → публикация сразу (сводки).
         is_postponed = bool(publish_date and int(publish_date) > 0)
         if is_postponed:
             params["publish_date"] = int(publish_date)
@@ -809,9 +809,9 @@ class VKPublisher:
     ) -> Dict[str, Any]:
         """Publish an ``AggregatedPost`` produced by NewsAggregator.
 
-        Thin wrapper over ``publish_digest`` that pulls ``digest.aggregated_text``
+        Thin wrapper over ``publish_bulletin`` that pulls ``digest.aggregated_text``
         and emits a couple of useful log lines. Attachments are not extracted —
-        ``publish_digest`` accepts them explicitly if a caller needs media.
+        ``publish_bulletin`` accepts them explicitly if a caller needs media.
         """
         try:
             text = digest.aggregated_text
@@ -826,7 +826,7 @@ class VKPublisher:
             getattr(digest, "total_likes", "?"),
         )
 
-        return await self.publish_digest(group_id=group_id, text=text)
+        return await self.publish_bulletin(group_id=group_id, text=text)
 
     @staticmethod
     def _normalize_group_owner_id(group_id: int) -> int:

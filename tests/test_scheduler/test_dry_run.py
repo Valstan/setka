@@ -1,6 +1,6 @@
 """dry_run contract for parse_and_publish_theme (feat/digest-dry-run).
 
-Гарантия: ``dry_run=True`` прогоняет парсинг → фильтр → сборку дайджеста, но
+Гарантия: ``dry_run=True`` прогоняет парсинг → фильтр → сборку сводки, но
 НЕ публикует (VKPublisher не дёргается), НЕ коммитит в БД и возвращает
 ``would_publish`` с превью. Используется страницей /regions/<code>/diagnostics.
 
@@ -90,7 +90,7 @@ def test_dry_run_builds_preview_without_publish_or_commit():
     splitter_inst = MagicMock()
     splitter_inst.split_posts.return_value = ([], [post])  # no mourning, one regular
     builder_inst = MagicMock()
-    builder_inst.build_digest.return_value = digest_ns
+    builder_inst.build_bulletin.return_value = digest_ns
 
     publisher_cls = MagicMock()
     publisher_cls.create_with_policy = AsyncMock()
@@ -104,18 +104,18 @@ def test_dry_run_builds_preview_without_publish_or_commit():
         ),
         patch("modules.vk_monitor.vk_client.VKClient", return_value=vk_client_inst),
         patch("modules.vk_monitor.advanced_parser.AdvancedVKParser", return_value=parser_inst),
-        patch("modules.publisher.digest_splitter.DigestSplitter", return_value=splitter_inst),
-        patch("modules.publisher.digest_builder.DigestBuilder", return_value=builder_inst),
+        patch("modules.publisher.bulletin_splitter.BulletinSplitter", return_value=splitter_inst),
+        patch("modules.publisher.bulletin_builder.BulletinBuilder", return_value=builder_inst),
         patch(
-            "modules.digest_pipeline_settings.get_effective_pipeline_settings",
+            "modules.bulletin_pipeline_settings.get_effective_pipeline_settings",
             MagicMock(return_value={}),
         ),
         patch(
-            "modules.publisher.postopus_digest_headers.resolve_digest_header",
+            "modules.publisher.postopus_bulletin_headers.resolve_bulletin_header",
             MagicMock(return_value="H"),
         ),
         patch(
-            "modules.publisher.postopus_digest_headers.resolve_digest_hashtags",
+            "modules.publisher.postopus_bulletin_headers.resolve_bulletin_hashtags",
             MagicMock(return_value=("#t", "#l")),
         ),
         patch("modules.publisher.vk_publisher_extended.VKPublisher", publisher_cls),
@@ -138,10 +138,10 @@ def test_dry_run_builds_preview_without_publish_or_commit():
 
 
 def test_cascaded_digest_accepts_dry_run_kwarg():
-    """run_cascaded_digest принимает dry_run (сигнатурный гард для diagnostics)."""
-    from modules.cascaded_digest import run_cascaded_digest
+    """run_cascaded_bulletin принимает dry_run (сигнатурный гард для diagnostics)."""
+    from modules.cascaded_bulletin import run_cascaded_bulletin
 
-    sig = inspect.signature(run_cascaded_digest)
+    sig = inspect.signature(run_cascaded_bulletin)
     assert "dry_run" in sig.parameters
     assert sig.parameters["dry_run"].default is False
 

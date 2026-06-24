@@ -28,11 +28,11 @@ class Region(Base):
     """Регион в иерархии strana → oblast → raion.
 
     Тип задаётся полем ``kind``:
-      * ``raion``  — район (низший уровень). Источники дайджеста — записи в
+      * ``raion``  — район (низший уровень). Источники сводки — записи в
         ``communities`` с ``region_id = region.id`` (текущая логика).
       * ``oblast`` — область. Источники — ``vk_group_id`` подчинённых районов
         (``parent_region_id = region.id``). Каскадная логика в
-        ``modules/cascaded_digest.py``.
+        ``modules/cascaded_bulletin.py``.
       * ``strana`` — страна. Источники — ``vk_group_id`` подчинённых областей.
 
     ``parent_region_id`` — FK self-ref на родителя в иерархии (NULL для strana
@@ -163,7 +163,7 @@ class RegionMemberSnapshot(Base):
     fields=members_count по `regions.vk_group_id` активных регионов). Иммутабелен;
     один снимок на (region_id, день) — повторный прогон за день перезаписывает
     count (ON CONFLICT). Основа графика роста подписчиков (owner-request
-    2026-06-05). Учитываем **только** главные группы (куда выпускаем дайджесты),
+    2026-06-05). Учитываем **только** главные группы (куда выпускаем сводки),
     а не весь пул источников — чтобы не жечь VK API (миграция 033 заменила
     per-community `community_member_snapshots`).
     """
@@ -711,7 +711,7 @@ class AdScheduledPost(Base):
 
     Оператор формирует график постов по датам в `/ad-cabinet` и отправляет их в
     VK-отложку целевого сообщества: VK сам публикует в назначенное время.
-    Публикация — через ``VKPublisher.publish_digest(publish_date=…)`` (seam B1-a).
+    Публикация — через ``VKPublisher.publish_bulletin(publish_date=…)`` (seam B1-a).
 
     ВАЖНО про время: ``publish_date`` хранится как МСК wall-clock (то, что ввёл
     оператор). В unix для VK конвертит API-слой (МСК = UTC+3, без DST).

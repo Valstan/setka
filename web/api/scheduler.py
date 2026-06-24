@@ -205,7 +205,7 @@ async def schedule_publication(
     request: ScheduleRequest, db: AsyncSession = Depends(get_db_session)
 ):
     """
-    Запланировать публикацию дайджеста
+    Запланировать публикацию сводки
 
     Args:
         request: Данные для планирования

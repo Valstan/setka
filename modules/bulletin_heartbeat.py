@@ -1,8 +1,8 @@
-"""Redis-heartbeat «последняя успешная публикация дайджеста» + watchdog-алёрт.
+"""Redis-heartbeat «последняя успешная публикация сводки» + watchdog-алёрт.
 
 **Зачем не Prometheus:** gauge ``setka_digest_last_published_timestamp`` на
 проде ненадёжен (multiproc-mmap пуст несмотря на реальные публикации — давняя
-боль вокруг PR #75). Для алёрта «давно нет дайджестов» нужен простой надёжный
+боль вокруг PR #75). Для алёрта «давно нет сводок» нужен простой надёжный
 сигнал: пишем unix-ts в Redis из единой точки
 ``monitoring.metrics.track_digest_published`` (она вызывается на ВСЕХ путях
 публикации — theme-волны и каскад), а beat-watchdog читает и при протухании
@@ -67,7 +67,7 @@ def _redis():
 
 
 def mark_published(topic: str, *, ts: Optional[float] = None) -> None:
-    """Отметить успешную публикацию дайджеста темы (best-effort, не падает).
+    """Отметить успешную публикацию сводки темы (best-effort, не падает).
 
     Вызывается из ``track_digest_published`` при ``result == "success"``.
     """
@@ -139,7 +139,7 @@ def all_heartbeats() -> dict[str, int]:
     return out
 
 
-def maybe_alert_stale_digest(
+def maybe_alert_stale_bulletin(
     *,
     topic: str = "novost",
     max_age_hours: float = DEFAULT_MAX_AGE_HOURS,

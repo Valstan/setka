@@ -165,17 +165,17 @@ class RealWorkflowManager:
                             best_post.community.name if best_post.community else "Unknown",
                         )
 
-                        # Уведомляем о начале создания дайджеста
+                        # Уведомляем о начале создания сводки
                         notify_digest_creation_start(
                             region.name, self.current_topic, len(approved_posts)
                         )
 
-                        # Создаем простой дайджест
+                        # Создаем простая сводка
                         digest_text = f"Основные новости по теме '{self.current_topic}':\n\n"
                         for i, post in enumerate(approved_posts[:3], 1):  # Берем первые 3 поста
                             digest_text += f"{i}. {post.text[:100]}...\n\n"
 
-                        # Уведомляем о завершении создания дайджеста
+                        # Уведомляем о завершении создания сводки
                         digest_time = 0.8  # Примерное время создания
                         notify_digest_creation_complete(
                             region.name, self.current_topic, len(digest_text), digest_time

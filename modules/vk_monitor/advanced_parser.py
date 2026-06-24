@@ -43,7 +43,7 @@ _MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP = 80
 _TEXT_SIMILARITY_THRESHOLD = 0.90
 _SIMHASH_BUCKET_SIZE = 20
 
-# Дайджесты: не брать посты старше 72 часов с момента публикации (оригинала при репосте)
+# Сводки: не брать посты старше 72 часов с момента публикации (оригинала при репосте)
 DIGEST_MAX_POST_AGE_HOURS = 72
 
 
@@ -276,7 +276,7 @@ class AdvancedVKParser:
     ) -> List[Dict[str, Any]]:
         """
         Тот же пайплайн _filter_post, что и при обходе сообществ, но для уже загруженных постов
-        (например областной дайджест из ссылок на источники в районных дайджестах).
+        (например областная сводка из ссылок на источники в районных сводках).
         """
         if work_table_lip is None:
             work_table_lip = []
@@ -408,7 +408,7 @@ class AdvancedVKParser:
             self.stats["posts_filtered_old"] += 1
             return None
 
-        # 3. Lip: уже в дайджестах / уже отобран в этом прогоне (один оригинал = один раз)
+        # 3. Lip: уже в сводках / уже отобран в этом прогоне (один оригинал = один раз)
         lip = lip_of_post(owner_id, post_id)
         if lip in work_table_lip or lip in self._batch_lips:
             self.stats["posts_filtered_duplicate_lip"] += 1
@@ -617,7 +617,7 @@ class AdvancedVKParser:
         """Intra-batch near-dup по множеству слов (порядок-независимо).
 
         Ловит переставленные/переписанные пересказы одной новости в пределах
-        одного дайджеста — класс, который char-SimHash упускает. Гейтится той же
+        одной сводки — класс, который char-SimHash упускает. Гейтится той же
         длины-корзиной, что и SimHash (анти-false-positive)."""
         bucket = self._simhash_bucket_for_len(rafinad_len)
         gate = getattr(self, "_simhash_bucket_gate", 1)

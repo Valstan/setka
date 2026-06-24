@@ -73,7 +73,7 @@ class ProductionWorkflow:
     - VK Monitor: сбор постов
     - Filter Pipeline: фильтрация
     - AI Analyzer: категоризация
-    - Aggregation: создание дайджестов
+    - Aggregation: создание сводок
     """
 
     def __init__(self):
@@ -527,7 +527,7 @@ class ProductionWorkflow:
             # Получить region_id для публикации
             region_id = region_stats.get("region_id")
 
-            # Добавить публикацию дайджеста
+            # Добавить публикацию сводки
             posts_published = 0
             publish_error = None
 
@@ -554,7 +554,7 @@ class ProductionWorkflow:
                         # Уведомляем о начале публикации
                         notify_publish_started(region_code, len(posts))
 
-                        # Создать дайджест
+                        # Создать сводка
                         aggregator = NewsAggregator(max_posts_per_digest=5)
 
                         # Получить информацию о регионе
@@ -617,7 +617,7 @@ class ProductionWorkflow:
                                                 error_msg,
                                                 {
                                                     "region_code": region_code,
-                                                    "task_name": "publish_digest",
+                                                    "task_name": "publish_bulletin",
                                                 },
                                             )
                                     except Exception as e:

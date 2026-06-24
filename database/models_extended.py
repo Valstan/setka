@@ -105,7 +105,7 @@ class RegionConfig(Base):
     """Расширенная конфигурация региона (из MongoDB config collection)
 
     Хранит все настройки которые были в MongoDB:
-    - zagolovki (заголовки дайджестов по темам)
+    - zagolovki (заголовки сводок по темам)
     - heshteg (хештеги по темам)
     - heshteg_local (локальные хештеги)
     - black_id (заблокированные источники)
@@ -146,7 +146,7 @@ class RegionConfig(Base):
         JSON, nullable=True
     )  # {"hard": 86400, "medium": 172800, "light": 604800}
 
-    # Пайплайн дайджеста: defaults + by_topic (см. modules/digest_pipeline_settings.py)
+    # Пайплайн сводки: defaults + by_topic (см. modules/digest_pipeline_settings.py)
     digest_filters = Column(JSON, nullable=True)
 
     # Post limits
@@ -315,9 +315,9 @@ class ScheduledPublication(Base):
 
 
 class DigestCurationRun(Base):
-    """Shadow-журнал LLM-курации дайджестов (PoC, миграция 035).
+    """Shadow-журнал LLM-курации сводок (PoC, миграция 035).
 
-    Один прогон = одна опубликованная порция дайджеста. После публикации
+    Один прогон = одна опубликованная порция сводки. После публикации
     (текущим детерминированным путём) вошедшие посты паркуются сюда; /curate
     проставляет per-post вердикт. Публикация не зависит от этой строки —
     recorder изолирован (отдельная сессия, best-effort). См.
@@ -332,7 +332,7 @@ class DigestCurationRun(Base):
     status = Column(String(20), nullable=False, default="pending", index=True)  # pending|reviewed
     shadow = Column(Boolean, nullable=False, default=True)
 
-    # [{lip, owner_id, post_id, text, has_media, url}] — посты дайджеста
+    # [{lip, owner_id, post_id, text, has_media, url}] — посты сводки
     candidates = Column(JSON, nullable=False)
     total_count = Column(Integer, nullable=False)
 

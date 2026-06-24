@@ -343,13 +343,13 @@ async def parsing_stats_page(request: Request):
 
 @app.get("/publications")
 async def publications_page(request: Request):
-    """История публикаций дайджестов по регионам/темам (со ссылками на VK)."""
+    """История публикаций сводок по регионам/темам (со ссылками на VK)."""
     return templates.TemplateResponse("publications.html", {"request": request})
 
 
 @app.get("/filtration")
 async def filtration_page(request: Request):
-    """Настройки фильтрации дайджестов и правил отбора постов"""
+    """Настройки фильтрации сводок и правил отбора постов"""
     return templates.TemplateResponse("filtration.html", {"request": request})
 
 

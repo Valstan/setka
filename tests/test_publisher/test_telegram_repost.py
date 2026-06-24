@@ -7,7 +7,7 @@ import modules.publisher.telegram_repost as tr
 from modules.publisher.telegram_repost import (
     ResolvedMedia,
     clean_text_for_telegram,
-    mirror_digest_to_telegram,
+    mirror_bulletin_to_telegram,
     repost_to_telegram,
     resolve_media,
 )
@@ -215,7 +215,7 @@ async def test_repost_docs_sent_separately(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# mirror_digest_to_telegram (integration)
+# mirror_bulletin_to_telegram (integration)
 # --------------------------------------------------------------------------- #
 async def test_mirror_digest_builds_clean_message(monkeypatch):
     monkeypatch.setattr(runtime, "TELEGRAM_TOKENS", {"AFONYA": "tok"})
@@ -231,7 +231,7 @@ async def test_mirror_digest_builds_clean_message(monkeypatch):
         {"text": "Вторая новость", "attachments": []},
     ]
     client = _FakeVKAsync({})
-    res = await mirror_digest_to_telegram(
+    res = await mirror_bulletin_to_telegram(
         "AFONYA",
         "@malmyzh_info",
         "Новости Малмыжа:",

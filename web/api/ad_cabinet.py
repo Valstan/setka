@@ -750,7 +750,7 @@ async def create_scheduled(
         )
         db.add(row)
         try:
-            res = await publisher.publish_digest(
+            res = await publisher.publish_bulletin(
                 group_id=gid,
                 text=payload.text or "",
                 attachments=attachment_list or None,
@@ -963,7 +963,7 @@ async def publish_request_now(
     # FOR UPDATE — атомарная защита от двойного клика: конкурентный второй запрос
     # блокируется на строке до коммита первого, затем видит status='published' и
     # выходит «already» (иначе оба прочли бы 'new' до коммита и запостили дважды
-    # в живую стену — async-интерливинг на await publish_digest).
+    # в живую стену — async-интерливинг на await publish_bulletin).
     ar = (
         await db.execute(select(AdRequest).where(AdRequest.id == request_id).with_for_update())
     ).scalar_one_or_none()
@@ -983,7 +983,7 @@ async def publish_request_now(
     attachments = _upload_request_photos(gid, user_token, photo_urls)
 
     publisher = await VKPublisher.create_with_policy(db, target_group_id=gid)
-    res = await publisher.publish_digest(group_id=gid, text=text, attachments=attachments)
+    res = await publisher.publish_bulletin(group_id=gid, text=text, attachments=attachments)
     if not res.get("success"):
         raise HTTPException(status_code=502, detail=f"Публикация не удалась: {res.get('error')}")
 

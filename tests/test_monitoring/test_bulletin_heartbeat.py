@@ -1,4 +1,4 @@
-"""Тесты Redis-heartbeat дайджестов + watchdog-алёрт (modules/digest_heartbeat).
+"""Тесты Redis-heartbeat сводок + watchdog-алёрт (modules/digest_heartbeat).
 
 Redis и Telegram замоканы: ``_redis_client`` подменяется in-memory фейком,
 ``requests.post`` — заглушкой. Сети нет.
@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from modules import digest_heartbeat as dh
+from modules import bulletin_heartbeat as dh
 
 
 class _FakeRedis:
@@ -92,7 +92,7 @@ def test_all_heartbeats_excludes_cooldown_keys(monkeypatch):
 
     dh.mark_published("novost", ts=0.0)
     # Простой → выставит cooldown-ключ setka:digest_last_published:stale_alert_cooldown:novost
-    dh.maybe_alert_stale_digest(
+    dh.maybe_alert_stale_bulletin(
         topic="novost", max_age_hours=6, telegram_token="t", chat_id="c", now=10 * 3600
     )
     hb = dh.all_heartbeats()
@@ -144,20 +144,20 @@ def test_redis_recreated_on_pid_change(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# maybe_alert_stale_digest
+# maybe_alert_stale_bulletin
 # --------------------------------------------------------------------------- #
 
 
 def test_none_heartbeat_does_not_alert():
     assert (
-        dh.maybe_alert_stale_digest(topic="novost", telegram_token="t", chat_id="c", now=10_000.0)
+        dh.maybe_alert_stale_bulletin(topic="novost", telegram_token="t", chat_id="c", now=10_000.0)
         == "unknown:no-heartbeat"
     )
 
 
 def test_fresh_heartbeat_not_alerted():
     dh.mark_published("novost", ts=10_000.0)
-    status = dh.maybe_alert_stale_digest(
+    status = dh.maybe_alert_stale_bulletin(
         topic="novost",
         max_age_hours=6,
         telegram_token="t",
@@ -169,7 +169,7 @@ def test_fresh_heartbeat_not_alerted():
 
 def test_stale_without_telegram_config_skipped():
     dh.mark_published("novost", ts=0.0)
-    status = dh.maybe_alert_stale_digest(
+    status = dh.maybe_alert_stale_bulletin(
         topic="novost", max_age_hours=6, telegram_token=None, chat_id=None, now=10 * 3600
     )
     assert status == "skipped:no-telegram-config"
@@ -192,7 +192,7 @@ def test_stale_sends_alert_and_sets_cooldown(monkeypatch):
     monkeypatch.setattr(requests, "post", _fake_post)
 
     dh.mark_published("novost", ts=0.0)
-    status = dh.maybe_alert_stale_digest(
+    status = dh.maybe_alert_stale_bulletin(
         topic="novost",
         max_age_hours=6,
         telegram_token="bottoken",
@@ -222,10 +222,10 @@ def test_cooldown_suppresses_second_alert(monkeypatch):
     monkeypatch.setattr(requests, "post", _fake_post)
 
     dh.mark_published("novost", ts=0.0)
-    first = dh.maybe_alert_stale_digest(
+    first = dh.maybe_alert_stale_bulletin(
         topic="novost", max_age_hours=6, telegram_token="t", chat_id="c", now=10 * 3600
     )
-    second = dh.maybe_alert_stale_digest(
+    second = dh.maybe_alert_stale_bulletin(
         topic="novost", max_age_hours=6, telegram_token="t", chat_id="c", now=10 * 3600
     )
     assert first == "alert-sent"

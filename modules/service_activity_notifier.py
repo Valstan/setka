@@ -226,7 +226,7 @@ class ServiceActivityNotifier:
             del self.active_operations[operation_id]
 
     def notify_digest_creation_start(self, region_name: str, topic: str, posts_count: int):
-        """Уведомление о начале создания дайджеста"""
+        """Уведомление о начале создания сводки"""
         message = f"📝 Создаю сводку по теме '{topic}' для {region_name} ({posts_count} постов)"
 
         self._add_notification(
@@ -249,7 +249,7 @@ class ServiceActivityNotifier:
     def notify_digest_creation_complete(
         self, region_name: str, topic: str, digest_length: int, processing_time: float = 0
     ):
-        """Уведомление о завершении создания дайджеста"""
+        """Уведомление о завершении создания сводки"""
         message = f"✅ Сводка по теме '{topic}' для {region_name} создана"
         message += f" ({digest_length} символов"
         if processing_time > 0:
@@ -273,7 +273,7 @@ class ServiceActivityNotifier:
             del self.active_operations[operation_id]
 
     def notify_digest_publishing_start(self, region_name: str, topic: str, channel: str = "VK"):
-        """Уведомление о начале публикации дайджеста"""
+        """Уведомление о начале публикации сводки"""
         message = f"📤 Публикую сводку от {topic} {region_name} в {channel}"
 
         self._add_notification(
@@ -301,7 +301,7 @@ class ServiceActivityNotifier:
         post_url: str = "",
         processing_time: float = 0,
     ):
-        """Уведомление о завершении публикации дайджеста"""
+        """Уведомление о завершении публикации сводки"""
         message = f"✅ Сводка от {topic} {region_name} опубликована в {channel}"
         if post_url:
             message += " [ссылка]"
@@ -540,21 +540,21 @@ def notify_post_sorting_complete(
 
 
 def notify_digest_creation_start(region_name: str, topic: str, posts_count: int):
-    """Начать создание дайджеста"""
+    """Начать создание сводки"""
     service_activity_notifier.notify_digest_creation_start(region_name, topic, posts_count)
 
 
 def notify_digest_creation_complete(
     region_name: str, topic: str, digest_length: int, processing_time: float = 0
 ):
-    """Завершить создание дайджеста"""
+    """Завершить создание сводки"""
     service_activity_notifier.notify_digest_creation_complete(
         region_name, topic, digest_length, processing_time
     )
 
 
 def notify_digest_publishing_start(region_name: str, topic: str, channel: str = "VK"):
-    """Начать публикацию дайджеста"""
+    """Начать публикацию сводки"""
     service_activity_notifier.notify_digest_publishing_start(region_name, topic, channel)
 
 
@@ -565,7 +565,7 @@ def notify_digest_publishing_complete(
     post_url: str = "",
     processing_time: float = 0,
 ):
-    """Завершить публикацию дайджеста"""
+    """Завершить публикацию сводки"""
     service_activity_notifier.notify_digest_publishing_complete(
         region_name, topic, channel, post_url, processing_time
     )

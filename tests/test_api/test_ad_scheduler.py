@@ -30,7 +30,7 @@ def _scalars_all(objs):
 
 def _fake_publisher(publish_result=None, **overrides):
     pub = MagicMock()
-    pub.publish_digest = AsyncMock(
+    pub.publish_bulletin = AsyncMock(
         return_value=publish_result or {"success": True, "post_id": 999, "postponed": True}
     )
     pub.set_post_comments = AsyncMock(return_value={"success": True})
@@ -96,8 +96,8 @@ async def test_create_scheduled_multi_date(monkeypatch):
     assert len(out["created"]) == 2
     assert all(r["status"] == "scheduled" for r in out["created"])
     # На каждую дату — отдельный wall.post с publish_date.
-    assert pub.publish_digest.await_count == 2
-    for call in pub.publish_digest.await_args_list:
+    assert pub.publish_bulletin.await_count == 2
+    for call in pub.publish_bulletin.await_args_list:
         assert call.kwargs["publish_date"] > 0
     db.commit.assert_awaited()
 
@@ -113,7 +113,7 @@ async def test_create_rejects_past_date(monkeypatch):
             db=db,
         )
     assert exc.value.status_code == 400
-    pub.publish_digest.assert_not_awaited()
+    pub.publish_bulletin.assert_not_awaited()
 
 
 async def test_create_rejects_empty_post(monkeypatch):
@@ -144,7 +144,7 @@ async def test_create_requires_dates(monkeypatch):
 async def test_create_partial_failure(monkeypatch):
     """Одна дата падает на публикации → её строка failed, остальные scheduled."""
     pub = _fake_publisher()
-    pub.publish_digest = AsyncMock(
+    pub.publish_bulletin = AsyncMock(
         side_effect=[
             {"success": True, "post_id": 1},
             {"success": False, "error": "VK error 214 (too many postponed)"},
@@ -225,7 +225,7 @@ async def test_remove_original_deletes_suggested_and_publishes(monkeypatch):
 async def test_remove_original_skipped_when_nothing_scheduled(monkeypatch):
     """Полный провал планирования → оригинал НЕ трогаем (не теряем заявку)."""
     pub = _fake_publisher()
-    pub.publish_digest = AsyncMock(return_value={"success": False, "error": "VK 214"})
+    pub.publish_bulletin = AsyncMock(return_value={"success": False, "error": "VK 214"})
     _patch_publish(monkeypatch, pub)
     db = _create_db()
     db.get = AsyncMock()

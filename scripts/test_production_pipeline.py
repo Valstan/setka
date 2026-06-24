@@ -25,12 +25,12 @@ async def main():
     from database.connection import AsyncSessionLocal
     from database.models import Community, Region
     from database.models_extended import RegionConfig, WorkTable
-    from modules.publisher.digest_builder import DigestBuilder
-    from modules.publisher.digest_splitter import DigestSplitter
-    from modules.publisher.postopus_digest_headers import (
-        resolve_digest_hashtags,
-        resolve_digest_header,
-        resolve_mourning_digest_format,
+    from modules.publisher.bulletin_builder import BulletinBuilder
+    from modules.publisher.bulletin_splitter import BulletinSplitter
+    from modules.publisher.postopus_bulletin_headers import (
+        resolve_bulletin_hashtags,
+        resolve_bulletin_header,
+        resolve_mourning_bulletin_format,
     )
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_monitor.advanced_parser import AdvancedVKParser
@@ -127,13 +127,13 @@ async def main():
             return
 
         # 5. Split by sentiment
-        splitter = DigestSplitter()
+        splitter = BulletinSplitter()
         mourning_posts, regular_posts = splitter.split_posts(posts)
         print(f"📊 Split: {len(mourning_posts)} mourning, {len(regular_posts)} regular")
 
         # 6. Build and publish digests
-        header = resolve_digest_header(region_config, theme, region_obj)
-        theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
+        header = resolve_bulletin_header(region_config, theme, region_obj)
+        theme_tags, local_hashtag = resolve_bulletin_hashtags(region_config, theme)
 
         comm_meta = await session.execute(
             select(Community.vk_id, Community.name).where(Community.region_id == region_obj.id)
@@ -144,18 +144,18 @@ async def main():
 
         # Regular digest
         if regular_posts:
-            builder = DigestBuilder(
+            builder = BulletinBuilder(
                 header=header,
                 hashtags=theme_tags,
                 local_hashtag=local_hashtag,
                 max_text_length=region_config.text_post_maxsize_simbols or 4096,
                 repost_mode=region_config.setka_regim_repost,
             )
-            digest = builder.build_digest(regular_posts, group_names=group_names)
+            digest = builder.build_bulletin(regular_posts, group_names=group_names)
             print(f"\n📝 Regular digest: {digest.post_count} posts, {digest.total_length} chars")
 
             vk_publisher = VKPublisher(test_polygon_mode=test_mode)
-            publish_result = await vk_publisher.publish_digest(
+            publish_result = await vk_publisher.publish_bulletin(
                 group_id=region_obj.vk_group_id,
                 text=digest.text,
                 attachments=digest.attachments_list,
@@ -166,22 +166,24 @@ async def main():
         # Mourning digest
         if mourning_posts:
             mourning_header, mourning_tags, mourning_local_hashtag = (
-                resolve_mourning_digest_format()
+                resolve_mourning_bulletin_format()
             )
-            mourning_builder = DigestBuilder(
+            mourning_builder = BulletinBuilder(
                 header=mourning_header,
                 hashtags=mourning_tags,
                 local_hashtag=mourning_local_hashtag,
                 max_text_length=region_config.text_post_maxsize_simbols or 4096,
             )
-            mourning_digest = mourning_builder.build_digest(mourning_posts, group_names=group_names)
+            mourning_digest = mourning_builder.build_bulletin(
+                mourning_posts, group_names=group_names
+            )
             print(
                 f"\nMourning digest: {mourning_digest.post_count} posts, "
                 f"{mourning_digest.total_length} chars"
             )
 
             vk_pub_m = VKPublisher(test_polygon_mode=test_mode)
-            mourning_pub = await vk_pub_m.publish_digest(
+            mourning_pub = await vk_pub_m.publish_bulletin(
                 group_id=region_obj.vk_group_id,
                 text=mourning_digest.text,
                 attachments=mourning_digest.attachments_list,

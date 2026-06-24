@@ -32,7 +32,7 @@ _BOT_USERNAME_TTL = 24 * 3600
 
 
 def _redis():
-    from modules.digest_heartbeat import _redis as _r
+    from modules.bulletin_heartbeat import _redis as _r
 
     return _r()
 

@@ -59,7 +59,7 @@ def _now_msk() -> datetime:
 
 
 def _redis():
-    from modules.digest_heartbeat import _redis as _r
+    from modules.bulletin_heartbeat import _redis as _r
 
     return _r()
 
@@ -304,7 +304,9 @@ async def _default_publisher(session) -> Callable[[int, str, Optional[List[str]]
     publisher = await VKPublisher.create_with_policy(session, target_group_id=None)
 
     async def _pub(group_id: int, text: str, attachments: Optional[List[str]]):
-        return await publisher.publish_digest(group_id=group_id, text=text, attachments=attachments)
+        return await publisher.publish_bulletin(
+            group_id=group_id, text=text, attachments=attachments
+        )
 
     return _pub
 
