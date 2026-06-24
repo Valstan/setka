@@ -59,7 +59,7 @@ class DigestBuilder:
     MAX_POSTS_PER_DIGEST = 3  # Maximum number of posts in a single digest
 
     # Default header
-    DEFAULT_HEADER = "📰 Дайджест новостей"
+    DEFAULT_HEADER = "📰 Сводка новостей"
 
     # Post separator emoji (from old_postopus style)
     POST_MARKER = "✍ "
