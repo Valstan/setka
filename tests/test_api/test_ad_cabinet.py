@@ -480,6 +480,26 @@ async def test_list_requests_route_filter():
     assert out["requests"][0]["route"] == "ad_cabinet"
 
 
+async def test_list_requests_orders_by_score_desc():
+    """Триаж: ORDER BY score desc, затем detected_at desc (brain GO 2026-06-23).
+
+    БД мокается, поэтому проверяем САМ построенный statement: компилируем SQL и
+    убеждаемся, что score сортируется первым и по убыванию (actionable наверх),
+    detected_at — вторичный ключ (свежие среди равного score).
+    """
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalars_all([]))
+    await api.list_requests(db=db)
+    stmt = db.execute.call_args.args[0]
+    sql = str(stmt.compile(compile_kwargs={"literal_binds": False})).lower()
+    order_clause = sql.split("order by", 1)[1]
+    assert "ad_requests.score desc" in order_clause
+    # score стоит раньше detected_at в ключе сортировки.
+    assert order_clause.index("ad_requests.score desc") < order_clause.index(
+        "ad_requests.detected_at desc"
+    )
+
+
 # ------------------------------------------------ route / handling (Этап 1)
 
 

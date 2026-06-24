@@ -167,7 +167,12 @@ async def list_requests(
     limit: int = 200,
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Список заявок с серверной фильтрацией, свежие сверху.
+    """Список заявок с серверной фильтрацией, **по убыванию score** (триаж).
+
+    Сортировка ``score desc, detected_at desc`` поднимает actionable-заявки
+    (явные коммерческие сигналы) наверх, а нулевой/низкий шум опускает вниз —
+    оператор видит «вот эти стоит обработать» без ручного перебора плоского
+    списка (рычаг триажа, brain GO 2026-06-23).
 
     ``origin`` — источник заявки (``suggested`` / ``inbound_dm``); без него —
     все источники. ``route`` — где «живёт» сообщение (``ad_cabinet`` /
@@ -189,7 +194,7 @@ async def list_requests(
         stmt = stmt.where(AdRequest.detected_at >= df)
     if dt:
         stmt = stmt.where(AdRequest.detected_at <= dt)
-    stmt = stmt.order_by(AdRequest.detected_at.desc()).limit(limit)
+    stmt = stmt.order_by(AdRequest.score.desc(), AdRequest.detected_at.desc()).limit(limit)
     rows = (await db.execute(stmt)).scalars().all()
     return {"requests": [r.to_dict() for r in rows]}
 
