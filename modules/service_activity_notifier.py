@@ -227,7 +227,7 @@ class ServiceActivityNotifier:
 
     def notify_digest_creation_start(self, region_name: str, topic: str, posts_count: int):
         """Уведомление о начале создания дайджеста"""
-        message = f"📝 Создаю дайджест по теме '{topic}' для {region_name} ({posts_count} постов)"
+        message = f"📝 Создаю сводку по теме '{topic}' для {region_name} ({posts_count} постов)"
 
         self._add_notification(
             ServiceActivityType.DIGEST_CREATION_START,
@@ -250,7 +250,7 @@ class ServiceActivityNotifier:
         self, region_name: str, topic: str, digest_length: int, processing_time: float = 0
     ):
         """Уведомление о завершении создания дайджеста"""
-        message = f"✅ Дайджест по теме '{topic}' для {region_name} создан"
+        message = f"✅ Сводка по теме '{topic}' для {region_name} создана"
         message += f" ({digest_length} символов"
         if processing_time > 0:
             message += f", время: {processing_time:.1f}с"
@@ -274,7 +274,7 @@ class ServiceActivityNotifier:
 
     def notify_digest_publishing_start(self, region_name: str, topic: str, channel: str = "VK"):
         """Уведомление о начале публикации дайджеста"""
-        message = f"📤 Публикую дайджест от {topic} {region_name} в {channel}"
+        message = f"📤 Публикую сводку от {topic} {region_name} в {channel}"
 
         self._add_notification(
             ServiceActivityType.DIGEST_PUBLISHING_START,
@@ -302,7 +302,7 @@ class ServiceActivityNotifier:
         processing_time: float = 0,
     ):
         """Уведомление о завершении публикации дайджеста"""
-        message = f"✅ Дайджест от {topic} {region_name} опубликован в {channel}"
+        message = f"✅ Сводка от {topic} {region_name} опубликована в {channel}"
         if post_url:
             message += " [ссылка]"
         if processing_time > 0:

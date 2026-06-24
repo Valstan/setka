@@ -370,7 +370,7 @@ def notify_publish_started(region: str, posts_count: int):
     module_activity_notifier.notify_activity(
         module_name="publisher",
         activity_type=ModuleActivityType.PUBLISH_STARTED,
-        message=f"Начата публикация дайджеста из {posts_count} постов",
+        message=f"Начата публикация сводки из {posts_count} постов",
         details={"posts_count": posts_count},
         region=region,
     )

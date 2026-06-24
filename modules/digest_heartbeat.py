@@ -181,7 +181,7 @@ def maybe_alert_stale_digest(
 
     hours = age / 3600.0
     parts = [
-        "⚠️ <b>SETKA: давно нет дайджестов</b>\n",
+        "⚠️ <b>SETKA: давно нет сводок</b>\n",
         f"Тема <b>{topic}</b> не публиковалась <b>{hours:.1f} ч</b> " f"(порог {max_age_hours} ч).",
         "\nВероятно, упал beat/worker или все публикации падают. Проверь: "
         "<code>systemctl status setka-celery-beat setka-celery-worker</code>.",

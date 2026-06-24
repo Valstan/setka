@@ -200,7 +200,7 @@
             <div class="modal-header">
                 <h5 class="modal-title">
                     <i class="bi bi-layout-text-window-reverse"></i>
-                    Внешний вид дайджестов: <span id="digestTemplateRegionName"></span>
+                    Внешний вид сводок: <span id="digestTemplateRegionName"></span>
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
@@ -322,10 +322,10 @@ async function loadRegions() {
 function renderKindBadge(region) {
     const k = region.kind || 'raion';
     if (k === 'strana') {
-        return '<span class="badge bg-primary" title="Регион типа «страна» — собирает дайджест с главных сообществ областей">🌍 страна</span>';
+        return '<span class="badge bg-primary" title="Регион типа «страна» — собирает сводку с главных сообществ областей">🌍 страна</span>';
     }
     if (k === 'oblast') {
-        return '<span class="badge" style="background-color:#6f42c1;color:#fff;" title="Регион типа «область» — собирает каскадный дайджест с главных сообществ районов">🏛 область</span>';
+        return '<span class="badge" style="background-color:#6f42c1;color:#fff;" title="Регион типа «область» — собирает каскадную сводку с главных сообществ районов">🏛 область</span>';
     }
     return '<span class="badge bg-light text-dark" title="Регион типа «район» — обычный pipeline">🏘 район</span>';
 }
@@ -429,7 +429,7 @@ function renderRegionCard(region) {
                                     <i class="bi bi-pencil"></i> Редактировать
                                 </a></li>
                                 <li><a class="dropdown-item" href="#" onclick="openDigestTemplateEditor('${region.code}', '${region.name}')">
-                                    <i class="bi bi-layout-text-window-reverse"></i> Внешний вид дайджестов
+                                    <i class="bi bi-layout-text-window-reverse"></i> Внешний вид сводок
                                 </a></li>
                                 <li><a class="dropdown-item" href="/regions/${region.code}/diagnostics">
                                     <i class="bi bi-clipboard-pulse"></i> Диагностика (без публикации)
@@ -773,7 +773,7 @@ async function saveDigestTemplateAll() {
             body: JSON.stringify(payload)
         });
         digestTemplateData = saved;
-        showToast('Настройки дайджестов сохранены', 'success');
+        showToast('Настройки сводок сохранены', 'success');
 
         // Close modal for clear feedback
         const modalEl = document.getElementById('digestTemplateModal');
