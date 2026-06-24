@@ -18,6 +18,16 @@ const ORIGIN_BADGE = {
     inbound_dm: '<span class="badge bg-primary"><i class="bi bi-chat-dots"></i> личка</span>',
 };
 
+// Бейдж приоритета по score (триаж): инбокс уже отсортирован score desc, бейдж
+// делает сигнал видимым. Порог 3 = SCORE_THRESHOLD классификатора (явные
+// коммерческие признаки → «стоит обработать»); 1–2 — слабый сигнал; 0 — шум.
+function scoreBadge(score) {
+    const s = Number(score) || 0;
+    if (s >= 3) return `<span class="badge bg-success" title="Явные коммерческие признаки — приоритет"><i class="bi bi-fire"></i> score ${s}</span>`;
+    if (s >= 1) return `<span class="badge bg-warning text-dark" title="Слабый сигнал">score ${s}</span>`;
+    return `<span class="badge bg-light text-dark border" title="Без коммерческих признаков (шум)">score ${s}</span>`;
+}
+
 // Кэш заявок текущего фильтра (для «Запланировать» — нужен текст/сообщество).
 let _adRequestsById = {};
 
@@ -252,7 +262,7 @@ function renderCard(ar) {
                 </div>
                 <div class="text-end">
                     ${originBadge} ${STATUS_BADGE[ar.status] || escapeHtml(ar.status)}
-                    <div class="text-muted small mt-1">score: ${ar.score}</div>
+                    <div class="mt-1">${scoreBadge(ar.score)}</div>
                 </div>
             </div>
             <div class="mb-2">${reasons}</div>
