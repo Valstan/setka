@@ -35,8 +35,8 @@ async def main():
     from database.connection import AsyncSessionLocal
     from database.models import Community, Region
     from database.models_extended import WorkTable
-    from modules.publisher.digest_builder import DigestBuilder
-    from modules.publisher.postopus_digest_headers import resolve_mourning_digest_format
+    from modules.publisher.bulletin_builder import BulletinBuilder
+    from modules.publisher.postopus_bulletin_headers import resolve_mourning_bulletin_format
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_monitor.advanced_parser import AdvancedVKParser
     from modules.vk_monitor.vk_client import VKClient
@@ -152,11 +152,11 @@ async def main():
             logger.info("\n⚠️ Нет постов для публикации (возможно все отфильтрованы)")
             return {"success": True, "posts_count": 0, "message": "No posts after filtering"}
 
-        # 8. Разделяем посты по тональности и строим дайджесты
+        # 8. Разделяем посты по тональности и строим сводки
         logger.info("\n[ШАГ 8] Разделение постов по тональности")
-        from modules.publisher.digest_splitter import DigestSplitter
+        from modules.publisher.bulletin_splitter import BulletinSplitter
 
-        splitter = DigestSplitter()
+        splitter = BulletinSplitter()
         split_result = splitter.split_with_stats(posts)
         mourning_posts = split_result["mourning_posts"]
         regular_posts = split_result["regular_posts"]
@@ -168,33 +168,33 @@ async def main():
             for m in split_result["mourning_markers"]:
                 logger.info(f"  LIP={m['lip']}, markers={m['mourning_count']}")
 
-        # 8a. Строим обычный дайджест
-        logger.info("\n[ШАГ 8a] Построение обычного дайджеста")
-        builder = DigestBuilder(
+        # 8a. Строим обычная сводка
+        logger.info("\n[ШАГ 8a] Построение обычной сводки")
+        builder = BulletinBuilder(
             header="📰 Тестовый запуск",
             hashtags=["#тест"],
             local_hashtag="#тест",
             max_text_length=4096,
         )
-        digest_result = builder.build_digest(regular_posts)
+        digest_result = builder.build_bulletin(regular_posts)
         logger.info(f"Обычный digest: {digest_result.post_count} постов")
         logger.info(f"Text length: {len(digest_result.text)}")
         logger.info(f"Attachments: {len(digest_result.attachments_list)}")
 
-        # 8b. Строим mourning дайджест (если есть)
+        # 8b. Строим mourning сводка (если есть)
         mourning_digest_result = None
         if mourning_posts:
-            logger.info("\n[ШАГ 8b] Построение mourning дайджеста")
+            logger.info("\n[ШАГ 8b] Построение mourning сводки")
             mourning_header, mourning_tags, mourning_local_hashtag = (
-                resolve_mourning_digest_format()
+                resolve_mourning_bulletin_format()
             )
-            mourning_builder = DigestBuilder(
+            mourning_builder = BulletinBuilder(
                 header=mourning_header,
                 hashtags=mourning_tags,
                 local_hashtag=mourning_local_hashtag,
                 max_text_length=4096,
             )
-            mourning_digest_result = mourning_builder.build_digest(mourning_posts)
+            mourning_digest_result = mourning_builder.build_bulletin(mourning_posts)
             logger.info(f"Mourning digest: {mourning_digest_result.post_count} постов")
             logger.info(f"Text length: {len(mourning_digest_result.text)}")
 
@@ -204,10 +204,10 @@ async def main():
 
         publish_results = {}
 
-        # 9a. Публикуем обычный дайджест
-        logger.info("[ШАГ 9a] Публикация обычного дайджеста")
+        # 9a. Публикуем обычная сводка
+        logger.info("[ШАГ 9a] Публикация обычной сводки")
         try:
-            publish_result = await vk_publisher.publish_digest(
+            publish_result = await vk_publisher.publish_bulletin(
                 group_id=region.vk_group_id,
                 text=digest_result.text,
                 attachments=digest_result.attachments_list,
@@ -215,14 +215,14 @@ async def main():
             logger.info(f"Результат публикации: {publish_result}")
             publish_results["regular"] = publish_result
         except Exception as e:
-            logger.error(f"❌ Ошибка публикации обычного дайджеста: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка публикации обычной сводки: {e}", exc_info=True)
             publish_results["regular"] = {"success": False, "error": str(e)}
 
-        # 9b. Публикуем mourning дайджест (если есть)
+        # 9b. Публикуем mourning сводка (если есть)
         if mourning_digest_result and mourning_digest_result.post_count > 0:
-            logger.info("[ШАГ 9b] Публикация mourning дайджеста")
+            logger.info("[ШАГ 9b] Публикация mourning сводки")
             try:
-                mourning_publish = await vk_publisher.publish_digest(
+                mourning_publish = await vk_publisher.publish_bulletin(
                     group_id=region.vk_group_id,
                     text=mourning_digest_result.text,
                     attachments=mourning_digest_result.attachments_list,
@@ -230,7 +230,7 @@ async def main():
                 logger.info(f"Результат публикации mourning: {mourning_publish}")
                 publish_results["mourning"] = mourning_publish
             except Exception as e:
-                logger.error(f"❌ Ошибка публикации mourning дайджеста: {e}", exc_info=True)
+                logger.error(f"❌ Ошибка публикации mourning сводки: {e}", exc_info=True)
                 publish_results["mourning"] = {"success": False, "error": str(e)}
 
         # 10. Обновляем work table (все опубликованные LIP)

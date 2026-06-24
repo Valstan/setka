@@ -345,7 +345,7 @@ async def execute_copy_setka_network(
                     message=msg_suffix,
                 )
             else:
-                out = await publisher.publish_digest(
+                out = await publisher.publish_bulletin(
                     group_id=gid,
                     text=copy_text,
                     attachments=copy_attachments,

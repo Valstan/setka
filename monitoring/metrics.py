@@ -145,16 +145,16 @@ posts_processed_total = Counter("setka_posts_processed_total", "Total posts proc
 
 posts_published_total = Counter("setka_posts_published_total", "Total posts published", ["channel"])
 
-# Дайджесты по регионам и темам — для Grafana «состояние дайджестов».
+# Сводки по регионам и темам — для Grafana «состояние сводок».
 digest_published_total = Counter(
     "setka_digest_published_total",
-    "Опубликованные дайджесты per region per topic",
+    "Опубликованные сводки per region per topic",
     ["region", "topic", "result"],  # result: success | empty | failed
 )
 
 digest_last_published_timestamp = Gauge(
     "setka_digest_last_published_timestamp",
-    "Unix timestamp последней успешной публикации дайджеста per region per topic",
+    "Unix timestamp последней успешной публикации сводки per region per topic",
     ["region", "topic"],
     # ``max`` корректен для timestamp: значение монотонно растёт, поэтому свежее
     # время публикации всегда «выигрывает» при агрегации из нескольких процессов
@@ -207,9 +207,9 @@ def track_cache_miss(cache_type: str = "redis"):
 
 
 def publish_result_label(publish_result) -> str:
-    """Свести результат ``VKPublisher.publish_digest()`` к метке для метрик.
+    """Свести результат ``VKPublisher.publish_bulletin()`` к метке для метрик.
 
-    ``publish_digest`` возвращает **dict** ``{"success": bool, ...}``. Call-sites
+    ``publish_bulletin`` возвращает **dict** ``{"success": bool, ...}``. Call-sites
     исторически обращались к ``publish_result.success`` как к атрибуту объекта,
     из-за чего на КАЖДОЙ успешной публикации падал ``AttributeError: 'dict'
     object has no attribute 'success'`` — до вызова ``track_digest_published``.
@@ -225,7 +225,7 @@ def publish_result_label(publish_result) -> str:
 
 
 def track_digest_published(region: str, topic: str, result: str = "success") -> None:
-    """Зафиксировать факт публикации дайджеста.
+    """Зафиксировать факт публикации сводки.
 
     Args:
         region: ``Region.code`` (например, ``"tuzha"``, ``"mi"``).
@@ -236,7 +236,7 @@ def track_digest_published(region: str, topic: str, result: str = "success") -> 
             публиковали успешно»).
     """
     # ── Redis-heartbeat пишем ПЕРВЫМ и НЕЗАВИСИМО от Prometheus ──────────────
-    # Heartbeat — это НАДЁЖНЫЙ сигнал для watchdog'а «давно нет дайджестов»
+    # Heartbeat — это НАДЁЖНЫЙ сигнал для watchdog'а «давно нет сводок»
     # (#018); Prometheus multiproc-gauge на проде исторически ненадёжен (mmap,
     # mode='max', боль #229) и его вызов может бросить исключение. Раньше
     # heartbeat стоял ПОСЛЕ ``gauge.set()`` в общей обёртке, и сбой Prometheus
@@ -246,7 +246,7 @@ def track_digest_published(region: str, topic: str, result: str = "success") -> 
     # (раньше debug → невидимо при LOG_LEVEL=INFO, оттого и не замечали).
     if result == "success":
         try:
-            from modules.digest_heartbeat import mark_published
+            from modules.bulletin_heartbeat import mark_published
 
             mark_published(topic)
         except Exception:  # pragma: no cover - наблюдаемость не должна валить публикацию

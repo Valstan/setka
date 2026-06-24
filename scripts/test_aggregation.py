@@ -55,12 +55,12 @@ async def test_aggregation():
         )
 
         if digest:
-            print("\n✅ Создан дайджест!")
+            print("\n✅ Создан сводка!")
             print("=" * 70)
             print(digest.aggregated_text)
             print("=" * 70)
 
-            print("\n📊 Статистика дайджеста:")
+            print("\n📊 Статистика сводки:")
             print(f"  Постов объединено: {digest.sources_count}")
             print(f"  Якорь: Post ID {digest.anchor_post.id}")
             print(f"  Дополнительных: {len(digest.additional_posts)}")
@@ -90,10 +90,10 @@ async def test_aggregation():
 
         digests = await aggregator.aggregate_by_category(posts, max_digests=3)
 
-        print(f"\n✅ Создано дайджестов: {len(digests)}")
+        print(f"\n✅ Создано сводок: {len(digests)}")
 
         for i, digest in enumerate(digests, 1):
-            print(f"\nДайджест {i}:")
+            print(f"\nСводка {i}:")
             print(f"  Категории: {', '.join(digest.categories)}")
             print(f"  Постов: {digest.sources_count}")
             print(f"  Просмотров: {digest.total_views}")

@@ -269,6 +269,6 @@ def test_radar_bot_beat_registered():
 def test_redis_helper_symbol_exists():
     # Guard: _run_radar_bot лениво импортирует redis-хелпер из digest_heartbeat.
     # Ловит переименование/опечатку (этот импорт не виден import-time CI).
-    from modules.digest_heartbeat import _redis  # noqa: F401
+    from modules.bulletin_heartbeat import _redis  # noqa: F401
 
     assert callable(_redis)

@@ -1,4 +1,4 @@
-"""Тесты для каскадного дайджеста (modules.cascaded_digest)."""
+"""Тесты для каскадной сводки (modules.cascaded_bulletin)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modules.cascaded_digest import (
+from modules.bulletin_pipeline_settings import POSTOPUS_DIGEST_THEMES
+from modules.cascaded_bulletin import (
     DEFAULT_LOOKBACK_HOURS,
     DEFAULT_POSTS_PER_CHILD,
     _defaults_dict,
@@ -17,7 +18,6 @@ from modules.cascaded_digest import (
     _is_religious_text,
     _resolve_child_regions,
 )
-from modules.digest_pipeline_settings import POSTOPUS_DIGEST_THEMES
 
 
 def test_postopus_themes_includes_oblast():
@@ -125,9 +125,9 @@ async def test_resolve_child_regions_override_empty_returns_empty():
 
 
 @pytest.mark.asyncio
-async def test_run_cascaded_digest_rejects_raion():
+async def test_run_cascaded_bulletin_rejects_raion():
     """Для kind=raion функция должна вернуть error — каскад только для oblast/strana."""
-    from modules.cascaded_digest import run_cascaded_digest
+    from modules.cascaded_bulletin import run_cascaded_bulletin
 
     session = AsyncMock()
     mock_result = MagicMock()
@@ -138,14 +138,14 @@ async def test_run_cascaded_digest_rejects_raion():
     )
     session.execute = AsyncMock(return_value=mock_result)
 
-    out = await run_cascaded_digest(session, region_code="mi", theme="oblast")
+    out = await run_cascaded_bulletin(session, region_code="mi", theme="oblast")
     assert out["success"] is False
     assert "oblast/strana only" in out["error"]
 
 
 @pytest.mark.asyncio
-async def test_run_cascaded_digest_rejects_region_without_vk_group_id():
-    from modules.cascaded_digest import run_cascaded_digest
+async def test_run_cascaded_bulletin_rejects_region_without_vk_group_id():
+    from modules.cascaded_bulletin import run_cascaded_bulletin
 
     session = AsyncMock()
     mock_result = MagicMock()
@@ -156,42 +156,44 @@ async def test_run_cascaded_digest_rejects_region_without_vk_group_id():
     )
     session.execute = AsyncMock(return_value=mock_result)
 
-    out = await run_cascaded_digest(session, region_code="kirov_obl", theme="oblast")
+    out = await run_cascaded_bulletin(session, region_code="kirov_obl", theme="oblast")
     assert out["success"] is False
     assert "no vk_group_id" in out["error"]
 
 
 @pytest.mark.asyncio
-async def test_run_cascaded_digest_rejects_missing_region():
-    from modules.cascaded_digest import run_cascaded_digest
+async def test_run_cascaded_bulletin_rejects_missing_region():
+    from modules.cascaded_bulletin import run_cascaded_bulletin
 
     session = AsyncMock()
     mock_result = MagicMock()
     mock_result.scalars.return_value.first.return_value = None
     session.execute = AsyncMock(return_value=mock_result)
 
-    out = await run_cascaded_digest(session, region_code="nonexistent", theme="oblast")
+    out = await run_cascaded_bulletin(session, region_code="nonexistent", theme="oblast")
     assert out["success"] is False
     assert "not found" in out["error"]
 
 
 @pytest.mark.asyncio
 async def test_kirov_oblast_wrapper_delegates_to_cascaded(monkeypatch):
-    """`modules.kirov_oblast_digest.run_kirov_oblast_digest` — тонкий wrapper."""
-    from modules import kirov_oblast_digest as kod
+    """`modules.kirov_oblast_bulletin.run_kirov_oblast_bulletin` — тонкий wrapper."""
+    from modules import kirov_oblast_bulletin as kod
 
     called = {}
 
-    async def fake_run_cascaded_digest(session, *, region_code, theme, test_mode):
+    async def fake_run_cascaded_bulletin(session, *, region_code, theme, test_mode):
         called["region_code"] = region_code
         called["theme"] = theme
         called["test_mode"] = test_mode
         return {"success": True, "delegated": True}
 
-    monkeypatch.setattr("modules.cascaded_digest.run_cascaded_digest", fake_run_cascaded_digest)
+    monkeypatch.setattr(
+        "modules.cascaded_bulletin.run_cascaded_bulletin", fake_run_cascaded_bulletin
+    )
 
     session = AsyncMock()
-    out = await kod.run_kirov_oblast_digest(session, test_mode=True)
+    out = await kod.run_kirov_oblast_bulletin(session, test_mode=True)
     assert out == {"success": True, "delegated": True}
     assert called == {
         "region_code": "kirov_obl",
@@ -202,7 +204,7 @@ async def test_kirov_oblast_wrapper_delegates_to_cascaded(monkeypatch):
 
 def test_kirov_oblast_wrapper_constants():
     """Backward-compat: DEFAULT_REGION_CODE и THEME_OBLAST экспортируются."""
-    from modules import kirov_oblast_digest as kod
+    from modules import kirov_oblast_bulletin as kod
 
     assert kod.DEFAULT_REGION_CODE == "kirov_obl"
     assert kod.THEME_OBLAST == "oblast"
@@ -216,7 +218,7 @@ def test_kirov_oblast_wrapper_constants():
 @pytest.mark.asyncio
 async def test_resolve_neighbor_regions_parses_and_excludes_self():
     """`_resolve_neighbor_regions` парсит Region.neighbors, исключая сам регион."""
-    from modules.cascaded_digest import _resolve_neighbor_regions
+    from modules.cascaded_bulletin import _resolve_neighbor_regions
 
     session = AsyncMock()
     mock_result = MagicMock()
@@ -234,7 +236,7 @@ async def test_resolve_neighbor_regions_parses_and_excludes_self():
 @pytest.mark.asyncio
 async def test_resolve_neighbor_regions_empty_neighbors_no_db():
     """Пустые neighbors → пустой список, в БД не ходим."""
-    from modules.cascaded_digest import _resolve_neighbor_regions
+    from modules.cascaded_bulletin import _resolve_neighbor_regions
 
     session = AsyncMock()
     session.execute = AsyncMock()
@@ -246,7 +248,7 @@ async def test_resolve_neighbor_regions_empty_neighbors_no_db():
 @pytest.mark.asyncio
 async def test_resolve_neighbor_regions_only_self_no_db():
     """neighbors указывает только на сам регион → пусто, в БД не ходим."""
-    from modules.cascaded_digest import _resolve_neighbor_regions
+    from modules.cascaded_bulletin import _resolve_neighbor_regions
 
     session = AsyncMock()
     session.execute = AsyncMock()
@@ -256,9 +258,9 @@ async def test_resolve_neighbor_regions_only_self_no_db():
 
 
 @pytest.mark.asyncio
-async def test_run_neighbor_digest_defaults_to_novosti_hashtag(monkeypatch):
+async def test_run_neighbor_bulletin_defaults_to_novosti_hashtag(monkeypatch):
     """Без config-override гейт = #Новости, theme/source_mode = neighbors."""
-    from modules.cascaded_digest import DEFAULT_NEIGHBOR_HASHTAG, run_neighbor_digest
+    from modules.cascaded_bulletin import DEFAULT_NEIGHBOR_HASHTAG, run_neighbor_bulletin
 
     captured = {}
 
@@ -273,14 +275,14 @@ async def test_run_neighbor_digest_defaults_to_novosti_hashtag(monkeypatch):
         )
         return {"success": True}
 
-    monkeypatch.setattr("modules.cascaded_digest.run_cascaded_digest", fake_cascaded)
+    monkeypatch.setattr("modules.cascaded_bulletin.run_cascaded_bulletin", fake_cascaded)
 
     session = AsyncMock()
     res = MagicMock()
     res.scalars.return_value.first.return_value = SimpleNamespace(code="mi", config=None)
     session.execute = AsyncMock(return_value=res)
 
-    out = await run_neighbor_digest(session, region_code="mi")
+    out = await run_neighbor_bulletin(session, region_code="mi")
     assert out == {"success": True}
     assert captured["theme"] == "neighbors"
     assert captured["source_mode"] == "neighbors"
@@ -288,9 +290,9 @@ async def test_run_neighbor_digest_defaults_to_novosti_hashtag(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_neighbor_digest_respects_config_hashtag(monkeypatch):
+async def test_run_neighbor_bulletin_respects_config_hashtag(monkeypatch):
     """region.config['neighbor_hashtag'] переопределяет гейт."""
-    from modules.cascaded_digest import run_neighbor_digest
+    from modules.cascaded_bulletin import run_neighbor_bulletin
 
     captured = {}
 
@@ -300,7 +302,7 @@ async def test_run_neighbor_digest_respects_config_hashtag(monkeypatch):
         captured["require_hashtag"] = require_hashtag
         return {"success": True}
 
-    monkeypatch.setattr("modules.cascaded_digest.run_cascaded_digest", fake_cascaded)
+    monkeypatch.setattr("modules.cascaded_bulletin.run_cascaded_bulletin", fake_cascaded)
 
     session = AsyncMock()
     res = MagicMock()
@@ -309,5 +311,5 @@ async def test_run_neighbor_digest_respects_config_hashtag(monkeypatch):
     )
     session.execute = AsyncMock(return_value=res)
 
-    await run_neighbor_digest(session, region_code="mi")
+    await run_neighbor_bulletin(session, region_code="mi")
     assert captured["require_hashtag"] == "#Срочно"

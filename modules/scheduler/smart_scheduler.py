@@ -200,10 +200,10 @@ class SmartScheduler:
         scheduled_time: Optional[datetime] = None,
     ) -> Dict:
         """
-        Запланировать публикацию дайджеста
+        Запланировать публикацию сводки
 
         Args:
-            digest_id: ID дайджеста
+            digest_id: ID сводки
             region_code: Код региона
             category: Категория
             scheduled_time: Желаемое время (если None, определится автоматически)

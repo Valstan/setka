@@ -1,4 +1,4 @@
-"""Тесты на ``track_digest_published`` — метрики дайджестов per region/topic."""
+"""Тесты на ``track_digest_published`` — метрики сводок per region/topic."""
 
 import time
 
@@ -14,7 +14,7 @@ from monitoring.metrics import (
 # --------------------------------------------------------------------------- #
 # publish_result_label — регрессия 2026-06-05
 #
-# publish_digest() возвращает dict {"success": bool}, а call-sites обращались
+# publish_bulletin() возвращает dict {"success": bool}, а call-sites обращались
 # к .success как к атрибуту → AttributeError на каждой публикации, heartbeat
 # #018 не писался, watchdog был молча мёртв.
 # --------------------------------------------------------------------------- #

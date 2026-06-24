@@ -1,12 +1,12 @@
 # SETKA — мониторинг
 
-Prometheus + Grafana стек для наблюдения за дайджестами, VK API, кэшем и БД.
+Prometheus + Grafana стек для наблюдения за сводками, VK API, кэшем и БД.
 
 ## Что есть
 
 - **`/metrics`** на setka-web (FastAPI, port 8000) — Prometheus exposition. Доступ только с `127.0.0.1` (Prometheus локально). Override `SETKA_METRICS_PUBLIC=1` если надо открыть наружу.
 - **Prometheus** — TSDB + scrape. Слушает `127.0.0.1:9090`, retention 5 дней (тонкий VPS).
-- **Grafana** — `127.0.0.1:3000`, доступ через SSH-tunnel. Дашборд «SETKA — состояние дайджестов».
+- **Grafana** — `127.0.0.1:3000`, доступ через SSH-tunnel. Дашборд «SETKA — состояние сводок».
 
 ## Установка (один раз на проде)
 
@@ -28,7 +28,7 @@ ssh -L 3000:127.0.0.1:3000 setka
 
 Открыть `http://localhost:3000`. Первый вход — `admin/admin`, сменить пароль.
 
-Дашборд: **SETKA → SETKA — состояние дайджестов**.
+Дашборд: **SETKA → SETKA — состояние сводок**.
 
 ## Что показывает дашборд
 

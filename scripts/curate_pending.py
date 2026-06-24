@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI для shadow LLM-курации дайджестов (PoC, письмо brain 2026-06-07).
+"""CLI для shadow LLM-курации сводок (PoC, письмо brain 2026-06-07).
 
 Мост между БД (`digest_curation_runs`) и slash-командой /curate: команда
 (Claude Code /loop) забирает pending-прогоны, по рубрике релевантности ставит
@@ -209,7 +209,7 @@ async def _stats(region: str | None) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Shadow LLM-курация дайджестов (PoC)")
+    ap = argparse.ArgumentParser(description="Shadow LLM-курация сводок (PoC)")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--list", action="store_true", help="pending-прогоны как JSON")
     g.add_argument("--apply", action="store_true", help="записать вердикты (JSON)")

@@ -4,7 +4,7 @@ import asyncio
 import time
 from types import SimpleNamespace
 
-from modules.publisher.digest_builder import DigestBuilder
+from modules.publisher.bulletin_builder import BulletinBuilder
 from modules.vk_monitor.advanced_parser import AdvancedVKParser
 
 
@@ -90,8 +90,8 @@ def test_region_words_filter_accepts_and_hides_attribution():
     assert filtered is not None
     assert filtered.get("hide_attribution") is True
 
-    builder = DigestBuilder(header="⚽ СПОРТ", hashtags=["#спорт"], local_hashtag="#малмыж")
-    digest = builder.build_digest([filtered], group_names={"123": "МалмыЖ"})
+    builder = BulletinBuilder(header="⚽ СПОРТ", hashtags=["#спорт"], local_hashtag="#малмыж")
+    digest = builder.build_bulletin([filtered], group_names={"123": "МалмыЖ"})
 
     assert "Источник" not in digest.text
     assert "@https://vk.com/wall-123_2" not in digest.text

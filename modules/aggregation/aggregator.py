@@ -1,9 +1,9 @@
 """
-News Aggregator - умная агрегация новостей в дайджесты
+News Aggregator - умная агрегация новостей в сводки
 
 Из Postopus LESSONS_LEARNED:
-"Агрегация новостей в дайджест - одна из лучших находок!"
-"Лучше один качественный дайджест, чем много отдельных постов"
+"Агрегация новостей в сводка - одна из лучших находок!"
+"Лучше одна качественная сводка, чем много отдельных постов"
 
 Результаты Postopus:
 - До агрегации: 5 постов × 200 просмотров = 1000
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AggregatedPost:
     """
-    Агрегированный пост (дайджест из нескольких новостей)
+    Агрегированный пост (сводка из нескольких новостей)
     """
 
     # Основной пост (якорь)
@@ -47,14 +47,14 @@ class AggregatedPost:
 
 class NewsAggregator:
     """
-    Агрегирует несколько новостей в один дайджест
+    Агрегирует несколько новостей в один сводка
 
     Логика из Postopus:
     1. Берется первая новость (самая просматриваемая)
     2. Добавляется ее текст и медиа
     3. Если есть место - добавляются еще новости
     4. Проверка: текст < MAX_SIZE и медиа < 10
-    5. Получается дайджест из 2-5 новостей
+    5. Получается сводка из 2-5 новостей
     """
 
     def __init__(
@@ -68,11 +68,11 @@ class NewsAggregator:
         self, posts: List[Any], title: str = "📰 НОВОСТИ", hashtags: List[str] = None
     ) -> Optional[AggregatedPost]:
         """
-        Агрегировать список постов в дайджест
+        Агрегировать список постов в сводка
 
         Args:
             posts: Список отсортированных постов (по просмотрам!)
-            title: Заголовок дайджеста
+            title: Заголовок сводки
             hashtags: Хештеги для добавления
 
         Returns:
@@ -81,7 +81,7 @@ class NewsAggregator:
         if not posts:
             return None
 
-        # Не агрегируем если ни один пост не содержит текста — иначе получится "пустой" дайджест
+        # Не агрегируем если ни один пост не содержит текста — иначе получится "пустой" сводка
         filtered_posts = [
             p for p in posts if getattr(p, "text", None) and str(getattr(p, "text", "")).strip()
         ]
@@ -134,8 +134,8 @@ class NewsAggregator:
             current_text_length += post_text_length
             current_media_count += post_media_count
 
-        # Формирование текста дайджеста
-        aggregated_text = self._format_digest(anchor, additional, title, hashtags)
+        # Формирование текста сводки
+        aggregated_text = self._format_bulletin(anchor, additional, title, hashtags)
         if not aggregated_text.strip():
             logger.warning("Digest aggregation produced empty text after formatting")
             return None
@@ -188,11 +188,11 @@ class NewsAggregator:
 
         return "\n".join(parts)
 
-    def _format_digest(
+    def _format_bulletin(
         self, anchor: Any, additional: List[Any], title: str, hashtags: List[str] = None
     ) -> str:
         """
-        Форматирование дайджеста из нескольких постов
+        Форматирование сводки из нескольких постов
 
         Формат из Postopus:
         📰 НОВОСТИ
@@ -274,11 +274,11 @@ class NewsAggregator:
         """
         Агрегировать посты по категориям
 
-        Создает отдельный дайджест для каждой категории
+        Создает отдельная сводка для каждой категории
 
         Args:
             posts: Список постов (могут быть разных категорий)
-            max_digests: Максимум дайджестов
+            max_digests: Максимум сводок
 
         Returns:
             Список AggregatedPost
@@ -291,7 +291,7 @@ class NewsAggregator:
                 by_category[category] = []
             by_category[category].append(post)
 
-        # Создаем дайджесты
+        # Создаем сводки
         digests = []
 
         for category, category_posts in sorted(

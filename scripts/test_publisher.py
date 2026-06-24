@@ -2,7 +2,7 @@
 """
 Тест VK Publisher
 
-Проверяет публикацию дайджестов в VK группу.
+Проверяет публикацию сводок в VK группу.
 
 Usage:
     python scripts/test_publisher.py
@@ -35,10 +35,10 @@ async def test_simple_publish():
         # Получаем информацию о группах пользователя
         logger.info("Getting user's groups...")
 
-        # Тестовый дайджест
+        # Тестовая сводка
         test_text = """🔥 Тест публикации SETKA v1.0
 
-📰 Это тестовый дайджест новостей
+📰 Это тестовая сводка новостей
 🕐 Время: {time}
 
 ✅ VK Publisher работает!
@@ -65,7 +65,7 @@ async def test_simple_publish():
 
 
 async def test_digest_creation():
-    """Тест создания дайджеста из реальных постов"""
+    """Тест создания сводки из реальных постов"""
     logger.info("=" * 80)
     logger.info("TEST 2: Digest creation from real posts")
     logger.info("=" * 80)
@@ -116,7 +116,7 @@ async def test_digest_creation():
                 logger.error("❌ No analyzed posts found for region")
                 return False
 
-            # Создаем дайджест
+            # Создаем сводка
             from modules.aggregation.aggregator import NewsAggregator
 
             aggregator = NewsAggregator(max_posts_per_digest=5)
@@ -137,7 +137,7 @@ async def test_digest_creation():
             logger.info(f"   Total likes: {digest.total_likes}")
             logger.info(f"   Text length: {len(digest.aggregated_text)} chars")
 
-            # Показываем превью дайджеста
+            # Показываем превью сводки
             logger.info("\n" + "=" * 80)
             logger.info("DIGEST PREVIEW:")
             logger.info("=" * 80)
@@ -185,7 +185,7 @@ async def test_full_workflow():
 
             logger.info(f"✅ Found {len(posts)} posts for region {region.name}")
 
-            # Создаем дайджест
+            # Создаем сводка
             from modules.aggregation.aggregator import NewsAggregator
 
             aggregator = NewsAggregator(max_posts_per_digest=5)

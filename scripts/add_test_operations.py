@@ -44,7 +44,7 @@ async def add_test_operations():
         {
             "id": "publishing_mi_1",
             "type": "publishing",
-            "description": "Публикация дайджеста региона Малмыж",
+            "description": "Публикация сводки региона Малмыж",
             "region": "mi",
             "status": "completed",
             "start_time": datetime.utcnow() - timedelta(minutes=13),
@@ -74,7 +74,7 @@ async def add_test_operations():
         {
             "id": "publishing_nolinsk_1",
             "type": "publishing",
-            "description": "Публикация дайджеста региона Нолинск",
+            "description": "Публикация сводки региона Нолинск",
             "region": "nolinsk",
             "status": "completed",
             "start_time": datetime.utcnow() - timedelta(minutes=8),
@@ -104,7 +104,7 @@ async def add_test_operations():
         {
             "id": "publishing_arbazh_1",
             "type": "publishing",
-            "description": "Публикация дайджеста региона Арбаж",
+            "description": "Публикация сводки региона Арбаж",
             "region": "arbazh",
             "status": "completed",
             "start_time": datetime.utcnow() - timedelta(minutes=3),

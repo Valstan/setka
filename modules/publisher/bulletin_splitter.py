@@ -1,11 +1,11 @@
 """
-Digest Splitter — разделяет посты по тональности перед построением дайджеста
+Digest Splitter — разделяет посты по тональности перед построением сводки
 
 Разделяет посты на:
 - mourning (траурные новости: смерть, гибель)
 - regular (обычные новости: positive, neutral, negative)
 
-Каждая группа затем передаётся в свой DigestBuilder.
+Каждая группа затем передаётся в свой BulletinBuilder.
 """
 
 import logging
@@ -16,9 +16,9 @@ from modules.ai_analyzer.sentiment_analyzer import SentimentAnalyzer
 logger = logging.getLogger(__name__)
 
 
-class DigestSplitter:
+class BulletinSplitter:
     """
-    Разделяет посты по тональности и создаёт отдельные дайджесты.
+    Разделяет посты по тональности и создаёт отдельные сводки.
 
     Mourning-посты публиются отдельным постом без заголовка (только текст и хештеги),
     не перемешиваются с обычными новостями.

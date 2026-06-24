@@ -1,4 +1,4 @@
-"""Поток «Кругозор»: научпоп-ДАЙДЖЕСТ веером на стены всех регионов.
+"""Поток «Кругозор»: научпоп-СВОДКА веером на стены всех регионов.
 
 Решение владельца 2026-06-14: познавательное/научпоп публикуется в районных пабликах
 для расширения кругозора — «разносол» между местными новостями. Источники — сообщества
@@ -6,13 +6,13 @@
 Антропогенез, Кот Шрёдингера, Наука и жизнь, Batrachospermum, Время-Вперёд и т.д.).
 
 Механика (раз в день, beat):
-- **Дайджест из РАЗНЫХ источников** (решение владельца): за прогон собираем до N (дефолт 4)
+- **Сводка из РАЗНЫХ источников** (решение владельца): за прогон собираем до N (дефолт 4)
   свежих постов из РАЗНЫХ источников в один пост — «сколько влезёт» по бюджету длины. Выбор
   источников — ротацией (round-robin курсор), чтобы со временем все попали в эфир, а не
   только частопостящие (Время-Вперёд/N+1).
 - **Каждый пункт**: «📚 Имя\n<текст или анонс ~500 знаков>…\n🔗 ссылка». Короткий пост —
   целиком; длинный — анонс + ссылка «читать». Лид-фото каждого пункта → грид под текстом.
-- **Веер**: дайджест публикуется нативным постом на стены всех целевых регионов с паузой
+- **Веер**: сводка публикуется нативным постом на стены всех целевых регионов с паузой
   между публикациями (анти-Captcha).
 
 Отдельный модуль (НЕ трогаем фрагильный copy_setka). Гейт `KRUGOZOR_BROADCAST_DISABLED`
@@ -53,7 +53,7 @@ def _is_promo(post: Dict[str, Any]) -> bool:
     список из AdvertisementFilter. НАМЕРЕННО без commercial-scoring (цена/руб/
     купить/скидка): он тюнингован под локальные объявления и ложно бил бы по
     научному тексту. Консервативно: лучше пропустить редкий промо, чем выкинуть
-    научпоп из дайджеста."""
+    научпоп из сводки."""
     if not isinstance(post, dict):
         return False
     if post.get("marked_as_ads"):
@@ -121,7 +121,7 @@ def _clean_text(text: str) -> str:
 
 
 def _make_block(name: str, url: str, text: str, snippet_len: int) -> str:
-    """Один пункт дайджеста: имя источника + текст/анонс + ссылка. Чистая."""
+    """Один пункт сводки: имя источника + текст/анонс + ссылка. Чистая."""
     t = _clean_text(text)
     if len(t) > snippet_len:
         cut = t[:snippet_len].rsplit(" ", 1)[0].rstrip(" ,.;:—-\n")
@@ -130,7 +130,7 @@ def _make_block(name: str, url: str, text: str, snippet_len: int) -> str:
     return f"📚 {name}\n{body}🔗 {url}"
 
 
-def _assemble_digest(
+def _assemble_bulletin(
     items: List[Dict[str, Any]],
     *,
     snippet_len: int,
@@ -138,7 +138,7 @@ def _assemble_digest(
     max_items: int,
     photos_enabled: bool,
 ) -> Tuple[str, List[str], List[int]]:
-    """Собрать дайджест: текст + грид лид-фото + индексы вошедших пунктов. Чистая.
+    """Собрать сводка: текст + грид лид-фото + индексы вошедших пунктов. Чистая.
 
     items: [{name, url, text, photo}] (уже отсортированы как надо). «Сколько влезёт» —
     добираем, пока не упёрлись в max_items или в бюджет длины (первый пункт — всегда)."""
@@ -315,9 +315,9 @@ async def execute_krugozor_broadcast(
     if not candidates:
         return {"success": True, "message": "no fresh posts to digest", "stats": _empty_stats()}
 
-    # Свежайшее — первым пунктом дайджеста.
+    # Свежайшее — первым пунктом сводки.
     candidates.sort(key=lambda c: c["date"], reverse=True)
-    text, attachments, used = _assemble_digest(
+    text, attachments, used = _assemble_bulletin(
         candidates,
         snippet_len=get_krugozor_snippet_len(),
         text_budget=get_krugozor_text_budget(),
@@ -335,12 +335,12 @@ async def execute_krugozor_broadcast(
         if i > 0 and interval > 0:
             await asyncio.sleep(interval)
         try:
-            res = await publisher.publish_digest(
+            res = await publisher.publish_bulletin(
                 group_id=int(reg.vk_group_id), text=text, attachments=attachments
             )
             if res.get("success"):
                 published += 1
-                logger.info("krugozor: дайджест -> %s OK %s", reg.code, res.get("url"))
+                logger.info("krugozor: сводка -> %s OK %s", reg.code, res.get("url"))
             else:
                 errors.append(f"{reg.code}: {res.get('error', 'unknown')}")
         except Exception as e:  # noqa: BLE001 — изолируем сбой одного региона
@@ -355,7 +355,7 @@ async def execute_krugozor_broadcast(
         await session.commit()
 
     logger.info(
-        "krugozor: дайджест из %d пунктов → %d/%d регионов (источники: %s)",
+        "krugozor: сводка из %d пунктов → %d/%d регионов (источники: %s)",
         len(selected),
         published,
         len(regions),

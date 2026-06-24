@@ -1,4 +1,4 @@
-"""Ссылки vk.com/wall в тексте дайджестов."""
+"""Ссылки vk.com/wall в тексте сводок."""
 
 from utils.vk_wall_links import extract_wall_post_refs_from_text
 

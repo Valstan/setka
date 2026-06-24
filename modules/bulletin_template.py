@@ -38,7 +38,7 @@ STANDARD_TOPICS: List[str] = [
 
 
 @dataclass(frozen=True)
-class DigestTemplateSettings:
+class BulletinTemplateSettings:
     title: str
     footer: str
     include_source_links: bool
@@ -47,9 +47,9 @@ class DigestTemplateSettings:
     topic_hashtag_override: str
 
 
-def _default_settings() -> DigestTemplateSettings:
+def _default_settings() -> BulletinTemplateSettings:
     # Global defaults: identical for all regions until user overrides in UI
-    return DigestTemplateSettings(
+    return BulletinTemplateSettings(
         title="📋 Госпаблики сообщают:",
         footer="",
         include_source_links=True,
@@ -84,11 +84,11 @@ def _coerce_str(v: Any, default: str) -> str:
 
 
 def _merge_settings(
-    base: DigestTemplateSettings, override: Dict[str, Any]
-) -> DigestTemplateSettings:
+    base: BulletinTemplateSettings, override: Dict[str, Any]
+) -> BulletinTemplateSettings:
     if not override:
         return base
-    return DigestTemplateSettings(
+    return BulletinTemplateSettings(
         title=_coerce_str(override.get("title"), base.title),
         footer=_coerce_str(override.get("footer"), base.footer),
         include_source_links=_coerce_bool(
@@ -154,7 +154,7 @@ def topic_to_default_hashtag(topic: str) -> str:
     return tag
 
 
-def _get_digest_template_override(region: Region) -> Dict[str, Any]:
+def _get_bulletin_template_override(region: Region) -> Dict[str, Any]:
     cfg = region.config or {}
     if not isinstance(cfg, dict):
         return {}
@@ -162,15 +162,15 @@ def _get_digest_template_override(region: Region) -> Dict[str, Any]:
     return dt if isinstance(dt, dict) else {}
 
 
-def compute_effective_digest_settings(
+def compute_effective_bulletin_settings(
     region: Region,
     topic: str,
-) -> Tuple[DigestTemplateSettings, Dict[str, Any]]:
+) -> Tuple[BulletinTemplateSettings, Dict[str, Any]]:
     """
     Returns (effective_settings, raw_override_digest_template)
     """
     base = _default_settings()
-    raw = _get_digest_template_override(region)
+    raw = _get_bulletin_template_override(region)
     defaults_override = raw.get("defaults") if isinstance(raw.get("defaults"), dict) else {}
     by_topic = raw.get("by_topic") if isinstance(raw.get("by_topic"), dict) else {}
     topic_override = by_topic.get(topic) if isinstance(by_topic.get(topic), dict) else {}
@@ -186,7 +186,7 @@ async def load_region_by_code(region_code: str) -> Optional[Region]:
         return result.scalar_one_or_none()
 
 
-async def get_effective_digest_settings_for_region(
+async def get_effective_bulletin_settings_for_region(
     region_code: str,
     topic: str,
 ) -> Optional[Dict[str, Any]]:
@@ -196,5 +196,5 @@ async def get_effective_digest_settings_for_region(
     region = await load_region_by_code(region_code)
     if not region:
         return None
-    settings, _raw = compute_effective_digest_settings(region, topic)
+    settings, _raw = compute_effective_bulletin_settings(region, topic)
     return asdict(settings)

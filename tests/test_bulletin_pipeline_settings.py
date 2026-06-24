@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from modules.digest_pipeline_settings import get_effective_pipeline_settings
+from modules.bulletin_pipeline_settings import get_effective_pipeline_settings
 
 
 def test_effective_uses_defaults():

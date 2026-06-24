@@ -1,4 +1,4 @@
-"""Каскадный дайджест для регионов типа ``oblast`` и ``strana``.
+"""Каскадная сводка для регионов типа ``oblast`` и ``strana``.
 
 Простыми словами
 ================
@@ -15,7 +15,7 @@
                                        v
                                   публикация в region.vk_group_id
 
-Каждый регион публикует свой дайджест в **своё** главное сообщество
+Каждый регион публикует свою сводку в **своё** главное сообщество
 (``region.vk_group_id``). Для **района** источники — сообщества-партнёры
 (старая логика в ``tasks/parsing_scheduler_tasks.parse_and_publish_theme``).
 
@@ -30,7 +30,7 @@
        рекламу, повторы по hash/lip.
     4. Дополнительно hard-exclude'им рекламу / addons / религиозные посты
        (как в старом kirov_oblast — список маркеров ниже).
-    5. Складываем итоговый дайджест через ``DigestBuilder`` и публикуем
+    5. Складываем итоговая сводка через ``BulletinBuilder`` и публикуем
        в ``region.vk_group_id`` через ``VKPublisher.create_with_policy``.
 
 Параметры в ``RegionConfig.digest_filters.defaults``
@@ -47,8 +47,8 @@
 Backward-compat
 ================
 
-Старый ``modules.kirov_oblast_digest.run_kirov_oblast_digest`` остаётся как
-тонкий wrapper и просто вызывает ``run_cascaded_digest(region_code="kirov_obl")``.
+Старый ``modules.kirov_oblast_bulletin.run_kirov_oblast_bulletin`` остаётся как
+тонкий wrapper и просто вызывает ``run_cascaded_bulletin(region_code="kirov_obl")``.
 """
 
 from __future__ import annotations
@@ -206,7 +206,7 @@ async def _resolve_neighbor_regions(session: AsyncSession, region: Any) -> List[
     return list(r.scalars().all())
 
 
-async def run_cascaded_digest(
+async def run_cascaded_bulletin(
     session: AsyncSession,
     *,
     region_code: str,
@@ -216,7 +216,7 @@ async def run_cascaded_digest(
     require_hashtag: Optional[str] = None,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
-    """Собрать и опубликовать каскадный дайджест для региона.
+    """Собрать и опубликовать каскадная сводка для региона.
 
     Два режима источников (``source_mode``):
 
@@ -236,7 +236,8 @@ async def run_cascaded_digest(
 
     from database.models import Community, Region
     from database.models_extended import RegionConfig, WorkTable
-    from modules.deduplication.digest_history import (
+    from modules.bulletin_pipeline_settings import get_effective_pipeline_settings
+    from modules.deduplication.bulletin_history import (
         GLOBAL_REGION_WORK_THEME,
         TARGET_GROUP_POSTS_SCAN_LIMIT,
         append_unique_limited,
@@ -250,12 +251,11 @@ async def run_cascaded_digest(
         create_text_simhash,
         text_to_rafinad,
     )
-    from modules.digest_pipeline_settings import get_effective_pipeline_settings
-    from modules.publisher.digest_builder import DigestBuilder
-    from modules.publisher.digest_splitter import DigestSplitter
-    from modules.publisher.postopus_digest_headers import (
-        resolve_digest_hashtags,
-        resolve_digest_header,
+    from modules.publisher.bulletin_builder import BulletinBuilder
+    from modules.publisher.bulletin_splitter import BulletinSplitter
+    from modules.publisher.postopus_bulletin_headers import (
+        resolve_bulletin_hashtags,
+        resolve_bulletin_header,
     )
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_monitor.advanced_parser import AdvancedVKParser
@@ -464,7 +464,7 @@ async def run_cascaded_digest(
     parser_stats = parser.get_stats()
 
     # Hard-exclude'им рекламу + addons + религию (требование пользователя
-    # для каскадных дайджестов; для районных дайджестов это идёт через
+    # для каскадных сводок; для районных сводок это идёт через
     # обычные фильтры).
     cascade_news_posts: List[Dict[str, Any]] = []
     for p in posts:
@@ -490,21 +490,21 @@ async def run_cascaded_digest(
         if child.vk_group_id:
             group_names[str(abs(int(child.vk_group_id)))] = child.name
 
-    splitter = DigestSplitter()
+    splitter = BulletinSplitter()
     mourning_posts, regular_posts = splitter.split_posts(cascade_news_posts)
     debug_counters["regular_posts_ready"] = len(regular_posts)
     if mourning_posts:
         debug_counters["filtered_posts_mourning"] = len(mourning_posts)
-    # Для каскадных дайджестов траурные посты исключаем — у области/страны нет
+    # Для каскадных сводок траурные посты исключаем — у области/страны нет
     # своей траурной повестки, а посты из районов в их раздел не подходят.
 
-    header = resolve_digest_header(region_config, theme, region)
-    theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
+    header = resolve_bulletin_header(region_config, theme, region)
+    theme_tags, local_hashtag = resolve_bulletin_hashtags(region_config, theme)
 
     results = []
     selected_by_lip: Dict[str, Dict[str, Any]] = {}
     if regular_posts:
-        builder = DigestBuilder(
+        builder = BulletinBuilder(
             header=header,
             hashtags=theme_tags,
             local_hashtag=local_hashtag,
@@ -512,7 +512,7 @@ async def run_cascaded_digest(
             repost_mode=region_config.setka_regim_repost,
             max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
         )
-        digest = builder.build_digest(regular_posts, group_names=group_names)
+        digest = builder.build_bulletin(regular_posts, group_names=group_names)
         if digest.post_count == 0 or not digest.text.strip():
             logger.warning(
                 "Cascaded digest %s: empty regular digest, skipping publish "
@@ -561,7 +561,7 @@ async def run_cascaded_digest(
                 target_group_id=region.vk_group_id,
                 test_polygon_mode=test_mode,
             )
-            pub = await vk_pub.publish_digest(
+            pub = await vk_pub.publish_bulletin(
                 group_id=region.vk_group_id,
                 text=digest.text,
                 attachments=digest.attachments_list,
@@ -658,7 +658,7 @@ async def run_cascaded_digest(
 DEFAULT_NEIGHBOR_HASHTAG = "#Новости"
 
 
-async def run_neighbor_digest(
+async def run_neighbor_bulletin(
     session: AsyncSession,
     *,
     region_code: str,
@@ -667,7 +667,7 @@ async def run_neighbor_digest(
 ) -> Dict[str, Any]:
     """Обмен новостями между соседями: репост `#Новости` с главных групп соседей.
 
-    Тонкая обёртка над :func:`run_cascaded_digest` с ``source_mode="neighbors"``,
+    Тонкая обёртка над :func:`run_cascaded_bulletin` с ``source_mode="neighbors"``,
     ``theme="neighbors"`` и гейтом по хэштегу. Источники соседей — ``Region.neighbors``.
     Это единственный модуль соседского обмена (бывший ``neighbor_sharing.py`` удалён).
 
@@ -686,7 +686,7 @@ async def run_neighbor_digest(
         if not gate:
             gate = DEFAULT_NEIGHBOR_HASHTAG
 
-    return await run_cascaded_digest(
+    return await run_cascaded_bulletin(
         session,
         region_code=region_code,
         theme="neighbors",

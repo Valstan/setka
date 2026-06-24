@@ -70,7 +70,7 @@ async def _run_radar_bot():
         # вовсе, чтобы зря не тревожить общий бот. Владелец задаёт свой tg-id.
         return {"skipped": "RADAR_BOT_ALLOWED_USERS empty"}
 
-    from modules.digest_heartbeat import _redis
+    from modules.bulletin_heartbeat import _redis
 
     r = _redis()
     if r is None:
@@ -160,7 +160,7 @@ async def _run_vk_intake():
     if not token:
         return {"skipped": f"no community token for {community_id}"}
 
-    from modules.digest_heartbeat import _redis
+    from modules.bulletin_heartbeat import _redis
 
     r = _redis()
     if r is None:

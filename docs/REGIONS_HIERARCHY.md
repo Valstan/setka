@@ -1,4 +1,4 @@
-# Регионы — иерархия и каскадные дайджесты
+# Регионы — иерархия и каскадные сводки
 
 Краткий референс по структуре регионов SETKA. Полная картина проекта — в [AI_DEV_GUIDE.md](AI_DEV_GUIDE.md).
 
@@ -6,7 +6,7 @@
 
 ## Три типа региона
 
-| Тип | Что это | Пример (код) | Главное сообщество (`region.vk_group_id`) | Источники для своего дайджеста |
+| Тип | Что это | Пример (код) | Главное сообщество (`region.vk_group_id`) | Источники для своей сводки |
 |---|---|---|---|---|
 | **`raion`** | район — низший уровень | `mi`, `vp`, `nolinsk` | МАЛМЫЖ - ИНФО | записи в `communities` (партнёрские VK-паблики района) |
 | **`oblast`** | область — содержит районы | `kirov_obl` | КИРОВСКАЯ ОБЛАСТЬ - ИНФО | главные сообщества подчинённых районов (`parent_region_id = oblast.id`) |
@@ -22,17 +22,17 @@
 
 ## Словарь — фиксируем термины
 
-* **главное сообщество региона** = `region.vk_group_id`. Туда публикуется дайджест. Иногда называется «ИНФО-страница» — это одно и то же. Хранится как отрицательный owner_id (например `-168170001` для `kirov_obl`).
+* **главное сообщество региона** = `region.vk_group_id`. Туда публикуется сводка. Иногда называется «ИНФО-страница» — это одно и то же. Хранится как отрицательный owner_id (например `-168170001` для `kirov_obl`).
 * **источники региона**:
   * для `raion` = записи в `communities` где `region_id = raion.id` и `is_active=True`.
   * для `oblast` / `strana` = главные сообщества всех активных детей (`SELECT vk_group_id FROM regions WHERE parent_region_id = region.id AND is_active AND vk_group_id IS NOT NULL`).
 * **дети региона** = активные регионы с `parent_region_id = region.id`. Только у `oblast` и `strana`.
-* **районный дайджест** = старая логика (`tasks.parsing_scheduler_tasks.parse_and_publish_theme` — парсинг сообществ-партнёров → агрегация → фильтрация → публикация). Не меняется.
-* **каскадный дайджест** = универсальная логика для `oblast` и `strana`. Берёт **N=5** свежих постов с `vk_group_id` каждого ребёнка → фильтрует рекламу/религию/дубли → публикует сводку в свой `vk_group_id`. Код — `modules/cascaded_digest.py`.
+* **районная сводка** = старая логика (`tasks.parsing_scheduler_tasks.parse_and_publish_theme` — парсинг сообществ-партнёров → агрегация → фильтрация → публикация). Не меняется.
+* **каскадная сводка** = универсальная логика для `oblast` и `strana`. Берёт **N=5** свежих постов с `vk_group_id` каждого ребёнка → фильтрует рекламу/религию/дубли → публикует сводку в свой `vk_group_id`. Код — `modules/cascaded_bulletin.py`.
 
 ---
 
-## Как работает каскадный дайджест
+## Как работает каскадная сводка
 
 Beat-таски `postopus-kirov-oblast-*` (`tasks/celery_app.py`) вызывают `parse_and_publish_theme(region_code="kirov_obl", theme="oblast")`. Special-case в `tasks/parsing_scheduler_tasks.py` ловит регионы с `kind in ('oblast','strana')` и делегирует в `modules.cascaded_digest.run_cascaded_digest`. Шаги:
 
@@ -41,7 +41,7 @@ Beat-таски `postopus-kirov-oblast-*` (`tasks/celery_app.py`) вызываю
 3. Для каждого ребёнка читаем **`cascade_posts_per_child`** свежих постов со стены `child.vk_group_id` (default `5`). Слишком старые (старше `cascade_lookback_hours`, default `72ч`) — отсекаем.
 4. Прогоняем собранные посты через общий `AdvancedVKParser.filter_posts_list` — дубли, реклама, повторы по `lip`/`hash`.
 5. Hard-exclude'им рекламу/addons/религию (маркеры в `_BANNED_DIGEST_MARKERS` и `_RELIGIOUS_MARKERS`).
-6. Собираем дайджест через `DigestBuilder` и публикуем в `region.vk_group_id` через `VKPublisher.create_with_policy` (с авто-fallback по политике токенов).
+6. Собираем сводка через `DigestBuilder` и публикуем в `region.vk_group_id` через `VKPublisher.create_with_policy` (с авто-fallback по политике токенов).
 7. Обновляем `WorkTable.lip` и `WorkTable.hash` — чтобы следующий выпуск не повторил эти посты.
 8. Записываем метрику `setka_digest_published_total{region,topic,result}`.
 
@@ -57,7 +57,7 @@ Beat-таски `postopus-kirov-oblast-*` (`tasks/celery_app.py`) вызываю
 | `cascade_lookback_hours` | `72.0` | 1-168 | Максимальный возраст поста |
 | `cascade_source_region_codes` | `[]` | список кодов | Явный override детей (если не пуст — игнорируется `parent_region_id`) |
 
-Старые поля `oblast_source_region_codes` / `oblast_wall_posts_per_source` / `oblast_max_wall_refs` из `modules/kirov_oblast_digest.py` больше не используются (хрупкая «extract wall.refs» механика удалена). На проде их можно оставить в RegionConfig — игнорируются.
+Старые поля `oblast_source_region_codes` / `oblast_wall_posts_per_source` / `oblast_max_wall_refs` из `modules/kirov_oblast_bulletin.py` больше не используются (хрупкая «extract wall.refs» механика удалена). На проде их можно оставить в RegionConfig — игнорируются.
 
 ---
 
@@ -67,7 +67,7 @@ Beat-таски `postopus-kirov-oblast-*` (`tasks/celery_app.py`) вызываю
 
 * **Источник соседей** — поле `Region.neighbors` (запятая-список кодов). Задаётся галочками в UI добавления/редактирования региона (multi-select существующих регионов) — адреса групп вводить не нужно, берётся `vk_group_id` каждого соседа.
 * **Гейт** — в кандидаты попадают только посты с хэштегом `#Новости` (по умолчанию; override через `region.config['neighbor_hashtag']`). Реклама/детсады/прочее без хэштега не репостятся.
-* **Движок** — тот же `modules/cascaded_digest.run_cascaded_digest` с `source_mode="neighbors"`, `theme="neighbors"` (тонкая обёртка `run_neighbor_digest`). **Без дублирования**: тот же сбор/фильтр/дедуп/публикация, что у каскадного дайджеста. Старый `modules/publisher/neighbor_sharing.py` удалён.
+* **Движок** — тот же `modules/cascaded_digest.run_cascaded_digest` с `source_mode="neighbors"`, `theme="neighbors"` (тонкая обёртка `run_neighbor_digest`). **Без дублирования**: тот же сбор/фильтр/дедуп/публикация, что у каскадной сводки. Старый `modules/publisher/neighbor_sharing.py` удалён.
 * **Расписание** — beat `digest-share-neighbors-daily` (раз в сутки, 8:30) → `run_all_regions_neighbor_share` → `share_neighbor_news(region_code)` по всем регионам с непустым `neighbors`.
 * **Не путать с темой `sosed`** — та парсит сообщества с `category="sosed"` *внутри* одного региона (тема контента), это не cross-region обмен.
 
@@ -122,5 +122,5 @@ WHERE kind = 'oblast';
 
 ## История
 
-* **2026-05-27** — миграция 015: добавлены `regions.kind` + `regions.parent_region_id`, создана запись `kirov_obl`, привязаны 13 районов Кировской области. Старый `modules/kirov_oblast_digest.py` стал тонким wrapper'ом над универсальным `modules/cascaded_digest.py`. См. PR с этим документом.
+* **2026-05-27** — миграция 015: добавлены `regions.kind` + `regions.parent_region_id`, создана запись `kirov_obl`, привязаны 13 районов Кировской области. Старый `modules/kirov_oblast_bulletin.py` стал тонким wrapper'ом над универсальным `modules/cascaded_bulletin.py`. См. PR с этим документом.
 * **2026-05-28** — миграция 016: создан `tatarstan_obl` (oblast, `vk.com/tatar_stan_info`, id=239149826), привязаны районы Татарстана bal/kukmor. Добавлены beat-слоты `postopus-tatarstan-oblast-9/-19`. Публикация — после добавления community-токена `COMM_239149826` через `/tokens`.

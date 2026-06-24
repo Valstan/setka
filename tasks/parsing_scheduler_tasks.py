@@ -32,13 +32,13 @@ def _parse_vk_post_id(url: str | None) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _use_cascade_digest(region_kind: str | None, region_config: Any) -> bool:
-    """Решает, собирать ли дайджест каскадом (из главных групп детей/соседей)
+def _use_cascade_bulletin(region_kind: str | None, region_config: Any) -> bool:
+    """Решает, собирать ли сводка каскадом (из главных групп детей/соседей)
     или обычным путём (из собственных ``communities`` региона).
 
     Каскад — для ``kind in {'oblast','strana'}`` ПО УМОЛЧАНИЮ. Но если у региона
     в ``config['digest_mode'] == 'communities'`` — он ведёт себя как район:
-    собирает тематические дайджесты из своего пула communities (см.
+    собирает тематические сводки из своего пула communities (см.
     `/discover_communities`). Так ``kirov_obl`` (2026-05) перешёл с каскада на
     собственный пул из 50+ областных источников, не варясь в новостях своих же
     районов. ``tatarstan_obl`` / ``rf`` без флага остаются на каскаде.
@@ -62,7 +62,7 @@ def parse_and_publish_theme(
     Celery-compatible: uses run_coro (one event loop per worker process).
 
     ``dry_run=True`` — «прогон без публикации»: парсинг → фильтр → сборка
-    дайджеста выполняются как обычно, но публикация в VK/Telegram, инкремент
+    сводки выполняются как обычно, но публикация в VK/Telegram, инкремент
     метрик и запись work-table/ParsingStats ПРОПУСКАЮТСЯ. Возвращает что было
     бы опубликовано (counts + превью текста). Используется страницей
     ``/regions/<code>/diagnostics``. В отличие от ``test_mode`` (публикует на
@@ -76,8 +76,9 @@ def parse_and_publish_theme(
     from database.connection import AsyncSessionLocal
     from database.models import Community, Region
     from database.models_extended import ParsingStats, RegionConfig, WorkTable
+    from modules.bulletin_pipeline_settings import get_effective_pipeline_settings
     from modules.curation.recorder import record_curation_run
-    from modules.deduplication.digest_history import (
+    from modules.deduplication.bulletin_history import (
         GLOBAL_REGION_WORK_THEME,
         TARGET_GROUP_POSTS_SCAN_LIMIT,
         append_unique_limited,
@@ -91,13 +92,12 @@ def parse_and_publish_theme(
         create_text_simhash,
         text_to_rafinad,
     )
-    from modules.digest_pipeline_settings import get_effective_pipeline_settings
-    from modules.publisher.digest_builder import DigestBuilder
-    from modules.publisher.digest_splitter import DigestSplitter
-    from modules.publisher.postopus_digest_headers import (
-        resolve_digest_hashtags,
-        resolve_digest_header,
-        resolve_mourning_digest_format,
+    from modules.publisher.bulletin_builder import BulletinBuilder
+    from modules.publisher.bulletin_splitter import BulletinSplitter
+    from modules.publisher.postopus_bulletin_headers import (
+        resolve_bulletin_hashtags,
+        resolve_bulletin_header,
+        resolve_mourning_bulletin_format,
     )
     from modules.publisher.vk_publisher_extended import VKPublisher
     from modules.vk_monitor.advanced_parser import AdvancedVKParser
@@ -124,7 +124,7 @@ def parse_and_publish_theme(
 
                 return await execute_krugozor_broadcast(session, test_mode=test_mode)
 
-            # Каскадный дайджест для регионов kind in {'oblast','strana'} —
+            # Каскадная сводка для регионов kind in {'oblast','strana'} —
             # ловим по типу региона, а не по жёсткому коду, чтобы новые
             # oblast/strana работали без правки кода (см. ``docs/REGIONS_HIERARCHY.md``).
             # ИСКЛЮЧЕНИЕ: если region.config['digest_mode']=='communities' — область
@@ -138,10 +138,10 @@ def parse_and_publish_theme(
             ).first()
             region_kind = kind_row[0] if kind_row else None
             region_kind_config = kind_row[1] if kind_row else None
-            if _use_cascade_digest(region_kind, region_kind_config):
-                from modules.cascaded_digest import run_cascaded_digest
+            if _use_cascade_bulletin(region_kind, region_kind_config):
+                from modules.cascaded_bulletin import run_cascaded_bulletin
 
-                return await run_cascaded_digest(
+                return await run_cascaded_bulletin(
                     session,
                     region_code=region_code,
                     theme=theme,
@@ -245,7 +245,7 @@ def parse_and_publish_theme(
                     msg = f"No '{theme}' communities for community-mode region {region_code}"
                 return {"success": True, "message": msg, "posts_published": 0}
 
-            # Имена сообществ для кликабельных ссылок «источник» в дайджесте
+            # Имена сообществ для кликабельных ссылок «источник» в сводке
             comm_meta = await session.execute(
                 select(Community.vk_id, Community.name).where(Community.region_id == region.id)
             )
@@ -296,13 +296,13 @@ def parse_and_publish_theme(
             parser_stats = parser.get_stats()
 
             # 6. Split by sentiment
-            splitter = DigestSplitter()
+            splitter = BulletinSplitter()
             mourning_posts, regular_posts = splitter.split_posts(posts)
             logger.info(f"Split: {len(mourning_posts)} mourning, {len(regular_posts)} regular")
 
             # 7. Build digests (заголовки/хештеги как в old_postopus, см. postopus_digest_headers)
-            header = resolve_digest_header(region_config, theme, region)
-            theme_tags, local_hashtag = resolve_digest_hashtags(region_config, theme)
+            header = resolve_bulletin_header(region_config, theme, region)
+            theme_tags, local_hashtag = resolve_bulletin_hashtags(region_config, theme)
 
             # Community access tokens + publish-кандидаты подбираются внутри
             # ``VKPublisher.create_with_policy`` (см. modules.vk_token_router.TokenPolicy).
@@ -323,7 +323,7 @@ def parse_and_publish_theme(
 
             # Regular digest
             if regular_posts:
-                builder = DigestBuilder(
+                builder = BulletinBuilder(
                     header=header,
                     hashtags=theme_tags,
                     local_hashtag=local_hashtag,
@@ -331,7 +331,7 @@ def parse_and_publish_theme(
                     repost_mode=region_config.setka_regim_repost,
                     max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
                 )
-                digest = builder.build_digest(regular_posts, group_names=group_names)
+                digest = builder.build_bulletin(regular_posts, group_names=group_names)
                 if digest.post_count == 0 or not digest.text.strip():
                     logger.warning(
                         "Empty regular digest after build, skipping publish "
@@ -359,7 +359,7 @@ def parse_and_publish_theme(
                             target_group_id=region.vk_group_id,
                             test_polygon_mode=test_mode,
                         )
-                        publish_result = await vk_publisher.publish_digest(
+                        publish_result = await vk_publisher.publish_bulletin(
                             group_id=region.vk_group_id,
                             text=digest.text,
                             attachments=digest.attachments_list,
@@ -386,16 +386,16 @@ def parse_and_publish_theme(
             # Mourning digest
             if mourning_posts:
                 mourning_header, mourning_tags, mourning_local_hashtag = (
-                    resolve_mourning_digest_format()
+                    resolve_mourning_bulletin_format()
                 )
-                mourning_builder = DigestBuilder(
+                mourning_builder = BulletinBuilder(
                     header=mourning_header,
                     hashtags=mourning_tags,
                     local_hashtag=mourning_local_hashtag,
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
                     max_posts_per_digest=pipeline_eff.get("max_posts_per_digest"),
                 )
-                mourning_digest = mourning_builder.build_digest(
+                mourning_digest = mourning_builder.build_bulletin(
                     mourning_posts, group_names=group_names
                 )
                 if mourning_digest.post_count == 0 or not mourning_digest.text.strip():
@@ -425,7 +425,7 @@ def parse_and_publish_theme(
                             target_group_id=region.vk_group_id,
                             test_polygon_mode=test_mode,
                         )
-                        mourning_pub = await vk_pub.publish_digest(
+                        mourning_pub = await vk_pub.publish_bulletin(
                             group_id=region.vk_group_id,
                             text=mourning_digest.text,
                             attachments=mourning_digest.attachments_list,
@@ -517,7 +517,7 @@ def parse_and_publish_theme(
             # Data-driven: only regions with telegram_channel set AND config.telegram_bot.
             # Wrapped so a Telegram failure NEVER breaks VK publishing.
             try:
-                from modules.publisher.telegram_repost import mirror_digest_to_telegram
+                from modules.publisher.telegram_repost import mirror_bulletin_to_telegram
                 from modules.publisher.telegram_repost_config import (
                     get_telegram_extra_hashtags,
                     telegram_repost_disabled,
@@ -545,7 +545,7 @@ def parse_and_publish_theme(
                             ]
                             if not posts_for:
                                 continue
-                            await mirror_digest_to_telegram(
+                            await mirror_bulletin_to_telegram(
                                 tg_bot,
                                 region.telegram_channel,
                                 tg_header,
@@ -699,16 +699,16 @@ def share_neighbor_news(region_code: str):
     """Соседский обмен новостями: репост ``#Новости`` с главных групп соседей.
 
     Источники — регионы из ``Region.neighbors``. Единый движок —
-    ``modules.cascaded_digest.run_neighbor_digest`` (source_mode=neighbors,
+    ``modules.cascaded_bulletin.run_neighbor_bulletin`` (source_mode=neighbors,
     theme=neighbors, гейт по хэштегу). Не путать с темой ``sosed`` (парсинг
     сообществ с ``category="sosed"`` внутри региона) — это разные механики.
     """
     from database.connection import AsyncSessionLocal
-    from modules.cascaded_digest import run_neighbor_digest
+    from modules.cascaded_bulletin import run_neighbor_bulletin
 
     async def _run():
         async with AsyncSessionLocal() as session:
-            return await run_neighbor_digest(session, region_code=region_code)
+            return await run_neighbor_bulletin(session, region_code=region_code)
 
     return run_coro(_run())
 
@@ -752,7 +752,7 @@ def run_all_regions_theme(theme: str, strict: bool = False):
     ``strict=True``: только регионы с communities именно этой темы. Используется
     для новых областных тем (proisshestviya/molodezh/nauka/promyshlennost/selhoz/
     zdorovie/zhkh/priroda), чтобы волна не затягивала районы (у них таких
-    communities нет) и не плодила «не свои» дайджесты.
+    communities нет) и не плодила «не свои» сводки.
     """
     from sqlalchemy import exists, select
 

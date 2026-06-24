@@ -1,6 +1,6 @@
 """Multiprocess-mode гарантии для monitoring.metrics.
 
-Worker-процесс Celery инкрементит дайджест-метрики в своём процессе, а
+Worker-процесс Celery инкрементит сводка-метрики в своём процессе, а
 ``/metrics`` живёт в web. Без ``PROMETHEUS_MULTIPROC_DIR`` + ``MultiProcessCollector``
 counter'ы умирают в worker'е. Тесты ниже фиксируют две вещи:
 

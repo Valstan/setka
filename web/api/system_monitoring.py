@@ -343,7 +343,7 @@ async def get_regions_status(db: AsyncSession = Depends(get_db_session)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Пороги «свежести» дайджеста (в часах). Для каждой пары (region_code, theme)
+# Пороги «свежести» сводки (в часах). Для каждой пары (region_code, theme)
 # берём last_run_date из parsing_stats и красим:
 #   fresh   — last_run < FRESH_HOURS назад
 #   stale   — last_run между FRESH_HOURS и STALE_HOURS
@@ -355,7 +355,7 @@ _DIGEST_STATUS_STALE_HOURS = 24
 _DIGEST_STATUS_BROKEN_MIN_FAILED_RUNS = 3
 
 
-def _classify_digest_row(
+def _classify_bulletin_row(
     last_run_at: Optional[datetime],
     last_success_at: Optional[datetime],
     consecutive_failed: int,
@@ -407,8 +407,8 @@ def _reclassify_retired(rows: List[Dict]) -> None:
 
 @router.get("/digests-status", response_model=Dict)
 @cache(ttl=60, key_prefix="monitoring")
-async def get_digests_status(db: AsyncSession = Depends(get_db_session)):
-    """Свод состояния дайджестов по (region_code, theme) из ``parsing_stats``.
+async def get_bulletins_status(db: AsyncSession = Depends(get_db_session)):
+    """Свод состояния сводок по (region_code, theme) из ``parsing_stats``.
 
     Источник — ``parsing_stats`` (та же таблица, что и для `/parsing-stats`).
     Возвращаем для каждой пары region×theme: время последней beat-таски,
@@ -508,7 +508,7 @@ async def get_digests_status(db: AsyncSession = Depends(get_db_session)):
     for r in agg_rows:
         key = (r.region_code, r.theme)
         cf = consecutive_failed.get(key, 0)
-        status = _classify_digest_row(
+        status = _classify_bulletin_row(
             last_run_at=r.last_run_date,
             last_success_at=r.last_success_date,
             consecutive_failed=cf,
@@ -712,7 +712,7 @@ async def get_system_status():
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Heartbeat дайджестов (#018) + liveness воркеров/beat
+# Heartbeat сводок (#018) + liveness воркеров/beat
 #
 # Heartbeat — Redis-ключи `setka:digest_last_published:<topic>` (см.
 # modules/digest_heartbeat). Watchdog шлёт Telegram-алёрт при протухании
@@ -744,7 +744,7 @@ def _classify_heartbeat_age(
 
 
 @router.get("/heartbeat", response_model=Dict)
-async def get_digest_heartbeat():
+async def get_bulletin_heartbeat():
     """Redis-heartbeat последних публикаций по темам (#018) + статус watchdog.
 
     Возвращает по каждой теме время последней успешной публикации (из
@@ -754,8 +754,8 @@ async def get_digest_heartbeat():
     показываются как ``unknown`` (никогда не публиковались / свежий деплой).
     """
     try:
-        from modules import digest_heartbeat as dh
-        from modules.digest_pipeline_settings import POSTOPUS_DIGEST_THEMES
+        from modules import bulletin_heartbeat as dh
+        from modules.bulletin_pipeline_settings import POSTOPUS_DIGEST_THEMES
 
         now_ts = time.time()
         hb = dh.all_heartbeats()  # topic -> unix-ts (best-effort)
@@ -841,7 +841,7 @@ async def get_celery_liveness():
 
     beat = {"status": "unknown", "note": "инференс по novost-heartbeat"}
     try:
-        from modules import digest_heartbeat as dh
+        from modules import bulletin_heartbeat as dh
 
         ts = dh.last_published_ts("novost")
         if ts is not None:

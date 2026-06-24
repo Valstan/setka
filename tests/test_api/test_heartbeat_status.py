@@ -2,7 +2,7 @@
 
 По образцу test_digests_status.py: проверяем pure-функцию `_classify_heartbeat_age`
 (unknown/fresh/stale), а не весь endpoint с Redis. Если порог/логика цвета
-сломаются — на /monitoring начнут светиться ложные тревоги по дайджестам.
+сломаются — на /monitoring начнут светиться ложные тревоги по сводкам.
 """
 
 from __future__ import annotations

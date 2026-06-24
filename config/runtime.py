@@ -159,7 +159,7 @@ if isinstance(VK_TOKENS_JSON, dict):
 # ============================================================================
 # Все ``VK_TOKENS`` могут читать VK (парсинг стен, поиск групп, getById).
 # Публиковать (wall.post / wall.repost / wall.createComment / messages.send /
-# photos.upload в качестве дайджеста или ответа модератора) могут только
+# photos.upload в качестве сводки или ответа модератора) могут только
 # токены из явного whitelist ``VK_PUBLISH_TOKEN_NAMES``. Жёсткий deny-list
 # ``VK_NEVER_PUBLISH_TOKEN_NAMES`` исключает имена даже если они попали в
 # whitelist — это страховка от того что Vita когда-нибудь случайно появится
@@ -486,7 +486,7 @@ def get_krugozor_source_exclude_ids() -> Set[int]:
 
 
 def get_krugozor_digest_max_items() -> int:
-    """Сколько новостей max в одном научпоп-дайджесте (решение владельца: до 4)."""
+    """Сколько новостей max в одном научпоп-сводкае (решение владельца: до 4)."""
     try:
         return max(1, int(_getenv("KRUGOZOR_DIGEST_MAX_ITEMS", "4") or "4"))
     except ValueError:
@@ -494,7 +494,7 @@ def get_krugozor_digest_max_items() -> int:
 
 
 def get_krugozor_snippet_len() -> int:
-    """До скольких знаков укорачивать длинный пост-источник в дайджесте (анонс)."""
+    """До скольких знаков укорачивать длинный пост-источник в сводке (анонс)."""
     try:
         return max(120, int(_getenv("KRUGOZOR_SNIPPET_LEN", "500") or "500"))
     except ValueError:
@@ -502,7 +502,7 @@ def get_krugozor_snippet_len() -> int:
 
 
 def get_krugozor_text_budget() -> int:
-    """Бюджет длины всего дайджеста («сколько влезёт») — добираем пункты до него."""
+    """Бюджет длины всей сводки («сколько влезёт») — добираем пункты до него."""
     try:
         return max(800, int(_getenv("KRUGOZOR_TEXT_BUDGET", "3500") or "3500"))
     except ValueError:
@@ -582,13 +582,13 @@ def krugozor_promo_filter_enabled() -> bool:
     )
 
 
-# --- LLM-курация дайджестов (shadow PoC, письмо brain 2026-06-07) -------------
+# --- LLM-курация сводок (shadow PoC, письмо brain 2026-06-07) -------------
 
 
 def digest_curation_shadow_enabled() -> bool:
-    """Включить shadow-журнал LLM-курации дайджестов (Фаза 1).
+    """Включить shadow-журнал LLM-курации сводок (Фаза 1).
 
-    OFF по умолчанию — нулевая регрессия. ON => после публикации дайджеста его
+    OFF по умолчанию — нулевая регрессия. ON => после публикации сводки его
     посты паркуются в `digest_curation_runs` для пост-фактум LLM-вердикта
     (/curate). Публикация при этом НЕ затрагивается (shadow)."""
     return (_getenv("DIGEST_CURATION_SHADOW_ENABLED", "0") or "0").strip().lower() in (
@@ -610,7 +610,7 @@ def get_digest_curation_region_codes() -> Optional[Set[str]]:
     return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
 
 
-# --- Near-dup дедуп дайджестов (SimHash + Jaccard), env-тюнинг -----------------
+# --- Near-dup дедуп сводок (SimHash + Jaccard), env-тюнинг -----------------
 # Параметры вынесены в env, чтобы калибровать порог на проде без передеплоя.
 # Дефолты совпадают с прежними хардкодами → нулевая регрессия (кроме Jaccard,
 # который новый и включён консервативно).
@@ -635,7 +635,7 @@ def get_digest_simhash_bucket_gate() -> int:
 
 def digest_jaccard_dedup_enabled() -> bool:
     """Включить intra-batch Jaccard near-dup (ловит переставленные/переписанные
-    дубли в пределах одного дайджеста). ON по умолчанию, консервативный порог;
+    дубли в пределах одной сводки). ON по умолчанию, консервативный порог;
     мгновенно отключается env при ложных срабатываниях."""
     return (_getenv("DIGEST_JACCARD_DEDUP_ENABLED", "1") or "1").strip().lower() in (
         "1",
