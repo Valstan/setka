@@ -603,7 +603,7 @@ def _format_recheck_message(reports: List[Dict[str, Any]]) -> str:
 
 
 def _maybe_send_recheck_telegram_alert(reports: List[Dict[str, Any]]) -> None:
-    """Send Telegram digest if recheck found anything actionable.
+    """Send Telegram bulletin if recheck found anything actionable.
 
     Использует тот же паттерн, что и
     ``tasks.celery_app._maybe_send_telegram_notifications_alert``:

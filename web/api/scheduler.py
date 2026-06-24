@@ -19,7 +19,7 @@ router = APIRouter()
 class ScheduleRequest(BaseModel):
     """Request to schedule publication"""
 
-    digest_id: int
+    bulletin_id: int
     region_code: str
     category: str = "novost"
     scheduled_time: Optional[str] = None  # ISO format
@@ -225,7 +225,7 @@ async def schedule_publication(
 
     # Schedule publication
     result = await scheduler.schedule_publication(
-        digest_id=request.digest_id,
+        bulletin_id=request.bulletin_id,
         region_code=request.region_code,
         category=request.category,
         scheduled_time=scheduled_time,

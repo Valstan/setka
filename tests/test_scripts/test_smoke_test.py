@@ -36,7 +36,7 @@ def _ok_result(posts: int = 3) -> Dict[str, Any]:
         "theme": "novost",
         "communities_count": 10,
         "posts_parsed": posts,
-        "digests_count": 1,
+        "bulletins_count": 1,
     }
 
 

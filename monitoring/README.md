@@ -50,7 +50,7 @@ setka_digest_last_published_timestamp{region,topic}  # Gauge (unix-ts)
 
 ## Multiprocess (web + Celery worker)
 
-`track_digest_published()` вызывается **из Celery worker'а** (`tasks/parsing_scheduler_tasks.py`, `modules/kirov_oblast_digest.py`), а `/metrics` живёт **в FastAPI web**. В обычном `prometheus_client` counter'ы хранятся в памяти процесса — без shared backend worker'овские инкременты до scrape'а не доходят, и дашборд остаётся пустым.
+`track_digest_published()` вызывается **из Celery worker'а** (`tasks/parsing_scheduler_tasks.py`, `modules/kirov_oblast_bulletin.py`), а `/metrics` живёт **в FastAPI web**. В обычном `prometheus_client` counter'ы хранятся в памяти процесса — без shared backend worker'овские инкременты до scrape'а не доходят, и дашборд остаётся пустым.
 
 Поэтому:
 
@@ -76,6 +76,6 @@ setka_digest_last_published_timestamp{region,topic}  # Gauge (unix-ts)
 - `monitoring/prometheus/prometheus.yml` — scrape config.
 - `monitoring/grafana/provisioning/datasources/prometheus.yml` — datasource auto-config.
 - `monitoring/grafana/provisioning/dashboards/setka.yml` — dashboard loader.
-- `monitoring/grafana/dashboards/digests.json` — JSON дашборда.
+- `monitoring/grafana/dashboards/bulletins.json` — JSON дашборда.
 - `monitoring/metrics.py` — Python-side метрики (импортируется из FastAPI и Celery).
 - `scripts/setup-monitoring.sh` — установщик.

@@ -2,7 +2,7 @@
 VK attachment utilities
 
 Extracts and formats VK post attachments (photos, videos, audio)
-for use in digest building and publishing.
+for use in bulletin building and publishing.
 """
 
 from typing import Any, Dict, List, Optional

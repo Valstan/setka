@@ -1,4 +1,4 @@
-"""dry_run contract for parse_and_publish_theme (feat/digest-dry-run).
+"""dry_run contract for parse_and_publish_theme (feat/bulletin-dry-run).
 
 Гарантия: ``dry_run=True`` прогоняет парсинг → фильтр → сборку сводки, но
 НЕ публикует (VKPublisher не дёргается), НЕ коммитит в БД и возвращает
@@ -75,9 +75,9 @@ def test_dry_run_builds_preview_without_publish_or_commit():
     cm = _FakeSessionCM(results)
 
     post = {"owner_id": -123, "id": 5, "text": "hello", "attachments": []}
-    digest_ns = SimpleNamespace(
+    bulletin_ns = SimpleNamespace(
         post_count=2,
-        text="DIGEST TEXT",
+        text="BULLETIN TEXT",
         attachments_list=[],
         posts_included=["lip1", "lip2"],
     )
@@ -90,7 +90,7 @@ def test_dry_run_builds_preview_without_publish_or_commit():
     splitter_inst = MagicMock()
     splitter_inst.split_posts.return_value = ([], [post])  # no mourning, one regular
     builder_inst = MagicMock()
-    builder_inst.build_bulletin.return_value = digest_ns
+    builder_inst.build_bulletin.return_value = bulletin_ns
 
     publisher_cls = MagicMock()
     publisher_cls.create_with_policy = AsyncMock()
@@ -126,18 +126,18 @@ def test_dry_run_builds_preview_without_publish_or_commit():
 
     assert out["dry_run"] is True
     assert out["success"] is True
-    assert out["digests_count"] == 1
+    assert out["bulletins_count"] == 1
     assert len(out["would_publish"]) == 1
     preview = out["would_publish"][0]
     assert preview["kind"] == "regular"
     assert preview["post_count"] == 2
-    assert preview["text_preview"].startswith("DIGEST TEXT")
+    assert preview["text_preview"].startswith("BULLETIN TEXT")
     # Главное: ничего не опубликовано и не закоммичено.
     publisher_cls.create_with_policy.assert_not_called()
     cm.session.commit.assert_not_called()
 
 
-def test_cascaded_digest_accepts_dry_run_kwarg():
+def test_cascaded_bulletin_accepts_dry_run_kwarg():
     """run_cascaded_bulletin принимает dry_run (сигнатурный гард для diagnostics)."""
     from modules.cascaded_bulletin import run_cascaded_bulletin
 

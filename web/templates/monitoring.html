@@ -136,7 +136,7 @@
                 </div>
                 <div class="card-footer bg-white small text-muted">
                     <i class="bi bi-info-circle"></i>
-                    Источник — Redis-ключи последних публикаций (<code>digest_heartbeat</code>).
+                    Источник — Redis-ключи последних публикаций (<code>bulletin_heartbeat</code>).
                     Watchdog по <code>novost</code> (порог 6ч) шлёт Telegram-алёрт при простое.
                 </div>
             </div>
@@ -183,13 +183,13 @@
         </div>
     </div>
 
-    <!-- Digests Status (источник: parsing_stats) -->
+    <!-- Bulletins Status (источник: parsing_stats) -->
     <div class="row mb-4">
         <div class="col-12">
             <div class="card border-info">
                 <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <h5 class="mb-0">📊 Состояние сводок</h5>
-                    <div class="d-flex gap-2 align-items-center flex-wrap" id="digests-summary-badges">
+                    <div class="d-flex gap-2 align-items-center flex-wrap" id="bulletins-summary-badges">
                         <span class="badge bg-secondary">Загрузка…</span>
                     </div>
                     <a href="/parsing-stats" class="btn btn-sm btn-outline-info">
@@ -287,17 +287,17 @@
 </div>
 
 <style>
-.digests-table { font-size: 0.86rem; margin-bottom: 0; }
-.digests-table th { font-weight: 500; color: #6c757d; font-size: 0.78rem; text-transform: uppercase; }
-.digests-table td { vertical-align: middle; }
-.digests-table .badge { font-size: 0.72rem; font-weight: 500; }
+.bulletins-table { font-size: 0.86rem; margin-bottom: 0; }
+.bulletins-table th { font-weight: 500; color: #6c757d; font-size: 0.78rem; text-transform: uppercase; }
+.bulletins-table td { vertical-align: middle; }
+.bulletins-table .badge { font-size: 0.72rem; font-weight: 500; }
 .bulletins-status-fresh  { background: #d1e7dd; color: #0a3622; }
 .bulletins-status-stale  { background: #fff3cd; color: #664d03; }
 .bulletins-status-broken { background: #f8d7da; color: #58151c; }
 .bulletins-status-dead   { background: #e2e3e5; color: #41464b; }
 .bulletins-status-retired { background: #f1f3f5; color: #868e96; }
-.digests-row-broken td { background: rgba(220, 53, 69, 0.06); }
-.digests-row-dead   td { background: rgba(108, 117, 125, 0.06); }
+.bulletins-row-broken td { background: rgba(220, 53, 69, 0.06); }
+.bulletins-row-dead   td { background: rgba(108, 117, 125, 0.06); }
 </style>
 
 <script>
@@ -369,7 +369,7 @@ function _humanAgo(iso) {
     return Math.floor(diff / 86400) + ' дн назад';
 }
 
-const _DIGEST_STATUS_TEXT = {
+const _BULLETIN_STATUS_TEXT = {
     fresh:  { label: 'свежо',  cls: 'bulletins-status-fresh',  icon: 'bi-check-circle-fill' },
     stale:  { label: 'устаревает', cls: 'bulletins-status-stale',  icon: 'bi-clock-history' },
     broken: { label: 'сломано', cls: 'bulletins-status-broken', icon: 'bi-exclamation-triangle-fill' },
@@ -377,11 +377,11 @@ const _DIGEST_STATUS_TEXT = {
     retired:{ label: 'снят', cls: 'bulletins-status-retired', icon: 'bi-archive' },
 };
 
-async function loadDigestsStatus() {
+async function loadBulletinsStatus() {
     const loading = document.getElementById('bulletins-status-loading');
     const content = document.getElementById('bulletins-status-content');
     const errorEl = document.getElementById('bulletins-status-error');
-    const badges  = document.getElementById('digests-summary-badges');
+    const badges  = document.getElementById('bulletins-summary-badges');
     try {
         const resp = await fetch('/api/monitoring/bulletins-status');
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -392,7 +392,7 @@ async function loadDigestsStatus() {
         // Summary badges
         const order = ['broken', 'dead', 'stale', 'fresh', 'retired'];
         badges.innerHTML = order.map(k => {
-            const st = _DIGEST_STATUS_TEXT[k] || {};
+            const st = _BULLETIN_STATUS_TEXT[k] || {};
             return `<span class="badge ${st.cls || 'bg-light text-dark'}">
                 <i class="bi ${st.icon}"></i> ${st.label}: ${summary[k] || 0}
             </span>`;
@@ -406,8 +406,8 @@ async function loadDigestsStatus() {
         }
 
         const tbody = rows.map(r => {
-            const st = _DIGEST_STATUS_TEXT[r.status] || _DIGEST_STATUS_TEXT.dead;
-            const rowCls = (r.status === 'broken' || r.status === 'dead') ? `digests-row-${r.status}` : '';
+            const st = _BULLETIN_STATUS_TEXT[r.status] || _BULLETIN_STATUS_TEXT.dead;
+            const rowCls = (r.status === 'broken' || r.status === 'dead') ? `bulletins-row-${r.status}` : '';
             const successRate30d = r.runs_30d > 0
                 ? Math.round((r.success_30d / r.runs_30d) * 100) + '%'
                 : '—';
@@ -434,7 +434,7 @@ async function loadDigestsStatus() {
 
         content.innerHTML = `
             <div class="table-responsive">
-                <table class="table table-sm digests-table mb-0">
+                <table class="table table-sm bulletins-table mb-0">
                     <thead>
                         <tr>
                             <th>Статус</th>
@@ -612,7 +612,7 @@ async function loadAllMonitoringData() {
         console.log('Loading all monitoring data...');
 
         // Виджет сводок не должен блокировать остальные данные — fire-and-forget
-        loadDigestsStatus().catch(e => console.warn('digests status failed:', e));
+        loadBulletinsStatus().catch(e => console.warn('bulletins status failed:', e));
         loadHeartbeat().catch(e => console.warn('heartbeat failed:', e));
         loadLiveness().catch(e => console.warn('liveness failed:', e));
 

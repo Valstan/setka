@@ -97,24 +97,26 @@ async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode
         title = f"📰 НОВОСТИ {region.name.upper()}"
         hashtags = [f"#Новости{region.code.upper()}", "#SETKA"]
 
-        digest = await aggregator.aggregate(posts=posts[:max_posts], title=title, hashtags=hashtags)
+        bulletin = await aggregator.aggregate(
+            posts=posts[:max_posts], title=title, hashtags=hashtags
+        )
 
-        if not digest:
+        if not bulletin:
             logger.error("❌ Не удалось создать сводка")
             return False
 
         logger.info("✅ Сводка создан!")
-        logger.info(f"   Постов: {digest.sources_count}")
-        logger.info(f"   Просмотров: {digest.total_views}")
-        logger.info(f"   Лайков: {digest.total_likes}")
-        logger.info(f"   Длина текста: {len(digest.aggregated_text)} символов")
+        logger.info(f"   Постов: {bulletin.sources_count}")
+        logger.info(f"   Просмотров: {bulletin.total_views}")
+        logger.info(f"   Лайков: {bulletin.total_likes}")
+        logger.info(f"   Длина текста: {len(bulletin.aggregated_text)} символов")
 
         # Показываем превью
         logger.info("\n" + "=" * 80)
         logger.info("ПРЕВЬЮ СВОДКАА:")
         logger.info("=" * 80)
-        preview = digest.aggregated_text[:500]
-        logger.info(preview + ("..." if len(digest.aggregated_text) > 500 else ""))
+        preview = bulletin.aggregated_text[:500]
+        logger.info(preview + ("..." if len(bulletin.aggregated_text) > 500 else ""))
         logger.info("=" * 80)
 
         if test_mode:
@@ -131,7 +133,9 @@ async def test_publish_to_region(region_code: str, max_posts: int = 5, test_mode
 
         publisher = VKPublisher()
 
-        result = await publisher.publish_aggregated_post(digest=digest, group_id=region.vk_group_id)
+        result = await publisher.publish_aggregated_post(
+            bulletin=bulletin, group_id=region.vk_group_id
+        )
 
         if result["success"]:
             logger.info("✅ УСПЕШНО ОПУБЛИКОВАНО!")

@@ -29,7 +29,7 @@ async def test_publish_bulletin_without_publish_date_is_immediate():
     vk = _DummyVkClient()
     publisher = VKPublisher(vk_client=vk)
 
-    result = await publisher.publish_bulletin(group_id=-100, text="digest")
+    result = await publisher.publish_bulletin(group_id=-100, text="bulletin")
 
     assert result["success"] is True
     assert result["postponed"] is False

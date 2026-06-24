@@ -1,4 +1,4 @@
-"""postopus_digest_headers fallbacks."""
+"""postopus_bulletin_headers fallbacks."""
 
 from types import SimpleNamespace
 

@@ -91,8 +91,8 @@ def test_region_words_filter_accepts_and_hides_attribution():
     assert filtered.get("hide_attribution") is True
 
     builder = BulletinBuilder(header="⚽ СПОРТ", hashtags=["#спорт"], local_hashtag="#малмыж")
-    digest = builder.build_bulletin([filtered], group_names={"123": "МалмыЖ"})
+    bulletin = builder.build_bulletin([filtered], group_names={"123": "МалмыЖ"})
 
-    assert "Источник" not in digest.text
-    assert "@https://vk.com/wall-123_2" not in digest.text
-    assert "Малмыж" in digest.text
+    assert "Источник" not in bulletin.text
+    assert "@https://vk.com/wall-123_2" not in bulletin.text
+    assert "Малмыж" in bulletin.text

@@ -313,7 +313,7 @@ async def execute_krugozor_broadcast(
         picked_lips.add(lip)
 
     if not candidates:
-        return {"success": True, "message": "no fresh posts to digest", "stats": _empty_stats()}
+        return {"success": True, "message": "no fresh posts to bulletin", "stats": _empty_stats()}
 
     # Свежайшее — первым пунктом сводки.
     candidates.sort(key=lambda c: c["date"], reverse=True)
@@ -364,7 +364,7 @@ async def execute_krugozor_broadcast(
     return {
         "success": published > 0,
         "items": len(selected),
-        "sources_in_digest": [it["name"] for it in selected],
+        "sources_in_bulletin": [it["name"] for it in selected],
         "posts_published": published,
         "targets": len(regions),
         "n_attachments": len(attachments),

@@ -171,14 +171,14 @@ class RealWorkflowManager:
                         )
 
                         # Создаем простая сводка
-                        digest_text = f"Основные новости по теме '{self.current_topic}':\n\n"
+                        bulletin_text = f"Основные новости по теме '{self.current_topic}':\n\n"
                         for i, post in enumerate(approved_posts[:3], 1):  # Берем первые 3 поста
-                            digest_text += f"{i}. {post.text[:100]}...\n\n"
+                            bulletin_text += f"{i}. {post.text[:100]}...\n\n"
 
                         # Уведомляем о завершении создания сводки
-                        digest_time = 0.8  # Примерное время создания
+                        bulletin_time = 0.8  # Примерное время создания
                         notify_bulletin_creation_complete(
-                            region.name, self.current_topic, len(digest_text), digest_time
+                            region.name, self.current_topic, len(bulletin_text), bulletin_time
                         )
 
                         # Уведомляем о начале публикации

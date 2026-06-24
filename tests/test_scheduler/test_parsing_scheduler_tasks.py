@@ -97,7 +97,7 @@ def _compiled_region_gate_sql(theme, strict):
 
 
 def test_region_gate_admits_community_mode_oblast_without_region_config():
-    """community-mode регионы (config.digest_mode='communities') должны попадать
+    """community-mode регионы (config.bulletin_mode='communities') должны попадать
     в тематическую волну даже без строки RegionConfig (баг kirov_obl, 2026-05).
 
     Без этого область, переведённая на собственный пул, молча выпадала из
@@ -106,7 +106,7 @@ def test_region_gate_admits_community_mode_oblast_without_region_config():
     for strict in (True, False):
         sql = _compiled_region_gate_sql("nauka", strict=strict).lower()
         # OR-ветка community-mode присутствует
-        assert "digest_mode" in sql
+        assert "bulletin_mode" in sql
         assert "communities" in sql
         # старая ветка (наличие RegionConfig) сохранена
         assert "region_configs" in sql
@@ -114,7 +114,7 @@ def test_region_gate_admits_community_mode_oblast_without_region_config():
 
 def test_region_gate_admits_region_with_community_pool_without_region_config():
     """Район с активным пулом communities попадает в волну даже без строки
-    RegionConfig и без digest_mode (онбординг-фикс 2026-06, баг Тужи).
+    RegionConfig и без bulletin_mode (онбординг-фикс 2026-06, баг Тужи).
 
     ``config_gate`` теперь содержит OR-ветку ``has_any_communities`` — поэтому в
     скомпилированном SQL появляется дополнительный EXISTS по ``communities``
@@ -127,6 +127,6 @@ def test_region_gate_admits_region_with_community_pool_without_region_config():
     assert strict_sql.count("from communities") == 2
     # non-strict: community_gate=has_theme|has_any (2) + config_gate.has_any (1) = 3
     assert nonstrict_sql.count("from communities") == 3
-    # старые ветки config_gate сохранены (RegionConfig + digest_mode)
+    # старые ветки config_gate сохранены (RegionConfig + bulletin_mode)
     assert "region_configs" in strict_sql
-    assert "digest_mode" in strict_sql
+    assert "bulletin_mode" in strict_sql

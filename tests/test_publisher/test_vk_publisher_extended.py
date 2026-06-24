@@ -34,7 +34,7 @@ async def test_publish_bulletin_normalizes_positive_group_id():
 
     result = await publisher.publish_bulletin(
         group_id=12345,
-        text="digest text",
+        text="bulletin text",
         attachments=[],
     )
 
@@ -223,18 +223,18 @@ def test_get_target_group_id_unknown_region_returns_none(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_publish_aggregated_post_publishes_digest_text():
+async def test_publish_aggregated_post_publishes_bulletin_text():
     vk = _DummyVkClient()
     publisher = VKPublisher(vk_client=vk)
 
-    digest = SimpleNamespace(
+    bulletin = SimpleNamespace(
         aggregated_text="📰 Сводка дня",
         sources_count=3,
         total_views=100,
         total_likes=10,
     )
 
-    result = await publisher.publish_aggregated_post(digest, -555)
+    result = await publisher.publish_aggregated_post(bulletin, -555)
 
     assert result["success"] is True
     assert result["owner_id"] == -555
@@ -250,9 +250,9 @@ async def test_publish_aggregated_post_normalizes_positive_group_id():
     vk = _DummyVkClient()
     publisher = VKPublisher(vk_client=vk)
 
-    digest = SimpleNamespace(aggregated_text="x", sources_count=1)
+    bulletin = SimpleNamespace(aggregated_text="x", sources_count=1)
 
-    await publisher.publish_aggregated_post(digest, 555)
+    await publisher.publish_aggregated_post(bulletin, 555)
 
     _, params = vk.calls[0]
     assert params["owner_id"] == -555
@@ -260,13 +260,13 @@ async def test_publish_aggregated_post_normalizes_positive_group_id():
 
 @pytest.mark.asyncio
 async def test_publish_aggregated_post_handles_missing_aggregated_text():
-    """digest без `aggregated_text` — success=False, не raise."""
+    """bulletin без `aggregated_text` — success=False, не raise."""
     vk = _DummyVkClient()
     publisher = VKPublisher(vk_client=vk)
 
-    digest_without_text = SimpleNamespace(sources_count=1)
+    bulletin_without_text = SimpleNamespace(sources_count=1)
 
-    result = await publisher.publish_aggregated_post(digest_without_text, -555)
+    result = await publisher.publish_aggregated_post(bulletin_without_text, -555)
 
     assert result["success"] is False
     assert "aggregated_text" in result["error"]

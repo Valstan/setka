@@ -89,7 +89,7 @@ class NewsAggregator:
             p for p in posts if getattr(p, "text", None) and str(getattr(p, "text", "")).strip()
         ]
         if not filtered_posts:
-            logger.warning("Skipping digest aggregation: no posts with meaningful text")
+            logger.warning("Skipping bulletin aggregation: no posts with meaningful text")
             return None
 
         posts = filtered_posts
@@ -108,7 +108,7 @@ class NewsAggregator:
             )
 
         # Агрегация нескольких постов
-        logger.info(f"Aggregating {len(posts)} posts into digest...")
+        logger.info(f"Aggregating {len(posts)} posts into bulletin...")
 
         # Якорь - первый пост (самый просматриваемый)
         anchor = posts[0]
@@ -140,7 +140,7 @@ class NewsAggregator:
         # Формирование текста сводки
         aggregated_text = self._format_bulletin(anchor, additional, title, hashtags)
         if not aggregated_text.strip():
-            logger.warning("Digest aggregation produced empty text after formatting")
+            logger.warning("Bulletin aggregation produced empty text after formatting")
             return None
 
         # Статистика
@@ -161,7 +161,7 @@ class NewsAggregator:
             categories=categories,
         )
 
-        logger.info(f"Created digest: {result}")
+        logger.info(f"Created bulletin: {result}")
 
         return result
 
@@ -272,7 +272,7 @@ class NewsAggregator:
         return 0
 
     async def aggregate_by_category(
-        self, posts: List[Any], max_digests: int = 3
+        self, posts: List[Any], max_bulletins: int = 3
     ) -> List[AggregatedPost]:
         """
         Агрегировать посты по категориям
@@ -281,7 +281,7 @@ class NewsAggregator:
 
         Args:
             posts: Список постов (могут быть разных категорий)
-            max_digests: Максимум сводок
+            max_bulletins: Максимум сводок
 
         Returns:
             Список AggregatedPost
@@ -295,12 +295,12 @@ class NewsAggregator:
             by_category[category].append(post)
 
         # Создаем сводки
-        digests = []
+        bulletins = []
 
         for category, category_posts in sorted(
             by_category.items(), key=lambda x: len(x[1]), reverse=True
         ):
-            if len(digests) >= max_digests:
+            if len(bulletins) >= max_bulletins:
                 break
 
             # Сортируем по просмотрам
@@ -316,10 +316,10 @@ class NewsAggregator:
             }
             title = titles.get(category, "📋 ВАЖНОЕ")
 
-            digest = await self.aggregate(category_posts, title=title)
-            if digest:
-                digests.append(digest)
+            bulletin = await self.aggregate(category_posts, title=title)
+            if bulletin:
+                bulletins.append(bulletin)
 
-        logger.info(f"Created {len(digests)} category digests")
+        logger.info(f"Created {len(bulletins)} category bulletins")
 
-        return digests
+        return bulletins

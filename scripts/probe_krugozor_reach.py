@@ -55,7 +55,7 @@ def _metrics(post: Dict[str, Any]) -> Dict[str, int]:
     }
 
 
-def _is_digest(post: Dict[str, Any], header: str) -> bool:
+def _is_bulletin(post: Dict[str, Any], header: str) -> bool:
     """Пост — научпоп-сводка «Кругозора» (по заголовку). Чистая."""
     return (post.get("text") or "").lstrip().startswith(header)
 
@@ -85,7 +85,7 @@ def _ratio(a: float, b: float) -> Optional[float]:
     return round(100.0 * a / b, 1)
 
 
-def _recommend(rows: List[Dict[str, Any]], pooled_digest: List[int]) -> Dict[str, Any]:
+def _recommend(rows: List[Dict[str, Any]], pooled_bulletin: List[int]) -> Dict[str, Any]:
     """Рекомендация 1× vs 2× по охвату сводки относительно локальных постов.
 
     **Метрика — медиана per-region отношений, НЕ pooled.** Pooled-сравнение
@@ -100,17 +100,17 @@ def _recommend(rows: List[Dict[str, Any]], pooled_digest: List[int]) -> Dict[str
     оправдан. < 25% — слабо заходит, 2× лишь разбавит ленту. Между — оставить 1×,
     перезамерить через ~2 недели. Чистая."""
     ratios = [
-        r["digest_vs_local_pct"]
+        r["bulletin_vs_local_pct"]
         for r in rows
-        if r["digest_vs_local_pct"] is not None
+        if r["bulletin_vs_local_pct"] is not None
         and r["baseline_views_local"]["median"] >= MEANINGFUL_BASELINE
     ]
     typ = round(float(median(ratios)), 1) if ratios else None
     pooled_pct = _ratio(
-        float(median(pooled_digest)) if pooled_digest else 0.0,
+        float(median(pooled_bulletin)) if pooled_bulletin else 0.0,
         float(median([v for r in rows for v in [r["baseline_views_local"]["median"]]])) or 0.0,
     )
-    if not pooled_digest:
+    if not pooled_bulletin:
         verdict, why = "INSUFFICIENT", "сводок в окне не найдено — рано судить"
     elif typ is None:
         verdict, why = "INSUFFICIENT", "нет регионов с осмысленным baseline для сравнения"
@@ -132,9 +132,9 @@ def _recommend(rows: List[Dict[str, Any]], pooled_digest: List[int]) -> Dict[str
     return {
         "verdict": verdict,
         "why": why,
-        "typical_region_digest_vs_local_pct": typ,
+        "typical_region_bulletin_vs_local_pct": typ,
         "regions_considered": len(ratios),
-        "pooled_digest_vs_local_pct": pooled_pct,
+        "pooled_bulletin_vs_local_pct": pooled_pct,
         "pooled_note": "pooled завышает (парадокс Симпсона) — ориентир по typical_region_*",
     }
 
@@ -180,9 +180,9 @@ async def main() -> None:
     mature_ceiling = now_ts - MIN_AGE_HOURS * 3600
 
     client = VKClient(user_token)
-    all_digest_views: List[int] = []
-    all_digest_likes: List[int] = []
-    all_digest_reposts: List[int] = []
+    all_bulletin_views: List[int] = []
+    all_bulletin_likes: List[int] = []
+    all_bulletin_reposts: List[int] = []
     all_baseline_views: List[int] = []
     per_day: Dict[str, List[int]] = {}
     rows: List[Dict[str, Any]] = []
@@ -193,24 +193,24 @@ async def main() -> None:
         d_likes: List[int] = []
         d_reposts: List[int] = []
         b_views: List[int] = []
-        digests: List[Dict[str, Any]] = []
+        bulletins: List[Dict[str, Any]] = []
         for p in posts or []:
             ts = int(p.get("date") or 0)
             if ts < window_floor or ts > mature_ceiling:
                 continue  # вне окна / ещё не дозрел
             m = _metrics(p)
-            if _is_digest(p, KRUGOZOR_HEADER_PREFIX):
+            if _is_bulletin(p, KRUGOZOR_HEADER_PREFIX):
                 d_views.append(m["views"])
                 d_likes.append(m["likes"])
                 d_reposts.append(m["reposts"])
                 per_day.setdefault(_msk_day(ts), []).append(m["views"])
-                digests.append({"day": _msk_day(ts), **m})
+                bulletins.append({"day": _msk_day(ts), **m})
             elif not p.get("is_pinned") and len(b_views) < BASELINE_SAMPLE:
                 b_views.append(m["views"])
 
-        all_digest_views += d_views
-        all_digest_likes += d_likes
-        all_digest_reposts += d_reposts
+        all_bulletin_views += d_views
+        all_bulletin_likes += d_likes
+        all_bulletin_reposts += d_reposts
         all_baseline_views += b_views
         dm = float(median(d_views)) if d_views else 0.0
         bm = float(median(b_views)) if b_views else 0.0
@@ -218,12 +218,12 @@ async def main() -> None:
             {
                 "code": reg["code"],
                 "name": reg["name"],
-                "digests_found": len(d_views),
-                "digest_views": _summary(d_views),
-                "digest_likes": _summary(d_likes),
+                "bulletins_found": len(d_views),
+                "bulletin_views": _summary(d_views),
+                "bulletin_likes": _summary(d_likes),
                 "baseline_views_local": _summary(b_views),
-                "digest_vs_local_pct": _ratio(dm, bm),
-                "digest_posts": digests,
+                "bulletin_vs_local_pct": _ratio(dm, bm),
+                "bulletin_posts": bulletins,
             }
         )
 
@@ -236,18 +236,18 @@ async def main() -> None:
         "window_days": MAX_WINDOW_DAYS,
         "min_age_hours": MIN_AGE_HOURS,
         "regions_scanned": len(regions),
-        "regions_with_digest": sum(1 for r in rows if r["digests_found"] > 0),
+        "regions_with_bulletin": sum(1 for r in rows if r["bulletins_found"] > 0),
         "publish_days_found": len(per_day),
-        "total_digest_posts": len(all_digest_views),
+        "total_bulletin_posts": len(all_bulletin_views),
         "overall": {
-            "digest_views": _summary(all_digest_views),
-            "digest_likes": _summary(all_digest_likes),
-            "digest_reposts": _summary(all_digest_reposts),
+            "bulletin_views": _summary(all_bulletin_views),
+            "bulletin_likes": _summary(all_bulletin_likes),
+            "bulletin_reposts": _summary(all_bulletin_reposts),
             "baseline_local_views": _summary(all_baseline_views),
         },
         "by_publish_day": by_day,
-        "recommendation": _recommend(rows, all_digest_views),
-        "per_region": sorted(rows, key=lambda r: -(r["digest_views"]["median"])),
+        "recommendation": _recommend(rows, all_bulletin_views),
+        "per_region": sorted(rows, key=lambda r: -(r["bulletin_views"]["median"])),
     }
     print(json.dumps(out, ensure_ascii=False, indent=2))
 

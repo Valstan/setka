@@ -13,7 +13,7 @@ This document describes the migration of functionality from the old_postopus bra
 | **Work Tables** | MongoDB collections (lip, hash) | PostgreSQL `work_tables` | ✅ Migrated |
 | **Filters** | Hardcoded in parser.py | Modular `modules/filters/` | ✅ Migrated |
 | **Parsing** | `bin/control/parser.py` | `modules/vk_monitor/advanced_parser.py` | ✅ Migrated |
-| **Digest Building** | `bin/rw/posting_post.py` | `modules/publisher/digest_builder.py` | ✅ Migrated |
+| **Bulletin Building** | `bin/rw/posting_post.py` | `modules/publisher/bulletin_builder.py` | ✅ Migrated |
 | **Publishing** | `bin/rw/post_msg.py` | `modules/publisher/vk_publisher_extended.py` | ✅ Migrated |
 | **Scheduling** | Crontab | Celery Beat | ✅ Migrated |
 | **Statistics** | Terminal output | Web UI + API | ✅ Migrated |
@@ -56,7 +56,7 @@ PostgreSQL regions + communities
 | `bin/control/sosed.py` | `modules/publisher/neighbor_sharing.py` | Neighbor news sharing |
 | `bin/control/karavan.py` | `modules/publisher/event_distribution.py` | Event distribution |
 | `bin/control/repost_oleny.py` | `modules/publisher/cross_region_repost.py` | Cross-region reposting |
-| `bin/rw/posting_post.py` | `modules/publisher/digest_builder.py` | Digest assembly |
+| `bin/rw/posting_post.py` | `modules/publisher/bulletin_builder.py` | Bulletin assembly |
 | `bin/rw/post_msg.py` | `modules/publisher/vk_publisher_extended.py` | VK publishing |
 | `bin/utils/is_advertisement.py` | `modules/filters/ads_filter.py` | Ad detection |
 | `bin/sort/sort_old_date.py` | `modules/filters/age_filter.py` | Age filtering |

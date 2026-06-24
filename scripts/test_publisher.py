@@ -64,10 +64,10 @@ async def test_simple_publish():
         return False
 
 
-async def test_digest_creation():
+async def test_bulletin_creation():
     """Тест создания сводки из реальных постов"""
     logger.info("=" * 80)
-    logger.info("TEST 2: Digest creation from real posts")
+    logger.info("TEST 2: Bulletin creation from real posts")
     logger.info("=" * 80)
 
     try:
@@ -125,24 +125,24 @@ async def test_digest_creation():
             title = f"📰 НОВОСТИ {region.name.upper()}"
             hashtags = [f"#Новости{region.code.upper()}"]
 
-            digest = await aggregator.aggregate(posts=posts, title=title, hashtags=hashtags)
+            bulletin = await aggregator.aggregate(posts=posts, title=title, hashtags=hashtags)
 
-            if not digest:
-                logger.error("❌ Failed to create digest")
+            if not bulletin:
+                logger.error("❌ Failed to create bulletin")
                 return False
 
-            logger.info("✅ Digest created successfully!")
-            logger.info(f"   Posts: {digest.sources_count}")
-            logger.info(f"   Total views: {digest.total_views}")
-            logger.info(f"   Total likes: {digest.total_likes}")
-            logger.info(f"   Text length: {len(digest.aggregated_text)} chars")
+            logger.info("✅ Bulletin created successfully!")
+            logger.info(f"   Posts: {bulletin.sources_count}")
+            logger.info(f"   Total views: {bulletin.total_views}")
+            logger.info(f"   Total likes: {bulletin.total_likes}")
+            logger.info(f"   Text length: {len(bulletin.aggregated_text)} chars")
 
             # Показываем превью сводки
             logger.info("\n" + "=" * 80)
-            logger.info("DIGEST PREVIEW:")
+            logger.info("BULLETIN PREVIEW:")
             logger.info("=" * 80)
-            preview = digest.aggregated_text[:500]
-            logger.info(preview + "..." if len(digest.aggregated_text) > 500 else preview)
+            preview = bulletin.aggregated_text[:500]
+            logger.info(preview + "..." if len(bulletin.aggregated_text) > 500 else preview)
             logger.info("=" * 80 + "\n")
 
             return True
@@ -194,30 +194,30 @@ async def test_full_workflow():
             title = f"📰 НОВОСТИ {region.name.upper()}"
             hashtags = [f"#Новости{region.code.upper()}"]
 
-            digest = await aggregator.aggregate(posts=posts, title=title, hashtags=hashtags)
+            bulletin = await aggregator.aggregate(posts=posts, title=title, hashtags=hashtags)
 
-            if not digest:
-                logger.error("❌ Failed to create digest")
+            if not bulletin:
+                logger.error("❌ Failed to create bulletin")
                 return False
 
-            logger.info("✅ Digest created")
+            logger.info("✅ Bulletin created")
 
             # Показываем что будет опубликовано
             logger.info("\n" + "=" * 80)
             logger.info("READY TO PUBLISH:")
             logger.info("=" * 80)
             logger.info(f"Region: {region.name}")
-            logger.info(f"Posts: {digest.sources_count}")
-            logger.info(f"Views: {digest.total_views}")
-            logger.info(f"Text: {len(digest.aggregated_text)} chars")
+            logger.info(f"Posts: {bulletin.sources_count}")
+            logger.info(f"Views: {bulletin.total_views}")
+            logger.info(f"Text: {len(bulletin.aggregated_text)} chars")
             logger.info("=" * 80)
-            preview = digest.aggregated_text[:300]
+            preview = bulletin.aggregated_text[:300]
             logger.info(preview + "...")
             logger.info("=" * 80 + "\n")
 
             logger.info("⚠️  To publish to VK, use:")
             logger.info(
-                "    result = await publisher.publish_aggregated_post(digest, -YOUR_GROUP_ID)"
+                "    result = await publisher.publish_aggregated_post(bulletin, -YOUR_GROUP_ID)"
             )
             logger.info("✅ Full workflow is ready!")
 
@@ -234,7 +234,7 @@ async def main():
 
     tests = [
         ("Simple Publish", test_simple_publish),
-        ("Digest Creation", test_digest_creation),
+        ("Bulletin Creation", test_bulletin_creation),
         ("Full Workflow", test_full_workflow),
     ]
 
@@ -274,7 +274,7 @@ async def main():
         logger.info("\n🎉 All tests passed! VK Publisher is ready!")
         logger.info("\n📝 Next steps:")
         logger.info("   1. Add your VK group ID to config")
-        logger.info("   2. Run: await publisher.publish_aggregated_post(digest, -YOUR_GROUP_ID)")
+        logger.info("   2. Run: await publisher.publish_aggregated_post(bulletin, -YOUR_GROUP_ID)")
         logger.info("   3. Start Celery for automation: systemctl start setka-celery-worker")
     else:
         logger.error(f"\n⚠️  {total - passed} test(s) failed")

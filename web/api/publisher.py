@@ -47,7 +47,7 @@ class PublishResponse(BaseModel):
     post_url: Optional[str] = None
     group_id: Optional[int] = None
     error: Optional[str] = None
-    digest_info: Optional[Dict[str, Any]] = None
+    bulletin_info: Optional[Dict[str, Any]] = None
 
 
 class SimplePublishRequest(BaseModel):
@@ -229,37 +229,37 @@ async def publish_region_bulletin(
         if request.hashtags:
             hashtags.extend(request.hashtags)
 
-        digest = await aggregator.aggregate(posts=posts, title=title, hashtags=hashtags)
+        bulletin = await aggregator.aggregate(posts=posts, title=title, hashtags=hashtags)
 
-        if not digest:
+        if not bulletin:
             return PublishResponse(
-                success=False, message="Failed to create digest", error="Aggregation failed"
+                success=False, message="Failed to create bulletin", error="Aggregation failed"
             )
 
         # Публикуем
-        result = await publisher.publish_aggregated_post(digest, target_group_id)
+        result = await publisher.publish_aggregated_post(bulletin, target_group_id)
 
         if result["success"]:
-            digest_info = {
-                "sources_count": digest.sources_count,
-                "total_views": digest.total_views,
-                "total_likes": digest.total_likes,
-                "total_reposts": digest.total_reposts,
-                "categories": digest.categories,
+            bulletin_info = {
+                "sources_count": bulletin.sources_count,
+                "total_views": bulletin.total_views,
+                "total_likes": bulletin.total_likes,
+                "total_reposts": bulletin.total_reposts,
+                "categories": bulletin.categories,
             }
 
             return PublishResponse(
                 success=True,
-                message="Digest published successfully",
+                message="Bulletin published successfully",
                 post_id=result["post_id"],
                 post_url=result["url"],
                 group_id=result["owner_id"],
-                digest_info=digest_info,
+                bulletin_info=bulletin_info,
             )
         else:
             return PublishResponse(
                 success=False,
-                message="Failed to publish digest",
+                message="Failed to publish bulletin",
                 error=result.get("error"),
                 group_id=target_group_id,
             )
@@ -267,7 +267,7 @@ async def publish_region_bulletin(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to publish region digest: {e}")
+        logger.error(f"Failed to publish region bulletin: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -314,7 +314,7 @@ async def publish_custom_bulletin(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to publish custom digest: {e}")
+        logger.error(f"Failed to publish custom bulletin: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

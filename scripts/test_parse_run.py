@@ -176,13 +176,13 @@ async def main():
             local_hashtag="#тест",
             max_text_length=4096,
         )
-        digest_result = builder.build_bulletin(regular_posts)
-        logger.info(f"Обычный digest: {digest_result.post_count} постов")
-        logger.info(f"Text length: {len(digest_result.text)}")
-        logger.info(f"Attachments: {len(digest_result.attachments_list)}")
+        bulletin_result = builder.build_bulletin(regular_posts)
+        logger.info(f"Обычный bulletin: {bulletin_result.post_count} постов")
+        logger.info(f"Text length: {len(bulletin_result.text)}")
+        logger.info(f"Attachments: {len(bulletin_result.attachments_list)}")
 
         # 8b. Строим mourning сводка (если есть)
-        mourning_digest_result = None
+        mourning_bulletin_result = None
         if mourning_posts:
             logger.info("\n[ШАГ 8b] Построение mourning сводки")
             mourning_header, mourning_tags, mourning_local_hashtag = (
@@ -194,9 +194,9 @@ async def main():
                 local_hashtag=mourning_local_hashtag,
                 max_text_length=4096,
             )
-            mourning_digest_result = mourning_builder.build_bulletin(mourning_posts)
-            logger.info(f"Mourning digest: {mourning_digest_result.post_count} постов")
-            logger.info(f"Text length: {len(mourning_digest_result.text)}")
+            mourning_bulletin_result = mourning_builder.build_bulletin(mourning_posts)
+            logger.info(f"Mourning bulletin: {mourning_bulletin_result.post_count} постов")
+            logger.info(f"Text length: {len(mourning_bulletin_result.text)}")
 
         # 9. Публикуем в тестовую группу (VKPublisher создаёт свой клиент с publish токеном)
         logger.info("\n[ШАГ 9] Публикация")
@@ -209,8 +209,8 @@ async def main():
         try:
             publish_result = await vk_publisher.publish_bulletin(
                 group_id=region.vk_group_id,
-                text=digest_result.text,
-                attachments=digest_result.attachments_list,
+                text=bulletin_result.text,
+                attachments=bulletin_result.attachments_list,
             )
             logger.info(f"Результат публикации: {publish_result}")
             publish_results["regular"] = publish_result
@@ -219,13 +219,13 @@ async def main():
             publish_results["regular"] = {"success": False, "error": str(e)}
 
         # 9b. Публикуем mourning сводка (если есть)
-        if mourning_digest_result and mourning_digest_result.post_count > 0:
+        if mourning_bulletin_result and mourning_bulletin_result.post_count > 0:
             logger.info("[ШАГ 9b] Публикация mourning сводки")
             try:
                 mourning_publish = await vk_publisher.publish_bulletin(
                     group_id=region.vk_group_id,
-                    text=mourning_digest_result.text,
-                    attachments=mourning_digest_result.attachments_list,
+                    text=mourning_bulletin_result.text,
+                    attachments=mourning_bulletin_result.attachments_list,
                 )
                 logger.info(f"Результат публикации mourning: {mourning_publish}")
                 publish_results["mourning"] = mourning_publish
@@ -236,9 +236,9 @@ async def main():
         # 10. Обновляем work table (все опубликованные LIP)
         logger.info("\n[ШАГ 10] Обновление work table")
         existing_lip = work_table.lip or []
-        existing_lip.extend(digest_result.posts_included)
-        if mourning_digest_result and mourning_digest_result.posts_included:
-            existing_lip.extend(mourning_digest_result.posts_included)
+        existing_lip.extend(bulletin_result.posts_included)
+        if mourning_bulletin_result and mourning_bulletin_result.posts_included:
+            existing_lip.extend(mourning_bulletin_result.posts_included)
         if len(existing_lip) > 30:
             existing_lip = existing_lip[-30:]
         work_table.lip = existing_lip
@@ -253,11 +253,11 @@ async def main():
         logger.info(f"  Mourning: {len(mourning_posts)}")
         logger.info(f"  Regular: {len(regular_posts)}")
         regular_url = publish_results.get("regular", {}).get("url", "N/A")
-        logger.info(f"Обычный digest: {digest_result.post_count} постов (URL: {regular_url})")
-        if mourning_digest_result:
+        logger.info(f"Обычный bulletin: {bulletin_result.post_count} постов (URL: {regular_url})")
+        if mourning_bulletin_result:
             mourning_url = publish_results.get("mourning", {}).get("url", "N/A")
             logger.info(
-                f"Mourning digest: {mourning_digest_result.post_count} постов "
+                f"Mourning bulletin: {mourning_bulletin_result.post_count} постов "
                 f"(URL: {mourning_url})"
             )
         logger.info(f"Публикация токеном: {publish_token_name}")
@@ -268,22 +268,22 @@ async def main():
             "posts_parsed": len(posts),
             "mourning_posts": len(mourning_posts),
             "regular_posts": len(regular_posts),
-            "digest_result": {
-                "post_count": digest_result.post_count,
-                "text_length": len(digest_result.text),
+            "bulletin_result": {
+                "post_count": bulletin_result.post_count,
+                "text_length": len(bulletin_result.text),
                 "publish": publish_results.get("regular"),
             },
             "mourning_result": (
                 {
                     "post_count": (
-                        mourning_digest_result.post_count if mourning_digest_result else 0
+                        mourning_bulletin_result.post_count if mourning_bulletin_result else 0
                     ),
                     "text_length": (
-                        len(mourning_digest_result.text) if mourning_digest_result else 0
+                        len(mourning_bulletin_result.text) if mourning_bulletin_result else 0
                     ),
                     "publish": publish_results.get("mourning"),
                 }
-                if mourning_digest_result
+                if mourning_bulletin_result
                 else None
             ),
             "publish_token": publish_token_name,

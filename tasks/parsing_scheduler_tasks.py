@@ -37,7 +37,7 @@ def _use_cascade_bulletin(region_kind: str | None, region_config: Any) -> bool:
     или обычным путём (из собственных ``communities`` региона).
 
     Каскад — для ``kind in {'oblast','strana'}`` ПО УМОЛЧАНИЮ. Но если у региона
-    в ``config['digest_mode'] == 'communities'`` — он ведёт себя как район:
+    в ``config['bulletin_mode'] == 'communities'`` — он ведёт себя как район:
     собирает тематические сводки из своего пула communities (см.
     `/discover_communities`). Так ``kirov_obl`` (2026-05) перешёл с каскада на
     собственный пул из 50+ областных источников, не варясь в новостях своих же
@@ -45,7 +45,7 @@ def _use_cascade_bulletin(region_kind: str | None, region_config: Any) -> bool:
     """
     if region_kind not in ("oblast", "strana"):
         return False
-    mode = region_config.get("digest_mode") if isinstance(region_config, dict) else None
+    mode = region_config.get("bulletin_mode") if isinstance(region_config, dict) else None
     return mode != "communities"
 
 
@@ -127,7 +127,7 @@ def parse_and_publish_theme(
             # Каскадная сводка для регионов kind in {'oblast','strana'} —
             # ловим по типу региона, а не по жёсткому коду, чтобы новые
             # oblast/strana работали без правки кода (см. ``docs/REGIONS_HIERARCHY.md``).
-            # ИСКЛЮЧЕНИЕ: если region.config['digest_mode']=='communities' — область
+            # ИСКЛЮЧЕНИЕ: если region.config['bulletin_mode']=='communities' — область
             # ведёт себя как район (собирает из своего пула communities, а не каскадом).
             from database.models import Region as _Region
 
@@ -150,7 +150,7 @@ def parse_and_publish_theme(
                 )
 
             # Сюда дошла либо обычный район, либо community-mode область/страна
-            # (digest_mode='communities'). Для области важно НЕ публиковать тему,
+            # (bulletin_mode='communities'). Для области важно НЕ публиковать тему,
             # которой у неё нет источников: иначе fallback «все communities» ниже
             # сделает, напр., «Объявления» из новостных пабликов. Поэтому для
             # community-mode oblast/strana fallback отключаем (см. шаг 4).
@@ -279,7 +279,7 @@ def parse_and_publish_theme(
                 region_lips.update(extract_source_lips_from_target_group_posts(target_group_posts))
             except Exception as e:
                 logger.warning(
-                    "Failed to load target group digest history for %s: %s",
+                    "Failed to load target group bulletin history for %s: %s",
                     region_code,
                     e,
                 )
@@ -300,7 +300,7 @@ def parse_and_publish_theme(
             mourning_posts, regular_posts = splitter.split_posts(posts)
             logger.info(f"Split: {len(mourning_posts)} mourning, {len(regular_posts)} regular")
 
-            # 7. Build digests (заголовки/хештеги как в old_postopus, см. postopus_digest_headers)
+            # 7. Build bulletins (заголовки/хештеги как в old_postopus)
             header = resolve_bulletin_header(region_config, theme, region)
             theme_tags, local_hashtag = resolve_bulletin_hashtags(region_config, theme)
 
@@ -321,7 +321,7 @@ def parse_and_publish_theme(
                     "text_preview": txt[:1500],
                 }
 
-            # Regular digest
+            # Regular bulletin
             if regular_posts:
                 builder = BulletinBuilder(
                     header=header,
@@ -331,10 +331,10 @@ def parse_and_publish_theme(
                     repost_mode=region_config.setka_regim_repost,
                     max_posts_per_bulletin=pipeline_eff.get("max_posts_per_bulletin"),
                 )
-                digest = builder.build_bulletin(regular_posts, group_names=group_names)
-                if digest.post_count == 0 or not digest.text.strip():
+                bulletin = builder.build_bulletin(regular_posts, group_names=group_names)
+                if bulletin.post_count == 0 or not bulletin.text.strip():
                     logger.warning(
-                        "Empty regular digest after build, skipping publish "
+                        "Empty regular bulletin after build, skipping publish "
                         "(region=%s theme=%s candidates=%d)",
                         region.code,
                         theme,
@@ -352,7 +352,7 @@ def parse_and_publish_theme(
                     )
 
                     if dry_run:
-                        dry_previews.append(_preview("regular", digest))
+                        dry_previews.append(_preview("regular", bulletin))
                     else:
                         vk_publisher = await VKPublisher.create_with_policy(
                             session,
@@ -361,10 +361,10 @@ def parse_and_publish_theme(
                         )
                         publish_result = await vk_publisher.publish_bulletin(
                             group_id=region.vk_group_id,
-                            text=digest.text,
-                            attachments=digest.attachments_list,
+                            text=bulletin.text,
+                            attachments=bulletin.attachments_list,
                         )
-                        results.append(("regular", digest, publish_result))
+                        results.append(("regular", bulletin, publish_result))
                         try:
                             from monitoring.metrics import (
                                 publish_result_label,
@@ -383,7 +383,7 @@ def parse_and_publish_theme(
                             # из-за чего сбой heartbeat #018 был невидим (2026-06-05).
                             logger.warning("track_digest_published failed", exc_info=True)
 
-            # Mourning digest
+            # Mourning bulletin
             if mourning_posts:
                 mourning_header, mourning_tags, mourning_local_hashtag = (
                     resolve_mourning_bulletin_format()
@@ -395,12 +395,12 @@ def parse_and_publish_theme(
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
                     max_posts_per_bulletin=pipeline_eff.get("max_posts_per_bulletin"),
                 )
-                mourning_digest = mourning_builder.build_bulletin(
+                mourning_bulletin = mourning_builder.build_bulletin(
                     mourning_posts, group_names=group_names
                 )
-                if mourning_digest.post_count == 0 or not mourning_digest.text.strip():
+                if mourning_bulletin.post_count == 0 or not mourning_bulletin.text.strip():
                     logger.warning(
-                        "Empty mourning digest after build, skipping publish "
+                        "Empty mourning bulletin after build, skipping publish "
                         "(region=%s theme=%s candidates=%d)",
                         region.code,
                         theme,
@@ -418,7 +418,7 @@ def parse_and_publish_theme(
                     )
 
                     if dry_run:
-                        dry_previews.append(_preview("mourning", mourning_digest))
+                        dry_previews.append(_preview("mourning", mourning_bulletin))
                     else:
                         vk_pub = await VKPublisher.create_with_policy(
                             session,
@@ -427,10 +427,10 @@ def parse_and_publish_theme(
                         )
                         mourning_pub = await vk_pub.publish_bulletin(
                             group_id=region.vk_group_id,
-                            text=mourning_digest.text,
-                            attachments=mourning_digest.attachments_list,
+                            text=mourning_bulletin.text,
+                            attachments=mourning_bulletin.attachments_list,
                         )
-                        results.append(("mourning", mourning_digest, mourning_pub))
+                        results.append(("mourning", mourning_bulletin, mourning_pub))
                         try:
                             from monitoring.metrics import (
                                 publish_result_label,
@@ -458,7 +458,7 @@ def parse_and_publish_theme(
                     "regular_posts": len(regular_posts),
                     "mourning_posts": len(mourning_posts),
                     "would_publish": dry_previews,
-                    "digests_count": len(dry_previews),
+                    "bulletins_count": len(dry_previews),
                     "stats": parser_stats,
                 }
 
@@ -513,7 +513,7 @@ def parse_and_publish_theme(
                 )
                 await session.commit()
 
-            # 8.5 Mirror published digests to Telegram (Flow A — e.g. Малмыж @malmyzh_info).
+            # 8.5 Mirror published bulletins to Telegram (Flow A — e.g. Малмыж @malmyzh_info).
             # Data-driven: only regions with telegram_channel set AND config.telegram_bot.
             # Wrapped so a Telegram failure NEVER breaks VK publishing.
             try:
@@ -583,7 +583,7 @@ def parse_and_publish_theme(
                 "published_url": first_url,
                 "mourning_posts": len(mourning_posts),
                 "regular_posts": len(regular_posts),
-                "digests_count": len(results),
+                "bulletins_count": len(results),
                 "stats": parser_stats,
             }
 
@@ -781,7 +781,7 @@ def run_all_regions_theme(theme: str, strict: bool = False):
             )
             # NB: раньше тут был хардкод ``Region.code != "kirov_obl"`` — область
             # держалась вне тематических волн (жила на каскад-слотах). С переходом
-            # kirov_obl на digest_mode='communities' (2026-05) исключение снято:
+            # kirov_obl на bulletin_mode='communities' (2026-05) исключение снято:
             # каскадные регионы (tatarstan_obl/rf) и так отсекаются проверкой
             # наличия communities ниже (у них пул пуст).
             community_gate = (
@@ -789,21 +789,21 @@ def run_all_regions_theme(theme: str, strict: bool = False):
             )
             # Регион допускается в волну, если выполнено ЛЮБОЕ из:
             #   1. есть строка RegionConfig (легаси-путь, мигрировано из Mongo);
-            #   2. он community-mode (config.digest_mode='communities') — области/
+            #   2. он community-mode (config.bulletin_mode='communities') — области/
             #      страны на собственном пуле (kirov_obl/tatarstan_obl, 2026-05);
             #   3. есть хотя бы одно активное community (``has_any_communities``).
             # Пункт 3 (2026-06) чинит онбординг районов: новый РАЙОН из визарда
             # `/regions/new` не получает строку region_configs (её создавала только
-            # Mongo-миграция) и без digest_mode молча выпадал из ВСЕХ волн, хотя пул
+            # Mongo-миграция) и без bulletin_mode молча выпадал из ВСЕХ волн, хотя пул
             # источников у него есть (Тужа: 49 communities, 0 публикаций). Теперь
             # регион публикует сразу после засева пула. ``parse_and_publish_theme``
             # при отсутствии RegionConfig подставляет safe-defaults; заголовки/хэштеги
             # имеют fallback по теме+имени региона.
             # ``Region.config`` — generic JSON-колонка (без .astext), поэтому
-            # достаём digest_mode PG-оператором ``->>`` (возвращает text).
+            # достаём bulletin_mode PG-оператором ``->>`` (возвращает text).
             config_gate = (
                 exists().where(RegionConfig.region_code == Region.code)
-                | (Region.config.op("->>")("digest_mode") == "communities")
+                | (Region.config.op("->>")("bulletin_mode") == "communities")
                 | has_any_communities
             )
             result = await session.execute(

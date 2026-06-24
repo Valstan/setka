@@ -2,7 +2,7 @@
 
 import time
 
-from modules.vk_monitor.advanced_parser import DIGEST_MAX_POST_AGE_HOURS, _post_age_hours_utc
+from modules.vk_monitor.advanced_parser import BULLETIN_MAX_POST_AGE_HOURS, _post_age_hours_utc
 
 
 def test_post_age_hours_fresh():
@@ -14,13 +14,13 @@ def test_post_age_hours_fresh():
 def test_post_age_hours_exactly_72_accepted():
     now = time.time()
     h = _post_age_hours_utc({"date": now - 72 * 3600}, now_ts=now)
-    assert h <= DIGEST_MAX_POST_AGE_HOURS
+    assert h <= BULLETIN_MAX_POST_AGE_HOURS
 
 
 def test_post_age_hours_over_72():
     now = time.time()
     h = _post_age_hours_utc({"date": now - 73 * 3600}, now_ts=now)
-    assert h > DIGEST_MAX_POST_AGE_HOURS
+    assert h > BULLETIN_MAX_POST_AGE_HOURS
 
 
 def test_post_age_missing_date():

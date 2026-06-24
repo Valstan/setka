@@ -1,6 +1,6 @@
 """Tests for /api/monitoring/heartbeat — классификатор свежести heartbeat (#018).
 
-По образцу test_digests_status.py: проверяем pure-функцию `_classify_heartbeat_age`
+По образцу test_bulletins_status.py: проверяем pure-функцию `_classify_heartbeat_age`
 (unknown/fresh/stale), а не весь endpoint с Redis. Если порог/логика цвета
 сломаются — на /monitoring начнут светиться ложные тревоги по сводкам.
 """

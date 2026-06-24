@@ -94,7 +94,7 @@ async def test_simple_post_publishing():
         return False
 
 
-async def test_digest_publishing():
+async def test_bulletin_publishing():
     """Тест 3: Создание и публикация сводки"""
     logger.info("\n" + "=" * 60)
     logger.info("🧪 ТЕСТ 3: Создание и публикация сводки")
@@ -129,21 +129,23 @@ async def test_digest_publishing():
         # Создаем сводка
         aggregator = NewsAggregator(max_posts_per_bulletin=3)
 
-        digest = await aggregator.aggregate(
+        bulletin = await aggregator.aggregate(
             posts=posts[:3],
             title="🧪 ТЕСТОВЫЙ СВОДКА SETKA",
             hashtags=["#Тест", "#SETKA", "#Сводка"],
         )
 
-        if not digest:
+        if not bulletin:
             logger.error("❌ Не удалось создать сводка")
             return False
 
-        logger.info(f"✅ Сводка создан: {digest}")
-        logger.info(f"📝 Текст: {digest.aggregated_text[:100]}...")
+        logger.info(f"✅ Сводка создан: {bulletin}")
+        logger.info(f"📝 Текст: {bulletin.aggregated_text[:100]}...")
 
         # Публикуем сводка
-        result = await publisher.publish_aggregated_post(digest=digest, group_id=VK_TEST_GROUP_ID)
+        result = await publisher.publish_aggregated_post(
+            bulletin=bulletin, group_id=VK_TEST_GROUP_ID
+        )
 
         if result["success"]:
             logger.info("✅ Сводка опубликован успешно!")
@@ -199,16 +201,16 @@ async def test_region_publishing():
         logger.info(f"📊 Найдено {len(posts)} постов для региона mi")
 
         aggregator = NewsAggregator(max_posts_per_bulletin=3)
-        digest = await aggregator.aggregate(
+        bulletin = await aggregator.aggregate(
             posts=posts[:3],
             title="📰 НОВОСТИ МАЛМЫЖА",
             hashtags=["#НовостиMI"],
         )
-        if not digest:
+        if not bulletin:
             logger.error("❌ Не удалось создать сводка")
             return False
 
-        result = await publisher.publish_aggregated_post(digest, VK_TEST_GROUP_ID)
+        result = await publisher.publish_aggregated_post(bulletin, VK_TEST_GROUP_ID)
 
         if result["success"]:
             logger.info("✅ Региональная сводка опубликована успешно!")
@@ -270,7 +272,7 @@ async def main():
     tests = [
         ("Инициализация VK Publisher", test_vk_publisher_initialization),
         ("Публикация простого поста", test_simple_post_publishing),
-        ("Создание и публикация сводки", test_digest_publishing),
+        ("Создание и публикация сводки", test_bulletin_publishing),
         ("Публикация для региона", test_region_publishing),
         ("Интеграция с Production Workflow", test_publisher_integration),
     ]

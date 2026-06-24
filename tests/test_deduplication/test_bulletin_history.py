@@ -1,4 +1,4 @@
-"""Unit tests for digest history dedup helpers."""
+"""Unit tests for bulletin history dedup helpers."""
 
 from types import SimpleNamespace
 

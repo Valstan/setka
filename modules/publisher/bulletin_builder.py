@@ -1,8 +1,8 @@
 """
-Digest Builder - Assembles multiple posts into a single VK digest post
+Bulletin Builder - Assembles multiple posts into a single VK bulletin post
 
 Migrated from old_postopus bin/rw/posting_post.py
-Builds formatted digests with headers, attribution, hashtags, and media attachments.
+Builds formatted bulletins with headers, attribution, hashtags, and media attachments.
 """
 
 from dataclasses import dataclass
@@ -15,7 +15,7 @@ from utils.vk_attachments import build_attachments_list, extract_vk_attachments
 
 @dataclass
 class BulletinPost:
-    """A single post included in the digest"""
+    """A single post included in the bulletin"""
 
     post_data: Dict[str, Any]
     source_attribution: str
@@ -27,7 +27,7 @@ class BulletinPost:
 
 @dataclass
 class BulletinResult:
-    """Result of digest building"""
+    """Result of bulletin building"""
 
     text: str
     attachments_list: List[str]  # VK API attachment strings
@@ -40,7 +40,7 @@ class BulletinResult:
 
 class BulletinBuilder:
     """
-    Builds digest posts from multiple source posts.
+    Builds bulletin posts from multiple source posts.
 
     Migrated from old_postopus posting_post() function.
 
@@ -56,7 +56,7 @@ class BulletinBuilder:
     # VK limits
     MAX_TEXT_LENGTH = 4096  # VK post text limit
     MAX_ATTACHMENTS = 10  # VK wall.post media limit
-    MAX_POSTS_PER_DIGEST = 3  # Maximum number of posts in a single digest
+    MAX_POSTS_PER_BULLETIN = 3  # Maximum number of posts in a single bulletin
 
     # Default header
     DEFAULT_HEADER = "📰 Сводка новостей"
@@ -75,7 +75,7 @@ class BulletinBuilder:
     ):
         """
         Args:
-            header: Digest header text
+            header: Bulletin header text
             hashtags: List of theme hashtags
             local_hashtag: Local region hashtag
             max_text_length: Maximum text length
@@ -94,7 +94,7 @@ class BulletinBuilder:
         self.max_posts_per_bulletin = (
             int(max_posts_per_bulletin)
             if max_posts_per_bulletin is not None
-            else self.MAX_POSTS_PER_DIGEST
+            else self.MAX_POSTS_PER_BULLETIN
         )
         self.max_posts_per_bulletin = max(1, min(self.max_posts_per_bulletin, 10))
 
@@ -104,7 +104,7 @@ class BulletinBuilder:
         group_names: Dict[str, str] = None,
     ) -> BulletinResult:
         """
-        Build digest from list of posts.
+        Build bulletin from list of posts.
 
         Format (old_postopus style):
             {HEADER}
@@ -135,15 +135,15 @@ class BulletinBuilder:
         # Sort posts by popularity
         sorted_posts = self._sort_by_popularity(posts)
 
-        # Build digest text and collect attachments
-        digest_parts = []
+        # Build bulletin text and collect attachments
+        bulletin_parts = []
         flat_attachments = []
         posts_included = []
 
         # Заголовок (если задан непустой)
         if self.header and str(self.header).strip():
-            digest_parts.append(str(self.header).strip())
-            digest_parts.append("")  # пустая строка после заголовка
+            bulletin_parts.append(str(self.header).strip())
+            bulletin_parts.append("")  # пустая строка после заголовка
 
         # Calculate static content that must always fit
         hashtag_text = self._build_hashtag_text()
@@ -181,7 +181,7 @@ class BulletinBuilder:
             post_attachments = build_attachments_list(attachments)
 
             # Calculate total length if we add this post
-            current_length = sum(len(part) for part in digest_parts)
+            current_length = sum(len(part) for part in bulletin_parts)
             new_total = current_length + len(post_entry) + hashtag_overhead
 
             # Check if the FULL post fits (no truncation allowed)
@@ -197,8 +197,8 @@ class BulletinBuilder:
                 continue
 
             # Add the post
-            digest_parts.append(post_entry)
-            digest_parts.append("")  # Empty line separator
+            bulletin_parts.append(post_entry)
+            bulletin_parts.append("")  # Empty line separator
 
             # Track lip
             lip = lip_of_post(owner_id, post_id)
@@ -208,7 +208,7 @@ class BulletinBuilder:
             flat_attachments.extend(post_attachments)
 
         # If no post made it through the loop, return an empty result so callers
-        # never publish a "digest" that's just a header + hashtags. All filtering
+        # never publish a "bulletin" that's just a header + hashtags. All filtering
         # paths (no text, doesn't fit, attachments don't fit) end up here.
         if not posts_included:
             return BulletinResult(
@@ -223,10 +223,10 @@ class BulletinBuilder:
 
         # Add hashtags at the end
         if hashtag_text:
-            digest_parts.append(hashtag_text)
+            bulletin_parts.append(hashtag_text)
 
         # Join all parts — NO final truncation
-        full_text = "\n".join(digest_parts)
+        full_text = "\n".join(bulletin_parts)
 
         # Truncate attachments to VK limit
         if len(flat_attachments) > self.MAX_ATTACHMENTS:
@@ -320,7 +320,7 @@ class BulletinBuilder:
         return min(remaining, max_per_post)
 
     def _build_hashtag_text(self) -> str:
-        """Build hashtag string for digest."""
+        """Build hashtag string for bulletin."""
         hashtags = []
 
         # Add theme hashtags
@@ -344,7 +344,7 @@ class BulletinBuilder:
         avg_attachments: int = 1,
     ) -> int:
         """
-        Estimate how many posts can fit in digest.
+        Estimate how many posts can fit in bulletin.
 
         Args:
             avg_post_length: Average post text length
@@ -373,10 +373,10 @@ class BulletinBuilder:
 
 class TextOnlyBulletinBuilder(BulletinBuilder):
     """
-    Builds text-only digest (no media attachments).
+    Builds text-only bulletin (no media attachments).
 
     Migrated from old_postopus post_bezfoto() function.
-    Used for advertising digests where images aren't needed.
+    Used for advertising bulletins where images aren't needed.
     """
 
     def build_bulletin(
@@ -384,7 +384,7 @@ class TextOnlyBulletinBuilder(BulletinBuilder):
         posts: List[Dict[str, Any]],
         group_names: Dict[str, str] = None,
     ) -> BulletinResult:
-        """Build text-only digest."""
+        """Build text-only bulletin."""
         # Use parent build but strip attachments
         result = super().build_bulletin(posts, group_names)
 
@@ -401,12 +401,12 @@ class TextOnlyBulletinBuilder(BulletinBuilder):
         hashtag: str = "",
     ) -> BulletinResult:
         """
-        Build digest from text-only items (bezfoto).
+        Build bulletin from text-only items (bezfoto).
 
         Args:
             text_items: List of text items to include
-            header: Digest header
-            hashtag: Single hashtag for digest
+            header: Bulletin header
+            hashtag: Single hashtag for bulletin
 
         Returns:
             BulletinResult

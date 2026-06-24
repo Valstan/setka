@@ -39,7 +39,7 @@ _redis_pid: Optional[int] = None
 
 
 def _redis():
-    """Fork-safe Redis-клиент (PID-guard, как в digest_heartbeat — инцидент 2026-06-05)."""
+    """Fork-safe Redis-клиент (PID-guard, как в bulletin_heartbeat — инцидент 2026-06-05)."""
     global _redis_client, _redis_pid
     pid = os.getpid()
     if _redis_client is None or _redis_pid != pid:

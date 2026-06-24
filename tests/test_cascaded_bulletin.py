@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modules.bulletin_pipeline_settings import POSTOPUS_DIGEST_THEMES
+from modules.bulletin_pipeline_settings import POSTOPUS_BULLETIN_THEMES
 from modules.cascaded_bulletin import (
     DEFAULT_LOOKBACK_HOURS,
     DEFAULT_POSTS_PER_CHILD,
@@ -21,10 +21,10 @@ from modules.cascaded_bulletin import (
 
 
 def test_postopus_themes_includes_oblast():
-    """Backward-compat: тема `oblast` всё ещё в списке POSTOPUS_DIGEST_THEMES,
+    """Backward-compat: тема `oblast` всё ещё в списке POSTOPUS_BULLETIN_THEMES,
     чтобы существующие beat-таски `postopus-kirov-oblast-*` находили
     `RegionConfig.bulletin_template.by_topic.oblast`."""
-    assert "oblast" in POSTOPUS_DIGEST_THEMES
+    assert "oblast" in POSTOPUS_BULLETIN_THEMES
 
 
 def test_constants():

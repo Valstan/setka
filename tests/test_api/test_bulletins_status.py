@@ -12,9 +12,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from web.api.system_monitoring import (
-    _DIGEST_STATUS_BROKEN_MIN_FAILED_RUNS,
-    _DIGEST_STATUS_FRESH_HOURS,
-    _DIGEST_STATUS_STALE_HOURS,
+    _BULLETIN_STATUS_BROKEN_MIN_FAILED_RUNS,
+    _BULLETIN_STATUS_FRESH_HOURS,
+    _BULLETIN_STATUS_STALE_HOURS,
     _classify_bulletin_row,
     _reclassify_retired,
 )
@@ -40,19 +40,19 @@ def test_classify_fresh_run_and_success():
 
 def test_classify_success_within_fresh_threshold():
     now = _now()
-    boundary = now - timedelta(hours=_DIGEST_STATUS_FRESH_HOURS - 1)
+    boundary = now - timedelta(hours=_BULLETIN_STATUS_FRESH_HOURS - 1)
     assert _classify_bulletin_row(boundary, boundary, 0, now) == "fresh"
 
 
 def test_classify_success_between_fresh_and_stale_is_stale():
     now = _now()
-    mid = now - timedelta(hours=_DIGEST_STATUS_FRESH_HOURS + 3)
+    mid = now - timedelta(hours=_BULLETIN_STATUS_FRESH_HOURS + 3)
     assert _classify_bulletin_row(mid, mid, 0, now) == "stale"
 
 
 def test_classify_old_success_is_dead():
     now = _now()
-    old = now - timedelta(hours=_DIGEST_STATUS_STALE_HOURS + 5)
+    old = now - timedelta(hours=_BULLETIN_STATUS_STALE_HOURS + 5)
     # last_run тоже старый — это «dead» (beat либо не запускает, либо не
     # доходит до success давно).
     assert _classify_bulletin_row(old, old, 0, now) == "dead"
@@ -66,7 +66,7 @@ def test_classify_recent_runs_all_failed_is_broken():
         _classify_bulletin_row(
             last_run_at=just_now,
             last_success_at=None,
-            consecutive_failed=_DIGEST_STATUS_BROKEN_MIN_FAILED_RUNS,
+            consecutive_failed=_BULLETIN_STATUS_BROKEN_MIN_FAILED_RUNS,
             now_utc=now,
         )
         == "broken"
@@ -76,7 +76,7 @@ def test_classify_recent_runs_all_failed_is_broken():
 def test_classify_broken_requires_recent_run():
     """Если последний запуск >24ч назад — это уже не broken, а dead."""
     now = _now()
-    long_ago = now - timedelta(hours=_DIGEST_STATUS_STALE_HOURS + 5)
+    long_ago = now - timedelta(hours=_BULLETIN_STATUS_STALE_HOURS + 5)
     assert (
         _classify_bulletin_row(
             last_run_at=long_ago,
@@ -97,7 +97,7 @@ def test_classify_consecutive_failed_below_threshold_uses_success_age():
         _classify_bulletin_row(
             last_run_at=just_now,
             last_success_at=last_success,
-            consecutive_failed=_DIGEST_STATUS_BROKEN_MIN_FAILED_RUNS - 1,
+            consecutive_failed=_BULLETIN_STATUS_BROKEN_MIN_FAILED_RUNS - 1,
             now_utc=now,
         )
         == "fresh"

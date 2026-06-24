@@ -1,5 +1,5 @@
 """
-Digest template management (defaults + per-region + per-topic overrides).
+Bulletin template management (defaults + per-region + per-topic overrides).
 
 Stored in Region.config (JSON) as:
 {

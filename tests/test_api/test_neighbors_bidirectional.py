@@ -8,7 +8,7 @@
   отброс неизвестных и само-соседа, дедуп, сортировка.
 * ``_sync_bidirectional_neighbors`` — добавление/удаление зеркалит у соседа.
 
-Сессия БД мокается через ``AsyncMock`` (как в ``tests/test_cascaded_digest.py`` —
+Сессия БД мокается через ``AsyncMock`` (как в ``tests/test_cascaded_bulletin.py`` —
 в проекте unit-тесты не поднимают реальную БД).
 """
 

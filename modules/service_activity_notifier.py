@@ -237,9 +237,9 @@ class ServiceActivityNotifier:
         )
 
         # Записываем активную операцию
-        operation_id = f"digest_{region_name}_{topic}"
+        operation_id = f"bulletin_{region_name}_{topic}"
         self.active_operations[operation_id] = {
-            "type": "digest_creation",
+            "type": "bulletin_creation",
             "region": region_name,
             "topic": topic,
             "started_at": now_moscow(),
@@ -247,11 +247,11 @@ class ServiceActivityNotifier:
         }
 
     def notify_bulletin_creation_complete(
-        self, region_name: str, topic: str, digest_length: int, processing_time: float = 0
+        self, region_name: str, topic: str, bulletin_length: int, processing_time: float = 0
     ):
         """Уведомление о завершении создания сводки"""
         message = f"✅ Сводка по теме '{topic}' для {region_name} создана"
-        message += f" ({digest_length} символов"
+        message += f" ({bulletin_length} символов"
         if processing_time > 0:
             message += f", время: {processing_time:.1f}с"
         message += ")"
@@ -262,13 +262,13 @@ class ServiceActivityNotifier:
             region=region_name,
             details={
                 "topic": topic,
-                "digest_length": digest_length,
+                "bulletin_length": bulletin_length,
                 "processing_time": processing_time,
             },
         )
 
         # Удаляем активную операцию
-        operation_id = f"digest_{region_name}_{topic}"
+        operation_id = f"bulletin_{region_name}_{topic}"
         if operation_id in self.active_operations:
             del self.active_operations[operation_id]
 
@@ -286,7 +286,7 @@ class ServiceActivityNotifier:
         # Записываем активную операцию
         operation_id = f"publish_{region_name}_{topic}"
         self.active_operations[operation_id] = {
-            "type": "digest_publishing",
+            "type": "bulletin_publishing",
             "region": region_name,
             "topic": topic,
             "started_at": now_moscow(),
@@ -545,11 +545,11 @@ def notify_bulletin_creation_start(region_name: str, topic: str, posts_count: in
 
 
 def notify_bulletin_creation_complete(
-    region_name: str, topic: str, digest_length: int, processing_time: float = 0
+    region_name: str, topic: str, bulletin_length: int, processing_time: float = 0
 ):
     """Завершить создание сводки"""
     service_activity_notifier.notify_bulletin_creation_complete(
-        region_name, topic, digest_length, processing_time
+        region_name, topic, bulletin_length, processing_time
     )
 
 
