@@ -11,6 +11,7 @@ const STATUS_BADGE = {
     contacted: '<span class="badge bg-info text-dark">Связались</span>',
     published: '<span class="badge bg-success">Опубликовано</span>',
     skipped: '<span class="badge bg-secondary">Пропущено</span>',
+    deleted: '<span class="badge bg-danger">Удалено</span>',
 };
 
 const ORIGIN_BADGE = {
@@ -301,6 +302,10 @@ function renderCard(ar) {
                        <button class="btn btn-sm btn-info" onclick="publishNow(${ar.id})"
                                title="Опубликовать бесплатно СЕЙЧАС (для бытовых объявлений) и убрать карточку">
                            <i class="bi bi-send-check"></i> Опубликовать
+                       </button>
+                       <button class="btn btn-sm btn-danger" onclick="deleteCard(${ar.id})"
+                               title="Удалить пост из предложки VK И убрать из кабинета (в отличие от «Пропустить», который оставляет пост в VK)">
+                           <i class="bi bi-trash"></i> Удалить
                        </button>`}
                 <button class="btn btn-sm btn-outline-success" onclick="markCard(${ar.id}, 'published')">
                     <i class="bi bi-check2"></i> Опубликовано
@@ -401,6 +406,22 @@ async function publishNow(id) {
         setTimeout(loadAdRequests, 500);
     } catch (e) {
         _res(id, 'Ошибка публикации: ' + escapeHtml(e.message), 'danger');
+    }
+}
+
+// Удалить пост-предложку из VK И из кабинета (в отличие от «Пропустить», который
+// оставляет пост висеть в VK). Наружу-действие + необратимо → подтверждаем.
+async function deleteCard(id) {
+    if (!confirm('Удалить этот пост из предложки VK и убрать из кабинета? Пост в VK будет удалён безвозвратно.')) {
+        return;
+    }
+    _res(id, 'Удаляю из VK…', 'muted');
+    try {
+        const r = await apiClient.deleteAdRequestPost(id);
+        _res(id, (r && r.already) ? 'Уже было удалено ранее.' : 'Удалено из VK и кабинета ✓', 'success');
+        setTimeout(loadAdRequests, 500);
+    } catch (e) {
+        _res(id, 'Не удалось удалить из VK: ' + escapeHtml(e.message), 'danger');
     }
 }
 
