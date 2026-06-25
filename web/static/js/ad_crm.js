@@ -197,12 +197,23 @@ async function loadFunnel() {
                 <div class="h4 mb-0 text-danger">${debtorsN} · ${fmtMoney(f.debtors_amount)}</div>
                 <div class="small text-muted">должников (&gt;${f.debtor_days || 3} дн.)</div>
             </div>` : '';
+        // Достижимость инбокса (Раунд 4): среди открытых заявок — кому сообщество
+        // может писать в ЛС (достижимо) vs у кого ЛС закрыта (нужен deeplink-фолбэк).
+        const reachableN = Number(f.inbox_reachable || 0);
+        const unreachableN = Number(f.inbox_unreachable || 0);
+        const reachChip = (reachableN > 0 || unreachableN > 0)
+            ? `<div class="text-center px-3 py-2 rounded border bg-body-tertiary"
+                    title="Открытые заявки: сообщество может написать в ЛС / ЛС закрыта (отвечать из личного VK)">
+                <div class="h4 mb-0">✉ <span class="text-success">${reachableN}</span> / <span class="text-danger">${unreachableN}</span></div>
+                <div class="small text-muted">ЛС: достижимо / закрыто</div>
+            </div>` : '';
         const totals = `<div class="text-center px-3 py-2 rounded border bg-body-tertiary ms-auto">
                 <div class="h4 mb-0 text-success">${fmtMoney(f.total_paid)}</div>
                 <div class="small text-muted">оплачено всего</div>
             </div>
             ${awaitingChip}
             ${debtorsChip}
+            ${reachChip}
             <div class="text-center px-3 py-2 rounded border bg-body-tertiary">
                 <div class="h4 mb-0">${f.publications_count || 0}</div>
                 <div class="small text-muted">публикаций</div>

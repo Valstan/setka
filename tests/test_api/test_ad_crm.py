@@ -368,6 +368,8 @@ async def test_funnel_aggregates():
             _scalar_one(98765),  # total_views (С3)
             _scalar_one(7000),  # debtors_amount (С4)
             _scalar_one(2),  # debtors_count (С4)
+            _scalar_one(3),  # inbox_reachable (Раунд 4)
+            _scalar_one(8),  # inbox_unreachable (Раунд 4)
         ]
     )
     out = await api.funnel(db=db)
@@ -381,6 +383,8 @@ async def test_funnel_aggregates():
     assert out["total_views"] == 98765  # С3: сумма просмотров публикаций
     assert out["debtors_count"] == 2  # С4: должники
     assert out["debtors_amount"] == 7000.0
+    assert out["inbox_reachable"] == 3  # Раунд 4: открытая ЛС
+    assert out["inbox_unreachable"] == 8  # Раунд 4: ЛС закрыта → нужен deeplink
 
 
 # ----------------------------------------------------------------- stats report (С3)
