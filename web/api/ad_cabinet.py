@@ -6,7 +6,9 @@
 - ``POST /requests/{id}/prepare``     — отрендерить ответ из шаблона (подставить имя/паблик);
 - ``POST /requests/{id}/send``        — отправить от сообщества (если VK разрешает ЛС),
                                         иначе вернуть deeplink на личный диалог;
-- ``POST /requests/{id}/status``      — сменить статус (contacted/skipped/published).
+- ``POST /requests/{id}/status``      — сменить статус (contacted/skipped/published);
+- ``POST /requests/{id}/delete-post`` — удалить пост-предложку из VK И из кабинета
+                                        (в отличие от ``skipped``, который оставляет пост в VK).
 
 Отправка — полу-авто: VK почти не даёт сообществу писать первым (error 901),
 поэтому ``messages_allowed`` предчекает, а на отказ UI переключается на личный
@@ -1021,6 +1023,77 @@ async def publish_request_now(
         "original_removed": original_removed,
         "attachments": len(attachments),
     }
+
+
+@router.post("/requests/{request_id}/delete-post")
+async def delete_request_post(
+    request_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Удалить заявку-предложку из VK (``wall.delete``) И из кабинета.
+
+    Отличие от ``/status skipped`` (только убирает карточку из инбокса, оставляя
+    предложенный пост висеть в VK): здесь сам пост снимается со стены сообщества
+    через ``VKPublisher.delete_post`` (тот же токен-роутинг с fallback на
+    user-токен при community-ошибке 15/27, что и публикация). Только для
+    предложки — у ``inbound_dm`` (личка) ``vk_post_id`` нет, удалять в VK нечего.
+
+    Порядок намеренный: **сначала VK-удаление** (главное действие), статус
+    кабинета меняем ТОЛЬКО при его успехе. Если VK не удалил (нет прав / пост
+    уже снят / сеть) — заявка остаётся в инбоксе, оператор видит ошибку и может
+    повторить или нажать «Пропустить». ``with_for_update`` сериализует двойной
+    клик: второй запрос увидит ``status='deleted'`` и выйдет идемпотентно.
+    """
+    from modules.publisher.vk_publisher_extended import VKPublisher
+
+    ar = (
+        await db.execute(select(AdRequest).where(AdRequest.id == request_id).with_for_update())
+    ).scalar_one_or_none()
+    if not ar:
+        raise HTTPException(status_code=404, detail="ad request not found")
+    if ar.status == "deleted":
+        return {"deleted": True, "already": True, "vk_removed": False}
+    if not ar.community_vk_id or not ar.vk_post_id:
+        raise HTTPException(
+            status_code=400, detail="у заявки нет поста-предложки в VK (нечего удалять)"
+        )
+
+    gid = int(ar.community_vk_id)
+    vk_post_id = int(ar.vk_post_id)
+    client_id = ar.client_id
+    publisher = await VKPublisher.create_with_policy(db, target_group_id=gid)
+    rm = await publisher.delete_post(gid, vk_post_id)
+    if not rm.get("success"):
+        # Fail-closed: при любой неудаче VK заявку НЕ помечаем удалённой (иначе
+        # карточка ушла бы из инбокса, а пост остался висеть в VK). Если пост уже
+        # снят в VK — у оператора есть «Пропустить» (убрать карточку без VK-вызова).
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"VK не удалил пост: {rm.get('error')}. "
+                "Если пост уже снят в VK — нажмите «Пропустить», чтобы убрать карточку."
+            ),
+        )
+
+    # Пост в VK удалён необратимо → статус кабинета это КРИТИЧНАЯ часть: коммитим
+    # её первой и отдельно. Запись в таймлайн — best-effort (как в
+    # publish_request_now): её сбой не должен откатить статус и вернуть уже
+    # «осиротевшую» карточку (без поста в VK) обратно в инбокс.
+    ar.status = "deleted"
+    await db.commit()
+    try:
+        log_interaction(
+            db,
+            kind="deleted",
+            client_id=client_id,
+            ad_request_id=request_id,
+            summary=f"Удалён пост-предложка wall{gid}_{vk_post_id} из VK и кабинета",
+            meta={"community_vk_id": gid, "vk_post_id": vk_post_id, "via": rm.get("via")},
+        )
+        await db.commit()
+    except Exception as e:  # noqa: BLE001 - лог не критичен, пост уже удалён
+        logger.warning("delete-post log_interaction failed: %s", e)
+    return {"deleted": True, "vk_removed": True, "via": rm.get("via")}
 
 
 @router.get("/scheduled")

@@ -114,6 +114,14 @@ const apiClient = {
         });
     },
 
+    // Удалить пост-предложку из VK И из кабинета (в отличие от «Пропустить»,
+    // который оставляет пост в VK).
+    async deleteAdRequestPost(id) {
+        return this.request(`/ad-cabinet/requests/${id}/delete-post`, {
+            method: 'POST'
+        });
+    },
+
     async getAdTemplates() {
         return this.request('/templates/?include_inactive=0');
     },

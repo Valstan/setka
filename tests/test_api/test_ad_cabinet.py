@@ -564,3 +564,116 @@ async def test_set_handling_invalid():
     with pytest.raises(HTTPException) as exc:
         await api.set_handling(1, api.HandlingIn(handling_status="bogus"), db=db)
     assert exc.value.status_code == 400
+
+
+# ------------------------------------------------ delete-post (VK + кабинет)
+
+
+def _scalar_one(obj):
+    """Результат db.execute(...).scalar_one_or_none() → obj (для with_for_update)."""
+    r = MagicMock()
+    r.scalar_one_or_none.return_value = obj
+    return r
+
+
+class _FakePublisher:
+    """Заглушка VKPublisher: фиксирует delete_post и отдаёт заданный результат."""
+
+    def __init__(self, result):
+        self._result = result
+        self.deleted: list = []
+
+    async def delete_post(self, owner_id, post_id):
+        self.deleted.append((owner_id, post_id))
+        return self._result
+
+
+async def test_delete_post_removes_from_vk_and_marks_deleted(monkeypatch):
+    """Успех: wall.delete вызван по (community, post), статус → deleted, commit."""
+    ar = _ad_request(status="new", community_vk_id=-100, vk_post_id=5)
+    db = AsyncMock()
+    db.add = MagicMock()  # AsyncSession.add синхронный (log_interaction)
+    db.execute = AsyncMock(return_value=_scalar_one(ar))
+    fake = _FakePublisher({"success": True, "via": "community-token"})
+    monkeypatch.setattr(
+        "modules.publisher.vk_publisher_extended.VKPublisher.create_with_policy",
+        AsyncMock(return_value=fake),
+    )
+    out = await api.delete_request_post(1, db=db)
+    assert out["deleted"] is True and out["vk_removed"] is True
+    assert out["via"] == "community-token"
+    assert ar.status == "deleted"
+    assert fake.deleted == [(-100, 5)]
+    db.commit.assert_awaited()
+    # Аудит-лог таймлайна фактически записан (kind='deleted'), а не потерян.
+    db.add.assert_called_once()
+    assert db.add.call_args.args[0].kind == "deleted"
+
+
+async def test_delete_post_vk_failure_keeps_request(monkeypatch):
+    """VK не удалил → 502, статус НЕ меняется, кабинет ничего не коммитит."""
+    ar = _ad_request(status="new", community_vk_id=-100, vk_post_id=5)
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_one(ar))
+    fake = _FakePublisher({"success": False, "error": "boom"})
+    monkeypatch.setattr(
+        "modules.publisher.vk_publisher_extended.VKPublisher.create_with_policy",
+        AsyncMock(return_value=fake),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await api.delete_request_post(1, db=db)
+    assert exc.value.status_code == 502
+    assert ar.status == "new"  # заявка осталась в инбоксе
+    db.commit.assert_not_awaited()
+
+
+def _forbid_vk(monkeypatch):
+    """Любой вызов VK на ранних выходах = провал теста (destructive-инвариант)."""
+    monkeypatch.setattr(
+        "modules.publisher.vk_publisher_extended.VKPublisher.create_with_policy",
+        AsyncMock(side_effect=AssertionError("VK не должен вызываться на раннем выходе")),
+    )
+
+
+async def test_delete_post_no_vk_post_returns_400(monkeypatch):
+    """inbound_dm (нет vk_post_id) — удалять в VK нечего → 400, VK не дёргаем."""
+    _forbid_vk(monkeypatch)
+    ar = _ad_request(status="new", origin="inbound_dm", vk_post_id=None)
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_one(ar))
+    with pytest.raises(HTTPException) as exc:
+        await api.delete_request_post(1, db=db)
+    assert exc.value.status_code == 400
+    assert ar.status == "new"
+
+
+async def test_delete_post_no_community_returns_400(monkeypatch):
+    """Нет community_vk_id (первая ветка гварда) → 400 без TypeError, VK не дёргаем."""
+    _forbid_vk(monkeypatch)
+    ar = _ad_request(status="new", community_vk_id=None, vk_post_id=5)
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_one(ar))
+    with pytest.raises(HTTPException) as exc:
+        await api.delete_request_post(1, db=db)
+    assert exc.value.status_code == 400
+    assert ar.status == "new"
+
+
+async def test_delete_post_already_deleted_idempotent(monkeypatch):
+    """Повторный вызов по уже удалённой заявке — no-op, без VK-вызова."""
+    _forbid_vk(monkeypatch)
+    ar = _ad_request(status="deleted", community_vk_id=-100, vk_post_id=5)
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_one(ar))
+    out = await api.delete_request_post(1, db=db)
+    assert out["already"] is True and out["vk_removed"] is False
+    db.commit.assert_not_awaited()
+
+
+async def test_delete_post_404_unknown(monkeypatch):
+    _forbid_vk(monkeypatch)
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_one(None))
+    with pytest.raises(HTTPException) as exc:
+        await api.delete_request_post(999, db=db)
+    assert exc.value.status_code == 404
