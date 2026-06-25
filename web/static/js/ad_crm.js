@@ -273,6 +273,19 @@ function stageSelectHtml(id, current) {
                     onchange="changeStage(${id}, this.value)">${opts}</select>`;
 }
 
+// Баланс нити (И1): «осталось» / сигнал «нужна доплата» по уровню из бэкенда
+// (ok/near/over). Крошка в свёрнутой карточке — виден в списке до раскрытия.
+function balanceCrumb(bal) {
+    if (!bal || (Number(bal.paid || 0) === 0 && Number(bal.spent || 0) === 0)) return '';
+    if (bal.level === 'over') {
+        return `<span class="badge bg-danger" title="Расход превысил оплату — напомнить о доплате">нужна доплата · ${fmtMoney(bal.remaining)}</span>`;
+    }
+    if (bal.level === 'near') {
+        return `<span class="badge bg-warning text-dark" title="Расход подобрался к оплате (≥80%)">осталось ${fmtMoney(bal.remaining)}</span>`;
+    }
+    return `<span class="text-muted" title="Остаток нити">· осталось ${fmtMoney(bal.remaining)}</span>`;
+}
+
 function renderClientCard(c) {
     const nameLabel = c.author_is_group
         ? `<i class="bi bi-people"></i> ${escapeHtml(c.name || 'сообщество')}`
@@ -293,6 +306,7 @@ function renderClientCard(c) {
                         <span class="text-success fw-bold">${fmtMoney(c.total_paid)}</span>
                         ${Number(c.total_awaiting || 0) > 0
                             ? `<span class="badge bg-warning text-dark" title="Ожидает оплаты">⏳ ${fmtMoney(c.total_awaiting)}</span>` : ''}
+                        ${balanceCrumb(c.balance)}
                         <span class="text-muted">· ${c.payments_count || 0} оплат · ${c.publications_count || 0} публикаций</span>
                     </div>
                 </div>
@@ -390,6 +404,45 @@ async function clientStatsReport(id) {
     }
 }
 
+// Блок «Баланс нити» в развёрнутой карточке: оплачено / израсходовано / осталось
+// + кнопка-мостик «Записать доплату» (фокусит форму оплаты в этой же карточке —
+// цикл «расход догнал оплату → внести доплату» замыкается, не покидая карточку).
+function balanceBlock(bal, clientId) {
+    if (!bal) return '';
+    const borderCls = bal.level === 'over' ? 'border-danger'
+        : bal.level === 'near' ? 'border-warning' : 'border-success-subtle';
+    const remainCls = bal.level === 'over' ? 'text-danger' : '';
+    const topupBtn = bal.needs_topup
+        ? `<button class="btn btn-sm btn-warning ms-auto" onclick="focusAddPayment(${clientId})"
+                   title="Внести доплату — напомнить рекламодателю о проплате следующего периода">
+               <i class="bi bi-cash-coin"></i> Записать доплату
+           </button>` : '';
+    const incomplete = bal.spend_incomplete
+        ? `<div class="small text-muted mt-1" title="Расход недосчитан — проставьте цену этим публикациям">
+               ⚠ расход неполный: ${bal.published_unpriced} публ. без цены</div>` : '';
+    return `
+    <div class="border ${borderCls} rounded p-2 mb-3">
+        <div class="d-flex gap-3 align-items-center flex-wrap">
+            <div><div class="small text-muted">Оплачено</div><div class="fw-bold text-success">${fmtMoney(bal.paid)}</div></div>
+            <div class="text-muted">−</div>
+            <div><div class="small text-muted">Израсходовано</div><div class="fw-bold">${fmtMoney(bal.spent)}</div></div>
+            <div class="text-muted">=</div>
+            <div><div class="small text-muted">Осталось</div><div class="fw-bold ${remainCls}">${fmtMoney(bal.remaining)}</div></div>
+            ${topupBtn}
+        </div>
+        ${incomplete}
+    </div>`;
+}
+
+// Кнопка «Записать доплату» — фокус на поле суммы оплаты в этой же карточке.
+function focusAddPayment(clientId) {
+    const el = document.getElementById(`pay-amount-${clientId}`);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+    }
+}
+
 function renderClientDetails(d) {
     const c = d.client;
     const payments = d.payments || [];
@@ -460,6 +513,7 @@ function renderClientDetails(d) {
         </div>
 
         <div class="col-md-7">
+            ${balanceBlock(d.balance, c.id)}
             <div class="fw-bold small mb-1"><i class="bi bi-cash-coin"></i> Оплаты</div>
             <table class="table table-sm align-middle mb-2">
                 <tbody>${payRows}</tbody>
