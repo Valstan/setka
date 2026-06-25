@@ -227,6 +227,14 @@ async function loadAdRequests() {
     }
 }
 
+// Достижимость ЛС (Раунд 4): VK не разрешает сообществу писать этому автору
+// (can_message=False, precheck со скана). Только для людей с валидным peer —
+// автор-группа и нерезолвимый peer недостижимы по другой причине (нет личного
+// диалога вовсе). Закрытым показываем бейдж + deeplink «ответить из личного VK».
+function reachClosed(ar) {
+    return ar.can_message === false && !ar.author_is_group && Number(ar.peer_id) > 0;
+}
+
 function renderCard(ar) {
     const reasons = (ar.reasons_json || []).map(r => `<span class="badge bg-light text-dark border me-1">${escapeHtml(r)}</span>`).join(' ');
     const photos = (ar.photo_urls_json || []).slice(0, 6).map(u =>
@@ -264,6 +272,9 @@ function renderCard(ar) {
                 <div class="text-end">
                     ${originBadge} ${STATUS_BADGE[ar.status] || escapeHtml(ar.status)}
                     <div class="mt-1">${scoreBadge(ar.score)}</div>
+                    ${reachClosed(ar) ? `<div class="mt-1"><span class="badge bg-danger"
+                        title="VK не разрешает сообществу писать этому автору в ЛС — отвечайте из личного VK (кнопка ниже)">
+                        <i class="bi bi-envelope-slash"></i> ЛС закрыта</span></div>` : ''}
                 </div>
             </div>
             <div class="mb-2">${reasons}</div>
@@ -281,6 +292,11 @@ function renderCard(ar) {
                 <button class="btn btn-sm btn-primary" onclick="sendCard(${ar.id})">
                     <i class="bi bi-send"></i> ${isDm ? 'Ответить в диалог' : 'Отправить от сообщества'}
                 </button>
+                ${reachClosed(ar) ? `<a class="btn btn-sm btn-warning"
+                        href="https://vk.com/im?sel=${encodeURIComponent(ar.peer_id)}" target="_blank"
+                        title="ЛС от сообщества закрыта. Откройте личный диалог и вставьте текст (кнопка «Копировать»).">
+                        <i class="bi bi-box-arrow-up-right"></i> Ответить из личного VK
+                    </a>` : ''}
                 <button class="btn btn-sm btn-outline-secondary" onclick="copyCard(${ar.id})">
                     <i class="bi bi-clipboard"></i> Копировать
                 </button>

@@ -1314,6 +1314,26 @@ async def funnel(db: AsyncSession = Depends(get_db_session)):
         )
     ).scalar_one()
 
+    # Достижимость инбокса (Раунд 4): среди ОТКРЫТЫХ заявок (route=ad_cabinet,
+    # status='new' — ровно то, что видит оператор на вкладке «Входящие», урок G91)
+    # сколько рекламодателей с ОТКРЫТОЙ vs ЗАКРЫТОЙ ЛС. Закрытым (can_message=False)
+    # сообщество писать не может → оператору нужен deeplink-фолбэк «ответить из
+    # личного VK». Метрика делает разрыв достижимости видимым неделя-к-неделе.
+    _open_inbox = (
+        AdRequest.route == "ad_cabinet",
+        AdRequest.status == "new",
+    )
+    inbox_reachable = (
+        await db.execute(
+            select(func.count(AdRequest.id)).where(*_open_inbox, AdRequest.can_message.is_(True))
+        )
+    ).scalar_one()
+    inbox_unreachable = (
+        await db.execute(
+            select(func.count(AdRequest.id)).where(*_open_inbox, AdRequest.can_message.is_(False))
+        )
+    ).scalar_one()
+
     return {
         "stages": _VALID_STAGES,
         "by_stage": by_stage,
@@ -1325,4 +1345,6 @@ async def funnel(db: AsyncSession = Depends(get_db_session)):
         "debtors_count": int(debtors_count or 0),
         "debtors_amount": float(debtors_amount or 0),
         "debtor_days": DEBTOR_DAYS,
+        "inbox_reachable": int(inbox_reachable or 0),
+        "inbox_unreachable": int(inbox_unreachable or 0),
     }
