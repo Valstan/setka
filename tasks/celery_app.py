@@ -675,6 +675,31 @@ def alert_ad_debtors():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.alert_ad_overspent")
+def alert_ad_overspent():
+    """Суточное Telegram-напоминание о перерасходе пакета публикаций (И2, ad-CRM).
+
+    Раз в день (11:00 MSK, через час после должников). Клиенты, у кого вышло
+    больше публикаций, чем оплачено пакетом (``units_paid``) → напомнить о проплате
+    следующего периода. Дедуп через ``spend_alerted_at`` (сброс при новой оплате).
+    """
+    logger.info("Alerting ad overspent (ad cabinet, И2)...")
+    try:
+        from config.runtime import SERVER
+        from modules.ad_cabinet.spend_balance import run_overspend_alert
+
+        domain = (
+            SERVER.get("domain") or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+        )
+        url = f"https://{domain}/ad#crm"
+        result = run_coro(run_overspend_alert(send=_send_debtor_alert, url=url))
+        logger.info("ad overspent alert done: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"alert_ad_overspent failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.auto_greet_ad_requests")
 def auto_greet_ad_requests():
     """Авто-приветствие рекламодателю на новую заявку (улучшение отклика).
@@ -1148,6 +1173,15 @@ app.conf.beat_schedule = {
     "alert-ad-debtors-daily": {
         "task": "tasks.celery_app.alert_ad_debtors",
         "schedule": crontab(minute=0, hour=10),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
+    # Суточное напоминание о перерасходе пакета публикаций (И2, ad-CRM) — 11:00 MSK
+    "alert-ad-overspent-daily": {
+        "task": "tasks.celery_app.alert_ad_overspent",
+        "schedule": crontab(minute=0, hour=11),
         "options": {
             "expires": 3600,
             "catchup": False,

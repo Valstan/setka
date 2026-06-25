@@ -60,6 +60,16 @@ def test_alert_ad_debtors_task_registered():
     assert entry["task"] == "tasks.celery_app.alert_ad_debtors"
 
 
+def test_alert_ad_overspent_task_registered():
+    """Суточное напоминание о перерасходе пакета (И2) зарегистрировано + beat."""
+    from tasks.celery_app import alert_ad_overspent, app  # noqa: F401
+
+    assert "tasks.celery_app.alert_ad_overspent" in app.tasks
+    assert "alert-ad-overspent-daily" in app.conf.beat_schedule
+    entry = app.conf.beat_schedule["alert-ad-overspent-daily"]
+    assert entry["task"] == "tasks.celery_app.alert_ad_overspent"
+
+
 def test_auto_greet_task_registered():
     """Авто-приветствие рекламодателю зарегистрировано + beat."""
     from tasks.celery_app import app, auto_greet_ad_requests  # noqa: F401
