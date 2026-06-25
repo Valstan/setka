@@ -91,8 +91,8 @@ def _request(**kw):
 async def test_list_clients_serializes_aggregates():
     client = _client()
     db = _db()
-    # row: (client, total_paid, total_awaiting, payments_count, publications_count)
-    db.execute = AsyncMock(return_value=_rows([(client, 1500, 300, 2, 3)]))
+    # row: (client, total_paid, total_awaiting, payments_count, publications_count, total_spent)
+    db.execute = AsyncMock(return_value=_rows([(client, 1500, 300, 2, 3, 1200)]))
     out = await api.list_clients(db=db)
     assert len(out["clients"]) == 1
     row = out["clients"][0]
@@ -102,15 +102,19 @@ async def test_list_clients_serializes_aggregates():
     assert row["payments_count"] == 2
     assert row["publications_count"] == 3
     assert row["vk_url"] == "https://vk.com/id42"
+    # Баланс-сигнал (И1): расход 1200 из 1500 → ratio 0.8 → near, осталось 300.
+    assert row["balance"]["remaining"] == 300.0
+    assert row["balance"]["level"] == "near"
 
 
 async def test_list_clients_null_aggregates_default_zero():
     db = _db()
-    db.execute = AsyncMock(return_value=_rows([(_client(), None, None, None, None)]))
+    db.execute = AsyncMock(return_value=_rows([(_client(), None, None, None, None, None)]))
     out = await api.list_clients(db=db)
     assert out["clients"][0]["total_paid"] == 0.0
     assert out["clients"][0]["total_awaiting"] == 0.0
     assert out["clients"][0]["payments_count"] == 0
+    assert out["clients"][0]["balance"]["level"] == "ok"
 
 
 # ------------------------------------------------- tiered-поиск q (#035)
@@ -119,7 +123,7 @@ async def test_list_clients_null_aggregates_default_zero():
 async def test_list_clients_q_substring_first_hit_no_retry():
     """Точный substring нашёлся — ретраи (раскладка/fuzzy) не выполняются."""
     db = _db()
-    db.execute = AsyncMock(return_value=_rows([(_client(name="иван петров"), 0, 0, 0, 0)]))
+    db.execute = AsyncMock(return_value=_rows([(_client(name="иван петров"), 0, 0, 0, 0, 0)]))
     out = await api.list_clients(q="петров", db=db)
     assert len(out["clients"]) == 1
     assert db.execute.await_count == 1
@@ -128,7 +132,7 @@ async def test_list_clients_q_substring_first_hit_no_retry():
 async def test_list_clients_q_layout_retry_on_zero():
     """Ноль результатов в исходной раскладке → второй запрос с RU↔EN конверсией."""
     db = _db()
-    hit = _rows([(_client(name="двигатель-сервис"), 0, 0, 0, 0)])
+    hit = _rows([(_client(name="двигатель-сервис"), 0, 0, 0, 0, 0)])
     db.execute = AsyncMock(side_effect=[_rows([]), hit])
     # «двигатель», набранный в EN-раскладке
     out = await api.list_clients(q="ldbufntkm", db=db)
@@ -148,7 +152,7 @@ async def test_list_clients_q_fuzzy_skipped_off_postgres():
 async def test_list_clients_q_fuzzy_fallback_on_postgres():
     """Substring пуст, диалект postgresql → третий запрос (pg_trgm similarity)."""
     db = _db()
-    hit = _rows([(_client(name="петров и ко"), 0, 0, 0, 0)])
+    hit = _rows([(_client(name="петров и ко"), 0, 0, 0, 0, 0)])
     # вариант 1 (substring) и вариант 2 (раскладка) пусты, fuzzy находит
     db.execute = AsyncMock(side_effect=[_rows([]), _rows([]), hit])
     bind = MagicMock()
@@ -161,7 +165,7 @@ async def test_list_clients_q_fuzzy_fallback_on_postgres():
 
 async def test_list_clients_blank_q_treated_as_no_filter():
     db = _db()
-    db.execute = AsyncMock(return_value=_rows([(_client(), 0, 0, 0, 0)]))
+    db.execute = AsyncMock(return_value=_rows([(_client(), 0, 0, 0, 0, 0)]))
     out = await api.list_clients(q="   ", db=db)
     assert len(out["clients"]) == 1
     assert db.execute.await_count == 1
@@ -200,13 +204,17 @@ async def test_create_client_invalid_stage_400():
 
 async def test_get_client_detail_totals():
     client = _client(id=3)
-    pays = [AdPayment(id=1, client_id=3, amount=1000), AdPayment(id=2, client_id=3, amount=500)]
+    pays = [
+        AdPayment(id=1, client_id=3, amount=1000, status="paid"),
+        AdPayment(id=2, client_id=3, amount=500, status="paid"),
+    ]
     pubs = [AdPublication(id=1, client_id=3, community_vk_id=-100, vk_post_id=9)]
     db = _db()
     db.get = AsyncMock(return_value=client)
     db.execute = AsyncMock(side_effect=[_scalars(pays), _scalars(pubs)])
     out = await api.get_client(3, db=db)
     assert out["total_paid"] == 1500.0
+    assert out["balance"]["paid"] == 1500.0
     assert out["publications_count"] == 1
     assert out["publications"][0]["vk_post_url"] == "https://vk.com/wall-100_9"
 

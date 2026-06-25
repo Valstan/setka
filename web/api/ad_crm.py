@@ -36,6 +36,7 @@ from database.models import (
     AdPublication,
     AdRequest,
 )
+from modules.ad_cabinet.balance import compute_balance, summarize
 from modules.ad_cabinet.interaction_log import log_interaction
 from utils.search_query import compact_number, normalize_query, query_variants
 
@@ -284,6 +285,16 @@ async def list_clients(
         .where(AdPublication.client_id == AdClient.id)
         .scalar_subquery()
     )
+    # Расход нити (И1): Σ цены вышедших публикаций — для сигнала «нужна доплата»
+    # прямо в списке клиентов, до раскрытия карточки.
+    spent_sq = (
+        select(func.coalesce(func.sum(AdPublication.price), 0))
+        .where(
+            AdPublication.client_id == AdClient.id,
+            AdPublication.status == "published",
+        )
+        .scalar_subquery()
+    )
 
     stmt = select(
         AdClient,
@@ -291,6 +302,7 @@ async def list_clients(
         awaiting_sq.label("total_awaiting"),
         pay_count_sq.label("payments_count"),
         pub_count_sq.label("publications_count"),
+        spent_sq.label("total_spent"),
     )
     if stage:
         stmt = stmt.where(AdClient.stage == stage)
@@ -313,12 +325,18 @@ async def list_clients(
 
     rows = await _search_client_rows(db, stmt, q, limit)
     clients = []
-    for client, total_paid, total_awaiting, payments_count, publications_count in rows:
+    for client, total_paid, total_awaiting, payments_count, publications_count, total_spent in rows:
         d = client.to_dict()
         d["total_paid"] = float(total_paid or 0)
         d["total_awaiting"] = float(total_awaiting or 0)
         d["payments_count"] = int(payments_count or 0)
         d["publications_count"] = int(publications_count or 0)
+        # Баланс-сигнал для списка (И1): уровень/остаток той же логикой, что в
+        # карточке. Цена части публикаций может быть NULL — в списке это не видно
+        # (published_unpriced=0), точный «расход неполный» показывает карточка.
+        d["balance"] = summarize(
+            d["total_paid"], float(total_spent or 0), awaiting=d["total_awaiting"]
+        )
         clients.append(d)
     return {"clients": clients}
 
@@ -387,21 +405,40 @@ async def get_client(
         .all()
     )
 
-    # paid = всё, что не «awaiting» (status в БД всегда задан default'ом 'paid').
-    total_paid = sum(
-        float(p.amount) for p in payments if p.amount is not None and p.status != "awaiting"
-    )
-    total_awaiting = sum(
-        float(p.amount) for p in payments if p.amount is not None and p.status == "awaiting"
-    )
+    # Баланс нити (И1): единый источник правды paid/spent/remaining. Чинит баг —
+    # карточка считала paid как «не awaiting», а список/воронка — как «== paid».
+    balance = compute_balance(payments, publications)
     return {
         "client": client.to_dict(),
         "payments": [p.to_dict() for p in payments],
         "publications": [p.to_dict() for p in publications],
-        "total_paid": total_paid,
-        "total_awaiting": total_awaiting,
+        "total_paid": balance["paid"],
+        "total_awaiting": balance["awaiting"],
         "publications_count": len(publications),
+        "balance": balance,
     }
+
+
+@router.get("/clients/{client_id}/balance")
+async def client_balance(
+    client_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Только баланс нити клиента (лёгкий endpoint для будущего beat-напоминания И2)."""
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    payments = (
+        (await db.execute(select(AdPayment).where(AdPayment.client_id == client_id)))
+        .scalars()
+        .all()
+    )
+    publications = (
+        (await db.execute(select(AdPublication).where(AdPublication.client_id == client_id)))
+        .scalars()
+        .all()
+    )
+    return compute_balance(payments, publications)
 
 
 @router.patch("/clients/{client_id}")
