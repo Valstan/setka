@@ -273,10 +273,19 @@ function stageSelectHtml(id, current) {
                     onchange="changeStage(${id}, this.value)">${opts}</select>`;
 }
 
-// Баланс нити (И1): «осталось» / сигнал «нужна доплата» по уровню из бэкенда
-// (ok/near/over). Крошка в свёрнутой карточке — виден в списке до раскрытия.
+// Баланс нити: крошка в свёрнутой карточке — виден в списке до раскрытия.
+// При штучном пакете (И2) — «осталось N публ.» / «перерасход», иначе рубли (И1).
 function balanceCrumb(bal) {
-    if (!bal || (Number(bal.paid || 0) === 0 && Number(bal.spent || 0) === 0)) return '';
+    if (!bal) return '';
+    const u = bal.units || {};
+    if (u.tracked) {
+        if (u.over) {
+            return `<span class="badge bg-danger" title="Вышло больше оплаченного пакета — напомнить о доплате">перерасход +${Math.abs(u.remaining)} публ.</span>`;
+        }
+        const cls = u.remaining <= 1 ? 'badge bg-warning text-dark' : 'text-muted';
+        return `<span class="${cls}" title="Пакет: куплено ${u.paid}, вышло ${u.consumed}">осталось ${u.remaining} публ.</span>`;
+    }
+    if (Number(bal.paid || 0) === 0 && Number(bal.spent || 0) === 0) return '';
     if (bal.level === 'over') {
         return `<span class="badge bg-danger" title="Расход превысил оплату — напомнить о доплате">нужна доплата · ${fmtMoney(bal.remaining)}</span>`;
     }
@@ -404,24 +413,38 @@ async function clientStatsReport(id) {
     }
 }
 
-// Блок «Баланс нити» в развёрнутой карточке: оплачено / израсходовано / осталось
-// + кнопка-мостик «Записать доплату» (фокусит форму оплаты в этой же карточке —
-// цикл «расход догнал оплату → внести доплату» замыкается, не покидая карточку).
+// Блок «Баланс нити» в развёрнутой карточке: пакет в публикациях (И2, если задан)
+// + рубли (И1) + кнопка-мостик «Записать доплату» (фокусит форму оплаты в этой же
+// карточке — цикл «расход догнал оплату → внести доплату» замыкается, не покидая её).
 function balanceBlock(bal, clientId) {
     if (!bal) return '';
-    const borderCls = bal.level === 'over' ? 'border-danger'
+    const u = bal.units || {};
+    // Сигнал доплаты: при штучном пакете — перерасход (вышло > оплачено); иначе рубли.
+    const needsTopup = u.tracked ? u.over : bal.needs_topup;
+    const borderCls = (u.tracked && u.over) || bal.level === 'over' ? 'border-danger'
         : bal.level === 'near' ? 'border-warning' : 'border-success-subtle';
     const remainCls = bal.level === 'over' ? 'text-danger' : '';
-    const topupBtn = bal.needs_topup
+    const topupBtn = needsTopup
         ? `<button class="btn btn-sm btn-warning ms-auto" onclick="focusAddPayment(${clientId})"
                    title="Внести доплату — напомнить рекламодателю о проплате следующего периода">
                <i class="bi bi-cash-coin"></i> Записать доплату
            </button>` : '';
+    // Штучный пакет (И2) — основной учёт по решению владельца: куплено / вышло / осталось.
+    const unitsRow = u.tracked
+        ? `<div class="d-flex gap-3 align-items-center flex-wrap mb-2 pb-2 border-bottom">
+               <div><div class="small text-muted">Куплено публ.</div><div class="fw-bold">${u.paid}</div></div>
+               <div class="text-muted">−</div>
+               <div><div class="small text-muted">Вышло</div><div class="fw-bold">${u.consumed}</div></div>
+               <div class="text-muted">=</div>
+               <div><div class="small text-muted">Осталось</div>
+                    <div class="fw-bold ${u.over ? 'text-danger' : ''}">${u.over ? 'перерасход +' + Math.abs(u.remaining) : u.remaining + ' публ.'}</div></div>
+           </div>` : '';
     const incomplete = bal.spend_incomplete
         ? `<div class="small text-muted mt-1" title="Расход недосчитан — проставьте цену этим публикациям">
                ⚠ расход неполный: ${bal.published_unpriced} публ. без цены</div>` : '';
     return `
     <div class="border ${borderCls} rounded p-2 mb-3">
+        ${unitsRow}
         <div class="d-flex gap-3 align-items-center flex-wrap">
             <div><div class="small text-muted">Оплачено</div><div class="fw-bold text-success">${fmtMoney(bal.paid)}</div></div>
             <div class="text-muted">−</div>
@@ -459,7 +482,7 @@ function renderClientDetails(d) {
                        onclick="markPaid(${p.id}, ${c.id})"><i class="bi bi-check2"></i></button>` : '';
         return `
         <tr>
-            <td class="text-nowrap fw-bold ${amountCls}">${fmtMoney(p.amount)}</td>
+            <td class="text-nowrap fw-bold ${amountCls}">${fmtMoney(p.amount)}${p.units_paid ? ` <span class="badge bg-light text-dark border" title="Пакет на ${p.units_paid} публикаций">${p.units_paid} публ.</span>` : ''}</td>
             <td>${statusBadge}</td>
             <td class="small text-nowrap">${escapeHtml(p.bank || '')}</td>
             <td class="text-nowrap small">${fmtDate(p.paid_at)}</td>
@@ -520,6 +543,7 @@ function renderClientDetails(d) {
             </table>
             <div class="input-group input-group-sm mb-1">
                 <input type="number" class="form-control" id="pay-amount-${c.id}" placeholder="Сумма ₽" style="max-width:100px;">
+                <input type="number" min="1" class="form-control" id="pay-units-${c.id}" placeholder="за N публ." title="За сколько публикаций эта оплата (пакет). Пусто — учёт только в рублях." style="max-width:100px;">
                 ${bankSelectHtml(`pay-bank-${c.id}`, '')}
                 <input type="text" class="form-control" id="pay-note-${c.id}" placeholder="Заметка">
                 <button class="btn btn-outline-success" onclick="addPayment(${c.id})"><i class="bi bi-plus-lg"></i> Оплата</button>
@@ -908,9 +932,11 @@ async function addPayment(id) {
     const bank = document.getElementById(`pay-bank-${id}`).value || null;
     const note = document.getElementById(`pay-note-${id}`).value.trim() || null;
     const awaiting = document.getElementById(`pay-awaiting-${id}`).checked;
+    const unitsRaw = parseInt(document.getElementById(`pay-units-${id}`).value, 10);
+    const units_paid = Number.isInteger(unitsRaw) && unitsRaw > 0 ? unitsRaw : null;
     try {
         await apiClient.createCrmPayment({
-            client_id: id, amount, bank, note, status: awaiting ? 'awaiting' : 'paid',
+            client_id: id, amount, bank, note, units_paid, status: awaiting ? 'awaiting' : 'paid',
         });
         await _detailReload(id);
         await loadFunnel();

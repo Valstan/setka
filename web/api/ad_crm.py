@@ -96,6 +96,7 @@ class PaymentCreateIn(BaseModel):
     amount: float
     method: Optional[str] = None
     status: str = "paid"  # awaiting | paid
+    units_paid: Optional[int] = None  # за сколько публикаций (пакет); None = не указано
     bank: Optional[str] = None
     ad_request_id: Optional[int] = None
     scheduled_post_id: Optional[int] = None
@@ -109,6 +110,7 @@ class PaymentUpdateIn(BaseModel):
     amount: Optional[float] = None
     method: Optional[str] = None
     status: Optional[str] = None
+    units_paid: Optional[int] = None
     bank: Optional[str] = None
     note: Optional[str] = None
     paid_at: Optional[str] = None
@@ -295,6 +297,21 @@ async def list_clients(
         )
         .scalar_subquery()
     )
+    # Штучный баланс (И2): куплено пакетом (Σ units_paid у оплат) vs вышло
+    # (число published-публикаций). Сигнал перерасхода в списке.
+    paid_units_sq = (
+        select(func.coalesce(func.sum(AdPayment.units_paid), 0))
+        .where(AdPayment.client_id == AdClient.id, AdPayment.status == "paid")
+        .scalar_subquery()
+    )
+    consumed_units_sq = (
+        select(func.count(AdPublication.id))
+        .where(
+            AdPublication.client_id == AdClient.id,
+            AdPublication.status == "published",
+        )
+        .scalar_subquery()
+    )
 
     stmt = select(
         AdClient,
@@ -303,6 +320,8 @@ async def list_clients(
         pay_count_sq.label("payments_count"),
         pub_count_sq.label("publications_count"),
         spent_sq.label("total_spent"),
+        paid_units_sq.label("paid_units"),
+        consumed_units_sq.label("consumed_units"),
     )
     if stage:
         stmt = stmt.where(AdClient.stage == stage)
@@ -325,17 +344,24 @@ async def list_clients(
 
     rows = await _search_client_rows(db, stmt, q, limit)
     clients = []
-    for client, total_paid, total_awaiting, payments_count, publications_count, total_spent in rows:
+    for row in rows:
+        client = row[0]
+        total_paid, total_awaiting, payments_count, publications_count = row[1:5]
+        total_spent, paid_units, consumed_units = row[5:8]
         d = client.to_dict()
         d["total_paid"] = float(total_paid or 0)
         d["total_awaiting"] = float(total_awaiting or 0)
         d["payments_count"] = int(payments_count or 0)
         d["publications_count"] = int(publications_count or 0)
-        # Баланс-сигнал для списка (И1): уровень/остаток той же логикой, что в
+        # Баланс-сигнал для списка (И1+И2): уровень/остаток той же логикой, что в
         # карточке. Цена части публикаций может быть NULL — в списке это не видно
         # (published_unpriced=0), точный «расход неполный» показывает карточка.
         d["balance"] = summarize(
-            d["total_paid"], float(total_spent or 0), awaiting=d["total_awaiting"]
+            d["total_paid"],
+            float(total_spent or 0),
+            awaiting=d["total_awaiting"],
+            paid_units=int(paid_units or 0),
+            consumed_units=int(consumed_units or 0),
         )
         clients.append(d)
     return {"clients": clients}
@@ -576,6 +602,7 @@ async def create_payment(
         amount=payload.amount,
         method=payload.method,
         status=status,
+        units_paid=payload.units_paid,
         bank=payload.bank,
         ad_request_id=payload.ad_request_id,
         scheduled_post_id=payload.scheduled_post_id,
@@ -587,6 +614,10 @@ async def create_payment(
     # В воронку «оплачено» двигаем только при фактической оплате.
     if status == "paid" and client.stage != "lost":
         client.stage = "paid"
+    # Доплата перевзводит напоминание о перерасходе (И2): «доплатил → можно
+    # напомнить снова, когда расход опять догонит оплату».
+    if status == "paid":
+        client.spend_alerted_at = None
     await db.flush()  # получить pay.id для ссылки в событии
     bank_part = f", {pay.bank}" if pay.bank else ""
     if status == "awaiting":
@@ -647,8 +678,10 @@ async def update_payment(
     if became_paid:
         pay.paid_confirmed_at = datetime.utcnow()
         client = await db.get(AdClient, pay.client_id)
-        if client and client.stage != "lost":
-            client.stage = "paid"
+        if client:
+            if client.stage != "lost":
+                client.stage = "paid"
+            client.spend_alerted_at = None  # доплата перевзводит напоминание (И2)
         log_interaction(
             db,
             kind="payment_paid",

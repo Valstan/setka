@@ -16,6 +16,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
 )
@@ -809,6 +810,10 @@ class AdClient(Base):
     # Воронка: detected|contacted|scheduled|published|paid|lost
     stage = Column(String(20), nullable=False, default="detected", index=True)
     notes = Column(Text, nullable=True)
+    # Дедуп Telegram-напоминания о перерасходе пакета (миграция 048). Ставится при
+    # отправке алёрта, сбрасывается в NULL при новой оплате — «доплатил → можно
+    # напомнить снова». NULL — ещё не напоминали / пакет в норме.
+    spend_alerted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -853,6 +858,9 @@ class AdPayment(Base):
     method = Column(String(40), nullable=True)  # нал | карта | перевод | …
     # Статус оплаты (миграция 029): awaiting (ждём деньги) | paid (получено).
     status = Column(String(20), nullable=False, default="paid")
+    # Штучный учёт пакета (миграция 048): за сколько публикаций эта оплата.
+    # NULL — штучно не указано (баланс только в рублях). Решение владельца 2026-06-25.
+    units_paid = Column(SmallInteger, nullable=True)
     bank = Column(String(40), nullable=True)  # банк зачисления (фикс-список AD_PAYMENT_BANKS)
     ad_request_id = Column(BigInteger, nullable=True)  # опц. за какую заявку
     scheduled_post_id = Column(BigInteger, nullable=True)  # опц. за какой отложенный пост
@@ -871,6 +879,7 @@ class AdPayment(Base):
             "amount": float(self.amount) if self.amount is not None else None,
             "method": self.method,
             "status": self.status,
+            "units_paid": self.units_paid,
             "bank": self.bank,
             "ad_request_id": self.ad_request_id,
             "scheduled_post_id": self.scheduled_post_id,

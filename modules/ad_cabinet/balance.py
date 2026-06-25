@@ -53,11 +53,22 @@ def summarize(
     *,
     awaiting: float = 0.0,
     published_unpriced: int = 0,
+    paid_units: int = 0,
+    consumed_units: int = 0,
 ) -> Dict[str, Any]:
     """Свести баланс из уже посчитанных сумм. Уровень: ok / near / over.
 
     Вынесено отдельно, чтобы список клиентов (скалярные подзапросы-агрегаты) и
     карточка (полные строки) считали уровень/остаток ОДНОЙ логикой.
+
+    Два измерения:
+      * **рубли** — приход/расход/остаток в деньгах (уровень near при ratio≥0.8);
+      * **штуки** (``units``) — пакет публикаций «куплено N, вышло M, осталось K».
+        Решение владельца 2026-06-25: основной учёт — штучный, напоминание о
+        доплате — при ПЕРЕРАСХОДЕ (вышло больше оплаченного → ``units.over``).
+
+    ``units.tracked`` = у клиента вообще зафиксирован пакет (``paid_units>0``);
+    пока оператор не проставил «за сколько публикаций» — штучный баланс молчит.
     """
     remaining = paid - spent
     if paid > 0:
@@ -74,6 +85,10 @@ def summarize(
     else:
         level = "ok"
 
+    units_remaining = int(paid_units) - int(consumed_units)
+    units_tracked = int(paid_units) > 0
+    units_over = units_tracked and units_remaining < 0
+
     return {
         "paid": round(paid, 2),
         "awaiting": round(awaiting, 2),
@@ -84,6 +99,13 @@ def summarize(
         "published_unpriced": int(published_unpriced),
         "level": level,
         "needs_topup": level in ("near", "over"),
+        "units": {
+            "paid": int(paid_units),
+            "consumed": int(consumed_units),
+            "remaining": units_remaining,
+            "tracked": units_tracked,
+            "over": units_over,
+        },
     }
 
 
@@ -94,22 +116,35 @@ def compute_balance(
     """Баланс нити по полным строкам оплат и публикаций клиента."""
     paid = 0.0
     awaiting = 0.0
+    paid_units = 0
     for p in payments:
         status = getattr(p, "status", None)
         if status == PAID_STATUS:
             paid += _amount(p)
+            units = getattr(p, "units_paid", None)
+            if units:
+                paid_units += int(units)
         elif status == AWAITING_STATUS:
             awaiting += _amount(p)
 
     spent = 0.0
     unpriced = 0
+    consumed_units = 0
     for pub in publications:
         if getattr(pub, "status", None) != PUBLISHED_STATUS:
             continue  # снятые (removed) в расход не идут
+        consumed_units += 1  # каждая вышедшая публикация — 1 размещение пакета
         price = getattr(pub, "price", None)
         if price is None:
             unpriced += 1
         else:
             spent += float(price)
 
-    return summarize(paid, spent, awaiting=awaiting, published_unpriced=unpriced)
+    return summarize(
+        paid,
+        spent,
+        awaiting=awaiting,
+        published_unpriced=unpriced,
+        paid_units=paid_units,
+        consumed_units=consumed_units,
+    )
