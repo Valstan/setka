@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}VK-шлюз — статистика - SETKA{% endblock %}
+{% block nav_gateway_stats %}active{% endblock %}
+{% block nav_section_system %}active{% endblock %}
+
+{% block content %}
+<div class="gateway-stats-page mx-auto" style="max-width: 1100px;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1><i class="bi bi-door-open"></i> VK-шлюз — статистика использования</h1>
+        <div class="d-flex gap-2 align-items-center">
+            <select class="form-select form-select-sm" id="gw-days" style="width:auto;">
+                <option value="7">7 дней</option>
+                <option value="30" selected>30 дней</option>
+                <option value="90">90 дней</option>
+                <option value="365">Год</option>
+            </select>
+            <button class="btn btn-outline-secondary btn-sm" id="gw-refresh">
+                <i class="bi bi-arrow-clockwise"></i> Обновить
+            </button>
+        </div>
+    </div>
+    <p class="text-muted">
+        Кто из проектов-потребителей, когда и сколько раз пользовался воротами в VK
+        (<code>/api/gateway</code>), и что именно запрашивал. Логируются запросы, прошедшие
+        авторизацию по ключу; параметры запроса («что искали/спрашивали») сохраняются.
+    </p>
+
+    <!-- Сводка по проектам -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <h6 class="mb-2"><i class="bi bi-people"></i> По проектам
+                <span class="text-muted small" id="gw-total"></span>
+            </h6>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Проект</th>
+                            <th class="text-end">Запросов</th>
+                            <th class="text-end">Успешно</th>
+                            <th class="text-end">Ошибок</th>
+                            <th>Последний раз</th>
+                        </tr>
+                    </thead>
+                    <tbody id="gw-summary-body">
+                        <tr><td colspan="5" class="text-muted small">Загрузка…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- График по дням -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <h6 class="mb-2"><i class="bi bi-bar-chart"></i> Запросов по дням</h6>
+            <div id="gw-timeline-empty" class="text-muted small d-none">
+                Пока нет запросов за выбранный период.
+            </div>
+            <canvas id="gw-chart" height="120"></canvas>
+        </div>
+    </div>
+
+    <!-- Последние запросы -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0"><i class="bi bi-clock-history"></i> Последние запросы</h6>
+                <input type="search" class="form-control form-control-sm" id="gw-filter"
+                       placeholder="Фильтр по проекту…" style="width: 220px;">
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Время</th>
+                            <th>Проект</th>
+                            <th>Метод</th>
+                            <th>Параметры (что спрашивали)</th>
+                            <th class="text-end">Статус</th>
+                        </tr>
+                    </thead>
+                    <tbody id="gw-recent-body">
+                        <tr><td colspan="5" class="text-muted small">Загрузка…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/js/gateway_stats.js?v=20260626"></script>
+{% endblock %}

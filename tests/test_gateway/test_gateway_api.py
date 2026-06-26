@@ -46,19 +46,27 @@ def test_wrong_key_401(client):
 
 # --- allowlist ----------------------------------------------------------
 def test_disallowed_method_400(client):
-    r = client.post(
-        "/api/gateway/call",
-        json={"method": "wall.post", "params": {"message": "spam"}},
-        headers={"X-API-Key": API_KEY},
-    )
+    fake_log = AsyncMock()
+    with patch("modules.gateway.usage.record_request", fake_log):
+        r = client.post(
+            "/api/gateway/call",
+            json={"method": "wall.post", "params": {"message": "spam"}},
+            headers={"X-API-Key": API_KEY},
+        )
     assert r.status_code == 400
     assert "not allowed" in r.json()["detail"]
+    fake_log.assert_awaited_once()  # отказ тоже виден в статистике
+    assert fake_log.await_args.kwargs["status"] == 400
 
 
 # --- happy path (VK замокан) -------------------------------------------
 def test_happy_path(client):
     fake_read = AsyncMock(return_value={"ok": True, "response": {"items": [1, 2, 3]}})
-    with patch.object(gw, "_gateway_vk_read", fake_read):
+    fake_log = AsyncMock()
+    with (
+        patch.object(gw, "_gateway_vk_read", fake_read),
+        patch("modules.gateway.usage.record_request", fake_log),
+    ):
         r = client.post(
             "/api/gateway/call",
             json={"method": "wall.get", "params": {"owner_id": -1, "count": 3}},
@@ -67,11 +75,19 @@ def test_happy_path(client):
     assert r.status_code == 200
     assert r.json() == {"ok": True, "response": {"items": [1, 2, 3]}}
     fake_read.assert_awaited_once_with("wall.get", {"owner_id": -1, "count": 3})
+    # запрос залогирован для статистики: проект + метод + успех
+    fake_log.assert_awaited_once()
+    kw = fake_log.await_args.kwargs
+    assert fake_log.await_args.args[0] == "TEST"  # имя проекта (ключа)
+    assert kw["ok"] is True
 
 
 def test_community_convenience_endpoint(client):
     fake_read = AsyncMock(return_value={"ok": True, "response": [{"id": 1}]})
-    with patch.object(gw, "_gateway_vk_read", fake_read):
+    with (
+        patch.object(gw, "_gateway_vk_read", fake_read),
+        patch("modules.gateway.usage.record_request", AsyncMock()),
+    ):
         r = client.get("/api/gateway/community?group=apiclub", headers={"X-API-Key": API_KEY})
     assert r.status_code == 200
     method, params = fake_read.await_args.args

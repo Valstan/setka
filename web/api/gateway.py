@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import logging
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -97,6 +98,34 @@ def _check_enabled() -> None:
         raise HTTPException(status_code=503, detail="gateway disabled")
 
 
+async def _run_and_log(
+    project: str, endpoint: str, method: str, params: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Исполнить read-вызов и записать его в лог статистики (best-effort)."""
+    from modules.gateway.usage import record_request
+
+    start = time.monotonic()
+    try:
+        result = await _gateway_vk_read(method, params)
+    except HTTPException as e:
+        await record_request(project, endpoint, method, params, status=e.status_code, ok=False)
+        raise
+    duration_ms = int((time.monotonic() - start) * 1000)
+    ok = bool(result.get("ok"))
+    error_code = None if ok else (result.get("error") or {}).get("error_code")
+    await record_request(
+        project,
+        endpoint,
+        method,
+        params,
+        status=200,
+        ok=ok,
+        error_code=error_code,
+        duration_ms=duration_ms,
+    )
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Исполнитель read-вызова
 # ---------------------------------------------------------------------------
@@ -152,9 +181,12 @@ async def gateway_call(body: GatewayCallIn, key_name: str = Depends(enforce_quot
     """
     _check_enabled()
     if body.method not in GATEWAY_READ_METHODS:
+        from modules.gateway.usage import record_request
+
+        await record_request(key_name, "call", body.method, body.params, status=400, ok=False)
         raise HTTPException(status_code=400, detail=f"method not allowed: {body.method}")
     logger.info("gateway: %s called %s", key_name, body.method)
-    return await _gateway_vk_read(body.method, body.params)
+    return await _run_and_log(key_name, "call", body.method, body.params)
 
 
 @router.get("/community")
@@ -169,7 +201,9 @@ async def gateway_community(
     """Инфо о сообществе (``groups.getById``) — удобная обёртка над /call."""
     _check_enabled()
     logger.info("gateway: %s community %s", key_name, group)
-    return await _gateway_vk_read("groups.getById", {"group_ids": group, "fields": fields})
+    return await _run_and_log(
+        key_name, "community", "groups.getById", {"group_ids": group, "fields": fields}
+    )
 
 
 @router.get("/wall")
@@ -182,6 +216,6 @@ async def gateway_wall(
     """Последние посты со стены (``wall.get``) — удобная обёртка над /call."""
     _check_enabled()
     logger.info("gateway: %s wall %s (count=%s)", key_name, owner_id, count)
-    return await _gateway_vk_read(
-        "wall.get", {"owner_id": owner_id, "count": count, "offset": offset}
+    return await _run_and_log(
+        key_name, "wall", "wall.get", {"owner_id": owner_id, "count": count, "offset": offset}
     )

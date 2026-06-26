@@ -1231,3 +1231,43 @@ class BroadcastPublication(Base):
             "error": self.error,
             "published_at": self.published_at.isoformat() if self.published_at else None,
         }
+
+
+class GatewayRequest(Base):
+    """Лог одного запроса к VK-шлюзу (``/api/gateway``) — для страницы статистики.
+
+    Пишется best-effort после исполнения (``modules/gateway/usage.py``), не
+    блокирует ответ шлюза. Хранит: кто (``project`` = имя API-ключа), когда,
+    какой эндпоинт/метод, что искали (``params``) и результат. Логируются
+    запросы, прошедшие auth+квоту (включая VK-ошибку и 503); 401/429 в v1 не
+    пишутся (см. PENDING — VK-шлюз v2-бэклог). Миграция 049.
+    """
+
+    __tablename__ = "gateway_requests"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    project = Column(String(64), index=True)
+    endpoint = Column(String(32))  # call | community | wall
+    method = Column(String(64))
+    params = Column(JSON)  # что искали/спрашивали
+    status = Column(Integer)  # HTTP-статус ответа
+    ok = Column(Boolean, default=False)  # успешный VK-ответ
+    error_code = Column(Integer, nullable=True)  # VK error_code, если был
+    duration_ms = Column(Integer, nullable=True)
+
+    __table_args__ = (Index("ix_gateway_requests_project_created", "project", "created_at"),)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "project": self.project,
+            "endpoint": self.endpoint,
+            "method": self.method,
+            "params": self.params,
+            "status": self.status,
+            "ok": self.ok,
+            "error_code": self.error_code,
+            "duration_ms": self.duration_ms,
+        }

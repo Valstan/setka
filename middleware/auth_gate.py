@@ -44,7 +44,9 @@ PUBLIC_PREFIXES = (
     "/static/",
     "/favicon.ico",
     "/api/health",  # internal watchdogs/CI ходят на 127.0.0.1:8000 без cookie
-    "/api/gateway",  # VK-шлюз: своя X-API-Key защита (web/api/gateway.py)
+    "/api/gateway/",  # VK-шлюз: своя X-API-Key защита (web/api/gateway.py).
+    # trailing slash важен: /api/gateway-stats НЕ public — это операторская
+    # статистика под сессионной cookie (web/api/gateway_stats.py).
     "/api/auth/login",
     "/api/auth/register",
     "/.well-known/",
