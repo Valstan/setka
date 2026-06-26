@@ -19,7 +19,7 @@ VK привязывает user-токен к IP выпуска, и чужой п
 
 | | |
 |---|---|
-| Base URL (внешний) | `https://<SARAFAN_HOST>` — уточнить актуальный домён (в git домен не хранится, `config/setka.conf.editable` → `server_name`) |
+| Base URL (внешний) | `https://3931b3fe50ab.vps.myjino.ru` (текущий myjino-хост; при переезде VPS обновить — `config/setka.conf.editable` → `server_name`) |
 | Base URL (тот же хост) | `http://127.0.0.1:8000` |
 | Заголовок авторизации | `X-API-Key: <ключ-проекта>` |
 | Ключи | свой на каждый проект, в env `GATEWAY_KEY_<PROJECT>` (только на VPS, `/etc/setka/setka.env`) |
@@ -99,16 +99,16 @@ KEY=...   # из /etc/setka/setka.env, GATEWAY_KEY_<PROJECT>
 
 # инфо о сообществе
 curl -s -H "X-API-Key: $KEY" \
-  "https://<SARAFAN_HOST>/api/gateway/community?group=apiclub"
+  "https://3931b3fe50ab.vps.myjino.ru/api/gateway/community?group=apiclub"
 
 # последние 5 постов со стены сообщества id=1
 curl -s -H "X-API-Key: $KEY" \
-  "https://<SARAFAN_HOST>/api/gateway/wall?owner_id=-1&count=5"
+  "https://3931b3fe50ab.vps.myjino.ru/api/gateway/wall?owner_id=-1&count=5"
 
 # универсальный вызов
 curl -s -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
   -d '{"method":"users.get","params":{"user_ids":"1,2","fields":"city,bdate"}}' \
-  "https://<SARAFAN_HOST>/api/gateway/call"
+  "https://3931b3fe50ab.vps.myjino.ru/api/gateway/call"
 ```
 
 Для AI-сессии другого проекта: «возьми VK-данные через шлюз SARAFAN» = один
