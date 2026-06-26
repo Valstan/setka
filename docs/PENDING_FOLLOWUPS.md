@@ -32,6 +32,26 @@ _Сейчас нет._
 
 ## ⏳ В процессе
 
+### 🌐 VK-шлюз — ворота доступа в VK для других проектов @valstan (запрос владельца 2026-06-26)
+
+`⏱ 2026-06-26 · snooze 0 · fresh`
+
+Другие проекты (и их AI-сессии) просят «сходи в VK — проанализируй сообщество / скачай / импортируй»,
+упираясь в закрытость VK 2026. SARAFAN — внутренняя кухня VK (токены + клиент + cooldown + rate-limiter).
+Шлюз даёт read-only доступ по HTTP: проект шлёт задачу → SARAFAN исполняет своим токеном → возвращает JSON.
+**Токен наружу не выдаётся** (VK привязывает user-токен к IP выпуска → error 5 с чужого бокса).
+
+- ✅ **Построено + ЗЕЛЁНО (v1 read-only):** роутер `/api/gateway` (`web/api/gateway.py`): `POST /call`
+  (allowlist read-методов), `GET /community`, `GET /wall`. Auth — API-ключ на проект `GATEWAY_KEY_<PROJECT>`
+  (`X-API-Key`, constant-time). Квота на ключ (`modules/gateway/quota.py`, Redis fixed-window, fail-open).
+  Переиспользует `TokenPolicy` (cooldown 5/17/29) + `VKClient`. Конфиг/allowlist `config/gateway.py`,
+  kill-switch `GATEWAY_DISABLED`. Контракт `docs/GATEWAY.md`. +9 тестов (1472 зелёных), pre-commit чистый.
+- 🟢 _Остаток:_ **деплой** (без миграции — добавить `GATEWAY_KEY_<PROJECT>` в `/etc/setka/setka.env` →
+  restart web; уточнить публичный домен для `docs/GATEWAY.md`) + curl-проверка владельцем.
+- 🟢 **v2-бэклог:** запись в VK (guarded, per-key scope); async-джоба для тяжёлого «прочесать весь паблик»
+  (как `/api/parsing`); MCP-обёртка для проектов-потребителей. Письмо `mailbox/to-brain` (пионер-находка,
+  рефлекс #009) — на `/close_session`.
+
 ### 🔭 Поток «Кругозор» — научпоп веером на районные паблики (решение владельца 2026-06-14)
 
 `⏱ 2026-06-14 · snooze 0 · fresh`
