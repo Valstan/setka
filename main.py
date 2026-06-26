@@ -29,6 +29,7 @@ from web.api import (
     discovery,
     filtration,
     gateway,
+    gateway_stats,
     health,
     notifications,
     parsing,
@@ -158,6 +159,7 @@ app.include_router(
 )
 app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Discovery"])
 app.include_router(gateway.router, prefix="/api/gateway", tags=["VK Gateway"])
+app.include_router(gateway_stats.router, prefix="/api/gateway-stats", tags=["VK Gateway Stats"])
 
 
 @app.get("/")
@@ -229,6 +231,12 @@ async def ad_page(request: Request):
 async def broadcast_page(request: Request):
     """Сетевая рассылка: композер кампании + цели + расписание/повтор + очередь."""
     return templates.TemplateResponse("broadcast.html", {"request": request})
+
+
+@app.get("/gateway-stats")
+async def gateway_stats_page(request: Request):
+    """Статистика использования VK-шлюза: кто/когда/сколько + последние запросы."""
+    return templates.TemplateResponse("gateway_stats.html", {"request": request})
 
 
 @app.get("/ad-cabinet")

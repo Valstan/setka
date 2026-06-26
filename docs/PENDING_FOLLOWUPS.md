@@ -50,11 +50,17 @@ _Сейчас нет._
   (`SABANTUY_MALMYZH`, `VMALMYZHE`, `CDK_KALININO`, `DK_MALMYZH`, `GONBA`), restart web (G92-проверен:
   ActiveEnterTimestamp свежий), health 200. Смоук на проде: no-key→401, valid→`/community`→200,
   `wall.post`→400; внешний HTTPS `3931b3fe50ab.vps.myjino.ru`→401. Домен прописан в `docs/GATEWAY.md`.
-- 🟢 _Остаток:_ раздать ключи проектам-потребителям (владелец: `ssh setka "sudo grep '^GATEWAY_KEY_'
-  /etc/setka/setka.env"`) + curl-проверка реальных данных.
+- ✅ **Страница статистики (запрос владельца 2026-06-26):** миграция 049 (`gateway_requests`); лог
+  запросов `modules/gateway/usage.py` (best-effort: кто/когда/метод/параметры/результат); операторский
+  API `/api/gateway-stats` (summary/timeline/recent); страница `/gateway-stats` (таблица по проектам +
+  график по дням + лента запросов с параметрами, меню «Система»). Public-prefix ужат `/api/gateway` →
+  `/api/gateway/`, чтобы статистика осталась под операторской сессией. +6 тестов (1478 зелёных).
+- 🟢 _Остаток:_ **деплой статистики** (миграция 049 + restart web) + раздать ключи проектам-потребителям
+  (владелец: `ssh setka "sudo grep '^GATEWAY_KEY_' /etc/setka/setka.env"`) + curl/браузер-проверка.
 - 🟢 **v2-бэклог:** запись в VK (guarded, per-key scope); async-джоба для тяжёлого «прочесать весь паблик»
-  (как `/api/parsing`); MCP-обёртка для проектов-потребителей. Письмо `mailbox/to-brain` (пионер-находка,
-  рефлекс #009) — на `/close_session`.
+  (как `/api/parsing`); логировать 401/429 на странице статистики; ретеншн `gateway_requests`;
+  MCP-обёртка для проектов-потребителей. Письмо `mailbox/to-brain` (пионер-находка, рефлекс #009) — на
+  `/close_session`.
 
 ### 🔭 Поток «Кругозор» — научпоп веером на районные паблики (решение владельца 2026-06-14)
 
