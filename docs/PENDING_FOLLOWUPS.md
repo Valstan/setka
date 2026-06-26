@@ -46,8 +46,12 @@ _Сейчас нет._
   (`X-API-Key`, constant-time). Квота на ключ (`modules/gateway/quota.py`, Redis fixed-window, fail-open).
   Переиспользует `TokenPolicy` (cooldown 5/17/29) + `VKClient`. Конфиг/allowlist `config/gateway.py`,
   kill-switch `GATEWAY_DISABLED`. Контракт `docs/GATEWAY.md`. +9 тестов (1472 зелёных), pre-commit чистый.
-- 🟢 _Остаток:_ **деплой** (без миграции — добавить `GATEWAY_KEY_<PROJECT>` в `/etc/setka/setka.env` →
-  restart web; уточнить публичный домен для `docs/GATEWAY.md`) + curl-проверка владельцем.
+- ✅ **ЗАДЕПЛОЕНО 2026-06-26** (прод HEAD `f999eb5`): 5 ключей потребителей в `/etc/setka/setka.env`
+  (`SABANTUY_MALMYZH`, `VMALMYZHE`, `CDK_KALININO`, `DK_MALMYZH`, `GONBA`), restart web (G92-проверен:
+  ActiveEnterTimestamp свежий), health 200. Смоук на проде: no-key→401, valid→`/community`→200,
+  `wall.post`→400; внешний HTTPS `3931b3fe50ab.vps.myjino.ru`→401. Домен прописан в `docs/GATEWAY.md`.
+- 🟢 _Остаток:_ раздать ключи проектам-потребителям (владелец: `ssh setka "sudo grep '^GATEWAY_KEY_'
+  /etc/setka/setka.env"`) + curl-проверка реальных данных.
 - 🟢 **v2-бэклог:** запись в VK (guarded, per-key scope); async-джоба для тяжёлого «прочесать весь паблик»
   (как `/api/parsing`); MCP-обёртка для проектов-потребителей. Письмо `mailbox/to-brain` (пионер-находка,
   рефлекс #009) — на `/close_session`.
