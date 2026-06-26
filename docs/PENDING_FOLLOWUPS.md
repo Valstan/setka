@@ -55,8 +55,12 @@ _Сейчас нет._
   API `/api/gateway-stats` (summary/timeline/recent); страница `/gateway-stats` (таблица по проектам +
   график по дням + лента запросов с параметрами, меню «Система»). Public-prefix ужат `/api/gateway` →
   `/api/gateway/`, чтобы статистика осталась под операторской сессией. +6 тестов (1478 зелёных).
-- 🟢 _Остаток:_ **деплой статистики** (миграция 049 + restart web) + раздать ключи проектам-потребителям
-  (владелец: `ssh setka "sudo grep '^GATEWAY_KEY_' /etc/setka/setka.env"`) + curl/браузер-проверка.
+- ✅ **Статистика ЗАДЕПЛОЕНА 2026-06-26** (прод HEAD `2de23ca`): миграция 049 применена (таблица +
+  индексы), restart web (G92-проверен), health 200. End-to-end проверено: вызовы `/community` + `/wall` →
+  200 и записались в `gateway_requests` (project/method/params/status/duration); `/gateway-stats` под
+  операторской сессией (401 без cookie).
+- 🟢 _Остаток:_ раздать ключи проектам-потребителям (владелец: `ssh setka "sudo grep '^GATEWAY_KEY_'
+  /etc/setka/setka.env"`) + браузер-проверка страницы `/gateway-stats` владельцем.
 - 🟢 **v2-бэклог:** запись в VK (guarded, per-key scope); async-джоба для тяжёлого «прочесать весь паблик»
   (как `/api/parsing`); логировать 401/429 на странице статистики; ретеншн `gateway_requests`;
   MCP-обёртка для проектов-потребителей. Письмо `mailbox/to-brain` (пионер-находка, рефлекс #009) — на
