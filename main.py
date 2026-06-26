@@ -28,6 +28,7 @@ from web.api import (
     communities,
     discovery,
     filtration,
+    gateway,
     health,
     notifications,
     parsing,
@@ -156,6 +157,7 @@ app.include_router(
     subscriber_growth.router, prefix="/api/subscriber-growth", tags=["Subscriber Growth"]
 )
 app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Discovery"])
+app.include_router(gateway.router, prefix="/api/gateway", tags=["VK Gateway"])
 
 
 @app.get("/")
