@@ -195,6 +195,11 @@ const apiClient = {
         return this.request(`/ad-crm/clients/${id}`);
     },
 
+    // И5: входящие заявки конкретного клиента (overlay-модалка «всё в карточке»).
+    async getClientRequests(id) {
+        return this.request(`/ad-crm/clients/${id}/requests`);
+    },
+
     async createCrmClient(payload) {
         return this.request('/ad-crm/clients', {
             method: 'POST',

@@ -1012,3 +1012,40 @@ async def test_list_banks_returns_fixed_list_and_stats():
     assert out["stats"][0]["bank"] == "Сбербанк"
     assert out["stats"][0]["count"] == 5
     assert out["stats"][0]["total"] == 10000.0
+
+
+# -------------------------------------------------- И5: заявки клиента
+
+
+async def test_list_client_requests_serializes_and_counts():
+    client = _client(id=3)
+    reqs = [
+        _request(id=11, client_id=3, origin="suggested", community_vk_id=-100, vk_post_id=9),
+        _request(id=12, client_id=3, origin="inbound_dm", vk_post_id=None, peer_id=42),
+    ]
+    db = _db()
+    db.get = AsyncMock(return_value=client)
+    db.execute = AsyncMock(return_value=_scalars(reqs))
+    out = await api.list_client_requests(3, db=db)
+    assert out["count"] == 2
+    assert [r["id"] for r in out["requests"]] == [11, 12]
+    # to_dict даёт производные ссылки для UI-модалки
+    assert out["requests"][0]["vk_post_url"] == "https://vk.com/wall-100_9"
+    assert out["requests"][0]["origin"] == "suggested"
+    assert out["requests"][1]["origin"] == "inbound_dm"
+
+
+async def test_list_client_requests_empty():
+    db = _db()
+    db.get = AsyncMock(return_value=_client(id=7))
+    db.execute = AsyncMock(return_value=_scalars([]))
+    out = await api.list_client_requests(7, db=db)
+    assert out == {"requests": [], "count": 0}
+
+
+async def test_list_client_requests_404():
+    db = _db()
+    db.get = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await api.list_client_requests(999, db=db)
+    assert exc.value.status_code == 404

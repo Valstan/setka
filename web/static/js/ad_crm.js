@@ -516,6 +516,16 @@ function renderClientDetails(d) {
     }).join('') : '<tr><td colspan="6" class="text-muted small">Публикаций пока нет.</td></tr>';
 
     return `
+    <div class="d-flex gap-2 mb-3 flex-wrap">
+        <button class="btn btn-sm btn-primary" onclick="scheduleForClient(${c.id})"
+                title="Запланировать публикацию за этого клиента — откроет планировщик с зашитым клиентом">
+            <i class="bi bi-calendar-plus"></i> Запланировать публикацию
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="showClientRequests(${c.id})"
+                title="Входящие заявки этого клиента (предложка + ЛС)">
+            <i class="bi bi-inbox"></i> Входящие заявки
+        </button>
+    </div>
     <div class="row g-3">
         <div class="col-md-5">
             <label class="form-label small mb-1">Имя / название</label>
@@ -618,6 +628,71 @@ function renderClientDetails(d) {
         <button class="btn btn-outline-secondary" onclick="addNote(${c.id})"><i class="bi bi-plus-lg"></i> Заметка</button>
     </div>
     <div id="crm-timeline-${c.id}"><div class="text-muted small">Загрузка истории…</div></div>`;
+}
+
+// --------------------------------------------------- И5: заявки клиента (модалка)
+
+const REQ_ORIGIN_BADGE = {
+    suggested: '<span class="badge bg-info text-dark">предложка</span>',
+    inbound_dm: '<span class="badge bg-primary">ЛС</span>',
+};
+const REQ_STATUS_BADGE = {
+    new: '<span class="badge bg-secondary">новая</span>',
+    contacted: '<span class="badge bg-warning text-dark">в работе</span>',
+    skipped: '<span class="badge bg-light text-dark border">пропущена</span>',
+    published: '<span class="badge bg-success">опубликована</span>',
+};
+
+// «Входящие заявки» на карточке клиента → overlay-модалка с историей обращений
+// (предложка + ЛС), не покидая карточку. Лениво грузит при открытии.
+async function showClientRequests(id) {
+    const modalEl = document.getElementById('client-requests-modal');
+    const bodyEl = document.getElementById('crm-req-body');
+    const titleEl = document.getElementById('crm-req-title');
+    if (!modalEl || !bodyEl || !window.bootstrap) return;
+    bodyEl.innerHTML = '<div class="text-muted small">Загрузка…</div>';
+    if (titleEl) titleEl.innerHTML = '<i class="bi bi-inbox"></i> Входящие заявки клиента';
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    try {
+        const r = await apiClient.getClientRequests(id);
+        bodyEl.innerHTML = renderClientRequests(r.requests || []);
+        if (titleEl) titleEl.innerHTML = `<i class="bi bi-inbox"></i> Входящие заявки клиента — ${r.count}`;
+    } catch (e) {
+        bodyEl.innerHTML = `<div class="text-danger small">Ошибка: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderClientRequests(reqs) {
+    if (!reqs.length) {
+        return '<div class="text-muted small">У клиента нет привязанных заявок. '
+            + 'Заявки привязываются, когда вы заводите или привязываете клиента из заявки.</div>';
+    }
+    return reqs.map(r => {
+        const origin = REQ_ORIGIN_BADGE[r.origin] || escapeHtml(r.origin || '');
+        const status = REQ_STATUS_BADGE[r.status] || escapeHtml(r.status || '');
+        const photos = (r.photo_urls_json || []).slice(0, 4).map(u =>
+            `<a href="${escapeHtml(u)}" target="_blank"><img src="${escapeHtml(u)}" alt=""
+                  style="height:54px;width:auto;border-radius:4px;margin:2px;"></a>`
+        ).join('');
+        const postLink = r.vk_post_url
+            ? `<a href="${escapeHtml(r.vk_post_url)}" target="_blank" class="small">
+                   <i class="bi bi-box-arrow-up-right"></i> пост в VK</a>` : '';
+        const dialogLink = r.dialog_url
+            ? `<a href="${escapeHtml(r.dialog_url)}" target="_blank" class="small ms-2">
+                   <i class="bi bi-chat-dots"></i> диалог</a>` : '';
+        const text = escapeHtml((r.text_snapshot || '').slice(0, 600));
+        return `
+        <div class="border rounded p-2 mb-2">
+            <div class="d-flex gap-2 align-items-center mb-1 flex-wrap">
+                ${origin} ${status}
+                <span class="badge bg-light text-dark border" title="score классификатора">score ${r.score ?? 0}</span>
+                <span class="small text-muted ms-auto">#${r.id} · ${fmtDate(r.detected_at)}</span>
+            </div>
+            <div class="small mb-1" style="white-space:pre-wrap;">${text || '<span class="text-muted">(без текста)</span>'}</div>
+            ${photos ? `<div class="mb-1">${photos}</div>` : ''}
+            <div>${postLink}${dialogLink}</div>
+        </div>`;
+    }).join('');
 }
 
 // --------------------------------------------------- таймлайн взаимодействий
