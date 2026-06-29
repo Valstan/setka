@@ -116,6 +116,20 @@ curl -s -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
 
 ---
 
+## MCP-обёртка (для AI-сессий проектов-потребителей)
+
+Чтобы Claude-сессия проекта-потребителя ходила в VK не через `curl`, а
+**инструментами**, есть готовый MCP-сервер: [`gateway_mcp/`](../gateway_mcp/)
+([README](../gateway_mcp/README.md)). Запускается в среде потребителя (не в
+SARAFAN), конфиг — env `SARAFAN_GATEWAY_KEY` (+ опц. `SARAFAN_GATEWAY_URL`).
+
+Инструменты (read-only): `vk_get_community`, `vk_get_wall`, `vk_call`. Пример
+`.mcp.json` и формат ответов — в README обёртки. Ядро (`client.py`) зависит
+только от `httpx` и покрыто тестами; `mcp` нужен лишь для запуска сервера у
+потребителя (в зависимостях SARAFAN его нет).
+
+---
+
 ## Эксплуатация
 
 - Аварийный kill-switch: env `GATEWAY_DISABLED=1` → весь шлюз отдаёт `503`
