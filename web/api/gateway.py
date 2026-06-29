@@ -55,13 +55,19 @@ _TOKEN_COOLDOWN_CODES = (5, 17, 29)
 # ---------------------------------------------------------------------------
 # Зависимости: авторизация и квота
 # ---------------------------------------------------------------------------
-def require_api_key(
+async def require_api_key(
     x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
 ) -> str:
     """Проверить API-ключ; вернуть ИМЯ проекта (для квоты/логов).
 
     401 при отсутствии или несовпадении. Сравнение constant-time
     (``hmac.compare_digest``). Секрет в логи не попадает.
+
+    Логирование отказов (v2, страница статистики): **переданный, но неверный**
+    ключ пишем в ``gateway_requests`` под проектом ``(unknown)`` — это сигнал
+    (мис-конфиг потребителя / прицельный перебор), владельцу полезно видеть.
+    **Пустой** ключ (``Missing``) НЕ логируем: публичный домен постоянно метут
+    интернет-сканеры без ключа — иначе зальёт таблицу шумом.
     """
     if not x_api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key")
@@ -69,11 +75,18 @@ def require_api_key(
         if secret and hmac.compare_digest(x_api_key, secret):
             return name
     logger.warning("gateway: rejected request with unknown API key")
+    from modules.gateway.usage import record_request
+
+    await record_request("(unknown)", "auth", "-", None, status=401, ok=False)
     raise HTTPException(status_code=401, detail="Unknown API key")
 
 
-def enforce_quota(key_name: str = Depends(require_api_key)) -> str:
-    """Учесть запрос в квоте проекта; 429 + Retry-After при превышении."""
+async def enforce_quota(key_name: str = Depends(require_api_key)) -> str:
+    """Учесть запрос в квоте проекта; 429 + Retry-After при превышении.
+
+    Превышение квоты пишем в ``gateway_requests`` (v2): известный проект, статус
+    429 — на странице статистики видно, кто упёрся в лимит.
+    """
     from modules.gateway.quota import GatewayQuota
     from modules.vk_monitor.rate_limiter import _build_redis_client
 
@@ -85,6 +98,11 @@ def enforce_quota(key_name: str = Depends(require_api_key)) -> str:
     allowed, retry_after = quota.check_and_consume(key_name)
     if not allowed:
         logger.info("gateway: quota exceeded for %s (retry_after=%ss)", key_name, retry_after)
+        from modules.gateway.usage import record_request
+
+        await record_request(
+            key_name, "quota", "-", {"retry_after": retry_after}, status=429, ok=False
+        )
         raise HTTPException(
             status_code=429,
             detail="Quota exceeded",

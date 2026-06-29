@@ -78,3 +78,13 @@ def test_auto_greet_task_registered():
     assert "auto-greet-ad-requests" in app.conf.beat_schedule
     entry = app.conf.beat_schedule["auto-greet-ad-requests"]
     assert entry["task"] == "tasks.celery_app.auto_greet_ad_requests"
+
+
+def test_prune_gateway_requests_task_registered():
+    """Ретеншн лога VK-шлюза зарегистрирован + суточный beat (v2)."""
+    from tasks.celery_app import app, prune_gateway_requests  # noqa: F401
+
+    assert "tasks.celery_app.prune_gateway_requests" in app.tasks
+    assert "prune-gateway-requests-daily" in app.conf.beat_schedule
+    entry = app.conf.beat_schedule["prune-gateway-requests-daily"]
+    assert entry["task"] == "tasks.celery_app.prune_gateway_requests"
