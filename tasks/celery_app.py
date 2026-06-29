@@ -1111,6 +1111,39 @@ def cleanup_old_posts():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.prune_gateway_requests")
+def prune_gateway_requests():
+    """Ретеншн лога VK-шлюза: удалить строки ``gateway_requests`` старше N дней.
+
+    Раз в сутки (03:40 MSK, после cleanup 03:00 и expire-ad 03:30). Порог — env
+    ``GATEWAY_REQUESTS_RETENTION_DAYS`` (дефолт 90). Аналог ``cleanup_old_posts``.
+    Лог шлюза растёт постоянно (включая 401/429) — без ретеншна таблица пухнет.
+    """
+    logger.info("Pruning old gateway_requests (VK-шлюз retention)...")
+    try:
+        from sqlalchemy import delete
+
+        from config.gateway import get_gateway_requests_retention_days
+        from database.connection import AsyncSessionLocal
+        from database.models import GatewayRequest
+
+        async def prune():
+            cutoff = datetime.utcnow() - timedelta(days=get_gateway_requests_retention_days())
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    delete(GatewayRequest).where(GatewayRequest.created_at < cutoff)
+                )
+                await session.commit()
+                return result.rowcount
+
+        deleted = run_coro(prune())
+        logger.info("gateway_requests prune done: deleted %s rows", deleted)
+        return {"success": True, "timestamp": datetime.now().isoformat(), "deleted_count": deleted}
+    except Exception as e:
+        logger.error(f"prune_gateway_requests failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 # Расписания (Beat Schedule)
 app.conf.beat_schedule = {
     # Проверка предложенных постов каждый час с 8:00 до 22:00 в X:15
@@ -1248,6 +1281,15 @@ app.conf.beat_schedule = {
         "schedule": crontab(hour=3, minute=0),  # 03:00 каждый день
         "options": {
             "expires": 3000,
+            "catchup": False,
+        },
+    },
+    # Ретеншн лога VK-шлюза: удалить строки старше N дней (env, дефолт 90) — 03:40 MSK
+    "prune-gateway-requests-daily": {
+        "task": "tasks.celery_app.prune_gateway_requests",
+        "schedule": crontab(minute=40, hour=3),
+        "options": {
+            "expires": 3600,
             "catchup": False,
         },
     },

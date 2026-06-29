@@ -14,6 +14,7 @@ Env vars:
   GATEWAY_QUOTA_PER_MIN=30  # минутная квота запросов на ключ
   GATEWAY_QUOTA_PER_DAY=5000 # суточная квота на ключ
   GATEWAY_DISABLED=0        # аварийный kill-switch (1/true/yes/on → выкл.)
+  GATEWAY_REQUESTS_RETENTION_DAYS=90  # сколько дней хранить лог gateway_requests
 """
 
 from __future__ import annotations
@@ -82,3 +83,15 @@ def get_gateway_quota_per_day() -> int:
 def gateway_disabled() -> bool:
     """Kill-switch шлюза (env ``GATEWAY_DISABLED``). Дефолт — включён (False)."""
     return os.getenv("GATEWAY_DISABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def get_gateway_requests_retention_days() -> int:
+    """Сколько дней хранить строки ``gateway_requests`` (env, дефолт 90).
+
+    Лог запросов к шлюзу растёт постоянно (включая 401/429); суточная beat-таска
+    ``prune_gateway_requests`` чистит строки старше этого порога.
+    """
+    try:
+        return int(os.getenv("GATEWAY_REQUESTS_RETENTION_DAYS", "90"))
+    except ValueError:
+        return 90

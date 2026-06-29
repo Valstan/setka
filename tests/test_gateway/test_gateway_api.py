@@ -31,17 +31,27 @@ def client():
 
 # --- авторизация --------------------------------------------------------
 def test_missing_key_401(client):
-    r = client.post("/api/gateway/call", json={"method": "wall.get"})
+    # Пустой ключ (сканеры по публичному домену) НЕ логируем — иначе зальёт лог.
+    fake_log = AsyncMock()
+    with patch("modules.gateway.usage.record_request", fake_log):
+        r = client.post("/api/gateway/call", json={"method": "wall.get"})
     assert r.status_code == 401
+    fake_log.assert_not_awaited()
 
 
-def test_wrong_key_401(client):
-    r = client.post(
-        "/api/gateway/call",
-        json={"method": "wall.get"},
-        headers={"X-API-Key": "nope"},
-    )
+def test_wrong_key_401_logged_as_unknown(client):
+    # Переданный, но неверный ключ — сигнал; пишем под проектом "(unknown)".
+    fake_log = AsyncMock()
+    with patch("modules.gateway.usage.record_request", fake_log):
+        r = client.post(
+            "/api/gateway/call",
+            json={"method": "wall.get"},
+            headers={"X-API-Key": "nope"},
+        )
     assert r.status_code == 401
+    fake_log.assert_awaited_once()
+    assert fake_log.await_args.args[0] == "(unknown)"
+    assert fake_log.await_args.kwargs["status"] == 401
 
 
 # --- allowlist ----------------------------------------------------------
@@ -97,7 +107,11 @@ def test_community_convenience_endpoint(client):
 
 # --- квота --------------------------------------------------------------
 def test_quota_exceeded_429(client):
-    with patch.object(GatewayQuota, "check_and_consume", lambda self, key: (False, 42)):
+    fake_log = AsyncMock()
+    with (
+        patch.object(GatewayQuota, "check_and_consume", lambda self, key: (False, 42)),
+        patch("modules.gateway.usage.record_request", fake_log),
+    ):
         r = client.post(
             "/api/gateway/call",
             json={"method": "wall.get"},
@@ -105,6 +119,10 @@ def test_quota_exceeded_429(client):
         )
     assert r.status_code == 429
     assert r.headers["Retry-After"] == "42"
+    # 429 виден в статистике: известный проект + статус 429.
+    fake_log.assert_awaited_once()
+    assert fake_log.await_args.args[0] == "TEST"
+    assert fake_log.await_args.kwargs["status"] == 429
 
 
 # --- kill-switch --------------------------------------------------------
@@ -194,3 +212,25 @@ async def test_no_tokens_503():
         with pytest.raises(HTTPException) as exc:
             await gw._gateway_vk_read("wall.get", {})
     assert exc.value.status_code == 503
+
+
+# --- ретеншн-конфиг -----------------------------------------------------
+def test_retention_days_default(monkeypatch):
+    from config.gateway import get_gateway_requests_retention_days
+
+    monkeypatch.delenv("GATEWAY_REQUESTS_RETENTION_DAYS", raising=False)
+    assert get_gateway_requests_retention_days() == 90
+
+
+def test_retention_days_env_override(monkeypatch):
+    from config.gateway import get_gateway_requests_retention_days
+
+    monkeypatch.setenv("GATEWAY_REQUESTS_RETENTION_DAYS", "30")
+    assert get_gateway_requests_retention_days() == 30
+
+
+def test_retention_days_invalid_falls_back(monkeypatch):
+    from config.gateway import get_gateway_requests_retention_days
+
+    monkeypatch.setenv("GATEWAY_REQUESTS_RETENTION_DAYS", "не число")
+    assert get_gateway_requests_retention_days() == 90
