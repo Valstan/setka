@@ -566,6 +566,14 @@ async function scheduleFromRequest(id) {
     _schSourceClientId = ar.client_id || null;
     const src = document.getElementById('sch-source');
     if (src) src.style.display = '';
+    // Режим «из заявки»: заявочный текст плашки + строка «убрать оригинал» видимы
+    // (клиентский режим И5 их прячет — восстанавливаем на каждый вход).
+    const reqText = document.getElementById('sch-source-text-req');
+    if (reqText) reqText.style.display = '';
+    const cliText = document.getElementById('sch-source-text-client');
+    if (cliText) cliText.style.display = 'none';
+    const rmRow = document.getElementById('sch-source-remove-row');
+    if (rmRow) rmRow.style.display = '';
     const lbl = document.getElementById('sch-source-label');
     if (lbl) lbl.innerHTML = ar.vk_post_url
         ? `<a href="${escapeHtml(ar.vk_post_url)}" target="_blank">#${id}</a>` : `#${id}`;
@@ -595,6 +603,50 @@ function clearScheduleSource() {
     if (src) src.style.display = 'none';
     const note = document.getElementById('sch-client-note');
     if (note) note.innerHTML = '';
+}
+
+// И5 «всё в карточке»: «Запланировать публикацию» из карточки клиента CRM.
+// Открывает тот же планировщик с зашитым client_id, но БЕЗ заявки-источника
+// (нет предложки → нет «убрать оригинал»). Бэкенд /scheduled уже принимает
+// client_id и двигает сделку в «Запланировано» — отдельный endpoint не нужен.
+// Имя клиента берём из открытой карточки (#cf-name-<id>) — без экранирования в
+// inline-onclick. Функция глобальна, зовётся из ad_crm.js (общий scope страницы).
+async function scheduleForClient(clientId) {
+    const nameEl = document.getElementById(`cf-name-${clientId}`);
+    const clientName = nameEl ? (nameEl.value || '').trim() : '';
+    const body = document.getElementById('scheduler-body');
+    await initScheduler();  // идемпотентно; грузит список сообществ
+
+    _schSourceRequestId = null;       // клиентский режим: заявки-источника нет
+    _schSourceClientId = clientId;
+
+    const src = document.getElementById('sch-source');
+    if (src) src.style.display = '';
+    // Клиентский режим плашки: прячем заявочный текст и «убрать оригинал»,
+    // показываем клиентскую подпись.
+    const reqText = document.getElementById('sch-source-text-req');
+    if (reqText) reqText.style.display = 'none';
+    const cliText = document.getElementById('sch-source-text-client');
+    if (cliText) cliText.style.display = '';
+    const cliLbl = document.getElementById('sch-source-client-label');
+    if (cliLbl) cliLbl.textContent = clientName ? `«${clientName}»` : `#${clientId}`;
+    const rmRow = document.getElementById('sch-source-remove-row');
+    if (rmRow) rmRow.style.display = 'none';
+    const rm = document.getElementById('sch-remove-original');
+    if (rm) rm.checked = false;
+    const note = document.getElementById('sch-client-note');
+    if (note) note.innerHTML =
+        '<span class="text-success"><i class="bi bi-person-check"></i> '
+        + 'Публикация привяжется к клиенту — сделка двинется в «Запланировано».</span>';
+
+    const schTabBtn = document.getElementById('tab-scheduler-btn');
+    if (schTabBtn && window.bootstrap) {
+        bootstrap.Tab.getOrCreateInstance(schTabBtn).show();
+    } else if (body && window.bootstrap) {
+        bootstrap.Collapse.getOrCreateInstance(body).show();
+    }
+    if (body) body.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    _schRes('Планируем за клиента — выберите сообщество, текст, картинки и даты, затем отправьте.', 'muted');
 }
 
 // ----------------------------------------------------------------------

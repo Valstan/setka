@@ -1152,6 +1152,39 @@ async def list_order_items(
     return {"order_items": [r.to_dict() for r in rows], "total_quantity": total_qty}
 
 
+# ----------------------------------------------------- заявки клиента (И5)
+
+
+@router.get("/clients/{client_id}/requests")
+async def list_client_requests(
+    client_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Все заявки (``ad_requests``) этого клиента — для overlay-модалки «всё в карточке» (И5).
+
+    Сводит предложку и входящие ЛС, привязанные к клиенту через ``client_id``
+    (привязка возникает при заведении/привязке клиента из заявки). Read-only:
+    отдаёт снимки постов + VK-ссылки (``to_dict`` уже даёт ``vk_post_url`` /
+    ``author_url`` / ``dialog_url``), чтобы оператор видел историю обращений
+    клиента прямо из карточки, не уходя в общий инбокс.
+    """
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    rows = (
+        (
+            await db.execute(
+                select(AdRequest)
+                .where(AdRequest.client_id == client_id)
+                .order_by(AdRequest.detected_at.desc(), AdRequest.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {"requests": [r.to_dict() for r in rows], "count": len(rows)}
+
+
 @router.post("/order-items")
 async def create_order_item(
     payload: OrderItemCreateIn,
