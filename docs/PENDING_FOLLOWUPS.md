@@ -32,6 +32,31 @@ _Сейчас нет._
 
 ## ⏳ В процессе
 
+### 🔐 Радар-ID — OIDC-провайдер идентичности экосистемы (решение владельца через brain 2026-06-30)
+
+`⏱ 2026-06-30 · snooze 0 · fresh · design-first (постройка после ратификации контракта + ответов владельца)`
+
+3 письма brain 2026-06-30 (`radar-as-ecosystem-sso-center`, `radar-auth-vk-arch-unified-login`,
+`radar-sso-contract-from-trener`): «Радар» (модуль setka) = единый OIDC-центр всей экосистемы (GONBA,
+Sabantuy, малмыж×3, trener, будущие футбол/такси). trener — клиент №1. Канон — `unified-auth-concept.md`
+§«Пересмотр 06-30» + Часть A.
+
+- ✅ **Дизайн готов — ADR-0002** (`docs/adr/0002-radar-sso-oidc-provider.md`): Радар-ID = multi-client
+  OIDC-провайдер на **Authlib** (крипта библиотекой, не руками). Модель (расширить `RadarUser`: `sub`
+  opaque/email/email_verified/соц-id + 3 oauth-таблицы), эндпоинты (discovery/jwks/authorize/token/
+  userinfo), claims/scopes per-client, MUST-митигаторы (офлайн-JWKS, RS256+ротация refresh+reuse-detect,
+  rate-limit, audit), фазы Ф1–Ф3.
+- ✅ **Контракт отправлен brain** (`mailbox/to-brain/2026-06-30-radar-sso-contract.md`): issuer/discovery,
+  claims sub/email/email_verified/name, RS256+JWKS, Auth Code+PKCE, ручная client-reg. + рекомендация ВК
+  (**одно приложение на слое Радара**, Вариант А уточнённый) + 4-методная login-страница (в Радаре, сайты —
+  тонкая кнопка-redirect; R16 ВК + R12 magic-link + Telegram-HMAC).
+- 🟡 **Нейминг разведён:** зонтик «Радар = платформа Сарафан», модули **Радар-ID** (SSO) / **Радар-лента**
+  (контент). Подтверждение — за владельцем.
+- ⏳ **Открытые вопросы владельца (до постройки Ф1):** (1) нейминг; (2) публичный домен `id.малмыже.рф` +
+  TLS на хосте setka (новая публичная поверхность у «внутреннего» setka); (3) пилотный клиент Ф1 (GONBA/trener).
+- ⏳ **Ф1 (после ратификации контракта + ответов):** миграция + Authlib-ядро + локальный логин + ВК-upstream
+  (R16) + клиент №1 + smoke round-trip (#011). Код клиентов не пишем до устаканивания контракта.
+
 ### 🧹 Discovery — чистка dead + политика dormant (запрос владельца через brain 2026-06-30)
 
 `⏱ 2026-06-30 · snooze 0 · fresh`
