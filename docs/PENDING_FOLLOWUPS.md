@@ -32,6 +32,27 @@ _Сейчас нет._
 
 ## ⏳ В процессе
 
+### 🧹 Discovery — чистка dead + политика dormant (запрос владельца через brain 2026-06-30)
+
+`⏱ 2026-06-30 · snooze 0 · fresh`
+
+Письмо brain `from-brain/2026-06-30-discovery-dead-communities-cleanup.md`: убрать confirmed-dead
+сообщества + предложить политику по dormant. Ответ — `mailbox/to-brain/2026-06-30-discovery-dead-dormant-cleanup.md`.
+
+- ✅ **59 confirmed-dead → миграция 050** (`050_disable_dead_communities.sql`, коммичена): обратимый
+  soft-disable (`is_active=false`, НЕ DELETE) — выводит из парса (`monitor.py`) и recheck (оба
+  фильтруют `is_active=true`), история/FK сохранены, откат в самой миграции. Заземлено на реальных
+  данных прода (773 active / 98 dormant / 59 dead). **Находка:** dead-ведро = в основном ошибочно
+  добавленные ЛИЧНЫЕ профили VK (+ 2 тест-мусора + закрытые малые паблики), почти нет РКН-недостижимых.
+- ⏳ **Применить миграцию 050 на проде** — DML под человеческим гейтом #025 (`/sql` или вручную), без
+  restart (is_active читается живьём). Затем verify `health_status='dead' AND is_active=true` → 0.
+- 🟢 **Политика dormant (98) — ждёт OK brain:** tiered по возрасту `last_post_at` (T1 заброшен >12мес →
+  kill-кандидат после 2 циклов · T2 застойный 6–12мес → watch · T3 сезонный 60д–6мес → KEEP · empty_wall →
+  re-probe). Механизм — тот же обратимый soft-disable + ежемесячный digest вынесенных (#018). До OK
+  массово dormant НЕ трогаем.
+- 🟢 **Бэклог:** апгрейд recheck «persist `error_code`» (одно поле) → машинно разделить dead 18/100
+  (удалён) от 15/203 (недостижим/РКН — re-probe перед kill, cf #041). Сейчас error_code не хранится.
+
 ### 🌐 VK-шлюз — ворота доступа в VK для других проектов @valstan (запрос владельца 2026-06-26)
 
 `⏱ 2026-06-26 · snooze 0 · fresh`
