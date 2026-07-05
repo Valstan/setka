@@ -54,10 +54,25 @@ Sabantuy, малмыж×3, trener, будущие футбол/такси). tren
   под зонтиком «Радар = платформа Сарафан»; (2) публичный домен **`вход.вмалмыже.рф`** (issuer; punycode
   `xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai` для ВК-приложения/redirect_uri — G108/R16) + TLS на хосте setka;
   (3) пилотный клиент Ф1 — **trener**.
-- ⏳ **Ждёт ратификации контракта brain** (может уточнить протокол/claims) → пинг brain, затем постройка Ф1.
-- ⏳ **Ф1 (после ратификации):** миграция (расширить `RadarUser` + 3 oauth-таблицы) + Authlib-ядро
-  (discovery/jwks/authorize/token/userinfo) + локальный логин + ВК-upstream (R16) + регистрация trener +
-  smoke round-trip (#011). TLS на хосте setka решить при деплое. Код клиентов не пишем до устаканивания контракта.
+- ✅ **Контракт РАТИФИЦИРОВАН brain** (`from-brain/2026-06-30-radar-sso-contract-ratified.md`, прочитано
+  2026-07-05): как есть, без правок. Brain форварднёт trener сигнал строить свою сторону. 4 MUST-митигатора
+  (офлайн-JWKS / короткие access + refresh-ротация + reuse-detect / rate-limit / audit) — условие go-live.
+- ✅ **Ф1 ступень 1 — схема (PR #301, 2026-07-05):** миграция 052 (radar_users → аккаунт-слой: sub UUID
+  opaque + backfill, email/email_verified, соц-id, login/password nullable; oauth_clients / auth_codes /
+  refresh_tokens с family_id), модели, RS256-ключи (`modules/radar_id/keys.py`, ключ файлом
+  `/etc/setka/radar_id_rs256.pem`, генератор `scripts/generate_radar_id_key.py`), config issuer punycode.
+- ✅ **Ф1 ступень 2 — OIDC-ядро (PR #302, 2026-07-05):** discovery/jwks/authorize/token/userinfo;
+  Code + PKCE S256, single-use код, RS256 id_token/access (claims-минимизация по scope), refresh-ротация
+  + family reuse-detect, client-auth basic/post/none, rate-limit per-IP, audit-логгер, kill-switch
+  `RADAR_ID_DISABLED`; consent auto-approve (все клиенты first-party, ручная регистрация);
+  `scripts/register_oidc_client.py`. Локальный логин = существующий /login (сессия RadarUser). 1537 тестов.
+- ⏳ **Ф1 ступень 3 — ВК-upstream (R16):** VK ID OAuth (id.vk.ru, Code+PKCE, `device_id` из callback
+  обязателен) как upstream-метод логина Радара. **Нужно от владельца:** создать ВК-приложение (Вариант А —
+  одно на слое Радара) с redirect `https://xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai/auth/vk/callback`.
+- ⏳ **Ф1 деплой:** `/reliz` (pip install Authlib/joserfc/aiosqlite; миграция 052 под #025; генерация
+  ключа; регистрация клиента trener; restart web) + **публичная экспозиция — owner-решения:** A-запись
+  `вход.вмалмыже.рф` → хост setka, TLS (certbot), nginx server-block. Затем smoke round-trip с trener
+  (#011) → пинг brain (подключит GONBA/Sabantuy). Ключ подписи — кандидат №1 на зеркало в Карман (ADR-0006).
 
 ### 🧹 Discovery — чистка dead + политика dormant (запрос владельца через brain 2026-06-30)
 
