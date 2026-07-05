@@ -34,25 +34,29 @@ _Сейчас нет._
 
 ### 🧠 HITL-классификатор контента — лента вердиктов + файл-корректировщик (GO владельца через brain 2026-07-05)
 
-`⏱ 2026-07-05 · snooze 0 · fresh · design-first (постройка Ф1 после провижининга ANTHROPIC_API_KEY)`
+`⏱ 2026-07-05 · snooze 0 · fresh · основа (этап B) ПОСТРОЕНА 2026-07-05; остаток — деплой + завести облачную рутину`
 
-Заказ владельца (свернул Claude-Code-рутины классификации): headless-классификатор постов через Claude API
-из Celery + лента вердиктов в web-UI + самообучающийся файл-корректировщик. Каркас (5 опор) утверждён brain,
-детали спроектированы setka. Полный дизайн — `docs/adr/0003-hitl-content-classifier.md`.
+Заказ владельца (свернул Claude-Code-рутины классификации): headless-классификатор постов + лента вердиктов
+в web-UI + самообучающийся файл-корректировщик. Каркас (5 опор) утверждён brain. Дизайн —
+`docs/adr/0003-hitl-content-classifier.md`. **Вариант B (решение владельца 2026-07-05):** пока нет
+`ANTHROPIC_API_KEY`, классификацию делает **облачная рутина** через HTTP-интерфейс к setka; когда ключ
+появится — рутину меняем на Celery+Claude API (те же таблицы/сервис/лента).
 
-- ✅ **Дизайн готов — ADR-0003:** классификатор = Claude API из Celery (`modules/classifier/`, Haiku 4.5 +
-  эскалация Opus на низкой уверенности, structured output, prompt-cache на system+постулаты); вердикт-схема
-  (theme/action/merge/split/confidence/reasoning); новые таблицы `content_classifications` +
-  `classification_corrections` (миграция 053); web-лента вердиктов рядом с рекламным кабинетом; файл
-  `config/classification_postulates.md` (дистиллят коррекций, потолок ~100 правил + aging #033); shadow-гейт
-  (agree-rate по-типам, enforce ≥90%/≥2нед, kill <60%).
-- ✅ **План отправлен brain** (`mailbox/to-brain/2026-07-05-hitl-classifier-shadow-plan.md`): оценка
-  (~$3–9/мес на один район), порог enforce, дизайн-вопросы Этапа 2 (VK-источники сайта).
-- ✅ **Решения владельца 2026-07-05:** (1) API-ключ пока НЕ провижинится → дизайн сейчас, постройка после
-  ключа; (2) тема свободной строкой в shadow (не enum); (3) источник — один район для обкатки.
-- ⏳ **Блокер постройки Ф1:** нет `ANTHROPIC_API_KEY`. Когда появится — строю: `modules/classifier/`
-  (client+schema, httpx-мок R18) + миграция 053 (2 таблицы) + Celery-таск (один район, читает `Post`) +
-  web-лента + agree/correction API + стартовый `classification_postulates.md` + тесты. Enforce ВЫКЛ.
+- ✅ **Дизайн — ADR-0003** + план отправлен brain (`mailbox/to-brain/2026-07-05-hitl-classifier-shadow-plan.md`).
+- ✅ **Решения владельца 2026-07-05:** (1) тема свободной строкой в shadow; (2) один район для обкатки;
+  (3) вариант B — основа сейчас + облачная рутина как мост.
+- ✅ **Основа ПОСТРОЕНА 2026-07-05 (PR #TBD):** миграция 053 (`content_classifications` +
+  `classification_corrections`) + модели; `modules/classifier/` (schema Pydantic + service — доменное
+  ядро, общее для рутины и будущего API); HTTP-ingest `/api/classifier` (public, X-API-Key рутины:
+  GET /pending, GET /postulates, POST /verdicts); операторская лента `/api/classifier-review` +
+  страница `/classifier`: feed/agree/correct/stats с agree-rate по типам; `config/classifier.py` +
+  `config/classification_postulates.md` (стартовый); AuthGate (`/api/classifier/` public,
+  `/api/classifier-review/` оператор). +28 тестов, 1579 зелёных. В shadow `Post` не трогаем.
+- ⏳ **Осталось запустить (этап B):** деплой (миграция 053 + `CLASSIFIER_INGEST_KEY` +
+  `CLASSIFIER_REGION_CODES=<район>` + restart) + scheduled cloud agent на claude.ai/code по инструкции
+  `docs/ops/hitl-classifier-routine.md`. Затем оператор разбирает `/classifier`, копится agree-rate.
+- 🟢 **Enforce / Claude API (позже):** agree-rate по типу ≥90%/≥2нед → авто-действие типа; при появлении
+  `ANTHROPIC_API_KEY` рутину меняем на Celery-таск, `CLASSIFIER_DISABLED=1` глушит ingest.
 - 🟢 **Этап 2 (после обкатки):** тот же движок наполняет вмалмыже.рф из ВК («Малмыж инфо») + LLM-вёрстка
   text↔image interleaving (рецепт Sabantuy), канал — VK-шлюз #062. Ждёт: VK-источники сайта (вопрос владельцу).
 

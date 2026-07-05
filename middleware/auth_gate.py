@@ -47,6 +47,9 @@ PUBLIC_PREFIXES = (
     "/api/gateway/",  # VK-шлюз: своя X-API-Key защита (web/api/gateway.py).
     # trailing slash важен: /api/gateway-stats НЕ public — это операторская
     # статистика под сессионной cookie (web/api/gateway_stats.py).
+    "/api/classifier/",  # HITL-классификатор ingest (облачная рутина): своя
+    # X-API-Key защита (web/api/classifier_ingest.py). Аналогично шлюзу,
+    # trailing slash важен: /api/classifier-review НЕ public (операторская лента).
     "/api/auth/login",
     "/api/auth/register",
     "/.well-known/",
