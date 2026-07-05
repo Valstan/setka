@@ -515,6 +515,79 @@ class OAuthRefreshToken(Base):
         return f"<OAuthRefreshToken family={self.family_id} user={self.user_id}>"
 
 
+class ContentClassification(Base):
+    """Пер-пост вердикт HITL-классификатора (миграция 053, ADR-0003).
+
+    Shadow-фаза: только пишем, ``Post`` не трогаем. Источник вердикта —
+    ``source``: ``routine`` (облачная рутина, этап B) | ``api`` (Claude API
+    из Celery, когда появится ключ). ``verdict`` JSONB — схема ADR-0003 §B
+    (theme/action/merge_with/split/confidence/reasoning).
+    """
+
+    __tablename__ = "content_classifications"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
+    region_code = Column(String(50), nullable=False, index=True)
+    source = Column(String(20), nullable=False, default="routine")
+    model = Column(String(50), nullable=True)
+    verdict = Column(JSON, nullable=False)
+    confidence = Column(Integer, nullable=True)
+    shadow = Column(Boolean, nullable=False, default=True)
+    escalated = Column(Boolean, nullable=False, default=False)
+    tokens_estimate = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "post_id": self.post_id,
+            "region_code": self.region_code,
+            "source": self.source,
+            "model": self.model,
+            "verdict": self.verdict or {},
+            "confidence": self.confidence,
+            "shadow": self.shadow,
+            "escalated": self.escalated,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def __repr__(self):
+        return f"<ContentClassification post={self.post_id} region={self.region_code}>"
+
+
+class ClassificationCorrection(Base):
+    """Лог реакции оператора на вердикт (миграция 053, ADR-0003).
+
+    ``outcome``: ``agree`` (согласие одним тыком) | ``correct`` (поправка).
+    Согласие тоже строка здесь, чтобы agree-rate = agrees / (agrees + corrects)
+    по ``verdict_type`` (theme|action|merge) считался одним запросом. Сырьё для
+    метрики shadow-гейта + дистилляции в файл-корректировщик (родня deny-лог #054).
+    """
+
+    __tablename__ = "classification_corrections"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    classification_id = Column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        ForeignKey("content_classifications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    post_id = Column(Integer, nullable=False)
+    verdict_type = Column(String(20), nullable=False)  # theme | action | merge
+    outcome = Column(String(10), nullable=False, default="correct")  # agree | correct
+    ai_value = Column(JSON, nullable=True)
+    operator_value = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return (
+            f"<ClassificationCorrection cls={self.classification_id} "
+            f"{self.verdict_type}:{self.outcome}>"
+        )
+
+
 class RadarSource(Base):
     """Источник контент-радара (миграция 038, Ф0.2).
 

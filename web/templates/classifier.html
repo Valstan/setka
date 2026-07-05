@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Классификатор — лента вердиктов - SETKA{% endblock %}
+{% block nav_classifier %}active{% endblock %}
+{% block nav_section_system %}active{% endblock %}
+
+{% block content %}
+<div class="classifier-page mx-auto" style="max-width: 1000px;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1><i class="bi bi-robot"></i> Классификатор — лента вердиктов</h1>
+        <div class="d-flex gap-2 align-items-center">
+            <input type="text" class="form-control form-control-sm" id="cf-region"
+                   placeholder="код района" style="width:130px;">
+            <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="cf-unreacted" checked>
+                <label class="form-check-label small" for="cf-unreacted">только неразобранные</label>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm" id="cf-refresh">
+                <i class="bi bi-arrow-clockwise"></i> Обновить
+            </button>
+        </div>
+    </div>
+    <p class="text-muted">
+        Shadow-фаза (ADR-0003): нейронка только <b>предлагает</b> вердикты — ничего не удаляет и не
+        публикует. Оператор соглашается или правит; несогласия копятся в лог и питают
+        <b>agree-rate</b> и файл-корректировщик. Классификацию сейчас делает облачная рутина через
+        <code>/api/classifier</code>.
+    </p>
+
+    <!-- agree-rate -->
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <h6 class="mb-2"><i class="bi bi-graph-up"></i> agree-rate по типам
+                <span class="text-muted small" id="cf-total"></span>
+            </h6>
+            <div class="row g-2" id="cf-stats"></div>
+        </div>
+    </div>
+
+    <div id="cf-feed"></div>
+    <div id="cf-empty" class="text-muted text-center py-4 d-none">
+        Нет вердиктов для разбора. Рутина ещё не прислала, либо всё разобрано.
+    </div>
+</div>
+
+<script>
+const ACTIONS = {publish: "публиковать", delete: "удалить", hold: "отложить"};
+
+async function loadStats() {
+    const r = await fetch("/api/classifier-review/stats");
+    const s = await r.json();
+    document.getElementById("cf-total").textContent =
+        "· классифицировано: " + (s.total_classified ?? 0);
+    const box = document.getElementById("cf-stats");
+    box.innerHTML = "";
+    for (const t of ["theme", "action", "merge"]) {
+        const d = s.by_type[t] || {};
+        const rate = d.agree_rate == null ? "—" : Math.round(d.agree_rate * 100) + "%";
+        const label = {theme: "Тема", action: "Действие", merge: "Склейка"}[t];
+        box.insertAdjacentHTML("beforeend", `
+            <div class="col-4">
+              <div class="border rounded p-2 text-center">
+                <div class="small text-muted">${label}</div>
+                <div class="fs-5 fw-bold">${rate}</div>
+                <div class="small text-muted">✓${d.agree||0} / ✎${d.correct||0}</div>
+              </div>
+            </div>`);
+    }
+}
+
+function esc(s) {
+    return (s || "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function loadFeed() {
+    const region = document.getElementById("cf-region").value.trim();
+    const unreacted = document.getElementById("cf-unreacted").checked;
+    const url = `/api/classifier-review/feed?only_unreacted=${unreacted}&limit=60`
+        + (region ? `&region=${encodeURIComponent(region)}` : "");
+    const r = await fetch(url);
+    const data = await r.json();
+    const feed = document.getElementById("cf-feed");
+    feed.innerHTML = "";
+    document.getElementById("cf-empty").classList.toggle("d-none", data.count > 0);
+    for (const it of data.items) {
+        const v = it.verdict || {};
+        const conf = it.confidence == null ? "" : `<span class="badge bg-light text-dark">увер. ${it.confidence}</span>`;
+        const merge = (v.merge_with && v.merge_with.length) ? `склейка с: ${v.merge_with.join(", ")}` :
+                      (v.split ? "разъединить" : "");
+        feed.insertAdjacentHTML("beforeend", `
+          <div class="card mb-2" data-id="${it.id}">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-start mb-1">
+                <div>
+                  <span class="badge bg-primary">${esc(v.theme || "?")}</span>
+                  <span class="badge bg-secondary">${ACTIONS[v.action] || v.action || "?"}</span>
+                  ${merge ? `<span class="badge bg-warning text-dark">${esc(merge)}</span>` : ""}
+                  ${conf}
+                </div>
+                <small class="text-muted">#${it.post_id} · ${esc(it.region_code)} · ${it.source}</small>
+              </div>
+              <div class="text-muted small mb-2" style="white-space:pre-wrap;max-height:6em;overflow:auto;">${esc(it.post_text) || "<i>без текста</i>"}</div>
+              ${v.reasoning ? `<div class="fst-italic small text-secondary mb-2">↳ ${esc(v.reasoning)}</div>` : ""}
+              <div class="d-flex gap-2 flex-wrap">
+                <button class="btn btn-success btn-sm" onclick="agree(${it.id})">✅ Согласен</button>
+                <button class="btn btn-outline-primary btn-sm" onclick="correctTheme(${it.id})">Изменить тему</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'publish')">→ публиковать</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'delete')">→ удалить</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'hold')">→ отложить</button>
+                <button class="btn btn-outline-warning btn-sm" onclick="correctSplit(${it.id})">Разъединить</button>
+              </div>
+            </div>
+          </div>`);
+    }
+}
+
+async function react(id, path, body) {
+    await fetch(`/api/classifier-review/${id}/${path}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: body ? JSON.stringify(body) : null,
+    });
+    document.querySelector(`.card[data-id="${id}"]`)?.remove();
+    loadStats();
+}
+
+function agree(id) { react(id, "agree"); }
+function correctAction(id, action) { react(id, "correct", {verdict_type: "action", operator_value: action}); }
+function correctSplit(id) { react(id, "correct", {verdict_type: "merge", operator_value: {split: true}}); }
+function correctTheme(id) {
+    const t = prompt("Правильная тема:");
+    if (t && t.trim()) react(id, "correct", {verdict_type: "theme", operator_value: t.trim()});
+}
+
+document.getElementById("cf-refresh").addEventListener("click", () => { loadFeed(); loadStats(); });
+document.getElementById("cf-unreacted").addEventListener("change", loadFeed);
+loadStats();
+loadFeed();
+</script>
+{% endblock %}

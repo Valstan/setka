@@ -25,6 +25,8 @@ from web.api import (
     ad_crm,
     auth,
     broadcast,
+    classifier_ingest,
+    classifier_review,
     communities,
     discovery,
     filtration,
@@ -163,6 +165,12 @@ app.include_router(
 app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Discovery"])
 app.include_router(gateway.router, prefix="/api/gateway", tags=["VK Gateway"])
 app.include_router(gateway_stats.router, prefix="/api/gateway-stats", tags=["VK Gateway Stats"])
+# HITL-классификатор (ADR-0003). Ingest — публичный (X-API-Key рутины), в PUBLIC_PREFIXES;
+# review — операторская сессия (как gateway / gateway-stats).
+app.include_router(classifier_ingest.router, prefix="/api/classifier", tags=["Classifier Ingest"])
+app.include_router(
+    classifier_review.router, prefix="/api/classifier-review", tags=["Classifier Review"]
+)
 
 
 @app.get("/")
@@ -240,6 +248,12 @@ async def broadcast_page(request: Request):
 async def gateway_stats_page(request: Request):
     """Статистика использования VK-шлюза: кто/когда/сколько + последние запросы."""
     return templates.TemplateResponse("gateway_stats.html", {"request": request})
+
+
+@app.get("/classifier")
+async def classifier_page(request: Request):
+    """Лента вердиктов HITL-классификатора (shadow): пост + вердикт + кнопки."""
+    return templates.TemplateResponse("classifier.html", {"request": request})
 
 
 @app.get("/ad-cabinet")
