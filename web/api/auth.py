@@ -53,7 +53,8 @@ class RegisterIn(BaseModel):
 
 
 def _set_session_cookie(response: Response, user: RadarUser) -> None:
-    token = issue_session_token(user.id, user.role, password_fragment(user.password_hash))
+    # password_hash nullable с миграции 052 (соц-only аккаунты) — fragment от "".
+    token = issue_session_token(user.id, user.role, password_fragment(user.password_hash or ""))
     response.set_cookie(
         SESSION_COOKIE,
         token,
@@ -74,7 +75,8 @@ async def login(body: LoginIn, response: Response):
         ).scalar_one_or_none()
         # verify и на несуществующем юзере (фиктивный хэш не храним — просто
         # ровняем стоимость ответа, не выдавая enumeration по таймингу scrypt).
-        ok = bool(user) and verify_password(body.password, user.password_hash)
+        # or "": соц-only аккаунт без пароля не роняет verify (честный 401).
+        ok = bool(user) and verify_password(body.password, user.password_hash or "")
         if not ok or not user.is_active:
             raise HTTPException(status_code=401, detail="Неверный логин или пароль")
         user.last_login_at = datetime.utcnow()

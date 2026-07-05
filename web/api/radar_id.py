@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Form, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -220,6 +221,79 @@ async def token(
             )
 
     return JSONResponse(bundle.as_response(), headers={"Cache-Control": "no-store"})
+
+
+# ---------------------------------------------------------------------------
+# ВК-вход (upstream R16): /auth/vk/login → id.vk.ru → /auth/vk/callback
+# ---------------------------------------------------------------------------
+
+
+@router.get("/auth/vk/login")
+async def vk_login(request: Request, next: str = "/radar"):  # noqa: A002 - query name
+    """Старт ВК-входа: PKCE+state в подписанную cookie → redirect на id.vk.ru."""
+    _check_enabled()
+    _enforce_ip_rate(request, "vk-login")
+    from modules.radar_id import vk_upstream
+
+    try:
+        url, blob = vk_upstream.build_vk_authorize(next)
+    except vk_upstream.VkUpstreamError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    resp = RedirectResponse(url, status_code=302)
+    resp.set_cookie(
+        vk_upstream.OAUTH_STATE_COOKIE,
+        blob,
+        max_age=vk_upstream.OAUTH_STATE_TTL,
+        httponly=True,
+        samesite="lax",  # cookie должна вернуться на top-level redirect от VK
+        secure=os.getenv("SESSION_COOKIE_SECURE", "1") == "1",
+    )
+    return resp
+
+
+@router.get("/auth/vk/callback")
+async def vk_callback(
+    request: Request,
+    code: str = "",
+    device_id: str = "",
+    state: str = "",
+    error: Optional[str] = None,
+    error_description: Optional[str] = None,
+):
+    """Callback VK ID: обмен кода (device_id обязателен — R16) → сессия → next."""
+    _check_enabled()
+    _enforce_ip_rate(request, "vk-callback")
+    from modules.radar_id import vk_upstream
+    from web.api.auth import _set_session_cookie
+
+    def _fail(msg: str):
+        logger.warning("vk-callback rejected: %s", msg)
+        return RedirectResponse(f"/login?error={quote(msg)}", status_code=302)
+
+    if error:
+        return _fail(error_description or error)
+
+    blob = request.cookies.get(vk_upstream.OAUTH_STATE_COOKIE)
+    saved = vk_upstream.verify_oauth_state(blob) if blob else None
+    if not saved or not state or saved.get("st") != state:
+        return _fail("Сессия ВК-входа истекла или state не совпал — попробуйте ещё раз")
+    if not code or not device_id:
+        return _fail("VK не вернул code/device_id")
+
+    try:
+        tokens = await vk_upstream.exchange_vk_code(
+            code=code, device_id=device_id, state=state, code_verifier=saved["cv"]
+        )
+        vk_user = await vk_upstream.fetch_vk_user(tokens["access_token"])
+        async with AsyncSessionLocal() as session:
+            user = await vk_upstream.find_or_create_user(session, vk_user)
+            resp = RedirectResponse(vk_upstream.safe_next(saved.get("next")), status_code=302)
+            _set_session_cookie(resp, user)
+    except vk_upstream.VkUpstreamError as e:
+        return _fail(str(e))
+
+    resp.delete_cookie(vk_upstream.OAUTH_STATE_COOKIE)
+    return resp
 
 
 # ---------------------------------------------------------------------------
