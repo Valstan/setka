@@ -37,6 +37,7 @@ from web.api import (
     posts,
     publisher,
     radar,
+    radar_id,
     regions,
     schedule_management,
     scheduler,
@@ -133,6 +134,8 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), na
 # Include routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(radar.router, prefix="/api/radar", tags=["Content Radar"])
+# Радар-ID (OIDC): абсолютные пути /.well-known/* и /oidc/* — без префикса.
+app.include_router(radar_id.router, tags=["Radar ID / OIDC"])
 app.include_router(health.router, prefix="/api/health", tags=["Health"])
 app.include_router(regions.router, prefix="/api/regions", tags=["Regions"])
 app.include_router(communities.router, prefix="/api/communities", tags=["Communities"])
