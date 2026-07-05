@@ -32,6 +32,30 @@ _Сейчас нет._
 
 ## ⏳ В процессе
 
+### 🧠 HITL-классификатор контента — лента вердиктов + файл-корректировщик (GO владельца через brain 2026-07-05)
+
+`⏱ 2026-07-05 · snooze 0 · fresh · design-first (постройка Ф1 после провижининга ANTHROPIC_API_KEY)`
+
+Заказ владельца (свернул Claude-Code-рутины классификации): headless-классификатор постов через Claude API
+из Celery + лента вердиктов в web-UI + самообучающийся файл-корректировщик. Каркас (5 опор) утверждён brain,
+детали спроектированы setka. Полный дизайн — `docs/adr/0003-hitl-content-classifier.md`.
+
+- ✅ **Дизайн готов — ADR-0003:** классификатор = Claude API из Celery (`modules/classifier/`, Haiku 4.5 +
+  эскалация Opus на низкой уверенности, structured output, prompt-cache на system+постулаты); вердикт-схема
+  (theme/action/merge/split/confidence/reasoning); новые таблицы `content_classifications` +
+  `classification_corrections` (миграция 053); web-лента вердиктов рядом с рекламным кабинетом; файл
+  `config/classification_postulates.md` (дистиллят коррекций, потолок ~100 правил + aging #033); shadow-гейт
+  (agree-rate по-типам, enforce ≥90%/≥2нед, kill <60%).
+- ✅ **План отправлен brain** (`mailbox/to-brain/2026-07-05-hitl-classifier-shadow-plan.md`): оценка
+  (~$3–9/мес на один район), порог enforce, дизайн-вопросы Этапа 2 (VK-источники сайта).
+- ✅ **Решения владельца 2026-07-05:** (1) API-ключ пока НЕ провижинится → дизайн сейчас, постройка после
+  ключа; (2) тема свободной строкой в shadow (не enum); (3) источник — один район для обкатки.
+- ⏳ **Блокер постройки Ф1:** нет `ANTHROPIC_API_KEY`. Когда появится — строю: `modules/classifier/`
+  (client+schema, httpx-мок R18) + миграция 053 (2 таблицы) + Celery-таск (один район, читает `Post`) +
+  web-лента + agree/correction API + стартовый `classification_postulates.md` + тесты. Enforce ВЫКЛ.
+- 🟢 **Этап 2 (после обкатки):** тот же движок наполняет вмалмыже.рф из ВК («Малмыж инфо») + LLM-вёрстка
+  text↔image interleaving (рецепт Sabantuy), канал — VK-шлюз #062. Ждёт: VK-источники сайта (вопрос владельцу).
+
 ### 🔐 Радар-ID — OIDC-провайдер идентичности экосистемы (решение владельца через brain 2026-06-30)
 
 `⏱ 2026-06-30 · snooze 0 · fresh · Ф1 ПОСТРОЕНА и ЗАДЕПЛОЕНА 2026-07-05 (вход.вмалмыже.рф live); остаток — round-trip с trener + Ф2/Ф3`
