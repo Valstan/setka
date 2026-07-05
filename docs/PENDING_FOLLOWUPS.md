@@ -45,16 +45,20 @@ _Сейчас нет._
 - ✅ **Дизайн — ADR-0003** + план отправлен brain (`mailbox/to-brain/2026-07-05-hitl-classifier-shadow-plan.md`).
 - ✅ **Решения владельца 2026-07-05:** (1) тема свободной строкой в shadow; (2) один район для обкатки;
   (3) вариант B — основа сейчас + облачная рутина как мост.
-- ✅ **Основа ПОСТРОЕНА 2026-07-05 (PR #TBD):** миграция 053 (`content_classifications` +
-  `classification_corrections`) + модели; `modules/classifier/` (schema Pydantic + service — доменное
-  ядро, общее для рутины и будущего API); HTTP-ingest `/api/classifier` (public, X-API-Key рутины:
-  GET /pending, GET /postulates, POST /verdicts); операторская лента `/api/classifier-review` +
-  страница `/classifier`: feed/agree/correct/stats с agree-rate по типам; `config/classifier.py` +
-  `config/classification_postulates.md` (стартовый); AuthGate (`/api/classifier/` public,
-  `/api/classifier-review/` оператор). +28 тестов, 1579 зелёных. В shadow `Post` не трогаем.
-- ⏳ **Осталось запустить (этап B):** деплой (миграция 053 + `CLASSIFIER_INGEST_KEY` +
-  `CLASSIFIER_REGION_CODES=<район>` + restart) + scheduled cloud agent на claude.ai/code по инструкции
-  `docs/ops/hitl-classifier-routine.md`. Затем оператор разбирает `/classifier`, копится agree-rate.
+- ✅ **Основа ПОСТРОЕНА (PR #307) + ЗАДЕПЛОЕНА 2026-07-05:** `modules/classifier/` (schema + service —
+  доменное ядро, общее для рутины и будущего API); HTTP-ingest `/api/classifier` (public, X-API-Key:
+  GET /pending, GET /postulates, POST /verdicts); операторская лента `/api/classifier-review` + страница
+  `/classifier` (feed/agree/correct/stats, agree-rate по типам); `config/classifier.py` +
+  `config/classification_postulates.md`; AuthGate. Env на проде: `CLASSIFIER_INGEST_KEY` (в
+  `/etc/setka/classifier-routine-key.txt`, root-only) + `CLASSIFIER_REGION_CODES=mi`.
+- ✅ **Источник исправлен (PR #308):** при деплое нашлось, что `posts` ПУСТА (monitor.py не в beat) —
+  живой источник это свод­ки `bulletin_curation_runs.candidates`. Перенаправил на них, ключ = `lip`
+  (`<owner_abs>_<post_id>`), текст/url снапшотом; миграция 054 (пересоздала пустые таблицы 053 под lip).
+  Задеплоено, `/pending` вернул реальные посты `mi` (count=3). 1583 зелёных.
+- ⏳ **Осталось запустить (этап B) — за владельцем:** завести scheduled cloud agent на claude.ai/code
+  по инструкции `docs/ops/hitl-classifier-routine.md` (ключ забрать: `ssh setka "sudo cat
+  /etc/setka/classifier-routine-key.txt"`). Затем оператор разбирает `/classifier` (меню «Система» →
+  Классификатор), копится agree-rate.
 - 🟢 **Enforce / Claude API (позже):** agree-rate по типу ≥90%/≥2нед → авто-действие типа; при появлении
   `ANTHROPIC_API_KEY` рутину меняем на Celery-таск, `CLASSIFIER_DISABLED=1` глушит ingest.
 - 🟢 **Этап 2 (после обкатки):** тот же движок наполняет вмалмыже.рф из ВК («Малмыж инфо») + LLM-вёрстка
