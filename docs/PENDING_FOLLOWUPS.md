@@ -74,12 +74,21 @@ Sabantuy, малмыж×3, trener, будущие футбол/такси). tren
 - ✅ **Миграция 050 ПРИМЕНЕНА на проде 2026-06-30** (под гейтом #025, owner-confirm): `UPDATE 59`,
   без restart. Verify: `health_status='dead' AND is_active=true` → **0** (все 59 → is_active=false);
   среди активных осталось 773 active + 98 dormant. Обратимо (откат в миграции).
-- 🟢 **Политика dormant (98) — ждёт OK brain:** tiered по возрасту `last_post_at` (T1 заброшен >12мес →
-  kill-кандидат после 2 циклов · T2 застойный 6–12мес → watch · T3 сезонный 60д–6мес → KEEP · empty_wall →
-  re-probe). Механизм — тот же обратимый soft-disable + ежемесячный digest вынесенных (#018). До OK
-  массово dormant НЕ трогаем.
+- ✅ **Политика dormant — ОДОБРЕНА brain (письмо 2026-06-30) и ПОСТРОЕНА 2026-07-05** (этот PR):
+  tiered по возрасту `last_post_at` (`classify_dormant_tier`: T1 >12мес / T2 6–12мес watch / T3 60д–6мес
+  KEEP / empty_wall re-probe, не авто-kill). Auto-disable **только T1 при 2 подряд dormant** (prev
+  `health_status='dormant'` + новый dormant — без новой схемы серий); обратимый soft-disable
+  (`is_active=false` + `disabled_at`/`disabled_reason='dormant_t1_auto'`, миграция 051). **Условие brain
+  соблюдено:** ежемесячный TG-digest вынесенных (beat `dormant-disable-digest-monthly`, 1-е число 09:30 MSK).
+  После первого месячного цикла с верными исходами — оформить «3 судьбы» письмом в brain (#009,
+  measure-before-promote). _Деплой: миграция 051 (аддитивная + backfill reason для 59 из 050) + restart
+  worker/beat._
 - 🟢 **Бэклог:** апгрейд recheck «persist `error_code`» (одно поле) → машинно разделить dead 18/100
   (удалён) от 15/203 (недостижим/РКН — re-probe перед kill, cf #041). Сейчас error_code не хранится.
+  Brain 2026-06-30: «разблокирует honest dead/unreachable split» — парный к #041.
+- 🟢 **Бэклог (brain 2026-06-30):** закрыть протечку discovery/seed, пускавшую ЛИЧНЫЕ VK-профили в
+  community-пул (dead-ведро миграции 050 состояло в основном из них) — валидировать на входе, что
+  vk_id принадлежит сообществу, а не пользователю.
 
 ### 🌐 VK-шлюз — ворота доступа в VK для других проектов @valstan (запрос владельца 2026-06-26)
 
