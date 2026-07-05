@@ -50,6 +50,11 @@ PUBLIC_PREFIXES = (
     "/api/auth/login",
     "/api/auth/register",
     "/.well-known/",
+    # Радар-ID OIDC (web/api/radar_id.py): token/userinfo зовут серверы
+    # клиентов без cookie — своя client-auth (secret/PKCE/Bearer).
+    # /oidc/authorize сюда НЕ входит — ему нужна сессия пользователя.
+    "/oidc/token",
+    "/oidc/userinfo",
 )
 
 # Куда пускаем роль radar (плюс PUBLIC сверху):
@@ -58,6 +63,7 @@ RADAR_PREFIXES = (
     "/api/radar/",
     "/api/auth/logout",
     "/api/auth/me",
+    "/oidc/",  # OIDC authorize: любой залогиненный RadarUser может входить на сайты
 )
 
 UserLoader = Callable[[int], Awaitable[Optional[object]]]
@@ -107,9 +113,12 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         user = await self._authenticate(request)
         if user is None:
             if _wants_html(request) and request.method == "GET":
-                return RedirectResponse(
-                    f"/login?next={quote(str(request.url.path))}", status_code=302
-                )
+                # next с query string: OIDC authorize (и любой GET с параметрами)
+                # обязан вернуться на полный URL, не только path.
+                next_url = request.url.path
+                if request.url.query:
+                    next_url += f"?{request.url.query}"
+                return RedirectResponse(f"/login?next={quote(next_url)}", status_code=302)
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
         request.state.user = user
@@ -138,6 +147,8 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         if user is None or not user.is_active:
             return None
         # Смена пароля инвалидирует старые сессии: fragment в токене ≠ актуальному.
-        if payload.get("pf") != password_fragment(user.password_hash):
+        # password_hash nullable с миграции 052 (соц-only аккаунты) — fragment
+        # считаем от пустой строки, семантика инвалидации сохраняется.
+        if payload.get("pf") != password_fragment(user.password_hash or ""):
             return None
         return user

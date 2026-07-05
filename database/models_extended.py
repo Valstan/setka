@@ -472,7 +472,8 @@ class OAuthAuthCode(Base):
 
     __tablename__ = "oauth_auth_codes"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    # BIGSERIAL в PG; variant Integer — автоинкремент в SQLite-тестах.
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     code_hash = Column(String(128), nullable=False, unique=True, index=True)
     client_id = Column(String(64), nullable=False)
     user_id = Column(Integer, ForeignKey("radar_users.id", ondelete="CASCADE"), nullable=False)
@@ -499,7 +500,7 @@ class OAuthRefreshToken(Base):
 
     __tablename__ = "oauth_refresh_tokens"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     token_hash = Column(String(128), nullable=False, unique=True, index=True)
     family_id = Column(String(36), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("radar_users.id", ondelete="CASCADE"), nullable=False)
