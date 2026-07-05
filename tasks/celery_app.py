@@ -1636,6 +1636,16 @@ app.conf.beat_schedule = {
             "catchup": False,
         },
     },
+    # Dormant-политика: ежемесячный digest вынесенных (условие brain 2026-06-30
+    # к auto-disable T1 — владелец видит и может возразить; soft-disable обратим).
+    "dormant-disable-digest-monthly": {
+        "task": "tasks.discovery_tasks.dormant_disable_digest",
+        "schedule": crontab(minute=30, hour=9, day_of_month="1"),
+        "options": {
+            "expires": 6 * 3600,
+            "catchup": False,
+        },
+    },
     # Rolling discovery — ОТКЛЮЧЕНО 2026-06-02 (по решению владельца).
     # Алгоритмический авто-подбор кандидатов БЕЗ нейро-классификации (Groq 403)
     # даёт ~98% мусора: на Туже из 136 авто-кандидатов годных ≈0 — омонимы

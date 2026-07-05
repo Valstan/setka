@@ -152,6 +152,7 @@ async def test_recheck_zero_communities_returns_empty_report():
         "dead": 0,
         "changed_category": 0,
         "errors": 0,
+        "disabled_t1": 0,
     }
 
 

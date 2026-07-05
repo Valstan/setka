@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import func, select, update
@@ -29,6 +29,7 @@ from modules.discovery.health_check import (
     DEFAULT_POSTS_SAMPLE,
     CommunityHealth,
     check_community_health,
+    classify_dormant_tier,
 )
 from modules.discovery.vk_search import DiscoveredGroup, discover_for_region
 from modules.vk_monitor.vk_client import VKClient
@@ -452,6 +453,7 @@ async def recheck_communities_for_region_async(
                 "dead": 0,
                 "changed_category": 0,
                 "errors": 0,
+                "disabled_t1": 0,
             }
 
         client = VKClient(token=token)
@@ -471,6 +473,7 @@ async def recheck_communities_for_region_async(
             "dead": 0,
             "changed_category": 0,
             "errors": 0,
+            "disabled_t1": 0,
         }
         by_id = {c.id: c for c in rows}
         for res in results:
@@ -480,6 +483,7 @@ async def recheck_communities_for_region_async(
             row = by_id.get(res.community_id)
             if row is None:
                 continue
+            prev_status = row.health_status
             row.health_status = res.status
             if res.last_post_at is not None:
                 row.last_post_at = res.last_post_at
@@ -489,6 +493,20 @@ async def recheck_communities_for_region_async(
             row.suggested_category = (
                 res.suggested_category if res.status == "changed_category" else None
             )
+            # Dormant-политика T1 (brain OK 2026-06-30): «2 подряд dormant» без
+            # новой схемы = предыдущий health_status уже был dormant И новый
+            # recheck снова dormant. Только T1 (>12 мес); empty_wall (last_post_at
+            # IS NULL) сюда не попадает — re-probe, не авто-kill. Обратимый
+            # soft-disable, видимость через ежемесячный digest (условие brain).
+            if (
+                res.status == "dormant"
+                and prev_status == "dormant"
+                and classify_dormant_tier(row.last_post_at, now=now) == "t1"
+            ):
+                row.is_active = False
+                row.disabled_at = now
+                row.disabled_reason = "dormant_t1_auto"
+                counts["disabled_t1"] += 1
 
         await session.commit()
 
@@ -563,7 +581,14 @@ def _has_interesting_findings(reports: List[Dict[str, Any]]) -> bool:
 
 def _format_recheck_message(reports: List[Dict[str, Any]]) -> str:
     """Telegram-сообщение (HTML) по итогам recheck'а."""
-    totals = {"dead": 0, "dormant": 0, "changed_category": 0, "errors": 0, "total": 0}
+    totals = {
+        "dead": 0,
+        "dormant": 0,
+        "changed_category": 0,
+        "errors": 0,
+        "total": 0,
+        "disabled_t1": 0,
+    }
     region_lines: List[str] = []
     for r in reports:
         if not r.get("success"):
@@ -583,6 +608,8 @@ def _format_recheck_message(reports: List[Dict[str, Any]]) -> str:
             parts.append(f"😴 dormant: {r['dormant']}")
         if r.get("changed_category"):
             parts.append(f"🔀 changed_category: {r['changed_category']}")
+        if r.get("disabled_t1"):
+            parts.append(f"🚫 выведено T1: {r['disabled_t1']}")
         region_lines.append(f"  • <b>{r.get('region', '?')}</b> — " + ", ".join(parts))
 
     lines: List[str] = []
@@ -594,6 +621,8 @@ def _format_recheck_message(reports: List[Dict[str, Any]]) -> str:
         f"😴 dormant: <b>{totals['dormant']}</b>, "
         f"🔀 changed_category: <b>{totals['changed_category']}</b>"
     )
+    if totals["disabled_t1"]:
+        lines.append(f"🚫 выведено dormant-политикой T1 (обратимо): <b>{totals['disabled_t1']}</b>")
     if totals["errors"]:
         lines.append(f"⚠ transient errors (не сместили статус): {totals['errors']}")
     if region_lines:
@@ -602,22 +631,19 @@ def _format_recheck_message(reports: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _maybe_send_recheck_telegram_alert(reports: List[Dict[str, Any]]) -> None:
-    """Send Telegram bulletin if recheck found anything actionable.
+def _send_telegram_html(text: str, *, log_prefix: str) -> None:
+    """Send an HTML message to TELEGRAM_ALERT_CHAT_ID.
 
-    Использует тот же паттерн, что и
-    ``tasks.celery_app._maybe_send_telegram_notifications_alert``:
+    Общий паттерн alert-рассылок discovery (тот же, что в
+    ``tasks.celery_app._maybe_send_telegram_notifications_alert``):
     pick первого работающего бот-токена + ``TELEGRAM_ALERT_CHAT_ID``.
     """
-    if not _has_interesting_findings(reports):
-        logger.info("recheck: nothing to report, skipping Telegram alert")
-        return
     try:
         import requests
 
         from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
     except ImportError as e:  # pragma: no cover
-        logger.warning("recheck: telegram deps missing: %s", e)
+        logger.warning("%s: telegram deps missing: %s", log_prefix, e)
         return
 
     bot_token = None
@@ -628,10 +654,9 @@ def _maybe_send_recheck_telegram_alert(reports: List[Dict[str, Any]]) -> None:
     if not bot_token:
         bot_token = next(iter((TELEGRAM_TOKENS or {}).values()), None)
     if not bot_token or not TELEGRAM_ALERT_CHAT_ID:
-        logger.info("recheck: telegram not configured, skipping alert")
+        logger.info("%s: telegram not configured, skipping alert", log_prefix)
         return
 
-    text = _format_recheck_message(reports)
     try:
         resp = requests.post(
             f"https://api.telegram.org/bot{bot_token}/sendMessage",
@@ -645,14 +670,23 @@ def _maybe_send_recheck_telegram_alert(reports: List[Dict[str, Any]]) -> None:
         )
         if resp.status_code != 200:
             logger.warning(
-                "recheck: telegram sendMessage failed: %s %s",
+                "%s: telegram sendMessage failed: %s %s",
+                log_prefix,
                 resp.status_code,
                 resp.text[:300],
             )
         else:
-            logger.info("recheck: telegram alert sent")
+            logger.info("%s: telegram alert sent", log_prefix)
     except Exception as e:  # pragma: no cover
-        logger.warning("recheck: telegram send error: %s", e)
+        logger.warning("%s: telegram send error: %s", log_prefix, e)
+
+
+def _maybe_send_recheck_telegram_alert(reports: List[Dict[str, Any]]) -> None:
+    """Send Telegram bulletin if recheck found anything actionable."""
+    if not _has_interesting_findings(reports):
+        logger.info("recheck: nothing to report, skipping Telegram alert")
+        return
+    _send_telegram_html(_format_recheck_message(reports), log_prefix="recheck")
 
 
 # ─── Rolling discovery: 1 регион в день, по очереди ─────────────────
@@ -806,54 +840,78 @@ def _format_rolling_message(report: Dict[str, Any]) -> str:
 
 
 def _maybe_send_rolling_telegram_alert(report: Dict[str, Any]) -> None:
-    """Telegram-alert для rolling discovery. Идентичен по паттерну с
-    ``_maybe_send_recheck_telegram_alert``: pick первого работающего
-    бот-токена + TELEGRAM_ALERT_CHAT_ID."""
-    try:
-        import requests
+    """Telegram-alert для rolling discovery (общий sender)."""
+    _send_telegram_html(_format_rolling_message(report), log_prefix="rolling")
 
-        from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
-    except ImportError as e:  # pragma: no cover
-        logger.warning("rolling: telegram deps missing: %s", e)
-        return
 
-    bot_token = None
-    for key in ("VALSTANBOT", "ALERT", "AFONYA"):
-        bot_token = (TELEGRAM_TOKENS or {}).get(key)
-        if bot_token:
-            break
-    if not bot_token:
-        bot_token = next(iter((TELEGRAM_TOKENS or {}).values()), None)
-    if not bot_token or not TELEGRAM_ALERT_CHAT_ID:
-        logger.info("rolling: telegram not configured, skipping alert")
-        return
+# ─── Dormant-политика: ежемесячный digest вынесенных ─────────────────
+#
+# Условие brain (OK 2026-06-30): auto-disable T1 — только с ежемесячным
+# digest'ом вынесенных. Под автономией «молча вынесли» дороже видимой
+# ошибки (#018) — digest даёт владельцу окно возразить (soft-disable
+# обратим: is_active=true возвращает в парс).
 
-    text = _format_rolling_message(report)
-    try:
-        resp = requests.post(
-            f"https://api.telegram.org/bot{bot_token}/sendMessage",
-            json={
-                "chat_id": TELEGRAM_ALERT_CHAT_ID,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
-            timeout=10,
+DORMANT_DIGEST_WINDOW_DAYS = 32  # месяц + запас на дрейф расписания
+
+
+def _format_dormant_digest(items: List[Dict[str, Any]]) -> str:
+    """HTML-digest сообществ, выведенных dormant-политикой за окно."""
+    lines: List[str] = []
+    lines.append("<b>😴 Dormant-политика: выведено из парса за месяц</b>")
+    lines.append("")
+    lines.append(f"Всего: <b>{len(items)}</b> (T1 — без постов &gt;12 мес, 2 recheck'а подряд)")
+    lines.append("")
+    for it in items:
+        last = it.get("last_post_at")
+        last_s = last.strftime("%Y-%m-%d") if last else "—"
+        lines.append(
+            f"  • <b>{it.get('region', '?')}</b> — {it.get('name', '?')}"
+            f" (vk.com/club{it.get('vk_id')}, последний пост {last_s})"
         )
-        if resp.status_code != 200:
-            logger.warning(
-                "rolling: telegram sendMessage failed: %s %s",
-                resp.status_code,
-                resp.text[:300],
+    lines.append("")
+    lines.append("Обратимо: is_active=true вернёт сообщество в парс.")
+    return "\n".join(lines)
+
+
+async def dormant_disable_digest_async(*, send_telegram: bool = True) -> Dict[str, Any]:
+    """Monthly digest: communities soft-disabled by the dormant policy.
+
+    Читает `communities.disabled_reason='dormant_t1_auto'` за последние
+    ``DORMANT_DIGEST_WINDOW_DAYS`` суток. Пусто → тишина (алёрт не шлём).
+    """
+    since = datetime.utcnow() - timedelta(days=DORMANT_DIGEST_WINDOW_DAYS)
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(Community, Region.code)
+                .join(Region, Community.region_id == Region.id)
+                .where(
+                    Community.disabled_reason == "dormant_t1_auto",
+                    Community.disabled_at >= since,
+                )
+                .order_by(Region.code, Community.name)
             )
-        else:
-            logger.info(
-                "rolling: telegram alert sent (region=%s, new=%s)",
-                report.get("region"),
-                report.get("new_pending"),
-            )
-    except Exception as e:  # pragma: no cover
-        logger.warning("rolling: telegram send error: %s", e)
+        ).all()
+
+    items = [
+        {
+            "region": code,
+            "name": c.name,
+            "vk_id": abs(int(c.vk_id or 0)),
+            "last_post_at": c.last_post_at,
+            "disabled_at": c.disabled_at,
+        }
+        for c, code in rows
+    ]
+
+    if not items:
+        logger.info("dormant-digest: nothing disabled in window, skipping")
+        return {"success": True, "count": 0}
+
+    if send_telegram:
+        _send_telegram_html(_format_dormant_digest(items), log_prefix="dormant-digest")
+
+    return {"success": True, "count": len(items), "items": items}
 
 
 # ─── Celery wrapper (для будущего шедулирования) ───
@@ -894,6 +952,11 @@ try:
     def discover_rolling_one_region():
         """Celery beat task: daily rolling discovery (1 регион — самый давний)."""
         return _run_coro(discover_rolling_one_region_async())
+
+    @_celery_app.task(name="tasks.discovery_tasks.dormant_disable_digest")
+    def dormant_disable_digest():
+        """Celery beat task: monthly digest вынесенных dormant-политикой."""
+        return _run_coro(dormant_disable_digest_async())
 
 except Exception as _import_err:  # pragma: no cover
     # При локальном импорте без Celery (например, в тестах web-API)

@@ -133,6 +133,11 @@ class Community(Base):
     checked_at = Column(DateTime, nullable=True)  # когда последний раз делали health-check
     suggested_category = Column(String(50), nullable=True)  # если AI считает что category устарел
 
+    # Dormant-политика (миграция 051): когда/почему выведено из парса.
+    # disabled_reason: dormant_t1_auto / dead_migration_050 / NULL (ручное/старое)
+    disabled_at = Column(DateTime, nullable=True)
+    disabled_reason = Column(String(50), nullable=True)
+
     # Telegram repost target (миграция 020, Flow B) — канал + ИМЯ бота
     # (токен только в env, pool #008). NULL = сообщество не зеркалится в TG.
     telegram_channel = Column(String(100), nullable=True)  # "@gonba_life" / chat_id

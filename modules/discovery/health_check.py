@@ -53,6 +53,32 @@ DEFAULT_DORMANT_DAYS = 60
 DEFAULT_POSTS_SAMPLE = 10
 CHANGED_CATEGORY_CONFIDENCE_THRESHOLD = 70
 
+# Тиры dormant-политики (одобрена brain 2026-06-30): возраст last_post_at
+# первичен, dormant_streak как вторичный сигнал — позже, не сейчас.
+DORMANT_T1_DAYS = 365  # T1 «заброшен» — soft-disable после 2 подряд dormant
+DORMANT_T2_DAYS = 180  # T2 «застойный» — watch, не трогаем
+
+
+def classify_dormant_tier(
+    last_post_at: Optional[datetime], *, now: Optional[datetime] = None
+) -> str:
+    """Тир dormant-политики по возрасту последнего поста.
+
+    - ``t1`` — >12 мес: kill-кандидат (disable после 2 подряд dormant-recheck'ей);
+    - ``t2`` — 6–12 мес: застойный, watch;
+    - ``t3`` — <6 мес: сезонный/тихий, KEEP (сельские ДК замолкают в межсезонье);
+    - ``empty_wall`` — постов нет вовсе: отдельный re-probe, НЕ авто-kill.
+    """
+    if last_post_at is None:
+        return "empty_wall"
+    now = now or datetime.utcnow()
+    age_days = (now - last_post_at).days
+    if age_days > DORMANT_T1_DAYS:
+        return "t1"
+    if age_days > DORMANT_T2_DAYS:
+        return "t2"
+    return "t3"
+
 
 @dataclass
 class CommunityHealth:
