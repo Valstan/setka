@@ -34,7 +34,7 @@ _Сейчас нет._
 
 ### 🔐 Радар-ID — OIDC-провайдер идентичности экосистемы (решение владельца через brain 2026-06-30)
 
-`⏱ 2026-06-30 · snooze 0 · fresh · design-first (постройка после ратификации контракта + ответов владельца)`
+`⏱ 2026-06-30 · snooze 0 · fresh · Ф1 ПОСТРОЕНА и ЗАДЕПЛОЕНА 2026-07-05 (вход.вмалмыже.рф live); остаток — round-trip с trener + Ф2/Ф3`
 
 3 письма brain 2026-06-30 (`radar-as-ecosystem-sso-center`, `radar-auth-vk-arch-unified-login`,
 `radar-sso-contract-from-trener`): «Радар» (модуль setka) = единый OIDC-центр всей экосистемы (GONBA,
@@ -66,13 +66,28 @@ Sabantuy, малмыж×3, trener, будущие футбол/такси). tren
   + family reuse-detect, client-auth basic/post/none, rate-limit per-IP, audit-логгер, kill-switch
   `RADAR_ID_DISABLED`; consent auto-approve (все клиенты first-party, ручная регистрация);
   `scripts/register_oidc_client.py`. Локальный логин = существующий /login (сессия RadarUser). 1537 тестов.
-- ⏳ **Ф1 ступень 3 — ВК-upstream (R16):** VK ID OAuth (id.vk.ru, Code+PKCE, `device_id` из callback
-  обязателен) как upstream-метод логина Радара. **Нужно от владельца:** создать ВК-приложение (Вариант А —
-  одно на слое Радара) с redirect `https://xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai/auth/vk/callback`.
-- ⏳ **Ф1 деплой:** `/reliz` (pip install Authlib/joserfc/aiosqlite; миграция 052 под #025; генерация
-  ключа; регистрация клиента trener; restart web) + **публичная экспозиция — owner-решения:** A-запись
-  `вход.вмалмыже.рф` → хост setka, TLS (certbot), nginx server-block. Затем smoke round-trip с trener
-  (#011) → пинг brain (подключит GONBA/Sabantuy). Ключ подписи — кандидат №1 на зеркало в Карман (ADR-0006).
+- ✅ **Ф1 ступень 3 — ВК-upstream (R16) (PR #304, 2026-07-05):** VK ID OAuth (id.vk.ru, Code+PKCE,
+  `device_id` из callback обязателен) как upstream-метод логина Радара. `modules/radar_id/vk_upstream.py`
+  + `/auth/vk/login|callback`; связывание по verified-email (анти-захват) / соц-only RadarUser. ВК-приложение
+  владельца **«Войти в Сервисы Малмыжа» App ID `54666252`** (Вариант А — одно на слое Радара). 1551 тест.
+- ✅ **Ф1 ЗАДЕПЛОЕНА на прод 2026-07-05** (под гейтом #025): pip install (Authlib/joserfc/aiosqlite),
+  миграция 052 применена, RS256-ключ сгенерирован (`/etc/setka/radar_id_rs256.pem` 0600, kid
+  `LoGbwp2W…`), `RADAR_ID_VK_APP_ID=54666252` в env, клиент **trener** зарегистрирован (confidential;
+  секрет в root-only `/etc/setka/trener-oidc-credentials.txt`), restart web/worker/beat, health 200.
+- ✅ **Публичная экспозиция поднята 2026-07-05** (через панель Джино, с владельцем): поддомен
+  `вход.вмалмыже.рф` → VPS СЕТКА (A-запись + привязка); Let's Encrypt (авто-продление Джино, TLS
+  терминируется на edge-прокси Джино — **не** certbot на боксе). nginx server-block
+  `/etc/nginx/conf.d/radar_id.conf` (вне git, прод-правка). **Внешний smoke зелёный:** discovery/jwks/
+  login = 200; authorize→login redirect с сохранением query; vk-login → 302 на id.vk.ru + PKCE + App ID.
+- 🟢 **Остаток Ф1:** (1) round-trip-smoke с trener (#011) — владелец передаёт trener client_secret из
+  root-файла + issuer; когда trener построит свою сторону → пинг brain, подключит GONBA/Sabantuy.
+  (2) владельцу — физически проверить `https://вход.вмалмыже.рф/auth/vk/login` (вход через ВК → /radar).
+  (3) RS256-ключ подписи — кандидат №1 на зеркало в Карман (ADR-0006), когда KARMAN даст mirror-API.
+  (4) нит: nginx-блок Радара — ACME-location через webroot оставлен, но реально TLS на edge Джино;
+  можно упростить при следующем касании (не блокер).
+- 🟢 **Ф2/Ф3 (не сейчас):** magic-link (R12) + Telegram-HMAC + клиент №2 (Ф2); остальные клиенты +
+  мобайл-PKCE футбол/такси (Ф3). Когда Сабантуй перейдёт на вход через Радар-ID — его отдельное
+  VK ID-приложение (App ID 54656174) выводится, остаётся одно на экосистему (Вариант А, анти-зоопарк).
 
 ### 🧹 Discovery — чистка dead + политика dormant (запрос владельца через brain 2026-06-30)
 
