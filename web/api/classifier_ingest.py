@@ -86,5 +86,10 @@ async def verdicts(batch: VerdictBatch, _auth: None = Depends(require_ingest_key
     """Принять пакет вердиктов от рутины → записать в content_classifications."""
     _check_enabled()
     async with AsyncSessionLocal() as session:
-        counts = await service.record_verdicts(session, batch.verdicts, source="routine")
+        counts = await service.record_verdicts(
+            session,
+            batch.verdicts,
+            source="routine",
+            region_codes_fallback=get_region_allowlist() or None,
+        )
     return {"ok": True, **counts}

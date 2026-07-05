@@ -28,18 +28,25 @@
 Базовый URL: `https://вход.вмалмыже.рф` (или прод-домен setka). Все ingest-эндпоинты — заголовок
 `X-API-Key: <CLASSIFIER_INGEST_KEY>`.
 
+**Источник постов** — свод­ки (`bulletin_curation_runs.candidates`): активный конвейер SARAFAN не пишет
+пер-пост Post-строки, а копит кандидатов в свод­ках. Ключ поста — **`lip`** (`"<owner_abs>_<post_id>"`,
+структурный фингерпринт, напр. `156168183_14260`).
+
 | Метод | Путь | Назначение |
 |---|---|---|
-| `GET` | `/api/classifier/pending?region=<код>&limit=<N>` | Батч постов без вердикта. `region` пуст → берётся `CLASSIFIER_REGION_CODES`. Ответ: `{count, posts: [{post_id, region_code, text, has_media, date}]}` |
+| `GET` | `/api/classifier/pending?region=<код>&limit=<N>` | Батч постов без вердикта. `region` пуст → берётся `CLASSIFIER_REGION_CODES`. Ответ: `{count, posts: [{lip, region_code, text, has_media, url}]}` |
 | `GET` | `/api/classifier/postulates` | Текст файла-корректировщика (вставить в промпт) |
-| `POST` | `/api/classifier/verdicts` | Вернуть вердикты. Тело: `{"verdicts": [{post_id, theme, action, merge_with, split, confidence, reasoning, model}]}`. Ответ: `{recorded, skipped_existing, skipped_missing}` |
+| `POST` | `/api/classifier/verdicts` | Вернуть вердикты. Тело: `{"verdicts": [{lip, theme, action, merge_with, split, confidence, reasoning, model, text, url, region_code}]}`. Ответ: `{recorded, skipped_existing, skipped_missing}` |
 
 Схема вердикта (ADR-0003 §B):
+- `lip` — ключ поста из `/pending`;
 - `theme` — тема поста (в shadow **свободной строкой**);
 - `action` — `publish` | `delete` | `hold`;
-- `merge_with` — список `post_id` **из этого же батча**, которые надо склеить с текущим по смыслу;
+- `merge_with` — список **`lip`** постов **из этого же батча**, которые надо склеить с текущим по смыслу;
 - `split` — `true`, если текущий пост сам ошибочная склейка (разъединить);
-- `confidence` — 0..100; `reasoning` — 1 строка.
+- `confidence` — 0..100; `reasoning` — 1 строка;
+- **`text`/`url`/`region_code`** — эхо из `/pending` (сохранить снапшот; если не вернёшь — сервер
+  доберёт из свод­ки, но эхо надёжнее).
 
 ## Промпт рутины (заготовка)
 
@@ -56,11 +63,12 @@
 2. GET https://вход.вмалмыже.рф/api/classifier/pending?limit=40
    (тот же X-API-Key) — батч постов. Если count=0 — заверши прогон, ничего не делай.
 3. Для КАЖДОГО поста в батче определи вердикт по схеме:
-   {post_id, theme (свободная строка), action: publish|delete|hold,
-    merge_with: [post_id ...из этого же батча], split: true|false,
-    confidence: 0..100, reasoning: одна строка}.
-   merge_with заполняй, только если посты — про ОДНО событие. split=true, если пост
-   сам склеен из разных тем (напр. спорт+похороны). Низкая уверенность → confidence < 60.
+   {lip, theme (свободная строка), action: publish|delete|hold,
+    merge_with: [lip ...из этого же батча], split: true|false,
+    confidence: 0..100, reasoning: одна строка,
+    text, url, region_code (скопируй из объекта поста в /pending — это снапшот)}.
+   merge_with заполняй списком lip, только если посты — про ОДНО событие. split=true,
+   если пост сам склеен из разных тем (напр. спорт+похороны). Низкая уверенность → confidence < 60.
 4. POST https://вход.вмалмыже.рф/api/classifier/verdicts (X-API-Key), тело:
    {"verdicts": [ ...по одному объекту на пост... ]}.
 5. Кратко отчитайся: сколько классифицировал, сколько publish/delete/hold, сколько merge/split.

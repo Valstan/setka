@@ -1,4 +1,7 @@
-"""Fixtures для тестов HITL-классификатора: in-memory async БД + сид постов."""
+"""Fixtures для тестов HITL-классификатора: in-memory async БД.
+
+Источник постов — свод­ки (``bulletin_curation_runs.candidates``), не posts.
+"""
 
 from __future__ import annotations
 
@@ -9,16 +12,18 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import database.models  # noqa: F401 — конфигурация мапперов
 from database.connection import Base
-from database.models import Post, Region
-from database.models_extended import ClassificationCorrection, ContentClassification
+from database.models_extended import (
+    BulletinCurationRun,
+    ClassificationCorrection,
+    ContentClassification,
+)
 
 
 @pytest_asyncio.fixture()
 async def db_session():
     engine = create_async_engine("sqlite+aiosqlite://")
     tables = [
-        Region.__table__,
-        Post.__table__,
+        BulletinCurationRun.__table__,
         ContentClassification.__table__,
         ClassificationCorrection.__table__,
     ]
@@ -30,24 +35,19 @@ async def db_session():
     await engine.dispose()
 
 
-async def seed_region(session, *, id_=1, code="mi", name="Малмыж"):
-    r = Region(id=id_, code=code, name=name)
-    session.add(r)
-    await session.commit()
-    return r
+def _cand(lip, text="пост", has_media=False):
+    return {"lip": lip, "text": text, "url": f"https://vk.com/wall{lip}", "has_media": has_media}
 
 
-async def seed_post(session, *, id_, region_id=1, text="пост", status="new", days_ago=0):
-    p = Post(
-        id=id_,
-        region_id=region_id,
-        community_id=100,
-        vk_post_id=id_,
-        vk_owner_id=-200,
-        text=text,
-        status=status,
-        date_published=datetime.utcnow() - timedelta(days=days_ago),
+async def seed_run(session, *, region_code="mi", candidates=None, days_ago=0, theme="novost"):
+    """Свод­ка-источник с кандидатами (lips)."""
+    run = BulletinCurationRun(
+        region_code=region_code,
+        theme=theme,
+        candidates=candidates or [],
+        total_count=len(candidates or []),
+        created_at=datetime.utcnow() - timedelta(days=days_ago),
     )
-    session.add(p)
+    session.add(run)
     await session.commit()
-    return p
+    return run
