@@ -69,11 +69,19 @@ ClassifierVerdict:
 (канонические 20 + добор из реально порождённых). Merge-by-meaning — тот же конвейер, отдельный тип
 вердикта (лечит склейки).
 
-### C. Shadow-таблица + лог коррекций (новая, миграция 053)
+### C. Shadow-таблица + лог коррекций (новая, миграция 053 → 054)
 
-- **`content_classifications`** (пер-пост вердикт): `id`, `post_id`(FK), `region_code`, `model` (haiku|opus),
-  `verdict` JSONB (схема B), `confidence`, `shadow` (default true), `escalated` (bool), `tokens_estimate`,
-  `created_at`. Классификатор **только пишет** — не трогает `Post.status`/`ai_category` в shadow.
+> **Правка при деплое 2026-07-05:** таблица `posts` оказалась ПУСТА — активный конвейер SARAFAN не пишет
+> пер-пост `Post`-строки, а копит кандидатов внутри свод­ок (`bulletin_curation_runs.candidates` JSONB:
+> `{lip, url, text, post_id, owner_id, has_media}`). Живой источник — именно он. Поэтому классификатор
+> читает кандидатов свод­ок, а таблицы ключуются по **`lip`** (`"<owner_abs>_<post_id>"`, структурный
+> фингерпринт), а не по `post_id`-FK на пустую `posts`; текст/url хранятся снапшотом (кандидат
+> транзиентен). Миграция 054 пересоздаёт таблицы под lip (053 была пустая).
+
+- **`content_classifications`** (пер-пост вердикт): `id`, `lip` (unique), `region_code`, `post_text`/`post_url`
+  (снапшот), `source` (routine|api), `model`, `verdict` JSONB (схема B, `merge_with` — список lip),
+  `confidence`, `shadow` (default true), `escalated`, `tokens_estimate`, `created_at`. Классификатор
+  **только пишет** — контент не трогает в shadow.
 - **`classification_corrections`** (лог несогласий, растёт из UI): `id`, `classification_id`(FK), `post_id`,
   `verdict_type` (theme|action|merge), `ai_value` JSONB, `operator_value` JSONB, `created_at`. Это сырьё
   для (1) метрики agree-rate по типам, (2) периодической дистилляции в файл-корректировщик. Родня deny-лог

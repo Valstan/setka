@@ -516,20 +516,24 @@ class OAuthRefreshToken(Base):
 
 
 class ContentClassification(Base):
-    """Пер-пост вердикт HITL-классификатора (миграция 053, ADR-0003).
+    """Пер-пост вердикт HITL-классификатора (миграция 054, ADR-0003).
 
-    Shadow-фаза: только пишем, ``Post`` не трогаем. Источник вердикта —
-    ``source``: ``routine`` (облачная рутина, этап B) | ``api`` (Claude API
-    из Celery, когда появится ключ). ``verdict`` JSONB — схема ADR-0003 §B
-    (theme/action/merge_with/split/confidence/reasoning).
+    Shadow-фаза: только пишем, контент не трогаем. Источник постов — свод­ки
+    (``bulletin_curation_runs.candidates``): активный конвейер не пишет Post-строки
+    (posts пуста), а копит кандидатов в свод­ках. Ключ поста — ``lip``
+    ("<owner_abs>_<post_id>", структурный фингерпринт). Текст/URL — снапшот на
+    момент классификации (кандидат в свод­ке транзиентен). ``verdict`` JSONB —
+    схема ADR-0003 §B; ``merge_with`` — список lip.
     """
 
     __tablename__ = "content_classifications"
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
-    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
+    lip = Column(String(50), nullable=False, unique=True, index=True)
     region_code = Column(String(50), nullable=False, index=True)
-    source = Column(String(20), nullable=False, default="routine")
+    post_text = Column(Text, nullable=True)
+    post_url = Column(String(300), nullable=True)
+    source = Column(String(20), nullable=False, default="routine")  # routine | api
     model = Column(String(50), nullable=True)
     verdict = Column(JSON, nullable=False)
     confidence = Column(Integer, nullable=True)
@@ -541,8 +545,10 @@ class ContentClassification(Base):
     def to_dict(self):
         return {
             "id": self.id,
-            "post_id": self.post_id,
+            "lip": self.lip,
             "region_code": self.region_code,
+            "post_text": (self.post_text or "").strip(),
+            "post_url": self.post_url,
             "source": self.source,
             "model": self.model,
             "verdict": self.verdict or {},
@@ -553,7 +559,7 @@ class ContentClassification(Base):
         }
 
     def __repr__(self):
-        return f"<ContentClassification post={self.post_id} region={self.region_code}>"
+        return f"<ContentClassification lip={self.lip} region={self.region_code}>"
 
 
 class ClassificationCorrection(Base):
@@ -574,7 +580,7 @@ class ClassificationCorrection(Base):
         nullable=False,
         index=True,
     )
-    post_id = Column(Integer, nullable=False)
+    lip = Column(String(50), nullable=False)
     verdict_type = Column(String(20), nullable=False)  # theme | action | merge
     outcome = Column(String(10), nullable=False, default="correct")  # agree | correct
     ai_value = Column(JSON, nullable=True)

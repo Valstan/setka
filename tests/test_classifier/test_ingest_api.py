@@ -34,12 +34,12 @@ def test_pending_requires_key(client):
 
 
 def test_pending_ok_with_key(client):
-    fake = AsyncMock(return_value=[{"post_id": 1, "text": "a"}])
+    fake = AsyncMock(return_value=[{"lip": "1_10", "text": "a"}])
     with patch.object(ing.service, "fetch_pending", fake):
         r = client.get("/api/classifier/pending?limit=5", headers={"X-API-Key": KEY})
     assert r.status_code == 200
     body = r.json()
-    assert body["count"] == 1 and body["posts"][0]["post_id"] == 1
+    assert body["count"] == 1 and body["posts"][0]["lip"] == "1_10"
 
 
 def test_pending_uses_region_query_over_allowlist(client, monkeypatch):
@@ -59,7 +59,7 @@ def test_verdicts_requires_key(client):
 def test_verdicts_records(client):
     fake = AsyncMock(return_value={"recorded": 1, "skipped_existing": 0, "skipped_missing": 0})
     payload = {
-        "verdicts": [{"post_id": 1, "theme": "novost", "action": "publish", "confidence": 80}]
+        "verdicts": [{"lip": "1_10", "theme": "novost", "action": "publish", "confidence": 80}]
     }
     with patch.object(ing.service, "record_verdicts", fake):
         r = client.post("/api/classifier/verdicts", json=payload, headers={"X-API-Key": KEY})
@@ -71,7 +71,7 @@ def test_verdicts_records(client):
 
 def test_verdicts_bad_action_rejected_by_schema(client):
     # confidence вне диапазона → 422 (pydantic), до записи не доходит
-    payload = {"verdicts": [{"post_id": 1, "theme": "t", "confidence": 500}]}
+    payload = {"verdicts": [{"lip": "1_10", "theme": "t", "confidence": 500}]}
     r = client.post("/api/classifier/verdicts", json=payload, headers={"X-API-Key": KEY})
     assert r.status_code == 422
 

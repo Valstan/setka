@@ -1,8 +1,9 @@
 """Схема вердикта классификатора (ADR-0003 §B).
 
-Pydantic-валидация входящих вердиктов от облачной рутины (и позже — от
-Claude API structured output). В shadow ``theme`` — свободная строка (решение
-владельца): учимся, какие темы нейронка рождает, до закрепления таксономии.
+Pydantic-валидация вердиктов от облачной рутины (и позже — от Claude API).
+Ключ поста — ``lip`` ("<owner_abs>_<post_id>", структурный фингерпринт), т.к.
+активный конвейер не пишет Post-строки — источник постов свод­ки
+(``bulletin_curation_runs.candidates``). В shadow ``theme`` — свободная строка.
 """
 
 from __future__ import annotations
@@ -18,16 +19,21 @@ ACTIONS = ("publish", "delete", "hold")
 
 
 class ClassifierVerdict(BaseModel):
-    """Вердикт по одному посту."""
+    """Вердикт по одному посту (ключ — lip)."""
 
-    post_id: int
+    lip: str = Field(min_length=1, max_length=50)
     theme: str = Field(min_length=1, max_length=100)
     action: str = Field(default="hold")
-    merge_with: List[int] = Field(default_factory=list)
+    merge_with: List[str] = Field(default_factory=list)  # lip'ы постов для склейки
     split: bool = False
     confidence: int = Field(default=0, ge=0, le=100)
     reasoning: str = Field(default="", max_length=500)
     model: Optional[str] = None
+    # Эхо снапшота из /pending (рутина возвращает — чтобы сохранить текст/url,
+    # кандидат в свод­ке транзиентен). Опциональны: если пусто, сервер добирает.
+    text: str = Field(default="", max_length=10000)
+    url: str = Field(default="", max_length=300)
+    region_code: str = Field(default="", max_length=50)
 
     def normalized_action(self) -> str:
         a = (self.action or "").strip().lower()
@@ -42,7 +48,7 @@ class ClassifierVerdict(BaseModel):
         return {
             "theme": self.theme.strip(),
             "action": self.normalized_action(),
-            "merge_with": list(self.merge_with),
+            "merge_with": [str(x) for x in self.merge_with],
             "split": bool(self.split),
             "confidence": int(self.confidence),
             "reasoning": (self.reasoning or "").strip(),

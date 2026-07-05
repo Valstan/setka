@@ -97,7 +97,7 @@ async function loadFeed() {
                   ${merge ? `<span class="badge bg-warning text-dark">${esc(merge)}</span>` : ""}
                   ${conf}
                 </div>
-                <small class="text-muted">#${it.post_id} · ${esc(it.region_code)} · ${it.source}</small>
+                <small class="text-muted">${it.post_url ? `<a href="${esc(it.post_url)}" target="_blank" rel="noopener">${esc(it.lip)}</a>` : esc(it.lip)} · ${esc(it.region_code)} · ${it.source}</small>
               </div>
               <div class="text-muted small mb-2" style="white-space:pre-wrap;max-height:6em;overflow:auto;">${esc(it.post_text) || "<i>без текста</i>"}</div>
               ${v.reasoning ? `<div class="fst-italic small text-secondary mb-2">↳ ${esc(v.reasoning)}</div>` : ""}
