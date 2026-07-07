@@ -541,6 +541,10 @@ class ContentClassification(Base):
     escalated = Column(Boolean, nullable=False, default=False)
     tokens_estimate = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    # Финализация оператором (миграция 055): пост уходит из ленты только когда
+    # оператор явно завершил вердикт («Согласен со всем» / «Готово»), а не после
+    # первого клика — иначе нельзя внести составной вердикт (тема И действие).
+    reviewed_at = Column(DateTime, nullable=True)
 
     def to_dict(self):
         return {
@@ -555,6 +559,7 @@ class ContentClassification(Base):
             "confidence": self.confidence,
             "shadow": self.shadow,
             "escalated": self.escalated,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

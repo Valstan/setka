@@ -157,9 +157,41 @@ async def test_correct_unknown_type_rejected(db_session):
 
 
 @pytest.mark.asyncio
-async def test_feed_only_unreacted(db_session):
+async def test_feed_only_unreviewed(db_session):
     cid = await _one(db_session)
-    assert len(await service.review_feed(db_session, only_unreacted=True)) == 1
+    assert len(await service.review_feed(db_session, only_unreviewed=True)) == 1
     await service.agree_all(db_session, cid)
-    assert len(await service.review_feed(db_session, only_unreacted=True)) == 0
-    assert len(await service.review_feed(db_session, only_unreacted=False)) == 1
+    assert len(await service.review_feed(db_session, only_unreviewed=True)) == 0
+    assert len(await service.review_feed(db_session, only_unreviewed=False)) == 1
+
+
+@pytest.mark.asyncio
+async def test_feed_stays_until_finalized(db_session):
+    # Правка НЕ убирает пост из ленты (можно внести составной вердикт).
+    cid = await _one(db_session)
+    await service.correct(db_session, cid, verdict_type="theme", operator_value="sport")
+    assert len(await service.review_feed(db_session, only_unreviewed=True)) == 1  # ещё в ленте
+    await service.finalize(db_session, cid)
+    assert len(await service.review_feed(db_session, only_unreviewed=True)) == 0  # ушёл
+
+
+@pytest.mark.asyncio
+async def test_finalize_auto_agrees_untouched(db_session):
+    # Поправили тему; finalize → action получает agree, тема остаётся correct.
+    cid = await _one(db_session)
+    await service.correct(db_session, cid, verdict_type="theme", operator_value="sport")
+    out = await service.finalize(db_session, cid)
+    assert out["auto_agreed_types"] == ["action"]  # тема не трогается, merge нет сигнала
+    stats = await service.agree_rate_stats(db_session)
+    assert stats["by_type"]["theme"]["correct"] == 1
+    assert stats["by_type"]["action"]["agree"] == 1
+
+
+@pytest.mark.asyncio
+async def test_correct_matching_ai_counts_as_agree(db_session):
+    # Клик «→ публиковать» на посте, где ИИ уже publish → согласие, не ложная правка.
+    cid = await _one(db_session, action="publish")
+    out = await service.correct(db_session, cid, verdict_type="action", operator_value="publish")
+    assert out["outcome"] == "agree"
+    stats = await service.agree_rate_stats(db_session)
+    assert stats["by_type"]["action"] == {"agree": 1, "correct": 0, "total": 1, "agree_rate": 1.0}
