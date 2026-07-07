@@ -2,41 +2,40 @@
 
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
-**Status:** ACTIVE (HITL-программа задеплоена; облачная рутина 24/7 заведена; идёт накопление — оператор разбирает ленту)
+**Status:** ACTIVE (HITL shadow копится; облачная рутина чинится от egress-403 — ждём проверки прогона)
 **Updated:** 2026-07-07
 **Branch:** main
-**Last release in prod:** код HEAD **`bc0b8b2`** (#314). Кода эта сессия не меняла — только настройка рутины (вне репо) + доки.
+**Last release in prod:** код HEAD **`bc0b8b2`** (#314). Кода эта сессия не меняла — только доки (#317, #318) + настройка рутины (вне репо).
 
 ---
 
 ## Текущая нитка
 
-HITL-классификатор: код построен/смёржен/задеплоен в прошлые сессии. Эта сессия — **настройка расписания рутины и её проверка**:
+HITL-классификатор задеплоен, крутится в shadow. Эта сессия — **починка облачной рутины после egress-403**: облачное окружение рутины по умолчанию `Network access: Trusted` (пускает только пакеты, не произвольные хосты) → CONNECT к нашему API возвращал 403. Прод жив (health 200, оба хоста отдают 401 без ключа = API дошёл). Промпт рутины переведён на ASCII-хост `3931b3fe50ab.vps.myjino.ru` (punycode-IDN спотыкается об egress-прокси и вдобавок отвергается валидатором поля allowed-domains). Доки обновлены с точным UI-путём фикса.
 
-1. **Локальная задача-рутина проверена живой:** ключ `CLASSIFIER_INGEST_KEY` уже вписан в её `SKILL.md` (вне репо), API отвечает (с ключом `/pending`→200, без→401). Ручной прогон-классификатор от меня подтвердил цепочку `/postulates`→`/pending`→`/verdicts`. Локальная задача `setka-hitl-classifier` сама отработала параллельно (cron ежечасно) — размечено ~40 постов, `content_classifications` вырос 56→96.
-2. **Облачная рутина 24/7 ЗАВЕДЕНА владельцем:** Cloud Routine «Классификатор текстов Сарафана» на claude.ai/code (Routines, **Active**, cron `22 7-22 * * *` = каждый час в :22 с 07 до 22 MSK). Самодостаточный промпт (вшиты база `/api/classifier` + ключ). Это истинный серверный 24/7 — не требует открытого приложения.
-3. **Фильтр повторной классификации — подтверждён рабочим** (`service.fetch_pending` уже исключает размеченные `lip`). Токены впустую не жгутся — дописывать нечего.
+Прод-факт этой сессии: `content_classifications` = 136 (было 96), все `source=routine`, последний вердикт 2026-07-07 18:35 MSK — до egress-блокировки рутина исправно писала.
 
 ## Следующий шаг
 
-Кода не требуют — за оператором + два UI-хвоста у владельца:
+За владельцем (UI облачной рутины на claude.ai/code → страница рутины → ✏️):
 
-1. **Отключить локальную задачу** `setka-hitl-classifier`, чтобы не дублировала облачную (обе идемпотентны, вреда нет, но лишний прогон). Команда для след. сессии: `update_scheduled_task(taskId="setka-hitl-classifier", enabled=false)` — или владелец сам в разделе Scheduled Claude Desktop.
-2. **Владельцу — снять коннектор Gamma** с облачной рутины (лишний, чуть жрёт контекст): страница рутины → ✏️ → Connectors → отключить Gamma, оставить Claude_Code_Remote.
-3. **Оператор** — разбирать ленту `/classifier` (меню «Система» → Классификатор): на проде **48 неразобранных вердиктов** (publish 15 / hold 18 / delete 15) → копится agree-rate по типам.
-4. **Проверить, что облачная рутина отработала** — после первого её прогона в ленте появятся новые вердикты `source=routine`; убедиться, что 200-ответы (`Runs` на странице рутины).
+1. **Network access:** `Trusted` → **`Custom`** → в allowed domains добавить `3931b3fe50ab.vps.myjino.ru` (или wildcard `*.vps.myjino.ru`, если один хост не примет). **Save changes.** NB: применяется к *новым* сессиям рутины, не задним числом. Punycode-хост в поле **не принимается** валидатором — и не нужен (промпт на ASCII).
+2. **Вставить обновлённый промпт** рутины (ASCII-хост) — заготовка в [`docs/ops/hitl-classifier-routine.md`](ops/hitl-classifier-routine.md) §«Промпт рутины».
+3. **Проверить прогон в :22** — в Runs 403 должен уйти; в ленте `/classifier` появятся новые вердикты `source=routine`. Эмпирика: `ssh setka "sudo -u postgres psql -d setka -tA -c \"SELECT source,MAX(created_at) FROM content_classifications GROUP BY source;\""` → время должно обновиться.
+4. **Оператор** — разбирать ленту `/classifier` (копит agree-rate по типам).
 
 ## Контекст
 
-- **План:** ADR-0003 (HITL), ADR-0004 (аудит обеих сторон), `docs/ops/hitl-classifier-routine.md`.
-- **Ключ рутины:** `CLASSIFIER_INGEST_KEY` в `/etc/setka/setka.env` (shadow-запись вердиктов, ничего деструктивного). Вшит в промпт локальной задачи и облачной рутины; **в git не кладём**.
-- **Прод:** все сервисы active, health 200, HEAD `bc0b8b2`. `content_classifications`: 96 (48 reviewed + 48 unreviewed). agree-rate по типам считается из лога коррекций.
+- **План:** ADR-0003 (HITL), ADR-0004 (аудит обеих сторон), [`docs/ops/hitl-classifier-routine.md`](ops/hitl-classifier-routine.md) (§Troubleshooting — egress-403 → Network access Custom).
+- **Связанные коммиты сессии:** `0d773df` (#317 — рутина на ASCII-хост + troubleshooting), `7629253` (#318 — точный UI-путь Network access → Custom).
+- **Прод:** все сервисы active, health 200, HEAD `bc0b8b2`. `content_classifications` = 136.
+- **Ключ рутины:** `CLASSIFIER_INGEST_KEY` в `/etc/setka/setka.env`; вшит в промпт рутины; **в git не кладём**.
 - **Открытых PR:** этот handoff-PR (doc-only, авто-merge).
 
 ## Failed approaches (этой нитки)
 
-- **`create_scheduled_task` / `CronCreate` / `ScheduleWakeup` для 24/7-облака** — ни один НЕ создаёт claude.ai/code Cloud Routine: первый = локальная задача Desktop (только пока открыто приложение), второй = session-only (умирает с сессией), третий = тик внутри /loop. **Истинная облачная рутина заводится только вручную кнопкой «+ New routine» на странице Routines.** Не искать программный путь отсюда — его нет.
-- **Диагноз «`/pending` без фильтра»** — был ошибкой: `fetch_pending` фильтрует размеченное. `skipped_existing=40` объяснялся гонкой с локальной задачей, писавшей те же посты в ту же секунду. Проверять эмпирией (повторный `/pending` → другие lip), а не по одному ответу POST.
+- **Совет «добавь домены в allowlist на странице рутины»** (первая формулировка в #317) — неточен: реальный UI — диалог **Update cloud environment → Network access** (None/Trusted/Full/Custom), а не абстрактный «trusted domains». Исправлено в #318.
+- **Punycode-хост `xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai` в allowed-domains** — валидатор поля отвергает («not a valid domain»). И на CONNECT egress-прокси режет его охотнее ASCII. Использовать только ASCII-хост.
 
 ## Открытые вопросы для пользователя
 
