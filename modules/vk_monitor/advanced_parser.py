@@ -20,6 +20,7 @@ from config.runtime import (
     get_bulletin_simhash_bucket_gate,
     get_bulletin_similarity_threshold,
 )
+from modules.curation.collection_audit import record_collection_audit, should_audit
 from modules.deduplication.fingerprints import (
     create_media_fingerprint,
     create_text_core_fingerprint,
@@ -206,6 +207,12 @@ class AdvancedVKParser:
 
         all_posts = []
 
+        # Аудит сбора (ADR-0004, shadow): под гейтом копим сырой собранный батч,
+        # чтобы после фильтрации записать обе стороны (kept + content-дропы). Ноль
+        # оверхеда/риска, когда выключено.
+        _audit_on = should_audit(getattr(region_config, "region_code", "") or "")
+        _audit_collected: List[Dict[str, Any]] = []
+
         # Fetch posts from all communities
         for community_id in community_ids:
             self.stats["total_groups_checked"] += 1
@@ -218,6 +225,8 @@ class AdvancedVKParser:
                     continue
 
                 self.stats["groups_with_posts"] += 1
+                if _audit_on:
+                    _audit_collected.extend(posts)
 
                 # Process each post
                 for post_data in posts:
@@ -239,6 +248,15 @@ class AdvancedVKParser:
             except Exception as e:
                 logger.error(f"❌ Failed to parse community {community_id}: {e}")
                 continue
+
+        if _audit_on:
+            await record_collection_audit(
+                region_code=getattr(region_config, "region_code", "") or "",
+                theme=theme,
+                region_config=region_config,
+                collected=_audit_collected,
+                kept=all_posts,
+            )
 
         # Sort by popularity
         all_posts.sort(
@@ -346,6 +364,16 @@ class AdvancedVKParser:
             reverse=True,
         )
         self.stats["posts_final_count"] = len(all_posts)
+
+        # Аудит сбора (ADR-0004, shadow): весь входной батч = собранное, all_posts = kept.
+        if should_audit(getattr(region_config, "region_code", "") or ""):
+            await record_collection_audit(
+                region_code=getattr(region_config, "region_code", "") or "",
+                theme=theme,
+                region_config=region_config,
+                collected=list(posts),
+                kept=all_posts,
+            )
         return all_posts
 
     async def _fetch_community_posts(self, community_id: int, count: int) -> List[Dict]:

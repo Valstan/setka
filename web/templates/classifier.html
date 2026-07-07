@@ -46,6 +46,22 @@
 
 <script>
 const ACTIONS = {publish: "публиковать", delete: "удалить", hold: "отложить"};
+const DROP_REASON = {
+    advertisement: "реклама", blacklist_text: "стоп-слово",
+    no_region_words: "не по району", no_attachments: "без фото",
+};
+
+// Решение детерминированного фильтра (ADR-0004): kept = прошёл, dropped = отсеян.
+function filterBadge(it) {
+    if (it.filter_decision === "dropped") {
+        const r = DROP_REASON[it.filter_reason] || it.filter_reason || "?";
+        return `<span class="badge bg-danger" title="детерминированный фильтр отсеял этот пост">🚫 отсеян: ${esc(r)}</span>`;
+    }
+    if (it.filter_decision === "kept") {
+        return `<span class="badge bg-success-subtle text-success-emphasis" title="пост прошёл детерминированный фильтр">✅ прошёл фильтр</span>`;
+    }
+    return "";
+}
 
 async function loadStats() {
     const r = await fetch("/api/classifier-review/stats");
@@ -97,6 +113,7 @@ async function loadFeed() {
                   <span class="badge bg-secondary">${ACTIONS[v.action] || v.action || "?"}</span>
                   ${merge ? `<span class="badge bg-warning text-dark">${esc(merge)}</span>` : ""}
                   ${conf}
+                  ${filterBadge(it)}
                 </div>
                 <small class="text-muted">${it.post_url ? `<a href="${esc(it.post_url)}" target="_blank" rel="noopener">${esc(it.lip)}</a>` : esc(it.lip)} · ${esc(it.region_code)} · ${it.source}</small>
               </div>

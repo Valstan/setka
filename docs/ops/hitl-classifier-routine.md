@@ -14,8 +14,14 @@
    CLASSIFIER_INGEST_KEY=<длинная-случайная-строка>
    CLASSIFIER_REGION_CODES=mi          # один район для обкатки (код региона)
    # CLASSIFIER_DISABLED=1             # аварийный kill-switch (по умолчанию выкл.)
+
+   # Аудит сбора (ADR-0004, вариант B) — источник ОБЕИХ сторон сбора:
+   COLLECTION_AUDIT_SHADOW_ENABLED=1   # включить запись собранных постов
+   COLLECTION_AUDIT_REGION_CODES=mi    # тот же район, что у классификатора
    ```
-   Сгенерировать ключ: `openssl rand -base64 32`.
+   Сгенерировать ключ: `openssl rand -base64 32`. Аудит сбора пишется в Celery-воркере
+   (там идёт сбор) → после включения нужен `systemctl restart setka-celery-worker` +
+   `setka` (web читает аудит). Fail-safe: сбой аудита НЕ ломает сбор/публикацию.
 2. **Миграция 053** (`053_hitl_classifier_shadow.sql`) применена + `restart web`.
 3. Проверка снаружи (с ключом):
    ```
@@ -28,9 +34,12 @@
 Базовый URL: `https://вход.вмалмыже.рф` (или прод-домен setka). Все ingest-эндпоинты — заголовок
 `X-API-Key: <CLASSIFIER_INGEST_KEY>`.
 
-**Источник постов** — свод­ки (`bulletin_curation_runs.candidates`): активный конвейер SARAFAN не пишет
-пер-пост Post-строки, а копит кандидатов в свод­ках. Ключ поста — **`lip`** (`"<owner_abs>_<post_id>"`,
-структурный фингерпринт, напр. `156168183_14260`).
+**Источник постов** — аудит сбора `collected_post_audit` (ADR-0004, вариант B): при сборе каждый
+пост парков­ается с решением фильтра — `kept` (прошёл, кандидат в публикацию) или `dropped` +
+причина (`advertisement`|`blacklist_text`|`no_region_words`|`no_attachments`). Так классификатор видит
+**обе стороны** (пере-публикацию и пере-фильтрацию), а не только опубликованное. Ключ поста — **`lip`**
+(`"<owner_abs>_<post_id>"`, напр. `156168183_14260`). Fallback на `bulletin_curation_runs.candidates`
+(только опубликованное), пока аудит не наполнился. Ответ `/pending` несёт `decision` + `drop_reason`.
 
 | Метод | Путь | Назначение |
 |---|---|---|

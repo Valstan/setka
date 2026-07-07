@@ -599,6 +599,49 @@ class ClassificationCorrection(Base):
         )
 
 
+class CollectedPostAudit(Base):
+    """Shadow-журнал каждого собранного поста с решением фильтра (миграция 056, ADR-0004).
+
+    Классификатор видит ОБЕ стороны сбора: ``kept`` (пост прошёл детерминированный
+    фильтр — кандидат в публикацию) и ``dropped`` + причина (выброшен). Пишется
+    fail-safe рекордером на границе сбора (``modules/curation/collection_audit.py``),
+    причина пере-выводится теми же чистыми функциями, что и ``_filter_post``.
+    Механические дропы (возраст/дедуп/black_id) НЕ пишутся — только content-дропы.
+    Ключ ``lip`` совпадает с ``content_classifications.lip``.
+    """
+
+    __tablename__ = "collected_post_audit"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    lip = Column(String(50), nullable=False, unique=True, index=True)
+    region_code = Column(String(50), nullable=False, index=True)
+    theme = Column(String(50), nullable=True)
+    post_text = Column(Text, nullable=True)
+    post_url = Column(String(300), nullable=True)
+    has_media = Column(Boolean, nullable=False, default=False)
+    decision = Column(String(12), nullable=False)  # kept | dropped
+    # advertisement | blacklist_text | no_region_words | no_attachments (NULL для kept)
+    drop_reason = Column(String(32), nullable=True)
+    collected_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "lip": self.lip,
+            "region_code": self.region_code,
+            "theme": self.theme,
+            "post_text": (self.post_text or "").strip(),
+            "post_url": self.post_url,
+            "has_media": self.has_media,
+            "decision": self.decision,
+            "drop_reason": self.drop_reason,
+            "collected_at": self.collected_at.isoformat() if self.collected_at else None,
+        }
+
+    def __repr__(self):
+        return f"<CollectedPostAudit lip={self.lip} {self.decision}:{self.drop_reason}>"
+
+
 class RadarSource(Base):
     """Источник контент-радара (миграция 038, Ф0.2).
 
