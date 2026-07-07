@@ -610,6 +610,32 @@ def get_bulletin_curation_region_codes() -> Optional[Set[str]]:
     return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
 
 
+def collection_audit_shadow_enabled() -> bool:
+    """Включить shadow-журнал аудита сбора (ADR-0004, вариант B).
+
+    OFF по умолчанию — нулевая регрессия. ON => каждый собранный пост паркуется в
+    `collected_post_audit` с решением фильтра (kept | dropped+причина), чтобы
+    классификатор видел ОБЕ стороны сбора (в т.ч. пере-фильтрацию). Захват fail-safe
+    на границе сбора — публикация НЕ затрагивается (shadow)."""
+    return (_getenv("COLLECTION_AUDIT_SHADOW_ENABLED", "0") or "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def get_collection_audit_region_codes() -> Optional[Set[str]]:
+    """Ограничить аудит сбора списком кодов регионов (через запятую).
+
+    None / пусто = все регионы. Обкатка — один район (напр. `mi`), как и
+    классификатор; задаём явный allowlist в `/etc/setka/setka.env`."""
+    raw = _getenv("COLLECTION_AUDIT_REGION_CODES")
+    if not raw or not str(raw).strip():
+        return None
+    return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
+
+
 # --- Near-dup дедуп сводок (SimHash + Jaccard), env-тюнинг -----------------
 # Параметры вынесены в env, чтобы калибровать порог на проде без передеплоя.
 # Дефолты совпадают с прежними хардкодами → нулевая регрессия (кроме Jaccard,

@@ -25,6 +25,7 @@ from sqlalchemy import delete, func, select
 from database.models_extended import (
     BulletinCurationRun,
     ClassificationCorrection,
+    CollectedPostAudit,
     ContentClassification,
 )
 from modules.classifier.schema import VERDICT_TYPES, ClassifierVerdict
@@ -76,6 +77,56 @@ async def _recent_candidates(
     return _candidate_map(runs)
 
 
+async def _recent_audit(
+    session,
+    *,
+    region_codes: Optional[Sequence[str]],
+    days: int,
+) -> Dict[str, Dict[str, Any]]:
+    """Собранные посты из аудита сбора (ADR-0004) → map lip → снапшот с решением фильтра.
+
+    В отличие от ``_recent_candidates`` (только опубликованное), видит ОБЕ стороны:
+    ``decision`` = kept|dropped + ``drop_reason``. Новейшее первым, дедуп по lip.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    stmt = (
+        select(CollectedPostAudit)
+        .where(CollectedPostAudit.collected_at >= cutoff)
+        .order_by(CollectedPostAudit.collected_at.desc())
+    )
+    if region_codes:
+        stmt = stmt.where(CollectedPostAudit.region_code.in_(list(region_codes)))
+    rows = (await session.execute(stmt)).scalars().all()
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        if r.lip in out:
+            continue
+        out[r.lip] = {
+            "lip": r.lip,
+            "region_code": r.region_code,
+            "text": (r.post_text or "").strip(),
+            "url": r.post_url or "",
+            "has_media": bool(r.has_media),
+            "decision": r.decision,
+            "drop_reason": r.drop_reason,
+        }
+    return out
+
+
+async def _recent_source(
+    session,
+    *,
+    region_codes: Optional[Sequence[str]],
+    days: int,
+) -> Dict[str, Dict[str, Any]]:
+    """Источник постов для классификатора: аудит сбора (обе стороны, ADR-0004);
+    если он пуст — журнал курации (только опубликованное, переходный период)."""
+    audit = await _recent_audit(session, region_codes=region_codes, days=days)
+    if audit:
+        return audit
+    return await _recent_candidates(session, region_codes=region_codes, days=days)
+
+
 async def fetch_pending(
     session,
     *,
@@ -83,8 +134,11 @@ async def fetch_pending(
     limit: int = 40,
     days: int = DEFAULT_SOURCE_DAYS,
 ) -> List[Dict[str, Any]]:
-    """Кандидаты свод­ок без вердикта, одним батчем (рутина видит их вместе → merge)."""
-    cand = await _recent_candidates(session, region_codes=region_codes, days=days)
+    """Собранные посты без вердикта, одним батчем (рутина видит их вместе → merge).
+
+    Источник — аудит сбора (обе стороны, ADR-0004) с fallback на журнал курации.
+    """
+    cand = await _recent_source(session, region_codes=region_codes, days=days)
     if not cand:
         return []
     classified = {
@@ -130,7 +184,7 @@ async def record_verdicts(
     need_lookup = any(not (v.region_code and v.text) for v in verdicts)
     cand: Dict[str, Dict[str, Any]] = {}
     if need_lookup:
-        cand = await _recent_candidates(
+        cand = await _recent_source(
             session, region_codes=region_codes_fallback, days=DEFAULT_SOURCE_DAYS
         )
 
@@ -202,7 +256,28 @@ async def review_feed(
     if only_unreviewed:
         stmt = stmt.where(ContentClassification.reviewed_at.is_(None))
     rows = (await session.execute(stmt)).scalars().all()
-    return [c.to_dict() for c in rows]
+    items = [c.to_dict() for c in rows]
+
+    # Прикрепить решение детерминированного фильтра (ADR-0004): оператор видит
+    # «🚫 отсеян: реклама» vs «✅ прошёл фильтр». Несогласие на dropped = сигнал
+    # пере-фильтрации, на kept = пере-публикации.
+    lips = [c.lip for c in rows]
+    if lips:
+        audit_rows = (
+            await session.execute(
+                select(
+                    CollectedPostAudit.lip,
+                    CollectedPostAudit.decision,
+                    CollectedPostAudit.drop_reason,
+                ).where(CollectedPostAudit.lip.in_(lips))
+            )
+        ).all()
+        amap = {lip: (dec, reason) for lip, dec, reason in audit_rows}
+        for item in items:
+            dr = amap.get(item["lip"])
+            item["filter_decision"] = dr[0] if dr else None
+            item["filter_reason"] = dr[1] if dr else None
+    return items
 
 
 async def _get_classification(session, classification_id: int) -> Optional[ContentClassification]:

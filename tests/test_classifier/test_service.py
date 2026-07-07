@@ -4,9 +4,26 @@ from __future__ import annotations
 
 import pytest
 
+from database.models_extended import CollectedPostAudit
 from modules.classifier import service
 from modules.classifier.schema import ClassifierVerdict
 from tests.test_classifier.conftest import _cand, seed_run
+
+
+async def _seed_audit(db_session, *, lip, region="mi", decision="kept", reason=None, text="t"):
+    db_session.add(
+        CollectedPostAudit(
+            lip=lip,
+            region_code=region,
+            post_text=text,
+            post_url=f"https://vk.com/wall{lip}",
+            has_media=False,
+            decision=decision,
+            drop_reason=reason,
+        )
+    )
+    await db_session.commit()
+
 
 # ───────── fetch_pending ─────────
 
@@ -185,6 +202,38 @@ async def test_finalize_auto_agrees_untouched(db_session):
     stats = await service.agree_rate_stats(db_session)
     assert stats["by_type"]["theme"]["correct"] == 1
     assert stats["by_type"]["action"]["agree"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_pending_prefers_audit_source(db_session):
+    # Аудит сбора (ADR-0004) имеет приоритет над журналом курации и несёт решение фильтра.
+    await _seed_audit(
+        db_session, lip="1_10", decision="dropped", reason="advertisement", text="продам"
+    )
+    out = await service.fetch_pending(db_session, region_codes=["mi"], limit=10)
+    assert {p["lip"] for p in out} == {"1_10"}
+    assert out[0]["decision"] == "dropped"
+    assert out[0]["drop_reason"] == "advertisement"
+
+
+@pytest.mark.asyncio
+async def test_fetch_pending_falls_back_to_curation(db_session):
+    # Нет аудита → источник = журнал курации (переходный период).
+    await seed_run(db_session, region_code="mi", candidates=[_cand("1_10")])
+    out = await service.fetch_pending(db_session, region_codes=["mi"], limit=10)
+    assert {p["lip"] for p in out} == {"1_10"}
+
+
+@pytest.mark.asyncio
+async def test_review_feed_attaches_filter_decision(db_session):
+    await _seed_audit(db_session, lip="1_20", decision="dropped", reason="advertisement", text="x")
+    await service.record_verdicts(
+        db_session, [ClassifierVerdict(lip="1_20", theme="reklama", region_code="mi", text="x")]
+    )
+    feed = await service.review_feed(db_session, region_code="mi")
+    item = next(i for i in feed if i["lip"] == "1_20")
+    assert item["filter_decision"] == "dropped"
+    assert item["filter_reason"] == "advertisement"
 
 
 @pytest.mark.asyncio
