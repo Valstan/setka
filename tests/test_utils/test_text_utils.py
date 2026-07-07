@@ -12,7 +12,9 @@ legacy-зачистке. В отличие от других F821, эта вет
 
 from __future__ import annotations
 
-from utils.text_utils import truncate_text
+import pytest
+
+from utils.text_utils import is_advertisement, truncate_text
 
 
 def test_truncate_text_short_text_unchanged():
@@ -67,3 +69,47 @@ def test_truncate_text_used_by_bulletin_builder_bezfoto_branch():
 
     assert len(result.text) <= 200
     assert "\n\n..." in result.text
+
+
+# ───────── is_advertisement: намерение купли-продажи товара (2026-07-07) ─────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ПРОДАМ ВАЗ 2104 карбюратор 2003г.в на ходу с документами 3 хозяина",
+        "Продам практически новый велотренажёр",
+        "Куплю косилку КРР и запчасти от неё",
+        "Продаётся мебель в связи с продажей дома",
+        "Продаю ниву инжектор, обменяю на что-то",
+    ],
+)
+def test_is_advertisement_catches_private_goods_sale(text):
+    # Раньше эти тексты (без цены/телефона) проходили как «не реклама» и утекали в
+    # сводку. Теперь глагол купли-продажи товара → сразу реклама (граница score>=4).
+    assert is_advertisement(text, theme="novost") is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Оказываю правовое сопровождение по вопросам банкротства физических лиц",
+        "Проведение весёлых юбилеев, свадеб, встреч выпускников",
+        "Ремонт квартир под ключ, качественно",
+    ],
+)
+def test_is_advertisement_leaves_local_services(text):
+    # Услуги мастеров (иные глаголы) НЕ ловятся сюда → остаются оператору (hold),
+    # как решил владелец (градация коммерции). Проверяем, что глаголы продажи товара
+    # их не задевают.
+    assert is_advertisement(text, theme="novost") is False
+
+
+def test_is_advertisement_sale_verb_word_boundary():
+    # «распродам»/«распродажа» — не частная продажа товара по глаголу; \b не матчит.
+    assert is_advertisement("мы распродам остатки скоро", theme="novost") is False
+
+
+def test_is_advertisement_skips_reklama_theme():
+    # Для темы reklama детектор рекламы не срабатывает (реклама там ожидаема).
+    assert is_advertisement("Продам ВАЗ 2104", skip_for_reklama=True, theme="reklama") is False
