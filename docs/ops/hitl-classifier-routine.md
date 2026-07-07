@@ -99,14 +99,18 @@
 ## Troubleshooting
 
 **403 на CONNECT от прокси облачного окружения** («organization egress-policy denial», рутина
-рапортует «0 постов, техническая блокировка»). Это НЕ прод и НЕ сеть — egress-allowlist окружения
-рутины не пропускает хост (punycode-IDN режется чаще всего; блокировка может флапать между
-прогонами). Лечение:
-1. На странице рутины (claude.ai/code → Routines → ✏️) в настройках окружения → Network /
-   trusted domains добавить **оба** хоста:
-   `3931b3fe50ab.vps.myjino.ru` и `xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai`.
+рапортует «0 постов, техническая блокировка»). Это НЕ прод и НЕ сеть — **Network access** облачного
+окружения рутины по умолчанию `Trusted` (пускает только скачивание пакетов из проверенных источников,
+но НЕ произвольные хосты). Лечение:
+1. **Разрешить наш хост в окружении рутины.** claude.ai/code → страница рутины → ✏️ →
+   **Update cloud environment** → блок **Network access**. По умолчанию стоит `Trusted` — сменить на
+   **`Custom`** («Create a list of allowed domains») и добавить хосты:
+   `3931b3fe50ab.vps.myjino.ru` (и при желании punycode `xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai`).
+   `Save changes`. **NB:** диалог пишет *«Changes will apply to new sessions»* — подхватится со
+   следующего прогона, не задним числом. Альтернатива — `Full` (безлимит), но `Custom` безопаснее:
+   рутине нужен ровно один хост.
 2. В промпте рутины использовать ASCII-хост (`3931b3fe50ab.vps.myjino.ru`) как основной —
-   заготовка выше уже на нём.
+   заготовка выше уже на нём (punycode-IDN спотыкается об egress-прокси чаще).
 3. Проверка, что дело не в проде: `curl -s -o /dev/null -w '%{http_code}'
    https://3931b3fe50ab.vps.myjino.ru/api/classifier/pending?limit=1` → `401` = API жив
    (нет ключа), значит блокирует именно окружение рутины.
