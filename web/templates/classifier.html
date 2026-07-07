@@ -22,9 +22,10 @@
     </div>
     <p class="text-muted">
         Shadow-фаза (ADR-0003): нейронка только <b>предлагает</b> вердикты — ничего не удаляет и не
-        публикует. Оператор соглашается или правит; несогласия копятся в лог и питают
-        <b>agree-rate</b> и файл-корректировщик. Классификацию сейчас делает облачная рутина через
-        <code>/api/classifier</code>.
+        публикует. <b>Согласен со всем</b> — один тык, если вердикт верен. Если надо поправить —
+        жми кнопки правок (тема / действие / склейка): карточка <b>остаётся</b>, можно внести
+        несколько правок, затем <b>✔ Готово</b>. Несогласия копятся в лог и питают <b>agree-rate</b>
+        и файл-корректировщик. Классификацию сейчас делает облачная рутина через <code>/api/classifier</code>.
     </p>
 
     <!-- agree-rate -->
@@ -75,7 +76,7 @@ function esc(s) {
 async function loadFeed() {
     const region = document.getElementById("cf-region").value.trim();
     const unreacted = document.getElementById("cf-unreacted").checked;
-    const url = `/api/classifier-review/feed?only_unreacted=${unreacted}&limit=60`
+    const url = `/api/classifier-review/feed?only_unreviewed=${unreacted}&limit=60`
         + (region ? `&region=${encodeURIComponent(region)}` : "");
     const r = await fetch(url);
     const data = await r.json();
@@ -101,35 +102,61 @@ async function loadFeed() {
               </div>
               <div class="text-muted small mb-2" style="white-space:pre-wrap;max-height:6em;overflow:auto;">${esc(it.post_text) || "<i>без текста</i>"}</div>
               ${v.reasoning ? `<div class="fst-italic small text-secondary mb-2">↳ ${esc(v.reasoning)}</div>` : ""}
+              <div class="cf-edits small text-success mb-2 d-none" data-edits="${it.id}"></div>
               <div class="d-flex gap-2 flex-wrap">
-                <button class="btn btn-success btn-sm" onclick="agree(${it.id})">✅ Согласен</button>
+                <button class="btn btn-success btn-sm" onclick="agree(${it.id})">✅ Согласен со всем</button>
                 <button class="btn btn-outline-primary btn-sm" onclick="correctTheme(${it.id})">Изменить тему</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'publish')">→ публиковать</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'delete')">→ удалить</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'hold')">→ отложить</button>
                 <button class="btn btn-outline-warning btn-sm" onclick="correctSplit(${it.id})">Разъединить</button>
+                <button class="btn btn-primary btn-sm d-none" data-finalize="${it.id}" onclick="finalize(${it.id})">✔ Готово</button>
               </div>
             </div>
           </div>`);
     }
 }
 
-async function react(id, path, body) {
-    await fetch(`/api/classifier-review/${id}/${path}`, {
+async function post(id, path, body) {
+    const r = await fetch(`/api/classifier-review/${id}/${path}`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: body ? JSON.stringify(body) : null,
     });
+    return r.json().catch(() => ({}));
+}
+
+// Финализация («Согласен со всем» / «Готово») — пост уходит из ленты.
+async function finalizeReact(id, path) {
+    await post(id, path);
     document.querySelector(`.card[data-id="${id}"]`)?.remove();
     loadStats();
 }
 
-function agree(id) { react(id, "agree"); }
-function correctAction(id, action) { react(id, "correct", {verdict_type: "action", operator_value: action}); }
-function correctSplit(id) { react(id, "correct", {verdict_type: "merge", operator_value: {split: true}}); }
+// Правка — карточка ОСТАЁТСЯ; показываем внесённое и кнопку «Готово».
+async function correctReact(id, verdict_type, operator_value, label) {
+    const out = await post(id, "correct", {verdict_type, operator_value});
+    const box = document.querySelector(`[data-edits="${id}"]`);
+    if (box) {
+        const mark = out.outcome === "agree" ? "✓ согласен" : "✎";
+        box.insertAdjacentHTML("beforeend", `<div>${mark}: ${esc(label)}</div>`);
+        box.classList.remove("d-none");
+    }
+    document.querySelector(`[data-finalize="${id}"]`)?.classList.remove("d-none");
+    loadStats();
+}
+
+function agree(id) { finalizeReact(id, "agree"); }
+function finalize(id) { finalizeReact(id, "finalize"); }
+function correctAction(id, action) {
+    correctReact(id, "action", action, "действие → " + (ACTIONS[action] || action));
+}
+function correctSplit(id) {
+    correctReact(id, "merge", {split: true}, "разъединить");
+}
 function correctTheme(id) {
     const t = prompt("Правильная тема:");
-    if (t && t.trim()) react(id, "correct", {verdict_type: "theme", operator_value: t.trim()});
+    if (t && t.trim()) correctReact(id, "theme", t.trim(), "тема → " + t.trim());
 }
 
 document.getElementById("cf-refresh").addEventListener("click", () => { loadFeed(); loadStats(); });

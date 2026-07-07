@@ -185,18 +185,22 @@ async def review_feed(
     session,
     *,
     region_code: Optional[str] = None,
-    only_unreacted: bool = True,
+    only_unreviewed: bool = True,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    """Вердикты + снапшот текста для операторской ленты (свежие первыми)."""
-    reacted = select(ClassificationCorrection.classification_id)
+    """Вердикты + снапшот текста для операторской ленты (свежие первыми).
+
+    ``only_unreviewed`` фильтрует по ``reviewed_at`` (явная финализация), НЕ по
+    «есть ли реакция» — чтобы пост с частичной правкой (сменил тему, но ещё не
+    завершил) оставался в ленте до «Готово» / «Согласен со всем».
+    """
     stmt = (
         select(ContentClassification).order_by(ContentClassification.created_at.desc()).limit(limit)
     )
     if region_code:
         stmt = stmt.where(ContentClassification.region_code == region_code)
-    if only_unreacted:
-        stmt = stmt.where(ContentClassification.id.notin_(reacted))
+    if only_unreviewed:
+        stmt = stmt.where(ContentClassification.reviewed_at.is_(None))
     rows = (await session.execute(stmt)).scalars().all()
     return [c.to_dict() for c in rows]
 
@@ -246,8 +250,24 @@ def _applicable_types(verdict: Dict[str, Any]) -> List[str]:
     return types
 
 
+async def _reacted_types(session, classification_id: int) -> set:
+    """Типы вердикта, по которым у поста уже есть реакция оператора."""
+    rows = (
+        await session.execute(
+            select(ClassificationCorrection.verdict_type).where(
+                ClassificationCorrection.classification_id == classification_id
+            )
+        )
+    ).all()
+    return {t for (t,) in rows}
+
+
 async def agree_all(session, classification_id: int) -> Dict[str, Any]:
-    """✅ «Согласен»: agree по всем применимым типам вердикта."""
+    """✅ «Согласен со всем»: agree по всем применимым типам + финализация.
+
+    Перезаписывает любые частичные правки оператора (буквальный смысл — «согласен
+    со всеми выводами ИИ»). Для сохранения правок есть ``finalize`` («Готово»).
+    """
     cls = await _get_classification(session, classification_id)
     if cls is None:
         return {"ok": False, "error": "classification not found"}
@@ -262,8 +282,38 @@ async def agree_all(session, classification_id: int) -> Dict[str, Any]:
             outcome="agree",
             ai_value=_ai_value_for_type(verdict, t),
         )
+    cls.reviewed_at = datetime.utcnow()
     await session.commit()
-    return {"ok": True, "classification_id": cls.id, "agreed_types": types}
+    return {"ok": True, "classification_id": cls.id, "agreed_types": types, "reviewed": True}
+
+
+async def finalize(session, classification_id: int) -> Dict[str, Any]:
+    """✔ «Готово»: завершить вердикт, сохранив правки оператора.
+
+    По каждому применимому типу БЕЗ явной реакции оператора пишем ``agree``;
+    уже внесённые правки остаются как есть. Ставит ``reviewed_at`` → пост уходит
+    из ленты. Это путь для СОСТАВНОГО вердикта (сменил тему, остальное принял).
+    """
+    cls = await _get_classification(session, classification_id)
+    if cls is None:
+        return {"ok": False, "error": "classification not found"}
+    verdict = cls.verdict or {}
+    reacted = await _reacted_types(session, cls.id)
+    agreed = []
+    for t in _applicable_types(verdict):
+        if t not in reacted:
+            await set_reaction(
+                session,
+                classification_id=cls.id,
+                lip=cls.lip,
+                verdict_type=t,
+                outcome="agree",
+                ai_value=_ai_value_for_type(verdict, t),
+            )
+            agreed.append(t)
+    cls.reviewed_at = datetime.utcnow()
+    await session.commit()
+    return {"ok": True, "classification_id": cls.id, "auto_agreed_types": agreed, "reviewed": True}
 
 
 async def correct(
@@ -273,24 +323,37 @@ async def correct(
     verdict_type: str,
     operator_value: Any,
 ) -> Dict[str, Any]:
-    """Поправка одного аспекта вердикта (theme|action|merge)."""
+    """Поправка одного аспекта вердикта (theme|action|merge). НЕ финализирует.
+
+    Если правка оператора совпала со значением ИИ (напр. клик «→ публиковать» на
+    посте, где ИИ уже поставил publish) — это согласие, пишем ``agree``, а не
+    ложную коррекцию (иначе agree-rate занижается). Карточка остаётся в ленте до
+    финализации.
+    """
     if verdict_type not in VERDICT_TYPES:
         return {"ok": False, "error": f"unknown verdict_type: {verdict_type}"}
     cls = await _get_classification(session, classification_id)
     if cls is None:
         return {"ok": False, "error": "classification not found"}
     verdict = cls.verdict or {}
+    ai_value = _ai_value_for_type(verdict, verdict_type)
+    outcome = "agree" if _values_agree(verdict_type, ai_value, operator_value) else "correct"
     await set_reaction(
         session,
         classification_id=cls.id,
         lip=cls.lip,
         verdict_type=verdict_type,
-        outcome="correct",
-        ai_value=_ai_value_for_type(verdict, verdict_type),
+        outcome=outcome,
+        ai_value=ai_value,
         operator_value=operator_value,
     )
     await session.commit()
-    return {"ok": True, "classification_id": cls.id, "verdict_type": verdict_type}
+    return {
+        "ok": True,
+        "classification_id": cls.id,
+        "verdict_type": verdict_type,
+        "outcome": outcome,
+    }
 
 
 def _ai_value_for_type(verdict: Dict[str, Any], verdict_type: str) -> Any:
@@ -301,6 +364,23 @@ def _ai_value_for_type(verdict: Dict[str, Any], verdict_type: str) -> Any:
     if verdict_type == "merge":
         return {"merge_with": verdict.get("merge_with") or [], "split": bool(verdict.get("split"))}
     return None
+
+
+def _values_agree(verdict_type: str, ai_value: Any, operator_value: Any) -> bool:
+    """Совпадает ли правка оператора со значением ИИ (тогда это согласие, не правка)."""
+    if operator_value is None:
+        return False
+    if verdict_type in ("theme", "action"):
+        return (
+            str(ai_value or "").strip().casefold() == str(operator_value or "").strip().casefold()
+        )
+    if verdict_type == "merge":
+        ai = ai_value or {}
+        op = operator_value or {}
+        return bool(ai.get("split")) == bool(op.get("split")) and sorted(
+            str(x) for x in (ai.get("merge_with") or [])
+        ) == sorted(str(x) for x in (op.get("merge_with") or []))
+    return False
 
 
 async def agree_rate_stats(session) -> Dict[str, Any]:

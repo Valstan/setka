@@ -28,7 +28,7 @@ router = APIRouter()
 @router.get("/feed")
 async def feed(
     region: str = Query("", description="код района (опционально)"),
-    only_unreacted: bool = Query(True, description="только неразобранные"),
+    only_unreviewed: bool = Query(True, description="только неразобранные (не финализированные)"),
     limit: int = Query(50, ge=1, le=200),
 ):
     """Лента: пост + вердикт нейронки для оператора."""
@@ -36,7 +36,7 @@ async def feed(
         items = await service.review_feed(
             session,
             region_code=region.strip() or None,
-            only_unreacted=only_unreacted,
+            only_unreviewed=only_unreviewed,
             limit=limit,
         )
     return {"count": len(items), "items": items}
@@ -44,9 +44,17 @@ async def feed(
 
 @router.post("/{classification_id}/agree")
 async def agree(classification_id: int):
-    """✅ «Согласен» со всем вердиктом (agree по всем применимым типам)."""
+    """✅ «Согласен со всем» — agree по всем типам + финализация (пост уходит из ленты)."""
     async with AsyncSessionLocal() as session:
         out = await service.agree_all(session, classification_id)
+    return out
+
+
+@router.post("/{classification_id}/finalize")
+async def finalize(classification_id: int):
+    """✔ «Готово» — завершить составной вердикт: правки сохранить, остальное = agree."""
+    async with AsyncSessionLocal() as session:
+        out = await service.finalize(session, classification_id)
     return out
 
 
