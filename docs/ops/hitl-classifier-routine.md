@@ -31,8 +31,11 @@
 
 ## HTTP-контракт (что зовёт рутина)
 
-Базовый URL: `https://вход.вмалмыже.рф` (или прод-домен setka). Все ingest-эндпоинты — заголовок
-`X-API-Key: <CLASSIFIER_INGEST_KEY>`.
+Базовый URL для **облачной рутины** — ASCII-хост `https://3931b3fe50ab.vps.myjino.ru`
+(тот же VPS; punycode-IDN `xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai` = `вход.вмалмыже.рф` тоже
+работает, но чаще спотыкается об egress-прокси облачного окружения — см. Troubleshooting ниже).
+При переезде VPS myjino-хост меняется — сверяться с `docs/GATEWAY.md`. Все ingest-эндпоинты —
+заголовок `X-API-Key: <CLASSIFIER_INGEST_KEY>`.
 
 **Источник постов** — аудит сбора `collected_post_audit` (ADR-0004, вариант B): при сборе каждый
 пост парков­ается с решением фильтра — `kept` (прошёл, кандидат в публикацию) или `dropped` +
@@ -67,9 +70,9 @@
 Работаешь строго по HTTP, ничего в systemd/БД напрямую не трогаешь.
 
 Шаги за один прогон:
-1. GET https://вход.вмалмыже.рф/api/classifier/postulates
+1. GET https://3931b3fe50ab.vps.myjino.ru/api/classifier/postulates
    (заголовок X-API-Key: {{KEY}}) — это классификационные постулаты, следуй им.
-2. GET https://вход.вмалмыже.рф/api/classifier/pending?limit=40
+2. GET https://3931b3fe50ab.vps.myjino.ru/api/classifier/pending?limit=40
    (тот же X-API-Key) — батч постов. Если count=0 — заверши прогон, ничего не делай.
 3. Для КАЖДОГО поста в батче определи вердикт по схеме:
    {lip, theme (свободная строка), action: publish|delete|hold,
@@ -78,7 +81,7 @@
     text, url, region_code (скопируй из объекта поста в /pending — это снапшот)}.
    merge_with заполняй списком lip, только если посты — про ОДНО событие. split=true,
    если пост сам склеен из разных тем (напр. спорт+похороны). Низкая уверенность → confidence < 60.
-4. POST https://вход.вмалмыже.рф/api/classifier/verdicts (X-API-Key), тело:
+4. POST https://3931b3fe50ab.vps.myjino.ru/api/classifier/verdicts (X-API-Key), тело:
    {"verdicts": [ ...по одному объекту на пост... ]}.
 5. Кратко отчитайся: сколько классифицировал, сколько publish/delete/hold, сколько merge/split.
 
@@ -92,6 +95,21 @@
 ✅ Согласен / Изменить тему / → публиковать|удалить|отложить / Разъединить. Несогласия копятся в лог,
 наверху — **agree-rate по типам** (тема/действие/склейка). Когда agree-rate по типу устойчиво ≥90%
 (≥2 недели) — тип созрел для enforce (ADR-0003 §F).
+
+## Troubleshooting
+
+**403 на CONNECT от прокси облачного окружения** («organization egress-policy denial», рутина
+рапортует «0 постов, техническая блокировка»). Это НЕ прод и НЕ сеть — egress-allowlist окружения
+рутины не пропускает хост (punycode-IDN режется чаще всего; блокировка может флапать между
+прогонами). Лечение:
+1. На странице рутины (claude.ai/code → Routines → ✏️) в настройках окружения → Network /
+   trusted domains добавить **оба** хоста:
+   `3931b3fe50ab.vps.myjino.ru` и `xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai`.
+2. В промпте рутины использовать ASCII-хост (`3931b3fe50ab.vps.myjino.ru`) как основной —
+   заготовка выше уже на нём.
+3. Проверка, что дело не в проде: `curl -s -o /dev/null -w '%{http_code}'
+   https://3931b3fe50ab.vps.myjino.ru/api/classifier/pending?limit=1` → `401` = API жив
+   (нет ключа), значит блокирует именно окружение рутины.
 
 ## Переход на Claude API (enforce)
 
