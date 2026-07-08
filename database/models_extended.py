@@ -642,6 +642,50 @@ class CollectedPostAudit(Base):
         return f"<CollectedPostAudit lip={self.lip} {self.decision}:{self.drop_reason}>"
 
 
+class ClassificationRule(Base):
+    """Выученное правило классификатора (миграция 057, ADR-0005).
+
+    Overlay поверх базового ``config/classification_postulates.md`` (git): рутина
+    дистиллирует коррекции оператора в ЧЕРНОВИКИ правил (``proposed``), оператор в
+    ленте ``/classifier`` утверждает/правит/отклоняет. ``approved`` подмешиваются в
+    эффективные постулаты, которые рутина читает каждый прогон. Нейросеть правила
+    сама не применяет — только предлагает; человек в петле. Родня deny-лог #054.
+    """
+
+    __tablename__ = "classification_rules"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    region_code = Column(String(50), nullable=True, index=True)  # NULL = глобальное
+    rule_text = Column(Text, nullable=False)
+    # proposed | approved | rejected | retired
+    status = Column(String(12), nullable=False, default="proposed", index=True)
+    source = Column(String(12), nullable=False, default="routine")  # routine | operator
+    rationale = Column(Text, nullable=True)
+    evidence = Column(JSON, nullable=True)
+    model = Column(String(50), nullable=True)
+    norm_key = Column(String(200), nullable=True, index=True)  # нормализация для дедупа
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    decided_at = Column(DateTime, nullable=True)
+    last_effective_at = Column(DateTime, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "region_code": self.region_code,
+            "rule_text": (self.rule_text or "").strip(),
+            "status": self.status,
+            "source": self.source,
+            "rationale": self.rationale,
+            "evidence": self.evidence or [],
+            "model": self.model,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "decided_at": self.decided_at.isoformat() if self.decided_at else None,
+        }
+
+    def __repr__(self):
+        return f"<ClassificationRule id={self.id} {self.status}: {(self.rule_text or '')[:40]!r}>"
+
+
 class RadarSource(Base):
     """Источник контент-радара (миграция 038, Ф0.2).
 

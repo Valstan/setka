@@ -98,7 +98,47 @@ def test_kill_switch_503(client, monkeypatch):
     assert r.status_code == 503
 
 
-def test_postulates_served(client):
-    r = client.get("/api/classifier/postulates")
+def test_postulates_served_effective(client):
+    # /postulates отдаёт эффективные постулаты (база + утверждённые правила, ADR-0005).
+    fake = AsyncMock(return_value="Классификационные постулаты\n\n## Выученные правила\n1. x")
+    with patch.object(ing.rules, "render_effective_postulates", fake):
+        r = client.get("/api/classifier/postulates")
     assert r.status_code == 200
     assert "Классификационные постулаты" in r.text
+    assert "Выученные правила" in r.text
+
+
+def test_corrections_requires_key(client):
+    assert client.get("/api/classifier/corrections").status_code == 401
+
+
+def test_corrections_ok_with_key(client):
+    fake = AsyncMock(return_value=[{"lip": "1_10", "verdict_type": "action"}])
+    with patch.object(ing.rules, "fetch_corrections_for_distill", fake):
+        r = client.get("/api/classifier/corrections?limit=50&days=14", headers={"X-API-Key": KEY})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 1
+    assert fake.await_args.kwargs["days"] == 14
+
+
+def test_rule_proposals_requires_key(client):
+    r = client.post("/api/classifier/rule-proposals", json={"proposals": []})
+    assert r.status_code == 401
+
+
+def test_rule_proposals_records(client):
+    fake = AsyncMock(return_value={"recorded": 1, "skipped_existing": 0, "skipped_invalid": 0})
+    payload = {"proposals": [{"rule_text": "Новое обобщённое правило", "rationale": "3 коррекции"}]}
+    with patch.object(ing.rules, "record_rule_proposals", fake):
+        r = client.post("/api/classifier/rule-proposals", json=payload, headers={"X-API-Key": KEY})
+    assert r.status_code == 200
+    assert r.json()["recorded"] == 1
+    assert fake.await_args.kwargs["source"] == "routine"
+
+
+def test_rule_proposals_too_short_rejected_by_schema(client):
+    # rule_text < 3 символов → 422 (pydantic), до записи не доходит
+    payload = {"proposals": [{"rule_text": "x"}]}
+    r = client.post("/api/classifier/rule-proposals", json=payload, headers={"X-API-Key": KEY})
+    assert r.status_code == 422

@@ -59,3 +59,24 @@ class VerdictBatch(BaseModel):
     """Пакет вердиктов, который POST'ит облачная рутина."""
 
     verdicts: List[ClassifierVerdict]
+
+
+class RuleProposal(BaseModel):
+    """Черновик выученного правила, который POST'ит рутина дистилляции (ADR-0005).
+
+    Обобщённое правило (не построчный лог), выведенное из накопленных коррекций
+    оператора. Применяется только после утверждения оператором в ленте.
+    """
+
+    rule_text: str = Field(min_length=3, max_length=600)
+    rationale: str = Field(default="", max_length=500)  # почему предложено (1 строка)
+    # доказательная база — какие коррекции породили (для суждения оператора)
+    evidence: List[dict] = Field(default_factory=list)
+    region_code: Optional[str] = Field(default=None, max_length=50)  # None = глобальное
+    model: Optional[str] = None
+
+
+class RuleProposalBatch(BaseModel):
+    """Пакет черновиков правил от рутины дистилляции."""
+
+    proposals: List[RuleProposal]
