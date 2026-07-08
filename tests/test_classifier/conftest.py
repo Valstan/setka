@@ -15,6 +15,7 @@ from database.connection import Base
 from database.models_extended import (
     BulletinCurationRun,
     ClassificationCorrection,
+    ClassificationRule,
     CollectedPostAudit,
     ContentClassification,
 )
@@ -28,6 +29,7 @@ async def db_session():
         ContentClassification.__table__,
         ClassificationCorrection.__table__,
         CollectedPostAudit.__table__,
+        ClassificationRule.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=tables))

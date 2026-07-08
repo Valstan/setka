@@ -13,13 +13,13 @@ gateway / gateway-stats.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Query
 from pydantic import BaseModel
 
 from database.connection import AsyncSessionLocal
-from modules.classifier import service
+from modules.classifier import rules, service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -81,3 +81,55 @@ async def stats():
     """agree-rate по типам вердикта — метрика shadow-гейта (ADR-0003 §F)."""
     async with AsyncSessionLocal() as session:
         return await service.agree_rate_stats(session)
+
+
+# --- Петля обучения (ADR-0005): оператор утверждает выученные правила ------------
+
+
+@router.get("/rules")
+async def rules_list(
+    status: str = Query("", description="proposed|approved|rejected|retired; пусто = все"),
+):
+    """Выученные правила для операторской панели (черновики + утверждённые)."""
+    async with AsyncSessionLocal() as session:
+        items = await rules.list_rules(session, status=status.strip() or None)
+    return {"count": len(items), "rules": items}
+
+
+class RuleDecision(BaseModel):
+    edited_text: Optional[str] = None  # опц. правка текста при утверждении
+
+
+@router.post("/rules/{rule_id}/approve")
+async def rule_approve(rule_id: int, body: RuleDecision = Body(default=RuleDecision())):
+    """✅ Утвердить черновик правила (опц. с правкой текста) → в деле со след. прогона."""
+    async with AsyncSessionLocal() as session:
+        return await rules.decide_rule(
+            session, rule_id, status="approved", edited_text=body.edited_text
+        )
+
+
+@router.post("/rules/{rule_id}/reject")
+async def rule_reject(rule_id: int):
+    """❌ Отклонить черновик правила."""
+    async with AsyncSessionLocal() as session:
+        return await rules.decide_rule(session, rule_id, status="rejected")
+
+
+@router.post("/rules/{rule_id}/retire")
+async def rule_retire(rule_id: int):
+    """🗑 Вывести утверждённое правило из обращения (aging)."""
+    async with AsyncSessionLocal() as session:
+        return await rules.decide_rule(session, rule_id, status="retired")
+
+
+class RuleAdd(BaseModel):
+    rule_text: str
+    region_code: Optional[str] = None
+
+
+@router.post("/rules/add")
+async def rule_add(body: RuleAdd = Body(...)):
+    """Оператор пишет правило руками → сразу утверждено (в деле со след. прогона)."""
+    async with AsyncSessionLocal() as session:
+        return await rules.add_operator_rule(session, body.rule_text, region_code=body.region_code)

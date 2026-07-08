@@ -38,6 +38,36 @@
         </div>
     </div>
 
+    <!-- Петля обучения (ADR-0005): выученные правила -->
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0"><i class="bi bi-mortarboard"></i> Правила обучения
+                    <span class="text-muted small">— рутина предлагает из твоих правок, ты утверждаешь</span>
+                </h6>
+                <button class="btn btn-outline-secondary btn-sm" id="cf-rules-refresh">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </button>
+            </div>
+            <div class="mb-2">
+                <div class="fw-semibold small text-warning-emphasis mb-1">
+                    ⏳ Черновики на утверждение <span id="cf-rules-prop-n" class="text-muted"></span>
+                </div>
+                <div id="cf-rules-proposed"></div>
+                <div id="cf-rules-proposed-empty" class="text-muted small d-none">Черновиков нет.</div>
+            </div>
+            <details>
+                <summary class="small text-muted">✅ Действующие правила <span id="cf-rules-appr-n"></span></summary>
+                <div id="cf-rules-approved" class="mt-2"></div>
+            </details>
+            <div class="input-group input-group-sm mt-2">
+                <input type="text" class="form-control" id="cf-rule-new"
+                       placeholder="написать правило вручную (сразу в дело)…">
+                <button class="btn btn-outline-primary" id="cf-rule-add">Добавить</button>
+            </div>
+        </div>
+    </div>
+
     <div id="cf-feed"></div>
     <div id="cf-empty" class="text-muted text-center py-4 d-none">
         Нет вердиктов для разбора. Рутина ещё не прислала, либо всё разобрано.
@@ -176,9 +206,86 @@ function correctTheme(id) {
     if (t && t.trim()) correctReact(id, "theme", t.trim(), "тема → " + t.trim());
 }
 
+// ─────────── Петля обучения: выученные правила (ADR-0005) ───────────
+async function ruleAction(id, action) {
+    await fetch(`/api/classifier-review/rules/${id}/${action}`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: "{}",
+    });
+    loadRules();
+}
+function approveRule(id) { ruleAction(id, "approve"); }
+function rejectRule(id) { ruleAction(id, "reject"); }
+function retireRule(id) { ruleAction(id, "retire"); }
+let RULE_TEXT_BY_ID = {};  // id → текущий текст правила (для безопасной правки, без вшивания в onclick)
+async function editApproveRule(id) {
+    const t = prompt("Правка правила перед утверждением:", RULE_TEXT_BY_ID[id] || "");
+    if (t === null) return;
+    await fetch(`/api/classifier-review/rules/${id}/approve`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({edited_text: t.trim()}),
+    });
+    loadRules();
+}
+async function addRule() {
+    const inp = document.getElementById("cf-rule-new");
+    const t = inp.value.trim();
+    if (!t) return;
+    await fetch("/api/classifier-review/rules/add", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({rule_text: t}),
+    });
+    inp.value = "";
+    loadRules();
+}
+
+async function loadRules() {
+    const r = await fetch("/api/classifier-review/rules");
+    const data = await r.json();
+    const rules = data.rules || [];
+    const proposed = rules.filter(x => x.status === "proposed");
+    const approved = rules.filter(x => x.status === "approved");
+    RULE_TEXT_BY_ID = {};
+    for (const x of rules) RULE_TEXT_BY_ID[x.id] = x.rule_text;
+
+    const pn = document.getElementById("cf-rules-prop-n");
+    pn.textContent = proposed.length ? `(${proposed.length})` : "";
+    document.getElementById("cf-rules-proposed-empty").classList.toggle("d-none", proposed.length > 0);
+    const pbox = document.getElementById("cf-rules-proposed");
+    pbox.innerHTML = "";
+    for (const x of proposed) {
+        const ev = (x.evidence && x.evidence.length) ? `<span class="badge bg-light text-dark" title="коррекций в основе">📎 ${x.evidence.length}</span>` : "";
+        pbox.insertAdjacentHTML("beforeend", `
+          <div class="border rounded p-2 mb-1">
+            <div class="mb-1">${esc(x.rule_text)}</div>
+            ${x.rationale ? `<div class="fst-italic small text-secondary mb-1">↳ ${esc(x.rationale)}</div>` : ""}
+            <div class="d-flex gap-1 flex-wrap align-items-center">
+              ${ev}
+              <button class="btn btn-success btn-sm" onclick="approveRule(${x.id})">✅ Утвердить</button>
+              <button class="btn btn-outline-primary btn-sm" onclick="editApproveRule(${x.id})">✏️ Правка+утв.</button>
+              <button class="btn btn-outline-danger btn-sm" onclick="rejectRule(${x.id})">❌ Отклонить</button>
+            </div>
+          </div>`);
+    }
+
+    document.getElementById("cf-rules-appr-n").textContent = approved.length ? `(${approved.length})` : "(0)";
+    const abox = document.getElementById("cf-rules-approved");
+    abox.innerHTML = "";
+    for (const x of approved) {
+        const who = x.source === "operator" ? "✍️" : "🤖";
+        abox.insertAdjacentHTML("beforeend", `
+          <div class="d-flex justify-content-between align-items-start border-bottom py-1">
+            <div class="small">${who} ${esc(x.rule_text)}</div>
+            <button class="btn btn-outline-secondary btn-sm py-0" onclick="retireRule(${x.id})" title="вывести из обращения">🗑</button>
+          </div>`);
+    }
+}
+
 document.getElementById("cf-refresh").addEventListener("click", () => { loadFeed(); loadStats(); });
 document.getElementById("cf-unreacted").addEventListener("change", loadFeed);
+document.getElementById("cf-rules-refresh").addEventListener("click", loadRules);
+document.getElementById("cf-rule-add").addEventListener("click", addRule);
 loadStats();
 loadFeed();
+loadRules();
 </script>
 {% endblock %}

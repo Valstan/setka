@@ -29,11 +29,10 @@ from config.classifier import (
     get_pending_max,
     get_region_allowlist,
     get_source_days,
-    read_postulates,
 )
 from database.connection import AsyncSessionLocal
-from modules.classifier import service
-from modules.classifier.schema import VerdictBatch
+from modules.classifier import rules, service
+from modules.classifier.schema import RuleProposalBatch, VerdictBatch
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -79,9 +78,11 @@ async def pending(
 
 @router.get("/postulates", response_class=PlainTextResponse)
 async def postulates():
-    """Текст файла-корректировщика (рутина вставляет его в промпт)."""
+    """Эффективные постулаты для промпта: базовый git-файл + утверждённые выученные
+    правила (overlay, ADR-0005). Рутина вставляет результат в промпт классификации."""
     _check_enabled()
-    return read_postulates()
+    async with AsyncSessionLocal() as session:
+        return await rules.render_effective_postulates(session)
 
 
 @router.post("/verdicts")
@@ -95,4 +96,35 @@ async def verdicts(batch: VerdictBatch, _auth: None = Depends(require_ingest_key
             source="routine",
             region_codes_fallback=get_region_allowlist() or None,
         )
+    return {"ok": True, **counts}
+
+
+# --- Петля обучения (ADR-0005): дистилляция коррекций → черновики правил --------
+
+
+@router.get("/corrections")
+async def corrections(
+    limit: int = Query(100, ge=1, le=500),
+    days: int = Query(30, ge=1, le=180),
+    _auth: None = Depends(require_ingest_key),
+):
+    """Коррекции оператора (несогласия) + снапшот поста — сырьё для рутины-дистиллятора.
+
+    Рутина смотрит на них + текущие эффективные правила (``/postulates``) и предлагает
+    обобщённые правила через ``POST /rule-proposals``."""
+    _check_enabled()
+    async with AsyncSessionLocal() as session:
+        items = await rules.fetch_corrections_for_distill(session, limit=limit, days=days)
+    return {"count": len(items), "corrections": items}
+
+
+@router.post("/rule-proposals")
+async def rule_proposals(batch: RuleProposalBatch, _auth: None = Depends(require_ingest_key)):
+    """Принять черновики выученных правил от рутины → записать как ``proposed``.
+
+    Не применяются автоматически: оператор утверждает/правит/отклоняет в ленте
+    ``/classifier`` (человек в петле, ADR-0005). Дедуп против активных правил."""
+    _check_enabled()
+    async with AsyncSessionLocal() as session:
+        counts = await rules.record_rule_proposals(session, batch.proposals, source="routine")
     return {"ok": True, **counts}

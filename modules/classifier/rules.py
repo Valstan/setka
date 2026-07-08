@@ -1,0 +1,215 @@
+"""Петля обучения классификатора: выученные правила overlay (ADR-0005).
+
+Коррекции оператора (лента ``/classifier``) → дистилляция (облачная рутина
+чеканит черновики) → утверждение оператором в вебе → ``approved`` правила
+подмешиваются в эффективные постулаты, которые рутина читает каждый прогон.
+Нейросеть правила сама не применяет — только предлагает; человек в петле.
+
+Операции:
+- ``render_effective_postulates`` — база (git-файл) + утверждённые правила (для рутины);
+- ``fetch_corrections_for_distill`` — коррекции оператора для рутины-дистиллятора;
+- ``record_rule_proposals`` — записать черновики (дедуп против активных);
+- ``list_rules`` / ``decide_rule`` / ``add_operator_rule`` — операторские операции.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Sequence
+
+from sqlalchemy import select
+
+from config.classifier import read_postulates
+from database.models_extended import (
+    ClassificationCorrection,
+    ClassificationRule,
+    ContentClassification,
+)
+from modules.classifier.schema import RuleProposal
+
+logger = logging.getLogger(__name__)
+
+RULE_STATUSES = ("proposed", "approved", "rejected", "retired")
+_ACTIVE_STATUSES = ("proposed", "approved")
+_MAX_RULE_LEN = 600
+_LEARNED_HEADER = "## Выученные правила (утверждены оператором, дистилляция коррекций)"
+
+
+def _norm(text: str) -> str:
+    """Нормализовать текст правила для дедупа (схлопнуть пробелы, регистр, обрезать)."""
+    return re.sub(r"\s+", " ", (text or "").strip().lower())[:200]
+
+
+async def render_effective_postulates(session) -> str:
+    """Эффективные постулаты: базовый git-файл + утверждённые выученные правила.
+
+    Это то, что отдаётся рутине в ``/postulates`` и идёт в промпт классификации.
+    Пусто выученных → возвращаем только базу (байт-в-байт, prompt-cache цел)."""
+    base = read_postulates()
+    rules = (
+        (
+            await session.execute(
+                select(ClassificationRule)
+                .where(ClassificationRule.status == "approved")
+                .order_by(ClassificationRule.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rules:
+        return base
+    lines = ["", _LEARNED_HEADER, ""]
+    for i, r in enumerate(rules, 1):
+        scope = "" if not r.region_code else f" _(район {r.region_code})_"
+        lines.append(f"{i}. {(r.rule_text or '').strip()}{scope}")
+    return base.rstrip() + "\n\n" + "\n".join(lines) + "\n"
+
+
+async def fetch_corrections_for_distill(
+    session, *, limit: int = 100, days: int = 30
+) -> List[Dict[str, Any]]:
+    """Коррекции оператора (outcome=correct) + снапшот поста — сырьё для дистилляции.
+
+    Только несогласия (``correct``): согласия правило не рождают. Свежие первыми,
+    окно ``days``. Рутина смотрит на них + текущие эффективные правила и предлагает
+    ОБОБЩЁННЫЕ правила для повторяющихся паттернов (не под единичный случай)."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    stmt = (
+        select(ClassificationCorrection, ContentClassification)
+        .join(
+            ContentClassification,
+            ClassificationCorrection.classification_id == ContentClassification.id,
+        )
+        .where(ClassificationCorrection.outcome == "correct")
+        .where(ClassificationCorrection.created_at >= cutoff)
+        .order_by(ClassificationCorrection.created_at.desc())
+        .limit(limit)
+    )
+    rows = (await session.execute(stmt)).all()
+    out: List[Dict[str, Any]] = []
+    for corr, cls in rows:
+        out.append(
+            {
+                "lip": corr.lip,
+                "verdict_type": corr.verdict_type,
+                "ai_value": corr.ai_value,
+                "operator_value": corr.operator_value,
+                "post_text": (cls.post_text or "").strip()[:800],
+                "post_url": cls.post_url,
+                "region_code": cls.region_code,
+                "created_at": corr.created_at.isoformat() if corr.created_at else None,
+            }
+        )
+    return out
+
+
+async def record_rule_proposals(
+    session, proposals: Sequence[RuleProposal], *, source: str = "routine"
+) -> Dict[str, int]:
+    """Записать черновики правил (status=proposed). Дедуп против активных (proposed|approved).
+
+    Идемпотентно по ``norm_key``: правило, уже висящее в предложениях или утверждённое,
+    повторно не заводим. Отклонённое/выведенное — можно предложить снова (паттерн вернулся)."""
+    if not proposals:
+        return {"recorded": 0, "skipped_existing": 0, "skipped_invalid": 0}
+
+    active = {
+        k
+        for (k,) in (
+            await session.execute(
+                select(ClassificationRule.norm_key).where(
+                    ClassificationRule.status.in_(list(_ACTIVE_STATUSES))
+                )
+            )
+        ).all()
+        if k
+    }
+    seen = set(active)
+    recorded = skipped_existing = skipped_invalid = 0
+    for p in proposals:
+        text = (p.rule_text or "").strip()
+        if not text or len(text) > _MAX_RULE_LEN:
+            skipped_invalid += 1
+            continue
+        nk = _norm(text)
+        if nk in seen:
+            skipped_existing += 1
+            continue
+        seen.add(nk)
+        session.add(
+            ClassificationRule(
+                region_code=(p.region_code or None),
+                rule_text=text,
+                status="proposed",
+                source=source,
+                rationale=(p.rationale or None),
+                evidence=(list(p.evidence) if p.evidence else None),
+                model=(p.model or None),
+                norm_key=nk,
+            )
+        )
+        recorded += 1
+    await session.commit()
+    logger.info(
+        "classifier rules: proposed recorded=%s skipped_existing=%s skipped_invalid=%s",
+        recorded,
+        skipped_existing,
+        skipped_invalid,
+    )
+    return {
+        "recorded": recorded,
+        "skipped_existing": skipped_existing,
+        "skipped_invalid": skipped_invalid,
+    }
+
+
+async def list_rules(
+    session, *, status: Optional[str] = None, limit: int = 200
+) -> List[Dict[str, Any]]:
+    """Правила для операторской панели (свежие первыми). ``status`` пуст → все."""
+    stmt = select(ClassificationRule).order_by(ClassificationRule.created_at.desc()).limit(limit)
+    if status:
+        stmt = stmt.where(ClassificationRule.status == status)
+    rows = (await session.execute(stmt)).scalars().all()
+    return [r.to_dict() for r in rows]
+
+
+async def decide_rule(
+    session, rule_id: int, *, status: str, edited_text: Optional[str] = None
+) -> Dict[str, Any]:
+    """Решение оператора: approve | reject | retire (+ опц. правка текста при approve)."""
+    if status not in RULE_STATUSES:
+        return {"ok": False, "error": f"bad status: {status}"}
+    r = await session.get(ClassificationRule, rule_id)
+    if r is None:
+        return {"ok": False, "error": "rule not found"}
+    if edited_text is not None and edited_text.strip():
+        r.rule_text = edited_text.strip()[:_MAX_RULE_LEN]
+        r.norm_key = _norm(r.rule_text)
+    r.status = status
+    r.decided_at = datetime.utcnow()
+    await session.commit()
+    return {"ok": True, "id": r.id, "status": status}
+
+
+async def add_operator_rule(
+    session, rule_text: str, *, region_code: Optional[str] = None
+) -> Dict[str, Any]:
+    """Оператор пишет правило руками → сразу approved (в деле со следующего прогона)."""
+    text = (rule_text or "").strip()
+    if not text:
+        return {"ok": False, "error": "empty rule_text"}
+    r = ClassificationRule(
+        region_code=region_code or None,
+        rule_text=text[:_MAX_RULE_LEN],
+        status="approved",
+        source="operator",
+        norm_key=_norm(text),
+        decided_at=datetime.utcnow(),
+    )
+    session.add(r)
+    await session.commit()
+    return {"ok": True, "id": r.id, "status": "approved"}
