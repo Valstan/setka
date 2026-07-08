@@ -33,7 +33,7 @@ from modules.deduplication.fingerprints import (
 )
 from modules.vk_monitor.vk_client import VKClient
 from utils.post_utils import clear_copy_history, lip_of_post, post_popularity
-from utils.text_utils import check_blacklist, is_advertisement
+from utils.text_utils import check_blacklist, is_advertisement, is_hard_spam
 from utils.vk_attachments import extract_vk_attachments, has_attachments
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,7 @@ class AdvancedVKParser:
             "posts_filtered_black_id": 0,
             "posts_filtered_no_region_words": 0,
             "posts_filtered_advertisement": 0,
+            "posts_filtered_hard_spam": 0,
             "posts_filtered_no_attachments": 0,
             "posts_filtered_blacklist_text": 0,
             "posts_final_count": 0,
@@ -447,6 +448,15 @@ class AdvancedVKParser:
             if abs(owner_id) in [abs(x) for x in region_config.black_id]:
                 self.stats["posts_filtered_black_id"] += 1
                 return None
+
+        # 5a. Hard spam / scam — режем ДАЖЕ для темы reklama (доска объявлений):
+        #     VK банит за это аккаунт-админа паблика (инцидент Уржум 2026-07-08 —
+        #     рекламная сводка ре-транслировала «удалённую работу / рассылку рекламы»
+        #     → бан 4 дня). Легальные частные объявления (продам/куплю) сюда НЕ
+        #     попадают — is_hard_spam узкий, ловит только скам/увод в обход VK.
+        if is_hard_spam(text):
+            self.stats["posts_filtered_hard_spam"] += 1
+            return None
 
         # 5. Advertisement filter
         is_reklama_theme = theme == "reklama"

@@ -49,6 +49,28 @@ def test_build_audit_records_classifies_both_sides():
     assert "100_5" not in by_lip  # механический дроп пропущен
 
 
+def test_build_audit_records_hard_spam_dropped_even_for_reklama():
+    # Жёсткий спам/скам режется для ВСЕХ тем, включая reklama (доска объявлений):
+    # is_advertisement там пропускается, а hard_spam — нет. Легальное частное
+    # объявление в той же рубрике остаётся (kept).
+    region_config = SimpleNamespace(delete_msg_blacklist=None)
+    p_scam = _post(11, "Удалённая работа, рассылка рекламы, по готовой системе")
+    p_legit = _post(12, "Продам велосипед, 3500 р", media=True)
+
+    records = ca.build_audit_records(
+        region_code="mi",
+        theme="reklama",
+        region_config=region_config,
+        collected=[p_scam, p_legit],
+        kept=[p_legit],
+    )
+    by_lip = {r["lip"]: r for r in records}
+
+    assert by_lip["100_11"]["decision"] == "dropped"
+    assert by_lip["100_11"]["drop_reason"] == "hard_spam"
+    assert by_lip["100_12"]["decision"] == "kept"
+
+
 def test_build_audit_records_snapshot_fields():
     records = ca.build_audit_records(
         region_code="mi",
