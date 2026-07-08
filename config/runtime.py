@@ -636,6 +636,21 @@ def get_collection_audit_region_codes() -> Optional[Set[str]]:
     return {x.strip().lower() for x in str(raw).split(",") if x.strip()}
 
 
+def get_collection_audit_retention_days() -> int:
+    """Ретеншн журнала аудита сбора (env ``COLLECTION_AUDIT_RETENTION_DAYS``, дефолт 60).
+
+    ``collected_post_audit`` пишется на КАЖДЫЙ собранный пост → растёт постоянно.
+    Beat-джоба ``prune_collected_post_audit`` удаляет строки старше порога. Безопасно
+    для дедупа: реестр вердиктов ``content_classifications`` (ключ ``lip``) НЕ чистится,
+    поэтому уже классифицированный пост не воскреснет в ``/pending`` даже после чистки
+    аудита. Порог держим заведомо шире окна свежести ``/pending`` (``CLASSIFIER_SOURCE_DAYS``).
+    Границы 7..365."""
+    try:
+        return max(7, min(365, int(_getenv("COLLECTION_AUDIT_RETENTION_DAYS", "60") or "60")))
+    except (TypeError, ValueError):
+        return 60
+
+
 # --- Near-dup дедуп сводок (SimHash + Jaccard), env-тюнинг -----------------
 # Параметры вынесены в env, чтобы калибровать порог на проде без передеплоя.
 # Дефолты совпадают с прежними хардкодами → нулевая регрессия (кроме Jaccard,
