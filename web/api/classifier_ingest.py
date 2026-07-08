@@ -28,6 +28,7 @@ from config.classifier import (
     get_ingest_key,
     get_pending_max,
     get_region_allowlist,
+    get_source_days,
     read_postulates,
 )
 from database.connection import AsyncSessionLocal
@@ -70,7 +71,9 @@ async def pending(
     cap = get_pending_max()
     n = min(limit or cap, cap)
     async with AsyncSessionLocal() as session:
-        posts = await service.fetch_pending(session, region_codes=codes or None, limit=n)
+        posts = await service.fetch_pending(
+            session, region_codes=codes or None, limit=n, days=get_source_days()
+        )
     return {"region_filter": codes, "count": len(posts), "posts": posts}
 
 

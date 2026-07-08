@@ -1144,6 +1144,41 @@ def prune_gateway_requests():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.prune_collected_post_audit")
+def prune_collected_post_audit():
+    """Ретеншн журнала аудита сбора: удалить ``collected_post_audit`` старше N дней.
+
+    Раз в сутки (03:45 MSK, после cleanup 03:00 и gateway-prune 03:40). Порог — env
+    ``COLLECTION_AUDIT_RETENTION_DAYS`` (дефолт 60). Аудит пишется на каждый собранный
+    пост (ADR-0004) → без ретеншна таблица пухнет. Безопасно: реестр вердиктов
+    ``content_classifications`` (дедуп по ``lip``) НЕ трогаем — уже классифицированный
+    пост не воскреснет в ``/pending`` даже после чистки аудита.
+    """
+    logger.info("Pruning old collected_post_audit (classifier source retention)...")
+    try:
+        from sqlalchemy import delete
+
+        from config.runtime import get_collection_audit_retention_days
+        from database.connection import AsyncSessionLocal
+        from database.models_extended import CollectedPostAudit
+
+        async def prune():
+            cutoff = datetime.utcnow() - timedelta(days=get_collection_audit_retention_days())
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    delete(CollectedPostAudit).where(CollectedPostAudit.collected_at < cutoff)
+                )
+                await session.commit()
+                return result.rowcount
+
+        deleted = run_coro(prune())
+        logger.info("collected_post_audit prune done: deleted %s rows", deleted)
+        return {"success": True, "timestamp": datetime.now().isoformat(), "deleted_count": deleted}
+    except Exception as e:
+        logger.error(f"prune_collected_post_audit failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 # Расписания (Beat Schedule)
 app.conf.beat_schedule = {
     # Проверка предложенных постов каждый час с 8:00 до 22:00 в X:15
@@ -1288,6 +1323,15 @@ app.conf.beat_schedule = {
     "prune-gateway-requests-daily": {
         "task": "tasks.celery_app.prune_gateway_requests",
         "schedule": crontab(minute=40, hour=3),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
+    # Ретеншн журнала аудита сбора классификатора: строки старше N дней (env, дефолт 60) — 03:45 MSK
+    "prune-collected-post-audit-daily": {
+        "task": "tasks.celery_app.prune_collected_post_audit",
+        "schedule": crontab(minute=45, hour=3),
         "options": {
             "expires": 3600,
             "catchup": False,

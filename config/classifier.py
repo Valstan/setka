@@ -10,6 +10,8 @@ Env vars:
   CLASSIFIER_REGION_CODES     # allowlist кодов регионов для shadow (CSV);
                               # пусто = все регионы. Обкатка — один район.
   CLASSIFIER_PENDING_MAX=40   # потолок постов в одном /pending-батче
+  CLASSIFIER_SOURCE_DAYS=3    # окно свежести источника (сутки): /pending видит
+                              # только посты, собранные за последние N дней
 """
 
 from __future__ import annotations
@@ -49,6 +51,21 @@ def get_pending_max() -> int:
         return max(1, min(200, int(os.getenv("CLASSIFIER_PENDING_MAX", "40"))))
     except ValueError:
         return 40
+
+
+def get_source_days() -> int:
+    """Окно свежести источника ``/pending`` в сутках (env ``CLASSIFIER_SOURCE_DAYS``).
+
+    Классификатор видит только посты, собранные за последние N дней — чтобы в
+    ленту не попадало старьё, которое в сводку уже не пойдёт. Дефолт 3 (модель
+    владельца «не старше 3 суток»). Считается по ``collected_at`` аудита сбора
+    (прокси даты публикации: механически-старые посты фильтр отсекает ещё при
+    сборе, поэтому собранное — свежее). Границы 1..30.
+    """
+    try:
+        return max(1, min(30, int(os.getenv("CLASSIFIER_SOURCE_DAYS", "3"))))
+    except ValueError:
+        return 3
 
 
 def read_postulates() -> str:

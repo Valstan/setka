@@ -51,6 +51,22 @@ def test_pending_uses_region_query_over_allowlist(client, monkeypatch):
     assert fake.await_args.kwargs["region_codes"] == ["mi"]
 
 
+def test_pending_passes_source_days_default(client):
+    # По умолчанию окно свежести — 3 суток (модель владельца «не старше 3 дней»).
+    fake = AsyncMock(return_value=[])
+    with patch.object(ing.service, "fetch_pending", fake):
+        client.get("/api/classifier/pending", headers={"X-API-Key": KEY})
+    assert fake.await_args.kwargs["days"] == 3
+
+
+def test_pending_source_days_env_override(client, monkeypatch):
+    monkeypatch.setenv("CLASSIFIER_SOURCE_DAYS", "5")
+    fake = AsyncMock(return_value=[])
+    with patch.object(ing.service, "fetch_pending", fake):
+        client.get("/api/classifier/pending", headers={"X-API-Key": KEY})
+    assert fake.await_args.kwargs["days"] == 5
+
+
 def test_verdicts_requires_key(client):
     r = client.post("/api/classifier/verdicts", json={"verdicts": []})
     assert r.status_code == 401
