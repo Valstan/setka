@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from utils.text_utils import is_advertisement, truncate_text
+from utils.text_utils import is_advertisement, is_hard_spam, truncate_text
 
 
 def test_truncate_text_short_text_unchanged():
@@ -113,3 +113,65 @@ def test_is_advertisement_sale_verb_word_boundary():
 def test_is_advertisement_skips_reklama_theme():
     # Для темы reklama детектор рекламы не срабатывает (реклама там ожидаема).
     assert is_advertisement("Продам ВАЗ 2104", skip_for_reklama=True, theme="reklama") is False
+
+
+# ───────── is_hard_spam: скам/увод в обход VK (инцидент Уржум 2026-07-08) ─────────
+
+
+def test_is_hard_spam_catches_incident_job_scam():
+    # Точный фрагмент, из-за которого VK забанил аккаунт: «удалённая работа /
+    # рассылка рекламы / по готовой системе». Ловится (несколькими маркерами).
+    text = (
+        "Удалённая работа через интернет. Гибкий график. Бесплатное обучение. "
+        "Работа по готовой системе. Обязанности: рассылка рекламы и ответы на "
+        "сообщения. Подробности по ссылке."
+    )
+    assert is_hard_spam(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Удалённая работа на дому, доход от 50000 в месяц",
+        "Работа в интернете, гибкий график",
+        "Рассылка рекламы — платим сразу",
+        "Заработок от 3000 рублей в день без вложений",
+        "Пассивный доход, финансовая независимость",
+        "Ставки на спорт, казино онлайн 1xbet",
+        "Займ без отказа на карту за 5 минут",
+        "Кредит без справок и залога",
+        "Инвестиции в криптовалюту, бинарные опционы",
+    ],
+)
+def test_is_hard_spam_catches_scam_markers(text):
+    assert is_hard_spam(text) is True
+
+
+def test_is_hard_spam_messenger_funnel_three_plus():
+    # ≥3 разных мессенджера-воронки в одном посте = скам-контакт (как в инциденте:
+    # «Wa, Tg, Max +7…»). Один-два — легальный локальный контакт, НЕ спам.
+    assert is_hard_spam("Пишите: Wa, Tg, Max +79210169384") is True
+    assert is_hard_spam("Звоните или напишите в WhatsApp") is False
+    assert is_hard_spam("Telegram или Viber для связи") is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Продам велосипед, колёса 16 дюймов. Состояние новое. Цена 3500 р.",
+        "ПРОДАМ ВАЗ 2104 карбюратор 2003г.в на ходу с документами",
+        "Куплю косилку КРР и запчасти",
+        "Оказываю правовое сопровождение по вопросам банкротства физлиц",
+        "Ремонт квартир под ключ, качественно, звоните",
+        "Проведение юбилеев и свадеб, тамада",
+    ],
+)
+def test_is_hard_spam_leaves_legit_local_ads(text):
+    # Легальные частные объявления и услуги мастеров остаются в рекламной рубрике:
+    # is_hard_spam режет только скам/увод, не трогая доску объявлений.
+    assert is_hard_spam(text) is False
+
+
+def test_is_hard_spam_empty():
+    assert is_hard_spam("") is False
+    assert is_hard_spam(None) is False  # type: ignore[arg-type]

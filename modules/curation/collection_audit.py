@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from config.runtime import collection_audit_shadow_enabled, get_collection_audit_region_codes
 from utils.post_utils import clear_copy_history, lip_of_post
-from utils.text_utils import check_blacklist, is_advertisement
+from utils.text_utils import check_blacklist, is_advertisement, is_hard_spam
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,10 @@ def _derive_drop_reason(post: Dict[str, Any], theme: str, region_config: Any) ->
     не пишем. Возвращаемые причины совпадают со счётчиками ``posts_filtered_*``.
     """
     text = (post.get("text") or "").strip()
+    # Шаг 5a: жёсткий спам/скам — режется для ВСЕХ тем, включая reklama (как в
+    # _filter_post шаг 5a). Проверяем первым — совпадает с порядком фильтра.
+    if is_hard_spam(text):
+        return "hard_spam"
     # Шаг 5: реклама (для темы reklama фильтр не срабатывает — как в _filter_post).
     if theme != "reklama" and is_advertisement(text, skip_for_reklama=False, theme=theme):
         return "advertisement"
