@@ -90,17 +90,20 @@ _Сейчас нет._
   Network access → Custom; (2) рутина стала «вежливо отказываться» (ИИ принял задачу за модерацию чужой
   платформы) → промпт переписан с **контекстом авторизации** (чей сервис, что делают вердикты, shadow+HITL) —
   вердикты снова идут (`content_classifications` 136→243). Заготовки промптов — `docs/ops/hitl-classifier-routine.md`.
-- ⏳ **Рутина снова отбита 2026-07-09 → построен v3 (скрипт + env-секрет), ждёт настройки owner'ом:**
-  модель ужесточилась — авторизационное эссе v2 читает как «social engineering», нейтральный промпт
+- ✅ **Рутина отбита 2026-07-09 → построен v3 (скрипт + env-секрет) → ПОДТВЕРЖДЁН РАБОЧИМ (PR #325):**
+  модель ужесточилась — авторизационное эссе v2 читала как «social engineering», нейтральный промпт
   без эссе — как «not a user message, standing by» (замерло на 267 вердиктах, MAX 2026-07-08 19:23).
   Претензии все к ОБВЯЗКЕ (ключ в тексте промпта + автономные HTTP), не к классификации → обвязка
-  вынесена в код: `scripts/classifier_routine.py` (fetch/submit, stdlib-only, ключ из env). **Owner:**
-  на странице рутины (1) репозиторий `Valstan/setka`; (2) env-переменная `CLASSIFIER_INGEST_KEY`
-  (значение — `/etc/setka/classifier-routine-key.txt` на VPS); (3) заменить промпт на v3-заготовку
-  из `docs/ops/hitl-classifier-routine.md`. Проверка — сдвиг `MAX(created_at)` в
-  `content_classifications`. Если и v3 отобьют — промпт-путь исчерпан, только enforce (Claude API).
-  NB: перед запуском дистиллятора (хвост А) перевести и его на v3-паттерн (подкоманды
-  `corrections`/`propose` в том же скрипте).
+  вынесена в код: `scripts/classifier_routine.py` (fetch/submit, stdlib-only, ключ из env
+  `CLASSIFIER_INGEST_KEY`). Owner настроил рутину (repo `Valstan/setka` + env-секрет + промпт v3),
+  прогон 11:22 MSK дал **+29 качественных вердиктов** (publish 13 / hold 9 / delete 7, калиброванная
+  уверенность; счётчик 267→296, MAX 2026-07-09 11:23). Промпт-путь для over-refusal исчерпан этим —
+  дальше только enforce. Находка отправлена в мозг (коррекция вчерашней,
+  `mailbox/to-brain/2026-07-09-cloud-routine-move-plumbing-out-of-prompt.md`). Прод-API не менялся.
+- 🟢 **Хвост дистиллятора — перевести на v3-паттерн перед запуском:** заготовка промпта дистиллятора
+  (`docs/ops/hitl-classifier-routine.md` §«Петля обучения») всё ещё v2-стиля (ключ в тексте + эссе) —
+  отобьётся так же. Добавить в `scripts/classifier_routine.py` подкоманды `corrections`/`propose`
+  (по образцу `fetch`/`submit`) и короткий промпт без ключа.
 - ✅ **Свежесть + ретеншн (PR #320, задеплоено 2026-07-08):** `/pending` окно `CLASSIFIER_SOURCE_DAYS`
   (дефолт 3, было 7 хардкодом); beat `prune-collected-post-audit-daily` (03:45, `COLLECTION_AUDIT_RETENTION_DAYS`
   дефолт 60) — аудит больше не растёт вечно. Дедуп по `lip` = 0 дублей на живых данных.
