@@ -79,6 +79,9 @@ Thumbs.db
 *.temp
 temp/
 
+# рабочие файлы прогона облачной рутины классификатора (scripts/classifier_routine.py)
+classifier_run/
+
 # discovery scratch (см. /discover_communities) — keeper-скрипты без префикса `_`
 # (scripts/discover_scan.py, scripts/seed_region_communities.py) коммитим; всё `_`-scratch — нет
 scripts/_*.json
