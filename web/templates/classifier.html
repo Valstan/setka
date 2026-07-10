@@ -272,9 +272,10 @@ async function loadRules() {
     abox.innerHTML = "";
     for (const x of approved) {
         const who = x.source === "operator" ? "✍️" : "🤖";
+        const stale = x.stale ? ` <span class="badge bg-warning text-dark" title="давно не подавалось в эффективные постулаты — кандидат на вывод (aging)">⏱ протухает</span>` : "";
         abox.insertAdjacentHTML("beforeend", `
           <div class="d-flex justify-content-between align-items-start border-bottom py-1">
-            <div class="small">${who} ${esc(x.rule_text)}</div>
+            <div class="small">${who} ${esc(x.rule_text)}${stale}</div>
             <button class="btn btn-outline-secondary btn-sm py-0" onclick="retireRule(${x.id})" title="вывести из обращения">🗑</button>
           </div>`);
     }

@@ -680,6 +680,9 @@ class ClassificationRule(Base):
             "model": self.model,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "decided_at": self.decided_at.isoformat() if self.decided_at else None,
+            "last_effective_at": (
+                self.last_effective_at.isoformat() if self.last_effective_at else None
+            ),
         }
 
     def __repr__(self):

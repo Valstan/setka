@@ -12,6 +12,10 @@ Env vars:
   CLASSIFIER_PENDING_MAX=40   # потолок постов в одном /pending-батче
   CLASSIFIER_SOURCE_DAYS=3    # окно свежести источника (сутки): /pending видит
                               # только посты, собранные за последние N дней
+  CLASSIFIER_RULE_STALE_DAYS=90       # aging: approved-правило старше порога без
+                                      # подачи в постулаты → подсветка в панели
+  CLASSIFIER_RULES_SNAPSHOT_PATH      # файл снапшота выученных правил (beat);
+                                      # дефолт logs/classifier_learned_rules_snapshot.md
 """
 
 from __future__ import annotations
@@ -66,6 +70,31 @@ def get_source_days() -> int:
         return max(1, min(30, int(os.getenv("CLASSIFIER_SOURCE_DAYS", "3"))))
     except ValueError:
         return 3
+
+
+def get_rule_stale_days() -> int:
+    """Порог aging выученного правила в сутках (env ``CLASSIFIER_RULE_STALE_DAYS``).
+
+    approved-правило, не подававшееся в эффективные постулаты дольше порога
+    (по ``last_effective_at``), подсвечивается в панели как кандидат на вывод
+    (retire, ADR-0005 §Aging / pool #033). Границы 7..365, дефолт 90.
+    """
+    try:
+        return max(7, min(365, int(os.getenv("CLASSIFIER_RULE_STALE_DAYS", "90"))))
+    except ValueError:
+        return 90
+
+
+def get_rules_snapshot_path() -> Path:
+    """Путь файла-снапшота выученных правил (env ``CLASSIFIER_RULES_SNAPSHOT_PATH``).
+
+    Пишется beat-джобой ``snapshot_learned_rules`` ежедневно. Путь должен быть
+    **untracked** (дефолт под ``logs/``): tracked-файл, перезаписанный на проде,
+    сломал бы ``git pull`` грязным деревом (PR-only, ADR-0002). Захват снапшота
+    в git-историю — шагом dev-сессии (см. docs/ops/hitl-classifier-routine.md).
+    """
+    raw = (os.getenv("CLASSIFIER_RULES_SNAPSHOT_PATH") or "").strip()
+    return Path(raw) if raw else Path("logs") / "classifier_learned_rules_snapshot.md"
 
 
 def read_postulates() -> str:
