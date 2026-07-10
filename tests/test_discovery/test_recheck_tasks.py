@@ -67,6 +67,7 @@ def _make_community(*, id_, vk_id=100, category="novost", is_active=True):
     c.last_post_at = None
     c.suggested_category = None
     c.checked_at = None
+    c.last_error_code = None
     return c
 
 
@@ -206,6 +207,9 @@ async def test_recheck_writes_health_fields_and_aggregates_counts():
     assert c_changed.suggested_category == "reklama"
     # active не должен иметь suggested_category
     assert c_active.suggested_category is None
+    # error_code recheck'а персистится (миграция 058): dead хранит код, чистые — NULL
+    assert c_dead.last_error_code == 15
+    assert c_active.last_error_code is None
     assert session.committed is True
 
 
@@ -243,6 +247,33 @@ async def test_recheck_counts_transient_errors():
         out = await dt.recheck_communities_for_region_async(1)
     assert out["errors"] == 1
     assert out["active"] == 1
+    # transient-код тоже персистится — виден до следующего чистого recheck'а
+    assert c.last_error_code == 6
+
+
+@pytest.mark.asyncio
+async def test_recheck_clean_run_clears_stale_error_code():
+    region = _make_region()
+    c = _make_community(id_=1)
+    c.last_error_code = 15  # прошлый recheck видел ошибку
+    session = _FakeSession(
+        [
+            {"kind": "scalar_one", "value": region},
+            {"kind": "scalars_all", "value": [c]},
+        ]
+    )
+
+    async def fake_check(**_kwargs):
+        return _health(1, "active")  # error_code=None — чистый прогон
+
+    with (
+        patch.object(dt, "_pick_parse_token", return_value="tok"),
+        patch.object(dt, "AsyncSessionLocal", return_value=session),
+        patch.object(dt, "VKClient", MagicMock()),
+        patch.object(dt, "check_community_health", side_effect=fake_check),
+    ):
+        await dt.recheck_communities_for_region_async(1)
+    assert c.last_error_code is None
 
 
 # ───────── recheck_all_active_regions_async ─────────
