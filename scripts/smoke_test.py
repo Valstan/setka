@@ -3,45 +3,41 @@
 
 После рестарта сервисов (`/reliz` Шаг 8) полезно за один шаг убедиться, что
 пайплайн региона жив: токены валидны, VK отвечает, парсинг → фильтр → сборка
-сводки проходят. Старый ручной способ — открыть `/regions/<code>/diagnostics`
-в браузере. Этот скрипт делает то же из CLI и возвращает exit-код, пригодный
-для автоматической проверки в `/reliz`.
+сводки проходят. Возвращает exit-код, пригодный для автоматической проверки
+в `/reliz`.
 
-Механика (переиспользует seam из PR #122):
-  1. ``POST /api/regions/{region}/diagnostics?theme={theme}`` ставит Celery-задачу
-     ``parse_and_publish_theme(dry_run=True)`` и возвращает ``task_id``.
-  2. ``GET /api/regions/diagnostics/task/{task_id}/status`` опрашивается до
-     ``ready`` (или таймаута).
-  3. Результат (dry_run-словарь) проверяется ``evaluate_result``: ``success`` +
-     спарсилось не меньше ``--min-posts`` постов. Публикация и запись в БД при
-     ``dry_run=True`` не происходят (см. ``parse_and_publish_theme``).
+Механика: ставит ``parse_and_publish_theme(dry_run=True)`` **напрямую в Celery**
+и опрашивает ``AsyncResult`` — тем же способом, что web-эндпоинт diagnostics
+(``web/api/regions.py``), но минуя web-слой: diagnostics-эндпоинты живут под
+операторской сессией, и у post-deploy скрипта нет cookie (старый HTTP-путь
+падал на 401). Публикация и запись в БД при ``dry_run=True`` не происходят.
 
-Использование (на проде, локальный API):
+Использование (на проде, из venv проекта — скрипт импортирует
+``tasks.celery_app``, поэтому чужим интерпретатором не запускается):
     ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py"
     ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py \\
         --region mi --theme novost --min-posts 1"
 
 Exit 0 — smoke прошёл; exit 1 — провал (детали в stderr); exit 2 — ошибка
-аргументов/сети. Stdlib-only (urllib), чтобы запускаться где угодно без
-зависимостей. Чистая логика вынесена в ``evaluate_result`` ради юнит-тестов.
+аргументов/постановки задачи. Чистая логика вынесена в ``evaluate_result``,
+оркестрация ``run_smoke`` принимает инжектируемые ``submit``/``poll`` — юнит-тесты
+не поднимают Celery.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
-import urllib.error
-import urllib.request
 from typing import Any, Callable, Dict, List, Optional
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_REGION = "mi"
 DEFAULT_THEME = "novost"
 DEFAULT_MIN_POSTS = 1
 DEFAULT_TIMEOUT = 180  # сек на весь dry-run (реальный VK-парсинг бывает долгим)
 DEFAULT_POLL_INTERVAL = 3  # сек между опросами статуса задачи
+
+TASK_NAME = "tasks.parsing_scheduler_tasks.parse_and_publish_theme"
 
 
 def evaluate_result(result: Optional[Dict[str, Any]], min_posts: int) -> List[str]:
@@ -74,57 +70,84 @@ def evaluate_result(result: Optional[Dict[str, Any]], min_posts: int) -> List[st
     return failures
 
 
-def _http_json(method: str, url: str, timeout: float) -> Dict[str, Any]:
-    """Минималистичный JSON-запрос на stdlib. Бросает на сетевых/HTTP-ошибках."""
-    req = urllib.request.Request(url, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8")
-    return json.loads(raw) if raw else {}
+def submit_dry_run(region: str, theme: str) -> str:
+    """Поставить dry-run задачу пайплайна в Celery, вернуть task_id.
+
+    Импорты внутри: скрипт остаётся импортируемым без Celery (для юнит-тестов
+    оркестрации с фейковыми ``submit``/``poll``)."""
+    from tasks.celery_app import app as celery_app
+
+    task = celery_app.send_task(
+        TASK_NAME, kwargs={"region_code": region, "theme": theme, "dry_run": True}
+    )
+    return task.id
+
+
+def poll_task(task_id: str) -> Dict[str, Any]:
+    """Статус Celery-задачи — та же форма словаря, что web-эндпоинт
+    ``/api/regions/diagnostics/task/{id}/status`` (см. web/api/regions.py)."""
+    from celery.result import AsyncResult
+
+    from tasks.celery_app import app as celery_app
+
+    ar = AsyncResult(task_id, app=celery_app)
+    state = ar.state
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "state": state,
+        "ready": ar.ready(),
+        "result": None,
+        "error": None,
+    }
+    if state == "SUCCESS":
+        try:
+            payload["result"] = ar.result
+        except Exception as e:  # pragma: no cover - тонкая обёртка backend'а
+            payload["error"] = f"не удалось получить result: {e}"
+    elif state == "FAILURE":
+        try:
+            payload["error"] = str(ar.result)
+        except Exception:  # pragma: no cover
+            payload["error"] = "задача завершилась с ошибкой"
+    return payload
 
 
 def run_smoke(
-    base_url: str,
     region: str,
     theme: str,
     min_posts: int,
     timeout: float,
     poll_interval: float,
     *,
-    http: Callable[[str, str, float], Dict[str, Any]] = _http_json,
+    submit: Callable[[str, str], str] = submit_dry_run,
+    poll: Callable[[str], Dict[str, Any]] = poll_task,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
     log: Callable[[str], None] = lambda m: print(m, file=sys.stderr),
 ) -> int:
     """Оркестрация smoke-теста. Возвращает exit-код (0 OK / 1 fail / 2 ошибка).
 
-    Коллабораторы (``http``/``sleep``/``now``/``log``) инжектируются для тестов.
+    Коллабораторы (``submit``/``poll``/``sleep``/``now``/``log``) инжектируются
+    для тестов.
     """
-    base = base_url.rstrip("/")
-    trigger_url = f"{base}/api/regions/{region}/diagnostics?theme={theme}"
-    log(f"[smoke] dry-run пайплайна region={region} theme={theme} → {trigger_url}")
+    log(f"[smoke] dry-run пайплайна region={region} theme={theme} (Celery напрямую)")
 
     try:
-        trigger = http("POST", trigger_url, min(timeout, 30))
-    except urllib.error.HTTPError as e:  # pragma: no cover - тонкая сетевая обёртка
-        log(f"[smoke] FAIL: запуск diagnostics вернул HTTP {e.code}: {e.reason}")
+        task_id = submit(region, theme)
+    except Exception as e:
+        log(f"[smoke] FAIL: не удалось поставить dry-run задачу: {e}")
         return 2
-    except Exception as e:  # pragma: no cover
-        log(f"[smoke] FAIL: не удалось запустить diagnostics: {e}")
-        return 2
-
-    task_id = trigger.get("task_id")
     if not task_id:
-        log(f"[smoke] FAIL: diagnostics не вернул task_id: {trigger}")
+        log("[smoke] FAIL: постановка задачи не вернула task_id")
         return 2
     log(f"[smoke] задача поставлена: task_id={task_id}, опрос до {timeout:.0f}s")
 
-    status_url = f"{base}/api/regions/diagnostics/task/{task_id}/status"
     deadline = now() + timeout
     last: Dict[str, Any] = {}
     while now() < deadline:
         try:
-            last = http("GET", status_url, min(timeout, 30))
-        except Exception as e:  # pragma: no cover
+            last = poll(task_id)
+        except Exception as e:  # pragma: no cover - transient backend
             log(f"[smoke] предупреждение: опрос статуса упал ({e}), повтор…")
             sleep(poll_interval)
             continue
@@ -158,9 +181,6 @@ def run_smoke(
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--base-url", default=DEFAULT_BASE_URL, help="API base (default prod local)"
-    )
     parser.add_argument("--region", default=DEFAULT_REGION, help="код эталонного региона")
     parser.add_argument("--theme", default=DEFAULT_THEME, help="тема сводки")
     parser.add_argument(
@@ -176,7 +196,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     return run_smoke(
-        base_url=args.base_url,
         region=args.region,
         theme=args.theme,
         min_posts=args.min_posts,
