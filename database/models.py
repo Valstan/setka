@@ -132,6 +132,9 @@ class Community(Base):
     last_post_at = Column(DateTime, nullable=True)  # timestamp последнего поста на стене
     checked_at = Column(DateTime, nullable=True)  # когда последний раз делали health-check
     suggested_category = Column(String(50), nullable=True)  # если AI считает что category устарел
+    # VK error_code последнего recheck'а (миграция 058, NULL = без ошибки):
+    # машинный split dead — 18/100 «удалён» vs 15/203 «недоступен» (re-probe перед kill, cf #041)
+    last_error_code = Column(Integer, nullable=True)
 
     # Dormant-политика (миграция 051): когда/почему выведено из парса.
     # disabled_reason: dormant_t1_auto / dead_migration_050 / NULL (ручное/старое)

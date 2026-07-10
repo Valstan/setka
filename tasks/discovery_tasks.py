@@ -488,6 +488,9 @@ async def recheck_communities_for_region_async(
             if res.last_post_at is not None:
                 row.last_post_at = res.last_post_at
             row.checked_at = now
+            # VK error_code этого recheck'а (миграция 058): NULL = чисто. Даёт
+            # машинный split dead 18/100 «удалён» vs 15/203 «недоступен» (#041).
+            row.last_error_code = res.error_code
             # suggested_category пишем только для changed_category; в остальных
             # случаях очищаем, чтобы UI не подсвечивал устаревшую подсказку.
             row.suggested_category = (
