@@ -1,9 +1,9 @@
 """Unit-тесты для ``scripts/smoke_test.py`` — post-deploy smoke (dry-run).
 
 Скрипт — CLI-утилита вне устанавливаемого пакета, грузим напрямую через
-importlib (как ``tests/test_scripts/test_check_commit_msg.py``). Сеть/Celery не
+importlib (как ``tests/test_scripts/test_check_commit_msg.py``). Celery не
 поднимаем: ``evaluate_result`` чистая, а ``run_smoke`` принимает инжектируемые
-``http``/``sleep``/``now``/``log``.
+``submit``/``poll``/``sleep``/``now``/``log``.
 """
 
 from __future__ import annotations
@@ -86,27 +86,27 @@ def test_evaluate_passes_with_min_zero_only_checks_success():
 # --------------------------------------------------------------------------- #
 
 
-class _FakeHttp:
-    """Скриптованный http: очередь ответов по (method) либо по последовательности."""
+class _FakePoll:
+    """Скриптованный опрос: отдаёт статусы по очереди, последний — повторяется."""
 
-    def __init__(self, responses: List[Dict[str, Any]]):
-        self._responses = list(responses)
-        self.calls: List[tuple] = []
+    def __init__(self, statuses: List[Dict[str, Any]]):
+        self._statuses = list(statuses)
+        self.calls: List[str] = []
 
-    def __call__(self, method: str, url: str, timeout: float) -> Dict[str, Any]:
-        self.calls.append((method, url))
-        return self._responses.pop(0)
+    def __call__(self, task_id: str) -> Dict[str, Any]:
+        self.calls.append(task_id)
+        return self._statuses.pop(0) if len(self._statuses) > 1 else self._statuses[0]
 
 
-def _run(http: _FakeHttp, **overrides) -> int:
+def _run(poll: _FakePoll, *, submit=lambda region, theme: "abc", **overrides) -> int:
     kwargs = dict(
-        base_url="http://127.0.0.1:8000",
         region="mi",
         theme="novost",
         min_posts=1,
         timeout=30,
         poll_interval=0,
-        http=http,
+        submit=submit,
+        poll=poll,
         sleep=lambda _s: None,
         now=_fake_clock(),
         log=lambda _m: None,
@@ -127,63 +127,64 @@ def _fake_clock(step: float = 1.0):
 
 
 def test_run_smoke_happy_path_returns_zero():
-    http = _FakeHttp(
+    submitted: List[tuple] = []
+
+    def _submit(region, theme):
+        submitted.append((region, theme))
+        return "abc"
+
+    poll = _FakePoll(
         [
-            {"task_id": "abc", "state": "PENDING"},  # POST trigger
-            {"task_id": "abc", "state": "PROGRESS", "ready": False},  # GET poll 1
+            {"task_id": "abc", "state": "PROGRESS", "ready": False},
             {"task_id": "abc", "state": "SUCCESS", "ready": True, "result": _ok_result(2)},
         ]
     )
-    assert _run(http) == 0
-    assert http.calls[0][0] == "POST"
-    assert "/api/regions/mi/diagnostics?theme=novost" in http.calls[0][1]
-    assert http.calls[-1][0] == "GET"
+    assert _run(poll, submit=_submit) == 0
+    assert submitted == [("mi", "novost")]
+    assert poll.calls and all(t == "abc" for t in poll.calls)
+
+
+def test_run_smoke_returns_2_when_submit_fails():
+    def _boom(region, theme):
+        raise RuntimeError("Celery недоступен")
+
+    assert _run(_FakePoll([{}]), submit=_boom) == 2
 
 
 def test_run_smoke_returns_2_when_no_task_id():
-    http = _FakeHttp([{"state": "ERROR"}])  # POST без task_id
-    assert _run(http) == 2
+    assert _run(_FakePoll([{}]), submit=lambda r, t: "") == 2
 
 
 def test_run_smoke_returns_1_on_task_failure():
-    http = _FakeHttp(
-        [
-            {"task_id": "abc"},
-            {"task_id": "abc", "state": "FAILURE", "ready": True, "error": "boom"},
-        ]
-    )
-    assert _run(http) == 1
+    poll = _FakePoll([{"task_id": "abc", "state": "FAILURE", "ready": True, "error": "boom"}])
+    assert _run(poll) == 1
 
 
 def test_run_smoke_returns_1_on_timeout():
     # Задача никогда не ready — дедлайн наступает (clock тикает быстрее timeout).
-    http = _FakeHttp([{"task_id": "abc"}] + [{"state": "PROGRESS", "ready": False}] * 50)
-    assert _run(http, timeout=5, now=_fake_clock(step=2.0)) == 1
+    poll = _FakePoll([{"state": "PROGRESS", "ready": False}])
+    assert _run(poll, timeout=5, now=_fake_clock(step=2.0)) == 1
 
 
 def test_run_smoke_returns_1_when_result_fails_evaluation():
-    http = _FakeHttp(
+    poll = _FakePoll(
         [
-            {"task_id": "abc"},
             {
                 "task_id": "abc",
                 "state": "SUCCESS",
                 "ready": True,
                 "result": {"success": False, "error": "No VK group ID for region mi"},
-            },
+            }
         ]
     )
-    assert _run(http) == 1
+    assert _run(poll) == 1
 
 
 def test_run_smoke_respects_min_posts_threshold():
-    http = _FakeHttp(
-        [
-            {"task_id": "abc"},
-            {"task_id": "abc", "state": "SUCCESS", "ready": True, "result": _ok_result(1)},
-        ]
+    poll = _FakePoll(
+        [{"task_id": "abc", "state": "SUCCESS", "ready": True, "result": _ok_result(1)}]
     )
-    assert _run(http, min_posts=5) == 1
+    assert _run(poll, min_posts=5) == 1
 
 
 # --------------------------------------------------------------------------- #
