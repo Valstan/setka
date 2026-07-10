@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import select
 
-from config.classifier import read_postulates
+from config.classifier import get_rule_stale_days, read_postulates
 from database.models_extended import (
     ClassificationCorrection,
     ClassificationRule,
@@ -46,7 +46,9 @@ async def render_effective_postulates(session) -> str:
     """Эффективные постулаты: базовый git-файл + утверждённые выученные правила.
 
     Это то, что отдаётся рутине в ``/postulates`` и идёт в промпт классификации.
-    Пусто выученных → возвращаем только базу (байт-в-байт, prompt-cache цел)."""
+    Пусто выученных → возвращаем только базу (байт-в-байт, prompt-cache цел).
+    Поданным правилам штампуется ``last_effective_at`` (aging, ADR-0005): правило,
+    давно не попадавшее в постулаты, панель подсветит кандидатом на вывод."""
     base = read_postulates()
     rules = (
         (
@@ -65,7 +67,43 @@ async def render_effective_postulates(session) -> str:
     for i, r in enumerate(rules, 1):
         scope = "" if not r.region_code else f" _(район {r.region_code})_"
         lines.append(f"{i}. {(r.rule_text or '').strip()}{scope}")
-    return base.rstrip() + "\n\n" + "\n".join(lines) + "\n"
+    rendered = base.rstrip() + "\n\n" + "\n".join(lines) + "\n"
+    now = datetime.utcnow()
+    for r in rules:
+        r.last_effective_at = now
+    await session.commit()
+    return rendered
+
+
+async def render_learned_snapshot(session) -> str:
+    """Детерминированный снапшот approved-правил для файла-аудита (ADR-0005, хвост Б).
+
+    Без timestamp генерации — байты меняются только при реальном изменении слоя,
+    поэтому git-дифф после захвата в репо содержательный. Источник истины — БД;
+    файл пишет beat ``snapshot_learned_rules`` (untracked-путь на проде), захват
+    в git-историю — шагом dev-сессии (PR-only, ADR-0002)."""
+    rules = (
+        (
+            await session.execute(
+                select(ClassificationRule)
+                .where(ClassificationRule.status == "approved")
+                .order_by(ClassificationRule.created_at, ClassificationRule.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    lines = ["# Снапшот выученных правил классификатора (ADR-0005)", ""]
+    if not rules:
+        lines.append("_Пусто — утверждённых правил нет._")
+        return "\n".join(lines) + "\n"
+    for i, r in enumerate(rules, 1):
+        scope = "" if not r.region_code else f" _(район {r.region_code})_"
+        decided = r.decided_at.date().isoformat() if r.decided_at else "?"
+        lines.append(
+            f"{i}. [id={r.id} {r.source}, утв. {decided}] {(r.rule_text or '').strip()}{scope}"
+        )
+    return "\n".join(lines) + "\n"
 
 
 async def fetch_corrections_for_distill(
@@ -169,12 +207,23 @@ async def record_rule_proposals(
 async def list_rules(
     session, *, status: Optional[str] = None, limit: int = 200
 ) -> List[Dict[str, Any]]:
-    """Правила для операторской панели (свежие первыми). ``status`` пуст → все."""
+    """Правила для операторской панели (свежие первыми). ``status`` пуст → все.
+
+    ``stale`` — aging-подсветка (ADR-0005 §Aging, #033): approved-правило, не
+    подававшееся в эффективные постулаты дольше ``CLASSIFIER_RULE_STALE_DAYS``
+    (свежеутверждённое без штампа меряем по ``decided_at``) — кандидат на retire."""
     stmt = select(ClassificationRule).order_by(ClassificationRule.created_at.desc()).limit(limit)
     if status:
         stmt = stmt.where(ClassificationRule.status == status)
     rows = (await session.execute(stmt)).scalars().all()
-    return [r.to_dict() for r in rows]
+    cutoff = datetime.utcnow() - timedelta(days=get_rule_stale_days())
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        d = r.to_dict()
+        ref = r.last_effective_at or r.decided_at or r.created_at
+        d["stale"] = bool(r.status == "approved" and ref and ref < cutoff)
+        out.append(d)
+    return out
 
 
 async def decide_rule(

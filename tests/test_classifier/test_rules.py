@@ -49,6 +49,70 @@ async def test_effective_appends_approved(db_session):
     assert "отклонённое" not in out  # rejected не подмешивается
 
 
+@pytest.mark.asyncio
+async def test_effective_stamps_last_effective_at(db_session):
+    # Поданное в постулаты правило получает штамп aging (ADR-0005 §Aging).
+    r = await _seed_rule(db_session, text="Правило со штампом", status="approved")
+    assert r.last_effective_at is None
+    await rules.render_effective_postulates(db_session)
+    await db_session.refresh(r)
+    assert r.last_effective_at is not None
+
+
+# ───────── render_learned_snapshot (хвост Б) ─────────
+
+
+@pytest.mark.asyncio
+async def test_snapshot_empty_is_deterministic(db_session):
+    out = await rules.render_learned_snapshot(db_session)
+    assert "Снапшот выученных правил" in out
+    assert "Пусто" in out
+    # детерминизм: повторный рендер байт-в-байт (нет timestamp генерации)
+    assert out == await rules.render_learned_snapshot(db_session)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_lists_approved_with_meta(db_session):
+    r = await _seed_rule(db_session, text="Первое правило", status="approved")
+    r.decided_at = datetime(2026, 7, 8, 12, 0)
+    r.region_code = "mi"
+    await db_session.commit()
+    await _seed_rule(db_session, text="черновик", status="proposed")  # не входит
+    out = await rules.render_learned_snapshot(db_session)
+    assert f"[id={r.id} routine, утв. 2026-07-08]" in out
+    assert "Первое правило" in out and "_(район mi)_" in out
+    assert "черновик" not in out
+    # снапшот не штампует last_effective_at — это не подача в постулаты
+    await db_session.refresh(r)
+    assert r.last_effective_at is None
+
+
+# ───────── list_rules: aging-подсветка (хвост В) ─────────
+
+
+@pytest.mark.asyncio
+async def test_list_rules_stale_flag(db_session):
+    old = await _seed_rule(db_session, text="давно не в деле", status="approved")
+    old.last_effective_at = datetime.utcnow() - timedelta(days=400)
+    fresh = await _seed_rule(db_session, text="свежее", status="approved", norm="n2")
+    fresh.last_effective_at = datetime.utcnow()
+    just_approved = await _seed_rule(
+        db_session, text="только что утв.", status="approved", norm="n3"
+    )
+    just_approved.decided_at = datetime.utcnow()  # штампа ещё нет — меряем по decided_at
+    stale_proposed = await _seed_rule(
+        db_session, text="старый черновик", status="proposed", norm="n4"
+    )
+    stale_proposed.created_at = datetime.utcnow() - timedelta(days=400)
+    await db_session.commit()
+    items = {x["rule_text"]: x for x in await rules.list_rules(db_session)}
+    assert items["давно не в деле"]["stale"] is True
+    assert items["свежее"]["stale"] is False
+    assert items["только что утв."]["stale"] is False
+    assert items["старый черновик"]["stale"] is False  # aging только для approved
+    assert items["свежее"]["last_effective_at"] is not None  # to_dict несёт поле
+
+
 # ───────── record_rule_proposals ─────────
 
 

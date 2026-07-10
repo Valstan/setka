@@ -1179,6 +1179,43 @@ def prune_collected_post_audit():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.snapshot_learned_rules")
+def snapshot_learned_rules():
+    """Ежедневный снапшот выученных правил (overlay ADR-0005) в файл на диске.
+
+    Пишет approved-правила из ``classification_rules`` в untracked-файл (дефолт
+    ``logs/classifier_learned_rules_snapshot.md``) — durable-аудит слоя вне БД.
+    Захват в git-историю — шагом dev-сессии (коммит с прода запрещён, PR-only
+    ADR-0002); контент детерминированный (без timestamp генерации), поэтому
+    git-дифф после захвата = реальное изменение слоя правил.
+    """
+    logger.info("Snapshotting learned classifier rules (ADR-0005 overlay)...")
+    try:
+        from config.classifier import get_rules_snapshot_path
+        from database.connection import AsyncSessionLocal
+        from modules.classifier.rules import render_learned_snapshot
+
+        async def snap():
+            async with AsyncSessionLocal() as session:
+                return await render_learned_snapshot(session)
+
+        content = run_coro(snap())
+        path = get_rules_snapshot_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        size = len(content.encode("utf-8"))
+        logger.info("learned rules snapshot written: %s (%s bytes)", path, size)
+        return {
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "path": str(path),
+            "bytes": size,
+        }
+    except Exception as e:
+        logger.error(f"snapshot_learned_rules failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 # Расписания (Beat Schedule)
 app.conf.beat_schedule = {
     # Проверка предложенных постов каждый час с 8:00 до 22:00 в X:15
@@ -1332,6 +1369,15 @@ app.conf.beat_schedule = {
     "prune-collected-post-audit-daily": {
         "task": "tasks.celery_app.prune_collected_post_audit",
         "schedule": crontab(minute=45, hour=3),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
+    # Снапшот выученных правил классификатора (overlay ADR-0005) в untracked-файл — 03:50 MSK
+    "snapshot-learned-rules-daily": {
+        "task": "tasks.celery_app.snapshot_learned_rules",
+        "schedule": crontab(minute=50, hour=3),
         "options": {
             "expires": 3600,
             "catchup": False,
