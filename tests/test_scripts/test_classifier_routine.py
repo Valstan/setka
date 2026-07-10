@@ -1,11 +1,18 @@
 """Тесты обвязки облачной рутины классификатора (scripts/classifier_routine.py).
 
-Покрывают чистую логику: валидацию пакета вердиктов (то, что модель чаще всего
-портит в JSON) и выбор базового URL из env. HTTP-функции (`fetch`/`submit`)
-не трогаем — они интеграционные, живут против прод-API.
+Покрывают чистую логику: валидацию пакетов вердиктов и черновиков правил (то,
+что модель чаще всего портит в JSON) и выбор базового URL из env. HTTP-функции
+(`fetch`/`submit`/`corrections`/`propose`) не трогаем — они интеграционные,
+живут против прод-API.
 """
 
-from scripts.classifier_routine import DEFAULT_API_BASE, api_base, validate_verdicts
+from scripts.classifier_routine import (
+    DEFAULT_API_BASE,
+    RULE_TEXT_MAX,
+    api_base,
+    validate_proposals,
+    validate_verdicts,
+)
 
 
 def _verdict(**overrides):
@@ -50,6 +57,55 @@ def test_confidence_bounds_and_bool_rejected():
 
 def test_merge_with_must_be_list():
     assert validate_verdicts({"verdicts": [_verdict(merge_with="1_2")]})
+
+
+def _proposal(**overrides):
+    base = {
+        "rule_text": "частные продажи (продам/куплю) — action=hold, не publish",
+        "rationale": "оператор трижды поправил publish→hold на объявлениях",
+        "evidence": [
+            {
+                "lip": "1_2",
+                "verdict_type": "action",
+                "ai_value": "publish",
+                "operator_value": "hold",
+            }
+        ],
+        "region_code": None,
+        "model": "test-model",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_valid_proposals_pass():
+    payload = {"proposals": [_proposal(), _proposal(rationale=None, evidence=None)]}
+    assert validate_proposals(payload) == []
+
+
+def test_proposals_not_a_dict_and_empty_list_rejected():
+    assert validate_proposals([_proposal()]) == ['ожидается объект {"proposals": [...]}']
+    assert validate_proposals({"proposals": []}) == ["пустой список proposals — нечего отправлять"]
+
+
+def test_proposal_rule_text_bounds_reported_with_index():
+    payload = {
+        "proposals": [
+            _proposal(rule_text="  a "),
+            _proposal(rule_text="x" * (RULE_TEXT_MAX + 1)),
+            _proposal(rule_text=None),
+        ]
+    }
+    errors = validate_proposals(payload)
+    assert len(errors) == 3
+    assert all("rule_text" in e for e in errors)
+    assert errors[0].startswith("[0]") and errors[2].startswith("[2]")
+
+
+def test_proposal_rationale_and_evidence_types():
+    assert validate_proposals({"proposals": [_proposal(rationale="x" * 501)]})
+    assert validate_proposals({"proposals": [_proposal(evidence="1_2")]})
+    assert validate_proposals({"proposals": [_proposal(), "не объект"]}) == ["[1] не объект"]
 
 
 def test_api_base_env_override_strips_trailing_slash(monkeypatch):
