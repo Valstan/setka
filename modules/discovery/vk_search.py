@@ -286,8 +286,10 @@ def _harvest_repost_owner_ids(
         posts_count: сколько последних постов читать (default 100).
 
     Returns:
-        Список уникальных положительных vk_id. Сам ``main_group_id`` исключён.
-        Пустой список при любой ошибке (закрытая стена / VK API error).
+        Список уникальных положительных vk_id **сообществ**. Сам
+        ``main_group_id`` исключён. Репосты постов ЛИЧНЫХ профилей
+        (``owner_id >= 0``) отбрасываются — см. ниже. Пустой список при
+        любой ошибке (закрытая стена / VK API error).
     """
     if not main_group_id:
         return []
@@ -301,13 +303,19 @@ def _harvest_repost_owner_ids(
     seen_ids: set[int] = set()
     for post in posts or []:
         for ch in post.get("copy_history") or []:
-            owner = ch.get("owner_id")
-            if owner is None:
-                continue
             try:
-                gid = abs(int(owner))
+                owner = int(ch.get("owner_id"))
             except (TypeError, ValueError):
                 continue
+            # VK copy_history.owner_id: отрицательный = сообщество,
+            # положительный = ЛИЧНЫЙ профиль пользователя. Репост поста
+            # пользователя НЕ добавляем в community-пул — иначе личные профили
+            # протекают в communities (dead-ведро миграции 050 состояло в
+            # основном из них, brain 2026-06-30). Совпадает с
+            # discover_scan.py::extract_repost_owner_ids.
+            if owner >= 0:
+                continue
+            gid = abs(owner)
             if gid == own_id:
                 continue
             seen_ids.add(gid)

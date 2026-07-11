@@ -224,9 +224,16 @@ Sabantuy, малмыж×3, trener, будущие футбол/такси). tren
   (NULL = чисто; transient-код тоже виден до следующего чистого прогона). Машинный split dead
   теперь SQL'ем: 18/100 «удалён» vs 15/203 «недоступен — re-probe перед kill» (#041).
   _Деплой: миграция 058 + restart worker._ Наполнится с ближайших weekly recheck'ов.
-- 🟢 **Бэклог (brain 2026-06-30):** закрыть протечку discovery/seed, пускавшую ЛИЧНЫЕ VK-профили в
-  community-пул (dead-ведро миграции 050 состояло в основном из них) — валидировать на входе, что
-  vk_id принадлежит сообществу, а не пользователю.
+- ~~🟢 **Бэклог (brain 2026-06-30):** закрыть протечку discovery/seed, пускавшую ЛИЧНЫЕ VK-профили в
+  community-пул~~ Закрыто 2026-07-11 (этот PR): (1) discovery — `_harvest_repost_owner_ids`
+  (`modules/discovery/vk_search.py`) теперь берёт только `copy_history.owner_id < 0` (сообщества),
+  отбрасывая репосты постов пользователей (`owner_id >= 0`); совпадает с уже-защищённым
+  `discover_scan.py::extract_repost_owner_ids`. Прочие входы discovery (`groups.search`/`getById`/
+  `getByRefs`, info_links) VK и так фильтрует до сообществ. (2) seed — `seed_region_communities.py`
+  получил best-effort VK-валидацию (`groups.getById` подтверждает каждый vk_id как сообщество; личные
+  профили/удалённые отсеиваются с предупреждением; без токена — пропуск, флаг `--no-validate`).
+  +4 теста discovery/seed. _Только код: деплой = git pull + restart worker (discovery в Celery); сидер —
+  ручной скрипт скила._
 
 ### 🌐 VK-шлюз — ворота доступа в VK для других проектов @valstan (запрос владельца 2026-06-26)
 

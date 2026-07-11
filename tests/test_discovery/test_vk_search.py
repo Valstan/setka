@@ -512,24 +512,37 @@ def test_discover_keeps_small_village_with_two_distinct_locality_matches():
 # ───────── ИНФО-страница репосты ─────────
 
 
-def test_harvest_repost_owner_ids_returns_unique_positives_excluding_self():
-    """copy_history.owner_id собирается как уникальные положительные id;
-    сам main_group_id исключается; знак нормализуется через abs()."""
+def test_harvest_repost_owner_ids_keeps_only_community_owners_excluding_self():
+    """Только сообщества (``owner_id < 0``) собираются как положительные id;
+    сам main_group_id исключается; репосты ЛИЧНЫХ профилей (``owner_id >= 0``)
+    отбрасываются — иначе личные профили протекают в пул (dead-ведро 050)."""
     client = MagicMock()
     client.get_wall_posts.return_value = [
         {"copy_history": [{"owner_id": -111}, {"owner_id": -222}]},  # 111, 222
         {"copy_history": [{"owner_id": -222}]},  # dup
         {"text": "no copy_history"},
         {"copy_history": [{"owner_id": -42}]},  # сам main_group → исключить
-        {"copy_history": [{"owner_id": 333}]},  # уже положительный (теоретически)
+        {"copy_history": [{"owner_id": 333}]},  # ЛИЧНЫЙ профиль → отбросить
+        {"copy_history": [{"owner_id": 0}]},  # owner_id 0 (не сообщество) → отбросить
         {"copy_history": [{"owner_id": None}, {"owner_id": "broken"}]},  # шум
     ]
     out = _harvest_repost_owner_ids(client, main_group_id=42)
-    assert out == [111, 222, 333]
+    assert out == [111, 222]
     # wall.get вызывается с отрицательным owner_id (group convention в VK API).
     client.get_wall_posts.assert_called_once()
     kwargs = client.get_wall_posts.call_args.kwargs
     assert kwargs["owner_id"] == -42
+
+
+def test_harvest_repost_owner_ids_drops_personal_profile_reposts():
+    """Стена, где главная репостит только посты пользователей (положительные
+    owner_id) → пустой пул кандидатов (не протекают личные профили)."""
+    client = MagicMock()
+    client.get_wall_posts.return_value = [
+        {"copy_history": [{"owner_id": 555}, {"owner_id": 666}]},  # оба — люди
+        {"copy_history": [{"owner_id": 777}]},
+    ]
+    assert _harvest_repost_owner_ids(client, main_group_id=42) == []
 
 
 def test_harvest_repost_owner_ids_returns_empty_on_vk_error():
