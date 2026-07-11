@@ -61,6 +61,10 @@ def client():
     async def radar_page():
         return {"page": "radar"}
 
+    @app.get("/oidc/authorize")
+    async def oidc_authorize():
+        return {"page": "authorize"}
+
     @app.get("/api/radar/sources")
     async def radar_api():
         return {"radar": "zone"}
@@ -98,6 +102,26 @@ def test_browser_get_redirects_to_login(client):
 def test_garbage_cookie_is_401(client):
     client.cookies.set(auth.SESSION_COOKIE, "garbage")
     assert client.get("/api/regions").status_code == 401
+
+
+def test_oidc_authorize_redirects_to_login_without_browser_accept(client):
+    # front-channel GET: curl/мониторинг без Accept: text/html должен получить
+    # 302 на login, а не ложный 401 (запрос trener через brain 2026-07-10).
+    resp = client.get(
+        "/oidc/authorize?client_id=trener&response_type=code",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    loc = resp.headers["location"]
+    assert loc.startswith("/login?next=")
+    # query authorize-запроса сохраняется в next, чтобы после логина вернуться.
+    assert "client_id" in loc and "response_type" in loc
+
+
+def test_oidc_authorize_still_401_for_non_get(client):
+    # POST на front-channel путь не редиректим — только GET (спек authorize=GET).
+    resp = client.post("/oidc/authorize", follow_redirects=False)
+    assert resp.status_code == 401
 
 
 # ─── Роли ────────────────────────────────────────────────────────
