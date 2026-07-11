@@ -185,6 +185,11 @@ Sabantuy, малмыж×3, trener, будущие футбол/такси). tren
   терминируется на edge-прокси Джино — **не** certbot на боксе). nginx server-block
   `/etc/nginx/conf.d/radar_id.conf` (вне git, прод-правка). **Внешний smoke зелёный:** discovery/jwks/
   login = 200; authorize→login redirect с сохранением query; vk-login → 302 на id.vk.ru + PKCE + App ID.
+- ✅ **AuthGate `/oidc/authorize` 401→302 для не-браузерных клиентов (trener пункт #1)** — закрыто 2026-07-11
+  ([PR #332](https://github.com/Valstan/setka/pull/332), задеплоено): `FRONT_CHANNEL_GET_PATHS` в
+  `middleware/auth_gate.py` — неаутентифицированный GET на authorize-эндпоинт всегда 302 на login (front-channel,
+  спекосообразнее), даже без браузерного `Accept`; curl-смоук без `-A Mozilla` больше не даёт ложный 401. Ответ
+  brain — `mailbox/to-brain/2026-07-11-authgate-oidc-authorize-302-fixed.md`.
 - 🟢 **Остаток Ф1:** (1) round-trip-smoke с trener (#011) — владелец передаёт trener client_secret из
   root-файла + issuer; когда trener построит свою сторону → пинг brain, подключит GONBA/Sabantuy.
   (2) владельцу — физически проверить `https://вход.вмалмыже.рф/auth/vk/login` (вход через ВК → /radar).
