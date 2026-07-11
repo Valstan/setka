@@ -16,6 +16,12 @@ password-fragment (смена пароля / деактивация инвали
 Неаутентифицированный запрос: браузерный GET (Accept: text/html) → 302 на
 /login?next=..., API/прочее → 401 JSON. 403 — аутентифицирован, но не та роль.
 
+Исключение — front-channel GET-эндпоинты (OIDC authorize, FRONT_CHANNEL_GET_PATHS):
+в них по спеку всегда приходят через redirect браузера, поэтому неаутентифи-
+цированный GET **всегда** → 302 на /login, даже без Accept: text/html. Иначе
+curl/мониторинг без браузерного заголовка видит ложный 401 «сломан» (запрос
+trener через brain 2026-07-10).
+
 Kill-switch: env ``WEB_AUTH_ENABLED=0`` отключает гейт целиком (локальный dev
 без БД-юзеров). Дефолт — включено; на проде не выключать.
 
@@ -61,6 +67,13 @@ PUBLIC_PREFIXES = (
     # ВК-вход Радар-ID: пользователь ещё НЕ аутентифицирован (это и есть вход).
     "/auth/vk/",
 )
+
+# Front-channel GET-эндпоинты: в них ходят только через redirect браузера
+# (OIDC authorization endpoint). Неаутентифицированный GET сюда → ВСЕГДА 302 на
+# /login, независимо от Accept — чтобы curl/мониторинг без браузерного заголовка
+# не получал ложный 401 (запрос trener через brain 2026-07-10). Точное сравнение
+# пути: не хотим ловить гипотетический /oidc/authorize-что-то.
+FRONT_CHANNEL_GET_PATHS = ("/oidc/authorize",)
 
 # Куда пускаем роль radar (плюс PUBLIC сверху):
 RADAR_PREFIXES = (
@@ -117,7 +130,13 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
 
         user = await self._authenticate(request)
         if user is None:
-            if _wants_html(request) and request.method == "GET":
+            # Редирект на login для браузерного GET, а также для front-channel
+            # GET-путей (OIDC authorize) даже без браузерного Accept — они
+            # достижимы только через redirect user-agent'а, 401 там бессмыслен.
+            redirect_to_login = request.method == "GET" and (
+                _wants_html(request) or path in FRONT_CHANNEL_GET_PATHS
+            )
+            if redirect_to_login:
                 # next с query string: OIDC authorize (и любой GET с параметрами)
                 # обязан вернуться на полный URL, не только path.
                 next_url = request.url.path
