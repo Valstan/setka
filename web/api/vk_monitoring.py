@@ -11,7 +11,6 @@ from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config.runtime import VK_TOKENS
 from database.connection import get_db_session
 from database.models import Post, Region, VKToken
 
@@ -154,7 +153,7 @@ async def get_vk_stats(db: AsyncSession = Depends(get_db_session)):
         return VKStatsResponse(
             requests_today=0,
             requests_per_hour=0,
-            active_tokens=len([token for token in VK_TOKENS.values() if token]),
+            active_tokens=0,  # error-path: БД недоступна — источник токенов тоже БД
             last_scan=None,
             scan_frequency=0.0,
             current_load="unknown",
@@ -166,10 +165,23 @@ async def get_vk_stats(db: AsyncSession = Depends(get_db_session)):
 
 @router.get("/validate-tokens", response_model=List[TokenValidationResponse])
 async def validate_vk_tokens():
-    """Validate all VK tokens"""
+    """Validate all VK user tokens (источник — БД ``vk_tokens``, 2026-07-12)."""
+    from sqlalchemy import select
+
+    from database.connection import AsyncSessionLocal
+    from database.models import VKToken
+
     results = []
 
-    for name, token in VK_TOKENS.items():
+    async with AsyncSessionLocal() as session:
+        rows = (
+            (await session.execute(select(VKToken).where(VKToken.community_id.is_(None))))
+            .scalars()
+            .all()
+        )
+    user_tokens = {row.name.upper(): row.token for row in rows}
+
+    for name, token in user_tokens.items():
         if not token:
             results.append(
                 TokenValidationResponse(

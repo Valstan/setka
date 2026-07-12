@@ -251,17 +251,20 @@ def parse_and_publish_theme(
             )
             group_names = {str(abs(row[0])): row[1] for row in comm_meta.fetchall()}
 
-            # 5. Parse — берём READ-токен с фильтром disabled_until (миграция 014).
-            # ВАЖНО: НЕ `next(iter(get_parse_tokens().values()))` — это вернёт
-            # заблокированный VALSTAN и worker уйдёт в loop с error 5
-            # (инцидент 2026-05-27, hot-fix PR).
-            from modules.vk_token_router import get_active_parse_tokens
+            # 5. Parse — живой READ-токен с probe'ом (инциденты 2026-05-27 и
+            # 2026-07-12): «первый из активных» без перебора заклинивал парсинг
+            # на мёртвом-но-включённом токене (error 5 на каждом вызове, 0
+            # постов, 0 сводок — 4 дня тишины). pick_healthy_read_token сам
+            # кладёт мёртвый токен в cooldown (report_error) и берёт следующий.
+            from modules.vk_token_router import pick_healthy_read_token
 
-            parse_tokens = await get_active_parse_tokens(session)
-            parse_token = next(iter(parse_tokens.values())) if parse_tokens else None
-            if not parse_token:
-                return {"success": False, "error": "No active VK READ tokens (all in cooldown?)"}
-            vk_client = VKClient(parse_token)
+            parse_cand = await pick_healthy_read_token(session)
+            if not parse_cand:
+                return {
+                    "success": False,
+                    "error": "No healthy VK READ tokens (all dead or in cooldown?)",
+                }
+            vk_client = VKClient(parse_cand.token)
             parser = AdvancedVKParser(vk_client)
             pipeline_eff = get_effective_pipeline_settings(region_config, theme)
 
@@ -533,7 +536,7 @@ def parse_and_publish_theme(
                     from modules.vk_monitor.vk_client_async import VKClientAsync
 
                     extra_tags = get_telegram_extra_hashtags(region.telegram_channel)
-                    async with VKClientAsync(parse_token) as tg_vk:
+                    async with VKClientAsync(parse_cand.token) as tg_vk:
                         for kind, d, pub in results:
                             if not pub.get("success", False):
                                 continue

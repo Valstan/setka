@@ -28,11 +28,11 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, validator
 from sqlalchemy import select, update
 
-from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Community, CommunityCandidate, Region
 from modules.discovery.ai_categorizer import ALLOWED_CATEGORIES
 from modules.vk_monitor.vk_client import VKClient
+from modules.vk_token_router import get_healthy_read_token
 from tasks.discovery_tasks import parse_list_field, run_discovery_for_region_async
 from utils.vk_url import parse_vk_group_url
 
@@ -50,9 +50,9 @@ _VALID_STATUSES = {"pending", "approved", "rejected", "deferred"}
 @router.get("/cities")
 async def resolve_city(q: str = Query(..., min_length=1, max_length=120)):
     """Resolve human-readable city name → list of VK cities for dropdown."""
-    token = next((t for t in (VK_TOKENS or {}).values() if t), None)
+    token = await get_healthy_read_token()
     if not token:
-        raise HTTPException(status_code=503, detail="no VK parse-token configured")
+        raise HTTPException(status_code=503, detail="no healthy VK parse-token")
     client = VKClient(token=token)
     items = client.resolve_city(query=q)
     # Trim payload to fields useful for UI.
@@ -994,9 +994,9 @@ async def resolve_vk_url(url: str = Query(..., min_length=1, max_length=500)):
     if group_id is None and screen_name is None:
         raise HTTPException(status_code=400, detail="не удалось распознать VK-ссылку")
 
-    token = next((t for t in (VK_TOKENS or {}).values() if t), None)
+    token = await get_healthy_read_token()
     if not token:
-        raise HTTPException(status_code=503, detail="no VK parse-token configured")
+        raise HTTPException(status_code=503, detail="no healthy VK parse-token")
     client = VKClient(token=token)
 
     if group_id is None and screen_name is not None:

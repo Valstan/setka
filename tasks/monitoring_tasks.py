@@ -9,13 +9,20 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, select
 
 from celery_app import app
-from config.runtime import VK_TOKENS
 from database.connection import AsyncSessionLocal
 from database.models import Post
 from modules.monitoring.health_checker import HealthChecker
 from modules.vk_monitor.monitor import VKMonitor
 
 logger = logging.getLogger(__name__)
+
+
+async def _active_read_tokens() -> list:
+    """Живые READ-токены из БД (единый источник 2026-07-12, был env)."""
+    from modules.vk_token_router import get_active_parse_tokens
+
+    async with AsyncSessionLocal() as session:
+        return [t for t in (await get_active_parse_tokens(session)).values() if t]
 
 
 @app.task(bind=True, name="tasks.monitoring_tasks.scan_all_communities")
@@ -43,8 +50,8 @@ def scan_all_communities(self):
 async def _scan_all_communities_async():
 
     try:
-        # Get VK tokens
-        tokens = [token for token in VK_TOKENS.values() if token]
+        # Get VK tokens (БД — единый источник)
+        tokens = await _active_read_tokens()
 
         if not tokens:
             logger.error("No VK tokens available")
@@ -97,7 +104,7 @@ def scan_region(self, region_code: str):
 async def _scan_region_async(region_code: str):
 
     try:
-        tokens = [token for token in VK_TOKENS.values() if token]
+        tokens = await _active_read_tokens()
         monitor = VKMonitor(tokens)
 
         result = await monitor.scan_region(region_code)

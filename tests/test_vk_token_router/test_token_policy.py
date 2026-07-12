@@ -2,10 +2,12 @@
 
 Покрывают:
 - pick(READ): возвращает все active user-токены, включая Vita.
-- pick(COMMUNITY_WRITE): community-токен первым, потом whitelist минус Vita.
-- pick(USER_WRITE): только whitelist минус Vita.
-- Vita НЕ попадает в WRITE-кандидаты ни при каких условиях.
+- pick(COMMUNITY_WRITE): каскад 2026-07-12 — community-токен первым, потом
+  whitelist (VALSTAN), резерв (VITA) строго последним.
+- pick(USER_WRITE): whitelist, затем резерв; hard deny-list побеждает всё.
 - Valstan в cooldown (disabled_until > now) → выпадает из всех op'ов.
+- pick_healthy_read_token: probe отсеивает мёртвый токен (cooldown) и отдаёт
+  следующий живой (инцидент 2026-07-12).
 - report_error(name, 5) → disabled_until = now + 24h; (29) → 1h; (100) → только consecutive++
 - report_success(name) → consecutive_errors = 0.
 - disable(name, hours) / enable(name) — manual control.
@@ -311,8 +313,9 @@ async def test_pick_skips_valstan_in_cooldown():
         assert "VALSTAN" not in read_names
 
         write_out = await policy.pick(TokenOp.USER_WRITE)
-        # Vita запрещена, Valstan в cooldown → пусто
-        assert write_out == []
+        # Valstan в cooldown; Vita — резерв (2026-07-12) → единственный кандидат,
+        # каскад community → VALSTAN → VITA дошёл до последнего эшелона.
+        assert [c.name for c in write_out] == ["VITA"]
 
 
 # ---------------------------------------------------------------------------
@@ -555,3 +558,205 @@ async def test_active_parse_tokens_skips_empty_token():
     session = _make_session_with_rows(rows_by_query=[rows])
     out = await get_active_parse_tokens(session)
     assert out == {"VITA": "tok_vita"}
+
+
+# ---------------------------------------------------------------------------
+# Каскад публикации 2026-07-12: community → VALSTAN → VITA (резерв последним)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pick_community_write_cascade_order():
+    """COMMUNITY_WRITE: community-токен → whitelist (VALSTAN) → резерв (VITA)."""
+    rows_active = [
+        _vk_token_row("VITA", "tok_vita"),  # нарочно первым в БД — порядок задаёт каскад
+        _vk_token_row("VALSTAN", "tok_v"),
+    ]
+    comm_rows = [_vk_token_row("COMM_777", "tok_comm", community_id=777)]
+    session = _make_session_with_rows(rows_by_query=[rows_active, comm_rows])
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+            "VK_TOKEN_VALSTAN": "tok_v",
+            "VK_TOKEN_VITA": "tok_vita",
+            "VK_PUBLISH_TOKEN_NAMES": "VALSTAN",
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        policy = TokenPolicy(session)
+        out = await policy.pick(TokenOp.COMMUNITY_WRITE, group_id=-777)
+
+    assert [(c.name, c.source) for c in out] == [
+        ("COMM_777", "community"),
+        ("VALSTAN", "user"),
+        ("VITA", "user"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pick_user_write_reserve_last():
+    """USER_WRITE: whitelist сначала, резерв (VITA) строго последним."""
+    rows_active = [
+        _vk_token_row("VITA", "tok_vita"),
+        _vk_token_row("VALSTAN", "tok_v"),
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+            "VK_TOKEN_VALSTAN": "tok_v",
+            "VK_TOKEN_VITA": "tok_vita",
+            "VK_PUBLISH_TOKEN_NAMES": "VALSTAN",
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        out = await TokenPolicy(session).pick(TokenOp.USER_WRITE)
+
+    assert [c.name for c in out] == ["VALSTAN", "VITA"]
+
+
+@pytest.mark.asyncio
+async def test_pick_db_token_value_wins_over_env():
+    """Единый источник 2026-07-12: значение токена берётся из БД, не из env."""
+    rows_active = [_vk_token_row("VALSTAN", "db_tok")]
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+            "VK_TOKEN_VALSTAN": "stale_env_tok",  # рассинхрон: env отстал от БД
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        out = await TokenPolicy(session).pick(TokenOp.READ)
+
+    assert [(c.name, c.token) for c in out] == [("VALSTAN", "db_tok")]
+
+
+# ---------------------------------------------------------------------------
+# pick_healthy_read_token: probe + self-heal (инцидент 2026-07-12)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pick_healthy_read_token_skips_dead_and_cooldowns_it():
+    """Мёртвый первый токен (error 5) → cooldown + отдаётся следующий живой."""
+    import modules.vk_token_router as vtr
+
+    rows_active = [
+        _vk_token_row("VALSTAN", "dead_tok"),
+        _vk_token_row("VITA", "live_tok"),
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+
+    probed = []
+
+    def _fake_probe(token):
+        probed.append(token)
+        return 5 if token == "dead_tok" else None
+
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+            "VK_TOKEN_VALSTAN": "dead_tok",
+            "VK_TOKEN_VITA": "live_tok",
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        with patch.object(vtr, "_probe_token_sync", _fake_probe):
+            cand = await vtr.pick_healthy_read_token(session)
+
+    assert cand is not None
+    assert cand.name == "VITA"
+    assert probed == ["dead_tok", "live_tok"]
+
+
+@pytest.mark.asyncio
+async def test_pick_healthy_read_token_none_when_all_dead():
+    import modules.vk_token_router as vtr
+
+    rows_active = [_vk_token_row("VALSTAN", "dead1")]
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+            "VK_TOKEN_VALSTAN": "dead1",
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        with patch.object(vtr, "_probe_token_sync", lambda t: 5):
+            cand = await vtr.pick_healthy_read_token(session)
+    assert cand is None
+
+
+@pytest.mark.asyncio
+async def test_pick_healthy_read_token_network_glitch_skips_without_disable():
+    """Сетевой сбой probe (-1) — токен пропускается, но report_error не зовётся."""
+    import modules.vk_token_router as vtr
+
+    rows_active = [
+        _vk_token_row("VALSTAN", "glitchy"),
+        _vk_token_row("VITA", "live_tok"),
+    ]
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+            "VK_TOKEN_VALSTAN": "glitchy",
+            "VK_TOKEN_VITA": "live_tok",
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        report_calls = []
+        with (
+            patch.object(vtr, "_probe_token_sync", lambda t: -1 if t == "glitchy" else None),
+            patch.object(
+                TokenPolicy,
+                "report_error",
+                AsyncMock(side_effect=lambda *a: report_calls.append(a)),
+            ),
+        ):
+            cand = await vtr.pick_healthy_read_token(session)
+    assert cand is not None and cand.name == "VITA"
+    assert report_calls == []  # сетевой сбой ≠ вина токена

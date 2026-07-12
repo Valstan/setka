@@ -80,7 +80,13 @@ async def start_parsing(request: ParsingRequest):
     if not request.source.strip():
         raise HTTPException(status_code=400, detail="Источник не может быть пустым")
 
-    if not VK_TOKENS:
+    # Гейт по БД — единый источник токенов (2026-07-12); env — bootstrap-fallback.
+    from database.connection import AsyncSessionLocal
+    from modules.vk_token_router import get_active_parse_tokens
+
+    async with AsyncSessionLocal() as _s:
+        _db_tokens = await get_active_parse_tokens(_s)
+    if not _db_tokens and not VK_TOKENS:
         raise HTTPException(status_code=400, detail="VK токены не настроены")
 
     fmt = request.format.lower().strip()
