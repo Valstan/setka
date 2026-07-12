@@ -760,3 +760,71 @@ async def test_pick_healthy_read_token_network_glitch_skips_without_disable():
             cand = await vtr.pick_healthy_read_token(session)
     assert cand is not None and cand.name == "VITA"
     assert report_calls == []  # сетевой сбой ≠ вина токена
+
+
+# ---------------------------------------------------------------------------
+# Карусель чтения 2026-07-12: last_used ASC + штамп при выборе
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pick_read_orders_by_last_used_oldest_first():
+    """READ-кандидаты идут каруселью: давно не использованные первыми, NULL в голову."""
+    rows_active = [
+        _vk_token_row("VALSTAN", "tok_v"),
+        _vk_token_row("VITA", "tok_vita"),
+        _vk_token_row("MAMA", "tok_m"),
+    ]
+    rows_active[0].last_used = datetime(2026, 7, 12, 10, 0)  # использован недавно
+    rows_active[1].last_used = datetime(2026, 7, 12, 9, 0)  # раньше
+    rows_active[2].last_used = None  # никогда → первым
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        out = await TokenPolicy(session).pick(TokenOp.READ)
+    assert [c.name for c in out] == ["MAMA", "VITA", "VALSTAN"]
+
+
+@pytest.mark.asyncio
+async def test_pick_healthy_read_token_stamps_rotation():
+    """Успешный выбор штампует last_used (report_success) — замыкает карусель."""
+    import modules.vk_token_router as vtr
+
+    rows_active = [_vk_token_row("VITA", "live_tok")]
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        success_calls = []
+        with (
+            patch.object(vtr, "_probe_token_sync", lambda t: None),
+            patch.object(
+                TokenPolicy,
+                "report_success",
+                AsyncMock(side_effect=lambda name: success_calls.append(name)),
+            ),
+        ):
+            cand = await vtr.pick_healthy_read_token(session)
+    assert cand is not None and cand.name == "VITA"
+    assert success_calls == ["VITA"]

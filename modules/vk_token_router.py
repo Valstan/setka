@@ -295,10 +295,20 @@ class TokenPolicy:
         )
 
         if op == TokenOp.READ:
-            # READ: любой active token, Vita разрешена.
+            # READ: любой active token, Vita разрешена. Карусель (решение
+            # владельца 2026-07-12): порядок — давно не использованные первыми
+            # (last_used ASC, NULL = никогда → в голову), чтобы нагрузка чтения
+            # распределялась по токенам равномерно, а не била в один. Ротацию
+            # замыкает pick_healthy_read_token: успешный выбор штампует
+            # last_used через report_success → следующий вызов возьмёт другой.
+            def _last_used_key(name: str):
+                row = active_db.get(name)
+                lu = getattr(row, "last_used", None) if row is not None else None
+                return (lu is not None, lu or datetime.min)
+
             out: List[TokenCandidate] = []
-            for name, tok in user_tokens.items():
-                out.append(TokenCandidate(name=name, token=tok, source="user"))
+            for name in sorted(user_tokens.keys(), key=_last_used_key):
+                out.append(TokenCandidate(name=name, token=user_tokens[name], source="user"))
             return out
 
         # Каскад публикации (решение владельца 2026-07-12):
@@ -613,6 +623,12 @@ async def pick_healthy_read_token(session: AsyncSession) -> Optional[TokenCandid
     for cand in await policy.pick(TokenOp.READ):
         code = await asyncio.to_thread(_probe_token_sync, cand.token)
         if code is None:
+            # Штамп last_used → карусель: следующий pick(READ) поставит этот
+            # токен в хвост, нагрузка чтения распределяется равномерно.
+            try:
+                await policy.report_success(cand.name)
+            except Exception:  # pragma: no cover — ротация не должна ронять чтение
+                logger.exception("pick_healthy_read_token: report_success failed")
             return cand
         if code in _AUTO_DISABLE_CODES_HOURS:
             logger.warning(
