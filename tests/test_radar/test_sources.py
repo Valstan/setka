@@ -134,8 +134,11 @@ async def test_vk_fetch_new_normalizes_posts(monkeypatch):
                 {"no_id": True},
             ]
 
+    async def _fake_token():
+        return "tok"
+
     monkeypatch.setattr("modules.vk_monitor.vk_client_async.VKClientAsync", FakeClient)
-    monkeypatch.setattr("config.runtime.VK_TOKENS", {"VALSTAN": "tok"})
+    monkeypatch.setattr("modules.vk_token_router.get_healthy_read_token", _fake_token)
 
     source = SimpleNamespace(key="-218688001", type="vk")
     items = await vk_adapter.fetch_new(source)

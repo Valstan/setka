@@ -15,6 +15,8 @@ import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from modules.vk_token_router import TokenCandidate
+
 
 def _res(first=None, sfirst=None, sall=None, fall=None):
     r = MagicMock()
@@ -99,8 +101,8 @@ def test_dry_run_builds_preview_without_publish_or_commit():
         patch("database.connection.AsyncSessionLocal", lambda: cm),
         patch("tasks.parsing_scheduler_tasks.run_coro", lambda coro: asyncio.run(coro)),
         patch(
-            "modules.vk_token_router.get_active_parse_tokens",
-            AsyncMock(return_value={"T": "tok"}),
+            "modules.vk_token_router.pick_healthy_read_token",
+            AsyncMock(return_value=TokenCandidate(name="T", token="tok", source="user")),
         ),
         patch("modules.vk_monitor.vk_client.VKClient", return_value=vk_client_inst),
         patch("modules.vk_monitor.advanced_parser.AdvancedVKParser", return_value=parser_inst),

@@ -344,12 +344,11 @@ def check_suggested_posts():
     try:
         from sqlalchemy import select
 
-        from config.runtime import VK_TOKENS
         from database.connection import AsyncSessionLocal
         from database.models import Region
         from modules.notifications.storage import NotificationsStorage
         from modules.notifications.vk_suggested_checker import VKSuggestedChecker
-        from modules.vk_token_router import load_community_tokens
+        from modules.vk_token_router import load_community_tokens, pick_healthy_read_token
 
         async def check():
             # Получаем все регионы с главными группами
@@ -379,10 +378,12 @@ def check_suggested_posts():
                     for r in regions
                 ]
 
-                # Проверяем предложенные посты
-                vk_token = VK_TOKENS.get("VALSTAN")
+                # Проверяем предложенные посты — живой READ-токен из БД
+                # (probe + self-heal; был хардкод env VALSTAN — инцидент 2026-07-12)
+                cand = await pick_healthy_read_token(session)
+                vk_token = cand.token if cand else None
                 if not vk_token:
-                    logger.error("VK token not found")
+                    logger.error("No healthy VK READ token")
                     return []
 
                 community_tokens = await load_community_tokens(session)
@@ -778,12 +779,11 @@ def check_unread_messages():
     try:
         from sqlalchemy import select
 
-        from config.runtime import VK_TOKENS
         from database.connection import AsyncSessionLocal
         from database.models import Region
         from modules.notifications.storage import NotificationsStorage
         from modules.notifications.vk_messages_checker import VKMessagesChecker
-        from modules.vk_token_router import load_community_tokens
+        from modules.vk_token_router import load_community_tokens, pick_healthy_read_token
 
         async def check():
             async with AsyncSessionLocal() as session:
@@ -811,9 +811,11 @@ def check_unread_messages():
                     for r in regions
                 ]
 
-                vk_token = VK_TOKENS.get("VALSTAN")
+                # Живой READ-токен из БД (probe + self-heal; был env-хардкод VALSTAN)
+                cand = await pick_healthy_read_token(session)
+                vk_token = cand.token if cand else None
                 if not vk_token:
-                    logger.error("VK token not found")
+                    logger.error("No healthy VK READ token")
                     return []
 
                 # Community-токены для каждой группы (если есть) — checker предпочтёт их.
@@ -901,20 +903,20 @@ def check_recent_comments():
     try:
         from sqlalchemy import select
 
-        from config.runtime import VK_TOKENS
         from database.connection import AsyncSessionLocal
         from database.models import Region
         from modules.notifications.storage import NotificationsStorage
         from modules.notifications.vk_comments_checker import VKCommentsChecker
-        from modules.vk_token_router import load_community_tokens
+        from modules.vk_token_router import get_healthy_read_token, load_community_tokens
 
         cutoff_dt = datetime.utcnow() - timedelta(hours=24)
         cutoff_ts = int(cutoff_dt.timestamp())
 
         async def check():
-            vk_token = VK_TOKENS.get("VALSTAN")
+            # Живой READ-токен из БД (probe + self-heal; был env-хардкод VALSTAN)
+            vk_token = await get_healthy_read_token()
             if not vk_token:
-                logger.error("VK token not found")
+                logger.error("No healthy VK READ token")
                 return []
 
             async with AsyncSessionLocal() as session:

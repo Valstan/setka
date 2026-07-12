@@ -69,7 +69,7 @@ async def test_resolve_city_returns_trimmed_items():
         {"id": 0, "title": "Skip me — no id"},  # должно отфильтроваться
         {"id": 200},  # минимум полей — заполняем пустыми строками
     ]
-    with patch.object(discovery_api, "VK_TOKENS", {"VALSTAN": "token"}):
+    with patch.object(discovery_api, "get_healthy_read_token", AsyncMock(return_value="token")):
         with patch.object(discovery_api, "VKClient", return_value=fake_client):
             res = await discovery_api.resolve_city(q="Малмыж")
     items = res["items"]
@@ -84,7 +84,7 @@ async def test_resolve_city_returns_trimmed_items():
 
 
 async def test_resolve_city_503_when_no_token():
-    with patch.object(discovery_api, "VK_TOKENS", {}):
+    with patch.object(discovery_api, "get_healthy_read_token", AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await discovery_api.resolve_city(q="X")
     assert exc.value.status_code == 503
@@ -447,7 +447,7 @@ async def test_resolve_vk_url_club_id_returns_group_info():
             "photo_200": "http://example.com/p.jpg",
         }
     ]
-    with patch.object(discovery_api, "VK_TOKENS", {"VALSTAN": "t"}):
+    with patch.object(discovery_api, "get_healthy_read_token", AsyncMock(return_value="t")):
         with patch.object(discovery_api, "VKClient", return_value=fake_client):
             out = await discovery_api.resolve_vk_url(url="https://vk.com/club12345")
     assert out["group_id"] == 12345
@@ -465,7 +465,7 @@ async def test_resolve_vk_url_screen_name_resolves_via_vk():
     fake_client.get_groups_by_ids.return_value = [
         {"id": 777, "name": "Карачев ИНФО", "screen_name": "karachev_info"}
     ]
-    with patch.object(discovery_api, "VK_TOKENS", {"VALSTAN": "t"}):
+    with patch.object(discovery_api, "get_healthy_read_token", AsyncMock(return_value="t")):
         with patch.object(discovery_api, "VKClient", return_value=fake_client):
             out = await discovery_api.resolve_vk_url(url="https://vk.com/karachev_info")
     assert out["group_id"] == 777
@@ -475,7 +475,7 @@ async def test_resolve_vk_url_screen_name_resolves_via_vk():
 async def test_resolve_vk_url_unknown_screen_name_404():
     fake_client = MagicMock()
     fake_client.vk.utils.resolveScreenName.return_value = {"type": "user", "object_id": 123}
-    with patch.object(discovery_api, "VK_TOKENS", {"VALSTAN": "t"}):
+    with patch.object(discovery_api, "get_healthy_read_token", AsyncMock(return_value="t")):
         with patch.object(discovery_api, "VKClient", return_value=fake_client):
             with pytest.raises(HTTPException) as exc:
                 await discovery_api.resolve_vk_url(url="https://vk.com/somebody")

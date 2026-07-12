@@ -159,15 +159,18 @@ if isinstance(VK_TOKENS_JSON, dict):
 # ============================================================================
 # Все ``VK_TOKENS`` могут читать VK (парсинг стен, поиск групп, getById).
 # Публиковать (wall.post / wall.repost / wall.createComment / messages.send /
-# photos.upload в качестве сводки или ответа модератора) могут только
-# токены из явного whitelist ``VK_PUBLISH_TOKEN_NAMES``. Жёсткий deny-list
-# ``VK_NEVER_PUBLISH_TOKEN_NAMES`` исключает имена даже если они попали в
-# whitelist — это страховка от того что Vita когда-нибудь случайно появится
-# среди публикаторов.
+# photos.upload в качестве сводки или ответа модератора) могут токены из
+# whitelist ``VK_PUBLISH_TOKEN_NAMES`` (основной эшелон) и из
+# ``VK_RESERVE_PUBLISH_TOKEN_NAMES`` (резервный эшелон — пробуется строго
+# ПОСЛЕДНИМ, только когда community-токен и все основные публикаторы
+# недоступны; решение владельца 2026-07-12: каскад community → VALSTAN →
+# VITA). Жёсткий deny-list ``VK_NEVER_PUBLISH_TOKEN_NAMES`` исключает имена
+# даже если они попали в whitelist/резерв.
 #
 # Env vars:
-#   VK_PUBLISH_TOKEN_NAMES="VALSTAN"            # CSV; кто может публиковать
-#   VK_NEVER_PUBLISH_TOKEN_NAMES="VITA"         # CSV; кто никогда (override)
+#   VK_PUBLISH_TOKEN_NAMES="VALSTAN"            # CSV; основные публикаторы
+#   VK_RESERVE_PUBLISH_TOKEN_NAMES="VITA"       # CSV; резерв (последний шанс)
+#   VK_NEVER_PUBLISH_TOKEN_NAMES=""             # CSV; кто никогда (override)
 #   VK_PUBLISH_TOKEN_NAME="VALSTAN"             # legacy single; читается если
 #                                                 # VK_PUBLISH_TOKEN_NAMES пусто
 #
@@ -205,14 +208,30 @@ def get_publish_token_names() -> list:
 def get_never_publish_token_names() -> set:
     """Имена токенов, которым НИКОГДА нельзя публиковать (hard deny).
 
-    По умолчанию — ``{"VITA"}``. Override через env
-    ``VK_NEVER_PUBLISH_TOKEN_NAMES`` (CSV). Override НЕ может убрать всех —
-    пустая строка интерпретируется как «не задано» и применяется default.
+    По умолчанию — пусто. До 2026-07-12 default был ``{"VITA"}``; по решению
+    владельца Vita переведена в РЕЗЕРВНЫЙ эшелон публикации (см.
+    :func:`get_reserve_publish_token_names`) — публикует только когда
+    community-токен и все основные публикаторы недоступны. Env
+    ``VK_NEVER_PUBLISH_TOKEN_NAMES`` (CSV) возвращает жёсткий запрет при
+    необходимости.
     """
-    names = _csv_token_names(_getenv("VK_NEVER_PUBLISH_TOKEN_NAMES"))
+    return set(_csv_token_names(_getenv("VK_NEVER_PUBLISH_TOKEN_NAMES")))
+
+
+def get_reserve_publish_token_names() -> list:
+    """Резервные публикаторы — пробуются строго ПОСЛЕДНИМИ (last resort).
+
+    Каскад публикации (решение владельца 2026-07-12):
+    community-токен группы → основной whitelist (VALSTAN) → резерв (VITA).
+    Резерв срабатывает только когда все предыдущие кандидаты недоступны
+    (мёртвый токен / cooldown / VK-ошибка) — в штатном режиме Vita не
+    публикует. Env ``VK_RESERVE_PUBLISH_TOKEN_NAMES`` (CSV), default VITA.
+    Имена из hard deny-list вычищаются на уровне TokenPolicy/validate.
+    """
+    names = _csv_token_names(_getenv("VK_RESERVE_PUBLISH_TOKEN_NAMES"))
     if names:
-        return set(names)
-    return {"VITA"}
+        return names
+    return ["VITA"]
 
 
 def get_publish_token() -> Optional[str]:
@@ -224,16 +243,23 @@ def get_publish_token() -> Optional[str]:
     кандидатов с учётом ``disabled_until``.
     """
     never = get_never_publish_token_names()
+    reserve = [n for n in get_reserve_publish_token_names() if n not in never]
+    # Эшелон 1: whitelist без резервных имён (даже если владелец вписал VITA
+    # в whitelist — резерв всё равно пробуется последним).
     for name in get_publish_token_names():
-        if name in never:
+        if name in never or name in reserve:
             continue
         if name in VK_TOKENS:
             return VK_TOKENS[name]
-    if VK_TOKENS:
-        # Fallback: first available token, но всё ещё фильтруем never.
-        for name, tok in VK_TOKENS.items():
-            if name.upper() not in never and tok:
-                return tok
+    # Эшелон 2: любой нерезервный env-токен.
+    for name, tok in (VK_TOKENS or {}).items():
+        if tok and name.upper() not in never and name.upper() not in reserve:
+            return tok
+    # Эшелон 3 (last resort): резерв — каскад community → VALSTAN → VITA.
+    for name in reserve:
+        tok = VK_TOKENS.get(name)
+        if tok:
+            return tok
     return None
 
 
@@ -241,21 +267,28 @@ def validate_publish_token(token: str, token_name: str = "") -> bool:
     """Может ли этот токен публиковать в принципе (env-only, без БД).
 
     Используется как защёлка перед wall.post — даже если что-то проскочило
-    мимо TokenPolicy, мы не дадим Vita-токену уйти в публикацию.
+    мимо TokenPolicy, deny-list не даст запрещённому токену уйти в
+    публикацию. Резервные публикаторы (:func:`get_reserve_publish_token_names`,
+    обычно VITA) — легитимные кандидаты: порядок «строго последним» держит
+    TokenPolicy, защёлка проверяет только принципиальное право.
     """
     never = get_never_publish_token_names()
-    whitelist = set(get_publish_token_names())
+    allowed = set(get_publish_token_names()) | set(get_reserve_publish_token_names())
     if token_name:
         upper = token_name.upper()
         if upper in never:
             return False
-        if whitelist and upper not in whitelist:
+        if allowed and upper not in allowed:
             return False
+        # Имя дано и прошло проверки — токен может быть из БД (единый источник
+        # 2026-07-12), в env его может не быть; сверка по содержимому ниже —
+        # только для безымянных вызовов.
+        return True
     # Сверяем по содержимому токена: если он действительно один из
-    # whitelist'а — пропускаем.
+    # разрешённых env-токенов — пропускаем.
     for name, env_token in VK_TOKENS.items():
         if env_token == token:
-            return name.upper() not in never and (not whitelist or name.upper() in whitelist)
+            return name.upper() not in never and (not allowed or name.upper() in allowed)
     return False
 
 

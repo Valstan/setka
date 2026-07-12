@@ -259,63 +259,81 @@ class TokenPolicy:
             список — нет ни одного подходящего токена; caller обязан вернуть
             понятную ошибку («сейчас публиковать нечем»).
         """
-        from config.runtime import VK_TOKENS, get_never_publish_token_names, get_publish_token_names
+        from config.runtime import (
+            VK_TOKENS,
+            get_never_publish_token_names,
+            get_publish_token_names,
+            get_reserve_publish_token_names,
+        )
 
         never_publish = get_never_publish_token_names()
-        publish_whitelist = set(get_publish_token_names())
         active_db = await self._load_active()
+
+        # Единый источник токенов — БД (``/tokens`` UI, решение владельца
+        # 2026-07-12): значения берём из активных БД-строк. env ``VK_TOKENS``
+        # остаётся bootstrap/аварийным дополнением — добавляет только имена,
+        # которых в БД нет вовсе (или у которых в БД пустой token). Имя,
+        # выключенное в БД, env НЕ воскрешает.
+        user_tokens: Dict[str, str] = {
+            name: row.token for name, row in active_db.items() if row.token
+        }
+        for name, tok in (VK_TOKENS or {}).items():
+            upper = name.upper()
+            if not tok or upper in user_tokens:
+                continue
+            if await self._token_exists_but_disabled(upper):
+                continue
+            user_tokens[upper] = tok
 
         # UI-override (миграция 023): user-токены с ``role='publish'`` в БД
         # добавляются к env-whitelist'у АДДИТИВНО — роль только РАСШИРЯЕТ набор
-        # публикаторов, существующее env-поведение не меняется (нулевая
-        # регрессия). Hard deny-list ниже по-прежнему имеет приоритет.
-        db_publish = {
+        # публикаторов. Hard deny-list ниже по-прежнему имеет приоритет.
+        db_publish = sorted(
             name
             for name, row in active_db.items()
             if (getattr(row, "role", None) or "").lower() == "publish"
-        }
-        publish_whitelist = publish_whitelist | db_publish
-
-        # Имена токенов из env, которые сейчас не помечены disabled в БД.
-        # Если в БД записи о токене нет — считаем его «живым» (env — source of
-        # truth для существования, БД — для статуса).
-        env_active: Dict[str, str] = {}
-        for name, tok in (VK_TOKENS or {}).items():
-            if not tok:
-                continue
-            upper = name.upper()
-            db_row = active_db.get(upper)
-            # Если есть запись в БД и она НЕ в _load_active — значит disabled.
-            # _load_active отбрасывает disabled_until>now, так что отсутствие
-            # имени в active_db при наличии его в БД = disabled.
-            if upper not in active_db:
-                # Проверим, есть ли вообще запись в БД (через всю таблицу).
-                # Дешевле — отдельный SELECT существования.
-                if await self._token_exists_but_disabled(upper):
-                    continue
-            env_active[upper] = tok
-            _ = db_row  # keep linter quiet
+        )
 
         if op == TokenOp.READ:
             # READ: любой active token, Vita разрешена.
             out: List[TokenCandidate] = []
-            for name, tok in env_active.items():
+            for name, tok in user_tokens.items():
                 out.append(TokenCandidate(name=name, token=tok, source="user"))
             return out
 
-        if op == TokenOp.USER_WRITE:
-            # Только whitelist минус deny-list.
-            out = []
-            for name in publish_whitelist or env_active.keys():
-                if name in never_publish:
+        # Каскад публикации (решение владельца 2026-07-12):
+        # community-токен группы → основной whitelist (VALSTAN) → резерв
+        # (VITA, строго последним). Порядок внутри эшелона — порядок env-CSV;
+        # db role='publish' добираются после env-имён (детерминированно).
+        def _user_write_names() -> List[str]:
+            primary = list(get_publish_token_names()) + [
+                n for n in db_publish if n not in get_publish_token_names()
+            ]
+            if not primary:
+                # Нет явного whitelist'а — исторический fallback: все active
+                # user-токены (кроме резервных — те всё равно добавятся ниже).
+                reserve_set = {n for n in get_reserve_publish_token_names()}
+                primary = [n for n in user_tokens.keys() if n not in reserve_set]
+            ordered = primary + [n for n in get_reserve_publish_token_names() if n not in primary]
+            seen: set = set()
+            result: List[str] = []
+            for n in ordered:
+                if n in never_publish or n in seen:
                     continue
-                tok = env_active.get(name)
+                seen.add(n)
+                result.append(n)
+            return result
+
+        if op == TokenOp.USER_WRITE:
+            out = []
+            for name in _user_write_names():
+                tok = user_tokens.get(name)
                 if tok:
                     out.append(TokenCandidate(name=name, token=tok, source="user"))
             return out
 
         # COMMUNITY_WRITE: community-token (если group_id передан) первым,
-        # потом user-tokens из whitelist.
+        # потом user-tokens каскадом whitelist → reserve.
         out = []
         if group_id is not None:
             cid = abs(int(group_id))
@@ -330,10 +348,8 @@ class TokenPolicy:
                         community_id=cid,
                     )
                 )
-        for name in publish_whitelist or env_active.keys():
-            if name in never_publish:
-                continue
-            tok = env_active.get(name)
+        for name in _user_write_names():
+            tok = user_tokens.get(name)
             if tok:
                 out.append(TokenCandidate(name=name, token=tok, source="user"))
         return out
@@ -543,6 +559,90 @@ async def get_publish_candidates_for_group(
     Не делает report_error / report_success — caller ответственен за это.
     """
     return await TokenPolicy(session).pick(TokenOp.COMMUNITY_WRITE, group_id=group_id)
+
+
+# ----------------------------------------------------------------------
+# Healthy READ token: probe + self-healing cooldown (инцидент 2026-07-12)
+# ----------------------------------------------------------------------
+
+
+def _probe_token_sync(token: str) -> Optional[int]:
+    """Живость токена одним лёгким ``users.get`` (stdlib, без vk_api).
+
+    Returns:
+        ``None`` — токен здоров; ``int`` — VK error_code (5 = мёртв);
+        ``-1`` — сеть/прочий сбой (токен НЕ виноват, disable не делаем).
+    """
+    import json
+    import urllib.parse
+    import urllib.request
+
+    url = "https://api.vk.com/method/users.get?" + urllib.parse.urlencode(
+        {"access_token": token, "v": "5.199"}
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.load(resp)
+    except Exception:
+        return -1
+    err = data.get("error")
+    if err:
+        try:
+            return int(err.get("error_code"))
+        except (TypeError, ValueError):
+            return -1
+    return None
+
+
+async def pick_healthy_read_token(session: AsyncSession) -> Optional[TokenCandidate]:
+    """Первый READ-кандидат, живость которого подтверждена probe'ом.
+
+    Лечит инцидент 2026-07-12: мёртвый-но-включённый токен (VK error 5)
+    вставал первым в ротацию чтения и заклинивал парсинг на 4 дня — путь
+    чтения брал ``next(iter(...))`` без перебора и без auto-disable.
+    Теперь: probe ``users.get`` перед выдачей; мёртвый кандидат (5/17/29)
+    уходит в cooldown через ``report_error`` (+Telegram-alert) и берётся
+    следующий. Сетевые сбои probe'а (-1) токен не дисквалифицируют.
+
+    Цена — один лишний VK-вызов на выбор токена; выключенные probe'ом токены
+    не переопрашиваются до конца cooldown'а (их отсеивает ``_load_active``).
+    """
+    import asyncio
+
+    policy = TokenPolicy(session)
+    for cand in await policy.pick(TokenOp.READ):
+        code = await asyncio.to_thread(_probe_token_sync, cand.token)
+        if code is None:
+            return cand
+        if code in _AUTO_DISABLE_CODES_HOURS:
+            logger.warning(
+                "pick_healthy_read_token: %s мёртв (VK error %s) — cooldown, пробуем следующий",
+                cand.name,
+                code,
+            )
+            await policy.report_error(cand.name, code)
+        else:
+            logger.warning(
+                "pick_healthy_read_token: probe %s не прошёл (code %s) — пропуск без disable",
+                cand.name,
+                code,
+            )
+    return None
+
+
+async def get_healthy_read_token() -> Optional[str]:
+    """Convenience: строка первого живого READ-токена (собственная сессия).
+
+    Для мест без готовой AsyncSession (radar-адаптеры, notification-чекеры,
+    web-эндпоинты). ``None`` — живых READ-токенов нет; caller обязан вернуть
+    понятную ошибку. Замена хардкоду ``VK_TOKENS.get("VALSTAN")`` (env),
+    который в инциденте 2026-07-12 держал мёртвый токен до рестарта.
+    """
+    from database.connection import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        cand = await pick_healthy_read_token(session)
+        return cand.token if cand else None
 
 
 def get_active_parse_tokens_sync() -> Dict[str, str]:

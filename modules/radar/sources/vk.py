@@ -51,12 +51,12 @@ async def resolve_source(value: str) -> dict:
     key — owner_id стены строкой (отрицательный для сообществ). Бросает
     ValueError, если источник не находится в VK.
     """
-    from config.runtime import VK_TOKENS
     from modules.vk_monitor.vk_client_async import VKClientAsync
+    from modules.vk_token_router import get_healthy_read_token
 
-    token = VK_TOKENS.get("VALSTAN")
+    token = await get_healthy_read_token()
     if not token:
-        raise RuntimeError("VK token VALSTAN is not configured")
+        raise RuntimeError("No healthy VK READ token (all dead or in cooldown)")
 
     parsed = _parse_vk_value(value)
     async with VKClientAsync(token) as client:
@@ -114,12 +114,12 @@ async def fetch_new(source) -> List[FetchedItem]:
     безопасен: поллер не двигает fail_count при отсутствии исключения, а
     реальный обрыв сети поднимет исключение из aiohttp до поллера.
     """
-    from config.runtime import VK_TOKENS
     from modules.vk_monitor.vk_client_async import VKClientAsync
+    from modules.vk_token_router import get_healthy_read_token
 
-    token = VK_TOKENS.get("VALSTAN")
+    token = await get_healthy_read_token()
     if not token:
-        raise RuntimeError("VK token VALSTAN is not configured")
+        raise RuntimeError("No healthy VK READ token (all dead or in cooldown)")
 
     owner_id = int(source.key)
     async with VKClientAsync(token) as client:
