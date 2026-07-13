@@ -80,6 +80,21 @@ def get_gateway_quota_per_day() -> int:
         return 5000
 
 
+def get_gateway_global_quota_per_min() -> int:
+    """Агрегатный минутный бюджет шлюза — сумма по ВСЕМ потребителям.
+
+    Env ``GATEWAY_GLOBAL_QUOTA_PER_MIN`` (дефолт 120). Анти-бан-энфорс
+    (мандат brain 2026-07-12): per-consumer квоты по отдельности могут
+    суммарно продавить VK-лимит READ-токенов; этот слой держит общую
+    нагрузку шлюза ниже лимитов VK с запасом. Превышение → 429 потребителю
+    до расхода токена. 0 или отрицательное → слой выключен.
+    """
+    try:
+        return int(os.getenv("GATEWAY_GLOBAL_QUOTA_PER_MIN", "120"))
+    except ValueError:
+        return 120
+
+
 def gateway_disabled() -> bool:
     """Kill-switch шлюза (env ``GATEWAY_DISABLED``). Дефолт — включён (False)."""
     return os.getenv("GATEWAY_DISABLED", "0").strip().lower() in ("1", "true", "yes", "on")
