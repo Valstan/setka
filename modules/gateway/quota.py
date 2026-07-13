@@ -53,8 +53,14 @@ class GatewayQuota:
                 logger.warning("GatewayQuota: register_script failed: %s", e)
                 self._script = None
 
-    def check_and_consume(self, key_name: str) -> "tuple[bool, int]":
+    def check_and_consume(self, key_name: str, day: bool = True) -> "tuple[bool, int]":
         """Учесть один запрос ключа ``key_name``.
+
+        Args:
+            key_name: имя проекта (или служебное ``__gateway__`` для
+                агрегатного бюджета всего шлюза — мандат brain 2026-07-12).
+            day: проверять ли суточное окно (агрегатному слою хватает
+                минутного).
 
         Returns:
             ``(allowed, retry_after_sec)`` — ``allowed=False`` при превышении
@@ -66,13 +72,17 @@ class GatewayQuota:
         now = int(time.time())
         try:
             min_window = now // 60
-            day_window = now // 86400
             min_count = int(
                 self._script(keys=[f"{REDIS_KEY_PREFIX}:min:{key_name}:{min_window}"], args=[60])
             )
-            day_count = int(
-                self._script(keys=[f"{REDIS_KEY_PREFIX}:day:{key_name}:{day_window}"], args=[86400])
-            )
+            day_count = 0
+            if day:
+                day_window = now // 86400
+                day_count = int(
+                    self._script(
+                        keys=[f"{REDIS_KEY_PREFIX}:day:{key_name}:{day_window}"], args=[86400]
+                    )
+                )
         except Exception as e:
             # Redis отвалился в момент запроса — не блокируем (fail-open).
             logger.warning("GatewayQuota: Redis call failed for %s — fail-open: %s", key_name, e)
@@ -80,6 +90,6 @@ class GatewayQuota:
 
         if min_count > self.per_min:
             return False, 60 - (now % 60)
-        if day_count > self.per_day:
+        if day and day_count > self.per_day:
             return False, 86400 - (now % 86400)
         return True, 0

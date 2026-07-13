@@ -509,6 +509,30 @@ class VKToken(Base):
         return self.token
 
 
+class GatewayKey(Base):
+    """API-ключ потребителя VK-шлюза (``/api/gateway``) — БД как единый источник.
+
+    Миграция 059 (мандат brain 2026-07-12, паттерн #072): ключи живут в БД,
+    env ``GATEWAY_KEY_<PROJECT>`` — только bootstrap-fallback. Семантика merge
+    как у ``vk_tokens`` (#336): env добавляет лишь имена, которых нет в БД;
+    выключенный в БД ключ env НЕ воскрешает. Выдача/ротация — через
+    ``scripts/issue_gateway_key.py`` (событие пишется в usage-лог шлюза).
+    """
+
+    __tablename__ = "gateway_keys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), unique=True, nullable=False, index=True)  # KAZANSKAYA, GONBA...
+    secret = Column(Text, nullable=False)  # ключ plaintext (как vk_tokens.token; БД root-only)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    note = Column(Text, nullable=True)  # кто/зачем (заявка, письмо brain)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    rotated_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<GatewayKey(name='{self.name}', active={self.is_active})>"
+
+
 class MessageTemplate(Base):
     """Шаблон ответа на сообщение сообщества (этап 4b).
 

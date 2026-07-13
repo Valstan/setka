@@ -301,8 +301,17 @@ Sabantuy, малмыж×3, trener, будущие футбол/такси). tren
   индексы), restart web (G92-проверен), health 200. End-to-end проверено: вызовы `/community` + `/wall` →
   200 и записались в `gateway_requests` (project/method/params/status/duration); `/gateway-stats` под
   операторской сессией (401 без cookie).
-- 🟢 _Остаток:_ раздать ключи проектам-потребителям (владелец: `ssh setka "sudo grep '^GATEWAY_KEY_'
-  /etc/setka/setka.env"`) + браузер-проверка страницы `/gateway-stats` владельцем.
+- 🟢 _Остаток:_ раздать ключи проектам-потребителям (теперь self-serve:
+  `python scripts/issue_gateway_key.py <PROJECT>`) + браузер-проверка страницы `/gateway-stats` владельцем.
+- ✅ **Мандат brain 2026-07-12 (self-serve + анти-бан) — ПОСТРОЕНО 2026-07-13** (этот PR):
+  (1) ключ `GATEWAY_KEY_KAZANSKAYA` был выдан 07-12 (env+restart), smoke 07-13 — community/wall
+  `dk_malmyzh` 200; (2) БД `gateway_keys` — единый источник ключей (миграция 059, семантика merge = #336),
+  self-serve `scripts/issue_gateway_key.py` (issue/rotate/disable/import-env, выдача в usage-лог);
+  (3) агрегатный анти-бан бюджет `GATEWAY_GLOBAL_QUOTA_PER_MIN` (дефолт 120/мин суммарно) → 429 до
+  расхода токена; карусель/cooldown/alert унаследованы от #336/#337. Ack —
+  `mailbox/to-brain/2026-07-13-gateway-selfserve-antiban-done.md`.
+  _Деплой: миграция 059 (аддитивная) + git pull + restart web; после деплоя — `--import-env`
+  (перенос 6 env-ключей в БД)._
 - ✅ **v2: observability 401/429 + ретеншн (2026-06-29):** отказы **429** (известный проект) и **401**
   с неверным ключом (проект `(unknown)`; пустой ключ не пишем — шум сканеров) теперь логируются в
   `gateway_requests` и видны на `/gateway-stats`. Beat `prune-gateway-requests-daily` (03:40 MSK) чистит
