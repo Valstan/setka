@@ -287,6 +287,12 @@ def parse_and_publish_theme(
                     e,
                 )
 
+            # Нейро-вердикты классификатора (delete/hold) выключают посты из
+            # сводки (enforce, заказ владельца 2026-07-13). Fail-open внутри.
+            from modules.classifier.enforce import fetch_blocked_lips
+
+            blocked_lips = await fetch_blocked_lips(session, region_code)
+
             posts = await parser.parse_posts_from_communities(
                 community_ids=community_ids,
                 theme=theme,
@@ -295,6 +301,7 @@ def parse_and_publish_theme(
                 work_table_hash=list(region_hashes),
                 count_per_community=20,
                 pipeline_settings=pipeline_eff,
+                blocked_lips=blocked_lips,
             )
             parser_stats = parser.get_stats()
 

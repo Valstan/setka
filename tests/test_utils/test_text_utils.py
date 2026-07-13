@@ -172,6 +172,57 @@ def test_is_hard_spam_leaves_legit_local_ads(text):
     assert is_hard_spam(text) is False
 
 
+# ── обфускация + серые «услуги с документами» (инцидент 2026-07-13, бан VALSTAN) ──
+
+
+def test_is_hard_spam_catches_incident_obfuscated_license_scam():
+    # Точный фрагмент объявления, за которое VK забанил VALSTAN 2026-07-13:
+    # латинские двойники внутри кириллических слов («Оkaжу поmощь в полyчeнии…»).
+    text = (
+        "Оkaжу поmощь в полyчeнии водитeльcкого yдоcтовеpения нa спeцтexниky, "
+        "вoдный и нaзeмный tpанcпоpт. Поmощь в зaмене инострaнных прaв. "
+        "Поmощь с экзaменaми. Поmощь лишeнныm. Пишите в ЛС - Aндрeй"
+    )
+    assert is_hard_spam(text) is True
+
+
+def test_is_hard_spam_catches_dangerous_cargo_permit_scam():
+    # Второй блок того же объявления — «допуск на перевозку опасных грузов».
+    text = (
+        "Поmощь в полyчeнии допycка нa перево3кy опacных грyзов. "
+        "Официaльные доkyменты. Провеpkа по бaзе ГAИ. Полyчение в МPЭО."
+    )
+    assert is_hard_spam(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Те же услуги БЕЗ обфускации — ловятся паттернами напрямую.
+        "Окажу помощь в получении водительского удостоверения. Помощь лишенным.",
+        "Помощь в получении допуска на перевозку опасных грузов, официально",
+        "Куплю права без экзаменов",
+    ],
+)
+def test_is_hard_spam_catches_plain_license_scam(text):
+    assert is_hard_spam(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Единичная латинская буква/опечатка или легальные латинские слова целиком —
+        # НЕ обфускация, порог ≥3 смешанных слов не срабатывает.
+        "Правительство окажет помощь в получении господдержки аграриям",
+        "Школа объявляет набор на курсы. Запись по тел, WhatsApp",
+        "Отдам кoтёнка в добрые руки",  # одна подменённая буква — опечатка
+        "Расписание автобусов Малмыж — Kиров на праздники",
+    ],
+)
+def test_is_hard_spam_obfuscation_threshold_spares_legit(text):
+    assert is_hard_spam(text) is False
+
+
 def test_is_hard_spam_empty():
     assert is_hard_spam("") is False
     assert is_hard_spam(None) is False  # type: ignore[arg-type]

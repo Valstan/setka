@@ -451,6 +451,11 @@ async def run_cascaded_bulletin(
 
     pipeline_eff = get_effective_pipeline_settings(region_config, theme)
     parser = AdvancedVKParser(vk)
+    # Нейро-вердикты классификатора (delete/hold) выключают посты из каскадной
+    # сводки так же, как из районной (enforce 2026-07-13). Fail-open внутри.
+    from modules.classifier.enforce import fetch_blocked_lips
+
+    blocked_lips = await fetch_blocked_lips(session, region_code)
     posts = await parser.filter_posts_list(
         candidate_posts,
         theme=theme,
@@ -459,6 +464,7 @@ async def run_cascaded_bulletin(
         work_table_hash=list(region_hashes),
         recent_text_fingerprints=[],
         pipeline_settings=pipeline_eff,
+        blocked_lips=blocked_lips,
     )
     debug_counters["filtered_posts_after_pipeline"] = len(posts)
     parser_stats = parser.get_stats()

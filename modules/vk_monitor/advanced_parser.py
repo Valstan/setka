@@ -116,6 +116,7 @@ class AdvancedVKParser:
             "posts_filtered_no_region_words": 0,
             "posts_filtered_advertisement": 0,
             "posts_filtered_hard_spam": 0,
+            "posts_filtered_classifier": 0,
             "posts_filtered_no_attachments": 0,
             "posts_filtered_blacklist_text": 0,
             "posts_final_count": 0,
@@ -133,6 +134,7 @@ class AdvancedVKParser:
         count_per_community: int = 20,
         shuffle_communities: bool = True,
         pipeline_settings: Optional[Dict[str, Any]] = None,
+        blocked_lips: Optional[Set[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Parse posts from multiple communities with full filtering.
@@ -149,6 +151,9 @@ class AdvancedVKParser:
             count_per_community: Posts to fetch per community
             shuffle_communities: Randomize community order
             pipeline_settings: Слитые настройки из bulletin_filters (возраст, дедуп, лимит fetch)
+            blocked_lips: lip'ы, выключенные из публикации нейро-вердиктом
+                классификатора (delete/hold; правка оператора главнее ИИ) —
+                см. modules/classifier/enforce.fetch_blocked_lips
 
         Returns:
             List of filtered post data dicts
@@ -171,6 +176,7 @@ class AdvancedVKParser:
         self._batch_media_sigs: Set[str] = set()
         self._batch_text_simhashes: Set[str] = set()
         self._batch_token_sets = []
+        self._blocked_lips: Set[str] = set(blocked_lips or [])
 
         if pipeline_settings is None:
             self._max_post_age_hours = float(BULLETIN_MAX_POST_AGE_HOURS)
@@ -292,6 +298,7 @@ class AdvancedVKParser:
         work_table_hash: List[str],
         recent_text_fingerprints: Optional[List[str]] = None,
         pipeline_settings: Optional[Dict[str, Any]] = None,
+        blocked_lips: Optional[Set[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Тот же пайплайн _filter_post, что и при обходе сообществ, но для уже загруженных постов
@@ -310,6 +317,7 @@ class AdvancedVKParser:
         self._batch_media_sigs = set()
         self._batch_text_simhashes = set()
         self._batch_token_sets = []
+        self._blocked_lips = set(blocked_lips or [])
 
         if pipeline_settings is None:
             self._max_post_age_hours = float(BULLETIN_MAX_POST_AGE_HOURS)
@@ -441,6 +449,13 @@ class AdvancedVKParser:
         lip = lip_of_post(owner_id, post_id)
         if lip in work_table_lip or lip in self._batch_lips:
             self.stats["posts_filtered_duplicate_lip"] += 1
+            return None
+
+        # 3a. Нейро-вердикт классификатора (enforce, заказ владельца 2026-07-13):
+        #     пост с эффективным действием delete/hold выключен из публикации.
+        #     Правка оператора главнее ИИ (см. modules/classifier/enforce).
+        if lip in getattr(self, "_blocked_lips", set()):
+            self.stats["posts_filtered_classifier"] += 1
             return None
 
         # 4. Black ID
