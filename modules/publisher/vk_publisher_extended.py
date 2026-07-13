@@ -20,9 +20,14 @@ logger = logging.getLogger(__name__)
 
 # VK error codes, при которых текущий publish-token считается «больше не
 # подходящим» — нужно повернуться к следующему кандидату из ``_publish_candidates``.
-# Совпадает с :data:`modules.vk_token_router._AUTO_DISABLE_CODES_HOURS` —
+# 5/17/29 совпадают с :data:`modules.vk_token_router._AUTO_DISABLE_CODES_HOURS` —
 # TokenPolicy в эти же моменты ставит cooldown в БД.
-_PUBLISH_ROTATE_CODES = frozenset({5, 17, 29})
+# 10 («Internal server error») — так VK отвечает на wall.post от ЗАБАНЕННОГО
+# аккаунта (инцидент 2026-07-13: бан VALSTAN → error 10 на каждом посте, каскад
+# не крутился и МАМА не пробовалась). Ротируем на следующего кандидата;
+# report_error(10) только фиксирует код (auto-disable для 10 нет — код бывает
+# и транзиентным серверным сбоем VK, cooldown здорового токена не ставим).
+_PUBLISH_ROTATE_CODES = frozenset({5, 10, 17, 29})
 
 
 class VKPublisher:
@@ -59,7 +64,11 @@ class VKPublisher:
     # VK error codes where a community-token wall.* call should be retried
     # via the global publish-token. Community access tokens issued via
     # vk.com/club{ID}→API typically lack `manage` scope.
-    _COMMUNITY_FALLBACK_CODES = {15, 27}
+    # 10 («Internal server error») added 2026-07-13: community-токены,
+    # выпущенные из-под забаненного аккаунта-админа, замораживаются вместе с
+    # ним и отвечают error 10 на wall.post — без fallback'а публикация вставала
+    # колом на первом же шаге каскада (МАМА не пробовалась).
+    _COMMUNITY_FALLBACK_CODES = {10, 15, 27}
 
     # VK API methods that are KNOWN to be unsupported with group access tokens
     # — VK docs explicitly state these need a user token. We don't even try
