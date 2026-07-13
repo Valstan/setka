@@ -154,3 +154,75 @@ async def test_community_fallback_uses_candidates_when_available():
     )
     assert response == {"post_id": 777}
     assert via == "community-fallback-publish:OLGA"
+
+
+# --- error 10: банный аккаунт (инцидент 2026-07-13) ------------------------
+# VK отвечает [10] Internal server error на wall.post от забаненного аккаунта.
+# Community-токены, выпущенные из-под забаненного админа, замерзают вместе с
+# ним и тоже дают 10. Каскад обязан крутиться дальше, а не вставать колом.
+
+
+@pytest.mark.asyncio
+async def test_community_error_10_falls_back_to_candidates():
+    """Community-токен → error 10 (токен заморожен с баном админа) → каскад
+    уходит на user-кандидатов (МАМА), публикация проходит."""
+    publisher = VKPublisher.__new__(VKPublisher)
+    publisher.test_polygon_mode = False
+    publisher.test_polygon_group_id = -137760500
+    publisher._last_post_time = {}
+    publisher._community_tokens = {}
+    publisher._community_clients = {}
+
+    community_client = _client_returning([_vk_error(10, "Internal server error")])
+    mama_client = _client_returning([{"response": {"post_id": 555}}])
+
+    publisher._user_clients = {"MAMA": mama_client}
+    publisher._publish_candidates = [("MAMA", "tok_m")]
+    publisher._active_publish_name = None
+    publisher.vk_client = None
+    publisher._policy = None
+
+    response, via = await publisher._call_wall_post(
+        params={"owner_id": -1, "message": "x"},
+        method="wall.post",
+        client=community_client,
+    )
+    assert response == {"post_id": 555}
+    assert via == "community-fallback-publish:MAMA"
+
+
+@pytest.mark.asyncio
+async def test_rotates_publish_token_on_code_10(monkeypatch):
+    """User-токен (забаненный VALSTAN) → error 10 → следующий кандидат (MAMA).
+
+    report_error(VALSTAN, 10) фиксируется (без auto-disable — это зона
+    TokenPolicy), report_success(MAMA) после успеха.
+    """
+    publisher = VKPublisher.__new__(VKPublisher)
+    publisher.test_polygon_mode = False
+    publisher.test_polygon_group_id = -137760500
+    publisher._last_post_time = {}
+    publisher._community_tokens = {}
+    publisher._community_clients = {}
+
+    valstan_client = _client_returning([_vk_error(10, "Internal server error")])
+    mama_client = _client_returning([{"response": {"post_id": 556}}])
+
+    publisher._user_clients = {"VALSTAN": valstan_client, "MAMA": mama_client}
+    publisher._publish_candidates = [("VALSTAN", "tok_v"), ("MAMA", "tok_m")]
+    publisher._active_publish_name = "VALSTAN"
+    publisher.vk_client = valstan_client
+
+    policy = MagicMock()
+    policy.report_error = AsyncMock()
+    policy.report_success = AsyncMock()
+    publisher._policy = policy
+
+    response, via = await publisher._call_wall_post(
+        params={"owner_id": -1, "message": "x"},
+        method="wall.post",
+    )
+    assert response == {"post_id": 556}
+    assert via == "publish-token:MAMA"
+    policy.report_error.assert_awaited_once_with("VALSTAN", 10)
+    policy.report_success.assert_awaited_once_with("MAMA")
