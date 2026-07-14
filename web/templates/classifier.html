@@ -219,7 +219,7 @@ function rejectRule(id) { ruleAction(id, "reject"); }
 function retireRule(id) { ruleAction(id, "retire"); }
 let RULE_TEXT_BY_ID = {};  // id → текущий текст правила (для безопасной правки, без вшивания в onclick)
 async function editApproveRule(id) {
-    const t = prompt("Правка правила перед утверждением:", RULE_TEXT_BY_ID[id] || "");
+    const t = prompt("Текст правила (сохранится как утверждённое):", RULE_TEXT_BY_ID[id] || "");
     if (t === null) return;
     await fetch(`/api/classifier-review/rules/${id}/approve`, {
         method: "POST", headers: {"Content-Type": "application/json"},
@@ -277,7 +277,10 @@ async function loadRules() {
         abox.insertAdjacentHTML("beforeend", `
           <div class="d-flex justify-content-between align-items-start border-bottom py-1">
             <div class="small">${who} ${esc(x.rule_text)}${stale}</div>
-            <button class="btn btn-outline-secondary btn-sm py-0" onclick="retireRule(${x.id})" title="вывести из обращения">🗑</button>
+            <div class="d-flex gap-1 flex-shrink-0">
+              <button class="btn btn-outline-primary btn-sm py-0" onclick="editApproveRule(${x.id})" title="изменить текст правила">✏️</button>
+              <button class="btn btn-outline-secondary btn-sm py-0" onclick="retireRule(${x.id})" title="вывести из обращения">🗑</button>
+            </div>
           </div>`);
     }
 }
