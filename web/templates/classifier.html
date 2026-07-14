@@ -148,6 +148,7 @@ async function loadFeed() {
                 <small class="text-muted">${it.post_url ? `<a href="${esc(it.post_url)}" target="_blank" rel="noopener">${esc(it.lip)}</a>` : esc(it.lip)} · ${esc(it.region_code)} · ${it.source}</small>
               </div>
               <div class="text-muted small mb-2" style="white-space:pre-wrap;max-height:6em;overflow:auto;">${esc(it.post_text) || "<i>без текста</i>"}</div>
+              ${v.media_summary ? `<div class="small mb-2"><span class="badge bg-info text-dark">📷 ИИ увидел</span> <span class="text-secondary">${esc(v.media_summary)}</span></div>` : ""}
               ${v.reasoning ? `<div class="fst-italic small text-secondary mb-2">↳ ${esc(v.reasoning)}</div>` : ""}
               <div class="cf-edits small text-success mb-2 d-none" data-edits="${it.id}"></div>
               <div class="d-flex gap-2 flex-wrap">

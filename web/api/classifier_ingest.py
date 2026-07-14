@@ -19,9 +19,11 @@ from __future__ import annotations
 import hmac
 import logging
 from typing import Optional
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 
 from config.classifier import (
     classifier_disabled,
@@ -97,6 +99,69 @@ async def verdicts(batch: VerdictBatch, _auth: None = Depends(require_ingest_key
             region_codes_fallback=get_region_allowlist() or None,
         )
     return {"ok": True, **counts}
+
+
+# --- Media-прокси: рутина смотрит фото/PDF постов без текста ---------------------
+#
+# Egress облачного окружения рутины пускает только наш хост (Network access →
+# Custom), напрямую к VK CDN ей нельзя. Прокси скачивает вложение с VK и отдаёт
+# рутине. Только суффиксы VK-хостов, только под ключом, с потолком размера.
+
+_MEDIA_ALLOWED_HOST_SUFFIXES = (".userapi.com", ".vk.com", ".vk.me", ".mycdn.me")
+_MEDIA_MAX_BYTES = 10 * 1024 * 1024  # 10 MB — фото/PDF; видео не проксируем
+_MEDIA_TIMEOUT_S = 20.0
+
+
+def _media_url_allowed(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    return bool(host) and (
+        host.endswith(_MEDIA_ALLOWED_HOST_SUFFIXES) or host in ("vk.com", "vk.me")
+    )
+
+
+@router.get("/media")
+async def media_proxy(
+    url: str = Query(..., min_length=12, max_length=2000),
+    _auth: None = Depends(require_ingest_key),
+):
+    """Проксировать вложение VK для облачной рутины (фото/PDF постов без текста).
+
+    ``url`` приходит из ``/pending`` (поле ``media[].url`` — снапшот аудита
+    сбора), т.е. это ссылки, которые VK сам отдал при сборе. Allowlist хостов —
+    защита от превращения прокси в открытый SSRF-фетчер.
+    """
+    _check_enabled()
+    if not _media_url_allowed(url):
+        raise HTTPException(status_code=400, detail="url host not allowed")
+    try:
+        async with httpx.AsyncClient(
+            timeout=_MEDIA_TIMEOUT_S, follow_redirects=True, max_redirects=3
+        ) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=502, detail=f"upstream returned {resp.status_code}"
+                    )
+                # редиректы могли увести с VK-хостов — перепроверить финальный URL
+                if not _media_url_allowed(str(resp.url)):
+                    raise HTTPException(status_code=502, detail="redirected off allowed hosts")
+                chunks = []
+                total = 0
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > _MEDIA_MAX_BYTES:
+                        raise HTTPException(status_code=413, detail="media too large")
+                    chunks.append(chunk)
+                content_type = resp.headers.get("content-type", "application/octet-stream")
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"upstream fetch failed: {exc}") from exc
+    return Response(content=b"".join(chunks), media_type=content_type)
 
 
 # --- Петля обучения (ADR-0005): дистилляция коррекций → черновики правил --------

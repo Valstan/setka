@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from config.runtime import collection_audit_shadow_enabled, get_collection_audit_region_codes
 from utils.post_utils import clear_copy_history, lip_of_post
 from utils.text_utils import check_blacklist, is_advertisement, is_hard_spam
+from utils.vk_attachments import summarize_media
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,10 @@ def _snapshot(
     owner_id = int(post.get("owner_id", post.get("from_id", 0)) or 0)
     post_id = int(post.get("id", 0) or 0)
     text = (post.get("text") or "").strip()
+    try:
+        media = summarize_media(post)
+    except Exception:  # pragma: no cover — сводка медиа не должна ронять аудит
+        media = []
     return {
         "lip": lip,
         "region_code": region_code,
@@ -103,6 +108,7 @@ def _snapshot(
         "post_text": (text[:_MAX_AUDIT_TEXT] or None),
         "post_url": f"https://vk.com/wall{owner_id}_{post_id}",
         "has_media": _has_media(post),
+        "media": media or None,
         "decision": decision,
         "drop_reason": reason,
     }
