@@ -161,6 +161,48 @@ def get_photo_urls(attachments: Dict[str, List[Dict]], max_photos: int = 10) -> 
     return urls
 
 
+def summarize_media(post_data: Dict[str, Any], max_items: int = 5) -> List[Dict[str, Any]]:
+    """Компактная сводка вложений поста для аудита сбора / классификатора.
+
+    Возвращает список ``{type, url?, ext?, title?}``: у фото — прямая ссылка на
+    лучший размер (модель классификатора сможет посмотреть картинку через
+    media-прокси), у документов — url + расширение (pdf/jpg и т.п.), у
+    видео/аудио/ссылок — только тип и заголовок (модель их не «смотрит», но
+    знает, что они есть). Пустой список = вложений нет.
+    """
+    atts = extract_vk_attachments(post_data)
+    out: List[Dict[str, Any]] = []
+
+    for url in get_photo_urls(atts, max_photos=max_items):
+        if len(out) >= max_items:
+            break
+        out.append({"type": "photo", "url": url})
+
+    for doc in atts.get("doc", []):
+        if len(out) >= max_items:
+            break
+        item: Dict[str, Any] = {"type": "doc"}
+        if doc.get("url"):
+            item["url"] = doc["url"]
+        if doc.get("ext"):
+            item["ext"] = str(doc["ext"])[:10]
+        if doc.get("title"):
+            item["title"] = str(doc["title"])[:100]
+        out.append(item)
+
+    for kind in ("video", "audio", "link"):
+        for a in atts.get(kind, []):
+            if len(out) >= max_items:
+                break
+            item = {"type": kind}
+            title = a.get("title")
+            if title:
+                item["title"] = str(title)[:100]
+            out.append(item)
+
+    return out
+
+
 async def resolve_video_url(client: Any, owner_id: int, video_id: int) -> Optional[str]:
     """
     Resolve a VK video attachment to a playable URL via ``video.get``.

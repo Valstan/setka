@@ -28,6 +28,9 @@ class ClassifierVerdict(BaseModel):
     split: bool = False
     confidence: int = Field(default=0, ge=0, le=100)
     reasoning: str = Field(default="", max_length=500)
+    # Что модель увидела во вложениях (для постов без текста): «афиша концерта
+    # в ДК 20 июля». Показывается оператору в ленте рядом с вердиктом.
+    media_summary: str = Field(default="", max_length=500)
     model: Optional[str] = None
     # Эхо снапшота из /pending (рутина возвращает — чтобы сохранить текст/url,
     # кандидат в свод­ке транзиентен). Опциональны: если пусто, сервер добирает.
@@ -45,7 +48,7 @@ class ClassifierVerdict(BaseModel):
 
     def to_verdict_json(self) -> dict:
         """Сериализация в JSONB-колонку ``content_classifications.verdict``."""
-        return {
+        out = {
             "theme": self.theme.strip(),
             "action": self.normalized_action(),
             "merge_with": [str(x) for x in self.merge_with],
@@ -53,6 +56,9 @@ class ClassifierVerdict(BaseModel):
             "confidence": int(self.confidence),
             "reasoning": (self.reasoning or "").strip(),
         }
+        if (self.media_summary or "").strip():
+            out["media_summary"] = self.media_summary.strip()
+        return out
 
 
 class VerdictBatch(BaseModel):

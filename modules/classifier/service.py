@@ -55,6 +55,7 @@ def _candidate_map(runs: Sequence[BulletinCurationRun]) -> Dict[str, Dict[str, A
                 "text": (c.get("text") or "").strip(),
                 "url": c.get("url") or "",
                 "has_media": bool(c.get("has_media")),
+                "media": [],  # свод­ки-кандидаты вложений не несут (только аудит)
             }
     return out
 
@@ -107,6 +108,7 @@ async def _recent_audit(
             "text": (r.post_text or "").strip(),
             "url": r.post_url or "",
             "has_media": bool(r.has_media),
+            "media": r.media or [],
             "decision": r.decision,
             "drop_reason": r.drop_reason,
         }

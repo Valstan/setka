@@ -619,6 +619,10 @@ class CollectedPostAudit(Base):
     post_text = Column(Text, nullable=True)
     post_url = Column(String(300), nullable=True)
     has_media = Column(Boolean, nullable=False, default=False)
+    # Компактная сводка вложений [{type, url?, ext?, title?}] (миграция 060) —
+    # чтобы классификатор мог посмотреть фото/PDF постов без текста через
+    # media-прокси. NULL = вложений нет / собрано до миграции.
+    media = Column(JSON, nullable=True)
     decision = Column(String(12), nullable=False)  # kept | dropped
     # advertisement | blacklist_text | no_region_words | no_attachments (NULL для kept)
     drop_reason = Column(String(32), nullable=True)
@@ -633,6 +637,7 @@ class CollectedPostAudit(Base):
             "post_text": (self.post_text or "").strip(),
             "post_url": self.post_url,
             "has_media": self.has_media,
+            "media": self.media or [],
             "decision": self.decision,
             "drop_reason": self.drop_reason,
             "collected_at": self.collected_at.isoformat() if self.collected_at else None,

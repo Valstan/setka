@@ -96,8 +96,10 @@ CLASSIFIER_INGEST_KEY — в промпте и отчёте он не нужен
 
 1. python scripts/classifier_routine.py fetch
    → запишет classifier_run/postulates.md (правила разметки) и
-   classifier_run/pending.json (батч постов). Если count=0 или скрипт сообщил
-   о сетевой ошибке/egress-403 — отчитайся одной строкой и заверши прогон.
+   classifier_run/pending.json (батч постов); постам БЕЗ текста скачает их
+   фото/PDF в classifier_run/media/ (пути — в поле media_files поста).
+   Если count=0 или скрипт сообщил о сетевой ошибке/egress-403 — отчитайся
+   одной строкой и заверши прогон.
 2. Прочитай оба файла. Для каждого поста из pending.json определи по правилам:
    theme — тема свободной строкой;
    action — publish | hold | delete (брать ли кандидата в подборку:
@@ -106,6 +108,11 @@ CLASSIFIER_INGEST_KEY — в промпте и отчёте он не нужен
    split — true, если пост сам склеен из разных тем (напр. спорт+похороны);
    confidence — 0..100 (сомневаешься — ниже 60); reasoning — одна строка;
    lip, text, url, region_code — скопируй из объекта поста как есть.
+   У поста БЕЗ текста с media_files: открой и посмотри эти файлы (картинки,
+   PDF), вынеси вердикт по содержимому и заполни media_summary — одна строка,
+   что во вложениях («афиша концерта в ДК 20 июля»). Картинки не открылись
+   или в media только видео/аудио — media_summary опиши типами («видео без
+   текста»), action по правилам для нераспознанного медиа.
 3. Сохрани classifier_run/verdicts.json: {"verdicts": [ ...объект на каждый пост... ]}.
 4. python scripts/classifier_routine.py submit classifier_run/verdicts.json
    (скрипт сам провалидирует и отправит; при ошибках валидации — исправь и повтори).
