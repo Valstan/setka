@@ -34,7 +34,7 @@ from config.classifier import (
 )
 from database.connection import AsyncSessionLocal
 from modules.classifier import rules, service
-from modules.classifier.schema import RuleProposalBatch, VerdictBatch
+from modules.classifier.schema import RuleProposalBatch, parse_verdict_loose
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -88,17 +88,35 @@ async def postulates():
 
 
 @router.post("/verdicts")
-async def verdicts(batch: VerdictBatch, _auth: None = Depends(require_ingest_key)):
-    """Принять пакет вердиктов от рутины → записать в content_classifications."""
+async def verdicts(batch: dict, _auth: None = Depends(require_ingest_key)):
+    """Принять пакет вердиктов от рутины → записать в content_classifications.
+
+    Разбор толерантный, per-item (``parse_verdict_loose``): один кривой вердикт
+    (перелимит эха текста, мусорный confidence) больше НЕ роняет весь батч
+    422-й — прогон рутины стоит токенов, чинимое чиним, нечинимое считаем в
+    ``skipped_invalid``.
+    """
     _check_enabled()
+    raw_list = batch.get("verdicts") if isinstance(batch, dict) else None
+    if not isinstance(raw_list, list):
+        raise HTTPException(status_code=422, detail="body must be {'verdicts': [...]}")
+    parsed = [parse_verdict_loose(r) for r in raw_list]
+    good = [v for v in parsed if v is not None]
+    skipped_invalid = len(parsed) - len(good)
+    if skipped_invalid:
+        logger.warning(
+            "classifier ingest: %d of %d verdicts unparseable — skipped",
+            skipped_invalid,
+            len(parsed),
+        )
     async with AsyncSessionLocal() as session:
         counts = await service.record_verdicts(
             session,
-            batch.verdicts,
+            good,
             source="routine",
             region_codes_fallback=get_region_allowlist() or None,
         )
-    return {"ok": True, **counts}
+    return {"ok": True, "skipped_invalid": skipped_invalid, **counts}
 
 
 # --- Media-прокси: рутина смотрит фото/PDF постов без текста ---------------------

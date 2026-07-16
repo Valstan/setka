@@ -85,10 +85,39 @@ def test_verdicts_records(client):
     assert fake.await_args.kwargs["source"] == "routine"
 
 
-def test_verdicts_bad_action_rejected_by_schema(client):
-    # confidence вне диапазона → 422 (pydantic), до записи не доходит
-    payload = {"verdicts": [{"lip": "1_10", "theme": "t", "confidence": 500}]}
-    r = client.post("/api/classifier/verdicts", json=payload, headers={"X-API-Key": KEY})
+def test_verdicts_lenient_repairs_instead_of_422(client):
+    # Толерантный разбор (2026-07-16): чинимые перелимиты нормализуются,
+    # батч НЕ отвергается — прогон рутины стоит токенов.
+    fake = AsyncMock(return_value={"recorded": 1, "skipped_existing": 0, "skipped_missing": 0})
+    payload = {"verdicts": [{"lip": "1_10", "theme": "t", "confidence": 500, "text": "x" * 20000}]}
+    with patch.object(ing.service, "record_verdicts", fake):
+        r = client.post("/api/classifier/verdicts", json=payload, headers={"X-API-Key": KEY})
+    assert r.status_code == 200
+    assert r.json()["skipped_invalid"] == 0
+    verdicts = fake.await_args.args[1]
+    assert verdicts[0].confidence == 100  # clamp, не 422
+    assert len(verdicts[0].text) == 10000  # обрезано до лимита схемы
+
+
+def test_verdicts_unfixable_item_skipped_not_fatal(client):
+    # Нечинимый (без lip) пропускается со счётчиком, остальные записываются.
+    fake = AsyncMock(return_value={"recorded": 1, "skipped_existing": 0, "skipped_missing": 0})
+    payload = {
+        "verdicts": [
+            {"theme": "t"},  # нет lip — нечинимый
+            {"lip": "1_11", "theme": "t2"},
+        ]
+    }
+    with patch.object(ing.service, "record_verdicts", fake):
+        r = client.post("/api/classifier/verdicts", json=payload, headers={"X-API-Key": KEY})
+    assert r.status_code == 200
+    assert r.json()["skipped_invalid"] == 1
+    verdicts = fake.await_args.args[1]
+    assert [v.lip for v in verdicts] == ["1_11"]
+
+
+def test_verdicts_malformed_body_still_422(client):
+    r = client.post("/api/classifier/verdicts", json={"nope": 1}, headers={"X-API-Key": KEY})
     assert r.status_code == 422
 
 
