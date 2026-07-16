@@ -38,6 +38,17 @@
         </div>
     </div>
 
+    <!-- Диагностика рутины (2026-07-16): успевает ли за мультирегиональным потоком -->
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <h6 class="mb-2"><i class="bi bi-heart-pulse"></i> Здоровье рутины
+                <span class="text-muted small" id="cf-health-meta"></span>
+            </h6>
+            <div class="row g-2 mb-1" id="cf-health"></div>
+            <div class="small text-muted" id="cf-health-backlog"></div>
+        </div>
+    </div>
+
     <!-- Петля обучения (ADR-0005): выученные правила -->
     <div class="card mb-3">
         <div class="card-body py-2">
@@ -113,6 +124,38 @@ async function loadStats() {
               </div>
             </div>`);
     }
+}
+
+async function loadHealth() {
+    const r = await fetch("/api/classifier-review/health");
+    if (!r.ok) return;
+    const h = await r.json();
+    document.getElementById("cf-health-meta").textContent =
+        `· окно ${h.window_days} дн · батч ≤${h.pending_max} · последний вердикт: ` +
+        (h.last_verdict_at ? new Date(h.last_verdict_at + "Z").toLocaleString("ru-RU") : "—");
+    const cells = [
+        ["Покрытие потока", h.coverage_pct == null ? "—" : h.coverage_pct + "%",
+         `${h.classified_in_window} из ${h.collected_in_window} собранных`],
+        ["Backlog (без вердикта)", h.backlog, "в окне свежести"],
+        ["Вердиктов за 24ч", h.verdicts_24h,
+         Object.keys(h.verdicts_24h_by_region || {}).length + " регионов"],
+    ];
+    const box = document.getElementById("cf-health");
+    box.innerHTML = "";
+    for (const [label, val, sub] of cells) {
+        box.insertAdjacentHTML("beforeend", `
+            <div class="col-4">
+              <div class="border rounded p-2 text-center">
+                <div class="small text-muted">${label}</div>
+                <div class="fs-5 fw-bold">${val}</div>
+                <div class="small text-muted">${esc(String(sub))}</div>
+              </div>
+            </div>`);
+    }
+    const bl = Object.entries(h.backlog_by_region || {}).sort((a, b) => b[1] - a[1]);
+    document.getElementById("cf-health-backlog").textContent = bl.length
+        ? "backlog по регионам: " + bl.map(([r, n]) => `${r} ${n}`).join(" · ")
+        : "";
 }
 
 function esc(s) {
@@ -285,11 +328,12 @@ async function loadRules() {
     }
 }
 
-document.getElementById("cf-refresh").addEventListener("click", () => { loadFeed(); loadStats(); });
+document.getElementById("cf-refresh").addEventListener("click", () => { loadFeed(); loadStats(); loadHealth(); });
 document.getElementById("cf-unreacted").addEventListener("change", loadFeed);
 document.getElementById("cf-rules-refresh").addEventListener("click", loadRules);
 document.getElementById("cf-rule-add").addEventListener("click", addRule);
 loadStats();
+loadHealth();
 loadFeed();
 loadRules();
 </script>
