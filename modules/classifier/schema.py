@@ -67,6 +67,49 @@ class VerdictBatch(BaseModel):
     verdicts: List[ClassifierVerdict]
 
 
+def parse_verdict_loose(raw: object) -> Optional[ClassifierVerdict]:
+    """Толерантный разбор одного вердикта: чинить, что чинится, не роняя батч.
+
+    Прогон рутины стоит токенов; строгий 422 на ВЕСЬ батч из-за одного
+    перелимита (эхо длинного текста поста, разросшийся reasoning) выбрасывал
+    результаты целого прогона. Здесь мягкая нормализация: строки обрезаем до
+    лимитов схемы, confidence зажимаем в 0..100, мусорные типы приводим.
+    None — только если вердикт нечинимый (нет lip или theme).
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _s(key: str, cap: int) -> str:
+        v = raw.get(key)
+        return str(v).strip()[:cap] if v is not None else ""
+
+    lip = _s("lip", 50)
+    theme = _s("theme", 100)
+    if not lip or not theme:
+        return None
+    try:
+        confidence = max(0, min(100, int(raw.get("confidence") or 0)))
+    except (TypeError, ValueError):
+        confidence = 0
+    merge_with = raw.get("merge_with")
+    if not isinstance(merge_with, (list, tuple)):
+        merge_with = []
+    return ClassifierVerdict(
+        lip=lip,
+        theme=theme,
+        action=_s("action", 20) or "hold",
+        merge_with=[str(x)[:50] for x in merge_with][:50],
+        split=bool(raw.get("split")),
+        confidence=confidence,
+        reasoning=_s("reasoning", 500),
+        media_summary=_s("media_summary", 500),
+        model=(_s("model", 100) or None),
+        text=_s("text", 10000),
+        url=_s("url", 300),
+        region_code=_s("region_code", 50),
+    )
+
+
 class RuleProposal(BaseModel):
     """Черновик выученного правила, который POST'ит рутина дистилляции (ADR-0005).
 

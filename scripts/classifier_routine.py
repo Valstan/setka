@@ -50,7 +50,7 @@ from pathlib import Path
 DEFAULT_API_BASE = "https://3931b3fe50ab.vps.myjino.ru"
 DEFAULT_OUT_DIR = "classifier_run"
 DEFAULT_DISTILL_DIR = "distill_run"
-DEFAULT_LIMIT = 40
+DEFAULT_LIMIT = 200  # синхронно с CLASSIFIER_PENDING_MAX на проде (2026-07-16)
 DEFAULT_CORRECTIONS_LIMIT = 100
 DEFAULT_CORRECTIONS_DAYS = 30
 TIMEOUT_S = 30
