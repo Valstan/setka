@@ -83,6 +83,17 @@ async def stats():
         return await service.agree_rate_stats(session)
 
 
+@router.get("/health")
+async def health():
+    """Диагностика рутины: backlog по регионам, вердикты/сутки, покрытие потока."""
+    from config.classifier import get_pending_max, get_source_days
+
+    async with AsyncSessionLocal() as session:
+        out = await service.health_stats(session, days=get_source_days())
+    out["pending_max"] = get_pending_max()
+    return out
+
+
 # --- Петля обучения (ADR-0005): оператор утверждает выученные правила ------------
 
 

@@ -50,8 +50,13 @@ async def fetch_blocked_lips(session, region_code: str) -> Set[str]:
     Блокируются посты с эффективным действием ``delete`` / ``hold``
     (правка оператора главнее ИИ). Окно свежести — как у источника
     классификатора (``CLASSIFIER_SOURCE_DAYS``): старше него посты и так
-    не попадают в сводку. lip-набор глобальный (вердикт — про контент,
-    не про регион), allowlist же проверяет ЦЕЛЕВОЙ регион публикации.
+    не попадают в сводку.
+
+    Вердикт применяется ТОЛЬКО к региону, в контексте которого он вынесен
+    (``ContentClassification.region_code``): гео-относительные правила
+    («чужой район → delete») дают противоположные вердикты для разных
+    регионов, глобальный lip-набор заражал бы соседей. Пост без вердикта
+    в своём регионе публикуется по обычным фильтрам (fail-open).
 
     Fail-open: ошибка чтения → пустой set + warning.
     """
@@ -71,7 +76,10 @@ async def fetch_blocked_lips(session, region_code: str) -> Set[str]:
                     ContentClassification.id,
                     ContentClassification.lip,
                     ContentClassification.verdict,
-                ).where(ContentClassification.created_at >= cutoff)
+                ).where(
+                    ContentClassification.created_at >= cutoff,
+                    ContentClassification.region_code == region_code,
+                )
             )
         ).all()
         if not rows:

@@ -154,7 +154,36 @@ async def fetch_pending(
         ).all()
     }
     fresh = [c for lip, c in cand.items() if lip not in classified]
-    return fresh[:limit]
+    return _fair_regional_batch(fresh, limit)
+
+
+def _fair_regional_batch(fresh: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """Собрать батч так, чтобы регионы не перемешивались и никто не голодал.
+
+    1) round-robin по регионам (свежие первыми внутри региона) — при backlog
+       больше лимита каждый регион получает честную долю, а не «кто первый
+       в куче»; 2) итоговый батч отсортирован блоками по региону — рутина
+       классифицирует посты одного региона подряд, без чересполосицы
+       (merge-кандидаты одного события живут в одном регионе).
+    """
+    by_region: Dict[str, List[Dict[str, Any]]] = {}
+    for c in fresh:  # fresh уже newest-first (порядок _recent_source)
+        by_region.setdefault(str(c.get("region_code") or ""), []).append(c)
+
+    picked: List[Dict[str, Any]] = []
+    queues = [q for _, q in sorted(by_region.items())]
+    while queues and len(picked) < limit:
+        next_round = []
+        for q in queues:
+            if len(picked) >= limit:
+                break
+            picked.append(q.pop(0))
+            if q:
+                next_round.append(q)
+        queues = next_round
+
+    picked.sort(key=lambda c: str(c.get("region_code") or ""))
+    return picked
 
 
 async def record_verdicts(
@@ -495,3 +524,74 @@ async def agree_rate_stats(session) -> Dict[str, Any]:
         await session.execute(select(func.count(ContentClassification.id)))
     ).scalar() or 0
     return {"total_classified": int(total_classified), "by_type": out}
+
+
+async def health_stats(session, *, days: int = DEFAULT_SOURCE_DAYS) -> Dict[str, Any]:
+    """Диагностика работы рутины: успевает ли она за потоком (заказ 2026-07-16).
+
+    - ``backlog`` — собранные в окне свежести посты БЕЗ вердикта (что рутина
+      ещё не разобрала); по регионам и всего;
+    - ``verdicts_24h`` — пропускная способность за сутки (по регионам);
+    - ``duplicates_prevented`` не считаем отдельно: дедуп по ``lip`` в
+      ``fetch_pending``/``record_verdicts`` исключает повторную трату токенов
+      by construction (уже размеченный lip не выдаётся и не перезаписывается).
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    audit_rows = (
+        await session.execute(
+            select(CollectedPostAudit.region_code, CollectedPostAudit.lip).where(
+                CollectedPostAudit.collected_at >= cutoff
+            )
+        )
+    ).all()
+    lips_by_region: Dict[str, set] = {}
+    all_lips: set = set()
+    for region, lip in audit_rows:
+        lips_by_region.setdefault(region or "", set()).add(lip)
+        all_lips.add(lip)
+
+    classified: set = set()
+    if all_lips:
+        chunk = list(all_lips)
+        for i in range(0, len(chunk), 5000):
+            classified.update(
+                lip
+                for (lip,) in (
+                    await session.execute(
+                        select(ContentClassification.lip).where(
+                            ContentClassification.lip.in_(chunk[i : i + 5000])
+                        )
+                    )
+                ).all()
+            )
+
+    day_ago = datetime.utcnow() - timedelta(hours=24)
+    verdict_rows = (
+        await session.execute(
+            select(ContentClassification.region_code, func.count())
+            .where(ContentClassification.created_at >= day_ago)
+            .group_by(ContentClassification.region_code)
+        )
+    ).all()
+    last_verdict_at = (
+        await session.execute(select(func.max(ContentClassification.created_at)))
+    ).scalar()
+
+    backlog_by_region = {r: len(lips - classified) for r, lips in sorted(lips_by_region.items())}
+    collected_total = len(all_lips)
+    backlog_total = len(all_lips - classified)
+    return {
+        "window_days": days,
+        "collected_in_window": collected_total,
+        "classified_in_window": collected_total - backlog_total,
+        "backlog": backlog_total,
+        "backlog_by_region": {r: n for r, n in backlog_by_region.items() if n},
+        "verdicts_24h": int(sum(n for _, n in verdict_rows)),
+        "verdicts_24h_by_region": {r or "": int(n) for r, n in sorted(verdict_rows)},
+        "last_verdict_at": last_verdict_at.isoformat() if last_verdict_at else None,
+        "coverage_pct": (
+            round(100.0 * (collected_total - backlog_total) / collected_total, 1)
+            if collected_total
+            else None
+        ),
+    }
