@@ -244,3 +244,49 @@ async def test_correct_matching_ai_counts_as_agree(db_session):
     assert out["outcome"] == "agree"
     stats = await service.agree_rate_stats(db_session)
     assert stats["by_type"]["action"] == {"agree": 1, "correct": 0, "total": 1, "agree_rate": 1.0}
+
+
+# ───────── fair regional batch + health (мультирегион 2026-07-16) ─────────
+
+
+@pytest.mark.asyncio
+async def test_pending_grouped_by_region_fair_share(db_session):
+    # backlog: 3 поста region A, 3 поста region B, лимит 4 → по 2 каждому,
+    # батч блоками по региону (не чересполосица).
+    for i in range(3):
+        await _seed_audit(db_session, lip=f"1_{i}", region="bal")
+        await _seed_audit(db_session, lip=f"2_{i}", region="mi")
+    out = await service.fetch_pending(db_session, limit=4)
+    regions = [p["region_code"] for p in out]
+    assert regions == ["bal", "bal", "mi", "mi"]
+
+
+@pytest.mark.asyncio
+async def test_pending_round_robin_no_starvation(db_session):
+    # 10 постов региона-гиганта против 1 поста малого — малый не голодает.
+    for i in range(10):
+        await _seed_audit(db_session, lip=f"3_{i}", region="tatarstan_obl")
+    await _seed_audit(db_session, lip="4_1", region="tuzha")
+    out = await service.fetch_pending(db_session, limit=5)
+    regions = [p["region_code"] for p in out]
+    assert "tuzha" in regions
+    assert regions == sorted(regions)  # блоками по региону
+
+
+@pytest.mark.asyncio
+async def test_health_stats_backlog_and_throughput(db_session):
+    await _seed_audit(db_session, lip="5_1", region="mi")
+    await _seed_audit(db_session, lip="5_2", region="mi")
+    await _seed_audit(db_session, lip="5_3", region="vp")
+    await service.record_verdicts(
+        db_session, [ClassifierVerdict(lip="5_1", theme="t", region_code="mi", text="x")]
+    )
+    out = await service.health_stats(db_session)
+    assert out["collected_in_window"] == 3
+    assert out["classified_in_window"] == 1
+    assert out["backlog"] == 2
+    assert out["backlog_by_region"] == {"mi": 1, "vp": 1}
+    assert out["verdicts_24h"] == 1
+    assert out["verdicts_24h_by_region"] == {"mi": 1}
+    assert out["coverage_pct"] == pytest.approx(33.3, abs=0.1)
+    assert out["last_verdict_at"] is not None

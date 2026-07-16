@@ -115,8 +115,26 @@ async def test_empty_allowlist_means_all_regions(db_session, monkeypatch):
     monkeypatch.setenv("CLASSIFIER_ENFORCE_ENABLED", "1")
     monkeypatch.setenv("CLASSIFIER_ENFORCE_REGION_CODES", "")
     await _seed(db_session, [_cls("5_1", "hold", region_code="mi")])
-    # lip-набор глобальный: вердикт про контент, целевой регион любой.
-    assert await fetch_blocked_lips(db_session, "vp") == {"5_1"}
+    # Пустой allowlist = enforce включён во всех регионах, но вердикт
+    # применяется только к региону, в контексте которого вынесен
+    # (гео-относительные правила: «чужой район» mi ≠ «чужой район» vp).
+    assert await fetch_blocked_lips(db_session, "mi") == {"5_1"}
+    assert await fetch_blocked_lips(db_session, "vp") == set()
+
+
+@pytest.mark.asyncio
+async def test_verdict_scoped_to_own_region(db_session, monkeypatch):
+    monkeypatch.setenv("CLASSIFIER_ENFORCE_ENABLED", "1")
+    monkeypatch.setenv("CLASSIFIER_ENFORCE_REGION_CODES", "")
+    await _seed(
+        db_session,
+        [
+            _cls("6_1", "delete", region_code="mi"),
+            _cls("6_2", "delete", region_code="nolinsk"),
+        ],
+    )
+    assert await fetch_blocked_lips(db_session, "mi") == {"6_1"}
+    assert await fetch_blocked_lips(db_session, "nolinsk") == {"6_2"}
 
 
 @pytest.mark.asyncio
