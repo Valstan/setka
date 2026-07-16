@@ -1,7 +1,7 @@
 """Tests медиа-зрения классификатора: сводка вложений, снапшот аудита,
 media_summary в вердикте, media-прокси (allowlist хостов)."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -64,13 +64,17 @@ def test_summarize_media_empty():
 
 def test_audit_snapshot_captures_media():
     post = {"owner_id": -1, "id": 10, "text": "", "attachments": [_photo()]}
-    snap = _snapshot(post, lip="1_10", region_code="mi", theme="novost", decision="kept", reason=None)
+    snap = _snapshot(
+        post, lip="1_10", region_code="mi", theme="novost", decision="kept", reason=None
+    )
     assert snap["media"] == [{"type": "photo", "url": "https://sun9-1.userapi.com/img.jpg"}]
 
 
 def test_audit_snapshot_media_none_when_empty():
     post = {"owner_id": -1, "id": 11, "text": "текст"}
-    snap = _snapshot(post, lip="1_11", region_code="mi", theme="novost", decision="kept", reason=None)
+    snap = _snapshot(
+        post, lip="1_11", region_code="mi", theme="novost", decision="kept", reason=None
+    )
     assert snap["media"] is None
 
 
