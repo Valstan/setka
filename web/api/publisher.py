@@ -71,16 +71,17 @@ class GroupInfo(BaseModel):
 
 
 # Helper functions
-async def get_vk_publisher() -> VKPublisher:
-    """Получить VK Publisher (extended) с publish-токеном из env.
+async def get_vk_publisher(
+    session: AsyncSession, target_group_id: Optional[int] = None
+) -> VKPublisher:
+    """Получить VK Publisher (extended) через TokenPolicy (токены из БД).
 
-    Extended publisher сам берёт publish-токен через ``get_publish_token()``
-    (см. ``config.runtime``). community-tokens сюда не передаём — для UI
-    `/publisher` достаточно publish-токена; для парсинговых задач Celery
-    использует свой инстанс с пробрасыванием community-tokens из БД.
+    ``create_with_policy`` подгружает community-токены и каскад user-кандидатов
+    (community → VALSTAN → резерв) из БД — тот же путь, что у Celery-задач.
+    ``target_group_id`` уточняет подбор community-токена конкретной группы.
     """
     try:
-        return VKPublisher()
+        return await VKPublisher.create_with_policy(session, target_group_id=target_group_id)
     except Exception as e:
         logger.error(f"Failed to initialize VK Publisher: {e}")
         raise HTTPException(status_code=500, detail="VK Publisher initialization failed")
@@ -126,10 +127,10 @@ async def get_posts_for_region(
 
 # API Endpoints
 @router.get("/groups", response_model=List[GroupInfo])
-async def get_available_groups():
+async def get_available_groups(session: AsyncSession = Depends(get_db_session)):
     """Получить список доступных групп для публикации"""
     try:
-        publisher = await get_vk_publisher()
+        publisher = await get_vk_publisher(session)
 
         groups = []
 
@@ -152,12 +153,13 @@ async def get_available_groups():
 
 
 @router.post("/publish/simple", response_model=PublishResponse)
-async def publish_simple_post(request: SimplePublishRequest):
+async def publish_simple_post(
+    request: SimplePublishRequest, session: AsyncSession = Depends(get_db_session)
+):
     """Публикация простого текстового поста"""
     try:
-        publisher = await get_vk_publisher()
-
         group_id = request.group_id or VK_TEST_GROUP_ID
+        publisher = await get_vk_publisher(session, target_group_id=group_id)
 
         result = await publisher.publish_bulletin(
             group_id=group_id, text=request.text, from_group=request.from_group
@@ -192,8 +194,6 @@ async def publish_region_bulletin(
 ):
     """Публикация сводки для региона"""
     try:
-        publisher = await get_vk_publisher()
-
         # Получаем посты для региона
         posts = await get_posts_for_region(session, request.region_code, request.max_posts)
 
@@ -211,6 +211,8 @@ async def publish_region_bulletin(
                 status_code=404,
                 detail=f"No target group configured for region '{request.region_code}'",
             )
+
+        publisher = await get_vk_publisher(session, target_group_id=target_group_id)
 
         # Создаем сводка
         aggregator = NewsAggregator(max_posts_per_bulletin=request.max_posts)
@@ -277,8 +279,6 @@ async def publish_custom_bulletin(
 ):
     """Публикация кастомной сводки"""
     try:
-        publisher = await get_vk_publisher()
-
         if not request.custom_text:
             raise HTTPException(status_code=400, detail="custom_text is required")
 
@@ -289,6 +289,8 @@ async def publish_custom_bulletin(
                 status_code=404,
                 detail=f"No target group configured for region '{request.region_code}'",
             )
+
+        publisher = await get_vk_publisher(session, target_group_id=target_group_id)
 
         # Публикуем кастомный текст
         result = await publisher.publish_bulletin(
@@ -356,10 +358,10 @@ async def get_region_posts(
 
 
 @router.get("/status")
-async def get_publisher_status():
+async def get_publisher_status(session: AsyncSession = Depends(get_db_session)):
     """Получить статус VK Publisher"""
     try:
-        publisher = await get_vk_publisher()
+        publisher = await get_vk_publisher(session)
 
         # Проверяем подключение
         test_group_info = await publisher.get_group_info(VK_TEST_GROUP_ID)
