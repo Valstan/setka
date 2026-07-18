@@ -694,6 +694,26 @@ class ClassificationRule(Base):
         return f"<ClassificationRule id={self.id} {self.status}: {(self.rule_text or '')[:40]!r}>"
 
 
+class ClassifierTheme(Base):
+    """Канонический словарь тем классификатора (миграция 069, заказ владельца 2026-07-18).
+
+    Тема вердикта была свободной строкой — за две недели накопилось ~180
+    вариантов (дубли рус/англ, опечатки). Теперь темы живут словарём: рутина
+    получает список в эффективных постулатах, оператор управляет через
+    редактор на ``/classifier`` (добавить / удалить с переносом постов).
+    """
+
+    __tablename__ = "classifier_themes"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    name = Column(String(100), nullable=False, unique=True)
+    position = Column(Integer, nullable=False, default=0)  # порядок в списках UI/постулатах
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<ClassifierTheme {self.name!r}>"
+
+
 class RadarSource(Base):
     """Источник контент-радара (миграция 038, Ф0.2).
 

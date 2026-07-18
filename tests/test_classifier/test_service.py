@@ -148,25 +148,76 @@ async def test_agree_skips_merge_when_no_signal(db_session):
     assert (await service.agree_rate_stats(db_session))["by_type"]["merge"]["total"] == 0
 
 
+async def _seed_dictionary(db_session, *names):
+    from database.models_extended import ClassifierTheme
+
+    for i, n in enumerate(names, 1):
+        db_session.add(ClassifierTheme(name=n, position=i))
+    await db_session.commit()
+
+
 @pytest.mark.asyncio
-async def test_themes_list_frequency_and_operator_weight(db_session):
-    # два вердикта novost, один sport; правка оператора kultura (вес ×2)
-    await seed_run(db_session, candidates=[_cand("1_10"), _cand("1_20"), _cand("1_30")])
+async def test_themes_list_canon_first_and_leftovers(db_session):
+    await _seed_dictionary(db_session, "новости", "спорт")
+    await service.record_verdicts(
+        db_session,
+        [
+            ClassifierVerdict(lip="1_10", theme="новости", region_code="mi", text="a"),
+            ClassifierVerdict(lip="1_20", theme="новости", region_code="mi", text="b"),
+            ClassifierVerdict(lip="1_30", theme="novost", region_code="mi", text="c"),
+        ],
+    )
+    themes = await service.themes_list(db_session)
+    # канон первым (по position), даже с меньшим счётчиком; остаток novost — canon:false
+    assert [(t["theme"], t["count"], t["canon"]) for t in themes] == [
+        ("новости", 2, True),
+        ("спорт", 0, True),
+        ("novost", 1, False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_theme_reassigns_posts_and_corrections(db_session):
+    await _seed_dictionary(db_session, "новости")
     await service.record_verdicts(
         db_session,
         [
             ClassifierVerdict(lip="1_10", theme="novost", region_code="mi", text="a"),
             ClassifierVerdict(lip="1_20", theme="novost", region_code="mi", text="b"),
-            ClassifierVerdict(lip="1_30", theme="sport", region_code="mi", text="c"),
         ],
     )
     feed = await service.review_feed(db_session)
-    await service.correct(db_session, feed[0]["id"], verdict_type="theme", operator_value="kultura")
+    await service.correct(db_session, feed[0]["id"], verdict_type="theme", operator_value="novost")
+    # слить не-каноническую novost в каноническую «новости»
+    out = await service.delete_theme(db_session, "novost", "новости")
+    assert out["ok"] is True and out["moved"] == 2
     themes = await service.themes_list(db_session)
-    as_map = {t["theme"]: t["count"] for t in themes}
-    assert as_map == {"novost": 2, "sport": 1, "kultura": 2}
-    # правка оператора с весом 2 наравне с двумя вердиктами, порядок стабильный
-    assert [t["theme"] for t in themes][:2] == ["kultura", "novost"]
+    assert [(t["theme"], t["count"]) for t in themes] == [("новости", 2)]
+    # правка оператора тоже переехала
+    from sqlalchemy import select as sa_select
+
+    from database.models_extended import ClassificationCorrection
+
+    vals = (
+        (await db_session.execute(sa_select(ClassificationCorrection.operator_value)))
+        .scalars()
+        .all()
+    )
+    assert "novost" not in vals and "новости" in vals
+
+
+@pytest.mark.asyncio
+async def test_delete_theme_requires_canonical_target(db_session):
+    await _seed_dictionary(db_session, "новости")
+    out = await service.delete_theme(db_session, "новости", "нету-такой")
+    assert out["ok"] is False and out["error"] == "target_not_in_dictionary"
+
+
+@pytest.mark.asyncio
+async def test_add_theme_dedup(db_session):
+    assert (await service.add_theme(db_session, "научпоп"))["ok"] is True
+    assert (await service.add_theme(db_session, "научпоп"))["error"] == "exists"
+    assert (await service.add_theme(db_session, "  "))["error"] == "empty_name"
 
 
 @pytest.mark.asyncio

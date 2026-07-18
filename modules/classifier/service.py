@@ -25,6 +25,7 @@ from sqlalchemy import delete, func, select
 from database.models_extended import (
     BulletinCurationRun,
     ClassificationCorrection,
+    ClassifierTheme,
     CollectedPostAudit,
     ContentClassification,
 )
@@ -526,17 +527,9 @@ async def agree_rate_stats(session) -> Dict[str, Any]:
     return {"total_classified": int(total_classified), "by_type": out}
 
 
-async def themes_list(
-    session, *, verdict_rows: int = 2000, correction_rows: int = 500
-) -> List[Dict[str, Any]]:
-    """Известные темы для подсказки оператору (кнопка «Изменить тему»).
-
-    Тема в вердикте — свободная строка (решение владельца 2026-07-05), поэтому
-    канонического словаря нет: собираем частотный список из последних вердиктов
-    ИИ и правок оператора (правкам — двойной вес: это выбор человека). Считаем
-    в Python, а не JSON-оператором СУБД — портируемо между Postgres и SQLite
-    тестов.
-    """
+async def _theme_usage_counts(session, *, verdict_rows: int = 5000) -> Dict[str, int]:
+    """Частота использования тем в последних вердиктах (учитывает правки: тема в
+    verdict уже актуальная после reassign). Python-подсчёт — портируемо PG/SQLite."""
     counts: Dict[str, int] = {}
     res = await session.execute(
         select(ContentClassification.verdict)
@@ -547,18 +540,96 @@ async def themes_list(
         theme = str((verdict or {}).get("theme") or "").strip()
         if theme:
             counts[theme] = counts.get(theme, 0) + 1
-    res = await session.execute(
-        select(ClassificationCorrection.operator_value)
-        .where(ClassificationCorrection.verdict_type == "theme")
-        .order_by(ClassificationCorrection.id.desc())
-        .limit(correction_rows)
+    return counts
+
+
+async def themes_list(session) -> List[Dict[str, Any]]:
+    """Темы для UI: канонический словарь (миграция 069) + не-канонические остатки.
+
+    Канон идёт первым (по position), у каждой темы счётчик использования в
+    вердиктах. Остатки (темы, ещё встречающиеся в вердиктах, но не в словаре)
+    отдаются с ``canon: false`` — редактор покажет их кандидатами на слияние.
+    """
+    canon_rows = (
+        (await session.execute(select(ClassifierTheme).order_by(ClassifierTheme.position)))
+        .scalars()
+        .all()
     )
-    for (value,) in res.all():
-        if isinstance(value, str) and value.strip():
-            theme = value.strip()
-            counts[theme] = counts.get(theme, 0) + 2
-    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    return [{"theme": t, "count": n} for t, n in ordered]
+    counts = await _theme_usage_counts(session)
+    out = [{"theme": t.name, "count": counts.pop(t.name, 0), "canon": True} for t in canon_rows]
+    leftovers = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    out.extend({"theme": t, "count": n, "canon": False} for t, n in leftovers)
+    return out
+
+
+async def add_theme(session, name: str) -> Dict[str, Any]:
+    """Добавить тему в канонический словарь (редактор оператора)."""
+    name = (name or "").strip()
+    if not name:
+        return {"ok": False, "error": "empty_name"}
+    existing = (
+        await session.execute(select(ClassifierTheme).where(ClassifierTheme.name == name))
+    ).scalar_one_or_none()
+    if existing:
+        return {"ok": False, "error": "exists"}
+    max_pos = (await session.execute(select(func.max(ClassifierTheme.position)))).scalar() or 0
+    session.add(ClassifierTheme(name=name, position=max_pos + 1))
+    await session.commit()
+    return {"ok": True, "theme": name}
+
+
+async def reassign_theme(session, old: str, new: str) -> int:
+    """Перенести все вердикты с темой ``old`` на ``new`` (посты не теряются).
+
+    Обновляет JSON-вердикты и правки оператора по теме. Возвращает число
+    затронутых вердиктов. Python-обход вместо JSON-операторов СУБД —
+    портируемо между Postgres и SQLite тестов; объёмы (тысячи строк) ок.
+    """
+    moved = 0
+    rows = (await session.execute(select(ContentClassification))).scalars().all()
+    for cls in rows:
+        verdict = dict(cls.verdict or {})
+        if str(verdict.get("theme") or "").strip() == old:
+            verdict["theme"] = new
+            cls.verdict = verdict
+            moved += 1
+    corr_rows = (
+        (
+            await session.execute(
+                select(ClassificationCorrection).where(
+                    ClassificationCorrection.verdict_type == "theme"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for corr in corr_rows:
+        if isinstance(corr.operator_value, str) and corr.operator_value.strip() == old:
+            corr.operator_value = new
+    await session.commit()
+    return moved
+
+
+async def delete_theme(session, name: str, reassign_to: str) -> Dict[str, Any]:
+    """Удалить тему из словаря, перенеся её посты в ``reassign_to`` (заказ 2026-07-18)."""
+    name = (name or "").strip()
+    reassign_to = (reassign_to or "").strip()
+    if not name or not reassign_to or name == reassign_to:
+        return {"ok": False, "error": "bad_args"}
+    target = (
+        await session.execute(select(ClassifierTheme).where(ClassifierTheme.name == reassign_to))
+    ).scalar_one_or_none()
+    if target is None:
+        return {"ok": False, "error": "target_not_in_dictionary"}
+    moved = await reassign_theme(session, name, reassign_to)
+    row = (
+        await session.execute(select(ClassifierTheme).where(ClassifierTheme.name == name))
+    ).scalar_one_or_none()
+    if row is not None:
+        await session.delete(row)
+        await session.commit()
+    return {"ok": True, "deleted": name, "reassign_to": reassign_to, "moved": moved}
 
 
 async def health_stats(session, *, days: int = DEFAULT_SOURCE_DAYS) -> Dict[str, Any]:
