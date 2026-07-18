@@ -451,6 +451,9 @@ class OAuthClient(Base):
     name = Column(String(128), nullable=False)
     redirect_uris = Column(JSON, nullable=False, default=list)
     allowed_scopes = Column(String(255), nullable=False, default="openid")
+    # Брендинг страницы единого входа (миграция 072): {"title","icon","accent","sub"}.
+    # NULL = страница покажет name.
+    branding = Column(JSON, nullable=True)
     is_confidential = Column(Boolean, nullable=False, default=True)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
