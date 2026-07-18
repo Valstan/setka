@@ -526,6 +526,41 @@ async def agree_rate_stats(session) -> Dict[str, Any]:
     return {"total_classified": int(total_classified), "by_type": out}
 
 
+async def themes_list(
+    session, *, verdict_rows: int = 2000, correction_rows: int = 500
+) -> List[Dict[str, Any]]:
+    """Известные темы для подсказки оператору (кнопка «Изменить тему»).
+
+    Тема в вердикте — свободная строка (решение владельца 2026-07-05), поэтому
+    канонического словаря нет: собираем частотный список из последних вердиктов
+    ИИ и правок оператора (правкам — двойной вес: это выбор человека). Считаем
+    в Python, а не JSON-оператором СУБД — портируемо между Postgres и SQLite
+    тестов.
+    """
+    counts: Dict[str, int] = {}
+    res = await session.execute(
+        select(ContentClassification.verdict)
+        .order_by(ContentClassification.id.desc())
+        .limit(verdict_rows)
+    )
+    for (verdict,) in res.all():
+        theme = str((verdict or {}).get("theme") or "").strip()
+        if theme:
+            counts[theme] = counts.get(theme, 0) + 1
+    res = await session.execute(
+        select(ClassificationCorrection.operator_value)
+        .where(ClassificationCorrection.verdict_type == "theme")
+        .order_by(ClassificationCorrection.id.desc())
+        .limit(correction_rows)
+    )
+    for (value,) in res.all():
+        if isinstance(value, str) and value.strip():
+            theme = value.strip()
+            counts[theme] = counts.get(theme, 0) + 2
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [{"theme": t, "count": n} for t, n in ordered]
+
+
 async def health_stats(session, *, days: int = DEFAULT_SOURCE_DAYS) -> Dict[str, Any]:
     """Диагностика работы рутины: успевает ли она за потоком (заказ 2026-07-16).
 

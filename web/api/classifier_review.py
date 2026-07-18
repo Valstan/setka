@@ -83,6 +83,14 @@ async def stats():
         return await service.agree_rate_stats(session)
 
 
+@router.get("/themes")
+async def themes():
+    """Известные темы (частотный список из вердиктов + правок) — подсказка оператору."""
+    async with AsyncSessionLocal() as session:
+        items = await service.themes_list(session)
+    return {"count": len(items), "themes": items}
+
+
 @router.get("/health")
 async def health():
     """Диагностика рутины: backlog по регионам, вердикты/сутки, покрытие потока."""

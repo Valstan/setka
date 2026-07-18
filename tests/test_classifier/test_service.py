@@ -149,6 +149,27 @@ async def test_agree_skips_merge_when_no_signal(db_session):
 
 
 @pytest.mark.asyncio
+async def test_themes_list_frequency_and_operator_weight(db_session):
+    # два вердикта novost, один sport; правка оператора kultura (вес ×2)
+    await seed_run(db_session, candidates=[_cand("1_10"), _cand("1_20"), _cand("1_30")])
+    await service.record_verdicts(
+        db_session,
+        [
+            ClassifierVerdict(lip="1_10", theme="novost", region_code="mi", text="a"),
+            ClassifierVerdict(lip="1_20", theme="novost", region_code="mi", text="b"),
+            ClassifierVerdict(lip="1_30", theme="sport", region_code="mi", text="c"),
+        ],
+    )
+    feed = await service.review_feed(db_session)
+    await service.correct(db_session, feed[0]["id"], verdict_type="theme", operator_value="kultura")
+    themes = await service.themes_list(db_session)
+    as_map = {t["theme"]: t["count"] for t in themes}
+    assert as_map == {"novost": 2, "sport": 1, "kultura": 2}
+    # правка оператора с весом 2 наравне с двумя вердиктами, порядок стабильный
+    assert [t["theme"] for t in themes][:2] == ["kultura", "novost"]
+
+
+@pytest.mark.asyncio
 async def test_correction_and_rate(db_session):
     cid = await _one(db_session)
     await service.correct(db_session, cid, verdict_type="theme", operator_value="sport")
