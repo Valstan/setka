@@ -79,6 +79,20 @@
         </div>
     </div>
 
+    <!-- Редактор канонических тем (миграция 069, заказ 2026-07-18) -->
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <h6 class="mb-2"><i class="bi bi-tags"></i> Темы (словарь)
+                <span class="text-muted small">— рутина выбирает тему строго из этого списка</span>
+            </h6>
+            <div id="cf-themes-editor"></div>
+            <div class="input-group input-group-sm mt-2" style="max-width: 360px;">
+                <input type="text" class="form-control" id="cf-theme-add-name" placeholder="добавить тему…">
+                <button class="btn btn-outline-primary" id="cf-theme-add-btn">Добавить</button>
+            </div>
+        </div>
+    </div>
+
     <div id="cf-feed"></div>
     <div id="cf-empty" class="text-muted text-center py-4 d-none">
         Нет вердиктов для разбора. Рутина ещё не прислала, либо всё разобрано.
@@ -212,18 +226,19 @@ async function loadFeed() {
     }
 }
 
-// ─────────── Темы: выпадающий список-подсказка (частотный, /themes) ───────────
-let KNOWN_THEMES = [];  // [{theme, count}] по убыванию частоты
+// ─────────── Темы: канонический словарь (/themes, миграция 069) ───────────
+let KNOWN_THEMES = [];  // [{theme, count, canon}] — канон первым (по position)
 
 async function loadThemes() {
     try {
         const r = await fetch("/api/classifier-review/themes");
         if (r.ok) KNOWN_THEMES = (await r.json()).themes || [];
     } catch (e) { /* подсказка недоступна — останется ручной ввод */ }
+    renderThemesEditor();
 }
 
 function themeMenuHTML(id, currentTheme) {
-    const items = KNOWN_THEMES.map(t => {
+    const items = KNOWN_THEMES.filter(t => t.canon).map(t => {
         const active = t.theme === currentTheme ? " active" : "";
         return `<button class="dropdown-item small py-1${active}" type="button"
                         onclick="pickTheme(${id}, this.dataset.theme)" data-theme="${esc(t.theme)}">
@@ -231,14 +246,79 @@ function themeMenuHTML(id, currentTheme) {
                 </button>`;
     }).join("");
     return `
-        <div class="dropdown-header py-1">Выбери тему (по частоте) или впиши новую</div>
-        ${items || '<div class="px-3 py-1 small text-muted">известных тем пока нет</div>'}
+        <div class="dropdown-header py-1">Выбери тему или впиши новую (попадёт в словарь)</div>
+        ${items || '<div class="px-3 py-1 small text-muted">словарь тем пуст</div>'}
         <div class="dropdown-divider"></div>
         <div class="input-group input-group-sm px-2">
             <input type="text" class="form-control" placeholder="новая тема…" data-theme-new="${id}"
                    onkeydown="if(event.key==='Enter'){event.preventDefault();applyNewTheme(${id});}">
             <button class="btn btn-outline-primary" type="button" onclick="applyNewTheme(${id})">✓</button>
         </div>`;
+}
+
+// ─────────── Редактор словаря тем: добавить / удалить с переносом постов ───────────
+function renderThemesEditor() {
+    const box = document.getElementById("cf-themes-editor");
+    if (!box) return;
+    box.innerHTML = "";
+    for (const t of KNOWN_THEMES) {
+        const badge = t.canon ? "" :
+            ` <span class="badge bg-warning text-dark" title="встречается в вердиктах, но не входит в словарь — стоит влить в каноническую тему">не в словаре</span>`;
+        box.insertAdjacentHTML("beforeend", `
+          <div class="d-flex justify-content-between align-items-center border-bottom py-1"
+               data-theme-row="${esc(t.theme)}">
+            <div class="small">${esc(t.theme)} <span class="text-muted">· ${t.count} пост(ов)</span>${badge}</div>
+            <button class="btn btn-outline-danger btn-sm py-0" title="удалить тему (посты будут перенесены)"
+                    onclick="askDeleteTheme(this.closest('[data-theme-row]').dataset.themeRow)">✕</button>
+          </div>`);
+    }
+}
+
+function askDeleteTheme(name) {
+    const row = document.querySelector(`[data-theme-row="${CSS.escape(name)}"]`);
+    if (!row || row.querySelector("select")) return;
+    const options = KNOWN_THEMES.filter(t => t.canon && t.theme !== name)
+        .map(t => `<option value="${esc(t.theme)}">${esc(t.theme)}</option>`).join("");
+    row.insertAdjacentHTML("beforeend", `
+        <div class="d-flex gap-1 align-items-center ms-2" data-del-controls>
+          <span class="small text-muted">перенести посты в:</span>
+          <select class="form-select form-select-sm" style="width:auto">${options}</select>
+          <button class="btn btn-danger btn-sm py-0"
+                  onclick="confirmDeleteTheme('${esc(name)}', this.parentElement.querySelector('select').value)">
+              Перенести и удалить</button>
+          <button class="btn btn-outline-secondary btn-sm py-0"
+                  onclick="this.parentElement.remove()">Отмена</button>
+        </div>`);
+}
+
+async function confirmDeleteTheme(name, reassignTo) {
+    if (!reassignTo) return;
+    const r = await fetch("/api/classifier-review/themes/delete", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name, reassign_to: reassignTo}),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (out.ok === false) alert("Не удалось удалить тему: " + (out.error || "ошибка"));
+    await loadThemes();
+    loadFeed();
+}
+
+async function addThemeToDictionary(name) {
+    const r = await fetch("/api/classifier-review/themes/add", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name}),
+    });
+    return r.json().catch(() => ({}));
+}
+
+async function addThemeFromEditor() {
+    const inp = document.getElementById("cf-theme-add-name");
+    const t = (inp.value || "").trim();
+    if (!t) return;
+    const out = await addThemeToDictionary(t);
+    if (out.ok === false && out.error === "exists") alert("Такая тема уже есть в словаре.");
+    inp.value = "";
+    await loadThemes();
 }
 
 function closeThemeDropdown(id) {
@@ -251,12 +331,14 @@ function pickTheme(id, theme) {
     if (theme && theme.trim()) correctTheme(id, theme.trim());
 }
 
-function applyNewTheme(id) {
+async function applyNewTheme(id) {
     const inp = document.querySelector(`[data-theme-new="${id}"]`);
     const t = (inp?.value || "").trim();
     if (!t) return;
     closeThemeDropdown(id);
     correctTheme(id, t);
+    await addThemeToDictionary(t);  // новая тема сразу в словарь ("exists" — не страшно)
+    loadThemes();
 }
 
 // ─────────── Склейка/разъединение: показываем ТОЛЬКО когда ИИ дал сигнал ───────────
@@ -426,6 +508,9 @@ document.getElementById("cf-refresh").addEventListener("click", () => { loadThem
 document.getElementById("cf-unreacted").addEventListener("change", loadFeed);
 document.getElementById("cf-rules-refresh").addEventListener("click", loadRules);
 document.getElementById("cf-rule-add").addEventListener("click", addRule);
+document.getElementById("cf-theme-add-btn").addEventListener("click", addThemeFromEditor);
+document.getElementById("cf-theme-add-name").addEventListener("keydown",
+    e => { if (e.key === "Enter") { e.preventDefault(); addThemeFromEditor(); } });
 loadStats();
 loadHealth();
 loadThemes().then(loadFeed);  // темы нужны меню карточек — грузим до ленты

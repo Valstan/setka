@@ -85,10 +85,33 @@ async def stats():
 
 @router.get("/themes")
 async def themes():
-    """Известные темы (частотный список из вердиктов + правок) — подсказка оператору."""
+    """Темы: канонический словарь + не-канонические остатки (для пикера и редактора)."""
     async with AsyncSessionLocal() as session:
         items = await service.themes_list(session)
     return {"count": len(items), "themes": items}
+
+
+class ThemeAdd(BaseModel):
+    name: str
+
+
+@router.post("/themes/add")
+async def themes_add(body: ThemeAdd = Body(...)):
+    """Добавить тему в канонический словарь."""
+    async with AsyncSessionLocal() as session:
+        return await service.add_theme(session, body.name)
+
+
+class ThemeDelete(BaseModel):
+    name: str
+    reassign_to: str
+
+
+@router.post("/themes/delete")
+async def themes_delete(body: ThemeDelete = Body(...)):
+    """Удалить тему, перенеся её посты в другую (посты не теряются)."""
+    async with AsyncSessionLocal() as session:
+        return await service.delete_theme(session, body.name, body.reassign_to)
 
 
 @router.get("/health")

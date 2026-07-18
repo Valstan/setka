@@ -50,6 +50,22 @@ async def render_effective_postulates(session) -> str:
     Поданным правилам штампуется ``last_effective_at`` (aging, ADR-0005): правило,
     давно не попадавшее в постулаты, панель подсветит кандидатом на вывод."""
     base = read_postulates()
+    # Канонический словарь тем (миграция 069): рутина выбирает theme СТРОГО из него.
+    from database.models_extended import ClassifierTheme
+
+    themes = (
+        (await session.execute(select(ClassifierTheme).order_by(ClassifierTheme.position)))
+        .scalars()
+        .all()
+    )
+    if themes:
+        theme_names = ", ".join(t.name for t in themes)
+        base = base.rstrip() + (
+            "\n\n## Разрешённые темы (theme)\n\n"
+            f"Выбирай тему СТРОГО из списка: {theme_names}. "
+            "Никаких новых тем, англицизмов и вариаций написания — если ни одна не "
+            "подходит идеально, бери ближайшую по смыслу; совсем мусор/пустое — «мусор».\n"
+        )
     rules = (
         (
             await session.execute(
