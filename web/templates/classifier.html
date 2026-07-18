@@ -175,8 +175,6 @@ async function loadFeed() {
     for (const it of data.items) {
         const v = it.verdict || {};
         const conf = it.confidence == null ? "" : `<span class="badge bg-light text-dark">увер. ${it.confidence}</span>`;
-        const merge = (v.merge_with && v.merge_with.length) ? `склейка с: ${v.merge_with.join(", ")}` :
-                      (v.split ? "разъединить" : "");
         feed.insertAdjacentHTML("beforeend", `
           <div class="card mb-2" data-id="${it.id}">
             <div class="card-body">
@@ -184,7 +182,6 @@ async function loadFeed() {
                 <div>
                   <span class="badge bg-primary">${esc(v.theme || "?")}</span>
                   <span class="badge bg-secondary">${ACTIONS[v.action] || v.action || "?"}</span>
-                  ${merge ? `<span class="badge bg-warning text-dark">${esc(merge)}</span>` : ""}
                   ${conf}
                   ${filterBadge(it)}
                 </div>
@@ -193,19 +190,114 @@ async function loadFeed() {
               <div class="text-muted small mb-2" style="white-space:pre-wrap;max-height:6em;overflow:auto;">${esc(it.post_text) || "<i>без текста</i>"}</div>
               ${v.media_summary ? `<div class="small mb-2"><span class="badge bg-info text-dark">📷 ИИ увидел</span> <span class="text-secondary">${esc(v.media_summary)}</span></div>` : ""}
               ${v.reasoning ? `<div class="fst-italic small text-secondary mb-2">↳ ${esc(v.reasoning)}</div>` : ""}
+              ${mergeBlock(it, v)}
               <div class="cf-edits small text-success mb-2 d-none" data-edits="${it.id}"></div>
               <div class="d-flex gap-2 flex-wrap">
                 <button class="btn btn-success btn-sm" onclick="agree(${it.id})">✅ Согласен со всем</button>
-                <button class="btn btn-outline-primary btn-sm" onclick="correctTheme(${it.id})">Изменить тему</button>
+                <div class="btn-group btn-group-sm" data-theme-dd="${it.id}">
+                  <button class="btn btn-outline-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown"
+                          data-bs-auto-close="outside" aria-expanded="false">Изменить тему</button>
+                  <div class="dropdown-menu p-2" style="min-width: 260px; max-height: 320px; overflow-y: auto;">
+                    ${themeMenuHTML(it.id, v.theme)}
+                  </div>
+                </div>
                 <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'publish')">→ публиковать</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'delete')">→ удалить</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'hold')">→ отложить</button>
-                <button class="btn btn-outline-warning btn-sm" onclick="correctSplit(${it.id})">Разъединить</button>
+                ${mergeButtonsHTML(it.id, v)}
                 <button class="btn btn-primary btn-sm d-none" data-finalize="${it.id}" onclick="finalize(${it.id})">✔ Готово</button>
               </div>
             </div>
           </div>`);
     }
+}
+
+// ─────────── Темы: выпадающий список-подсказка (частотный, /themes) ───────────
+let KNOWN_THEMES = [];  // [{theme, count}] по убыванию частоты
+
+async function loadThemes() {
+    try {
+        const r = await fetch("/api/classifier-review/themes");
+        if (r.ok) KNOWN_THEMES = (await r.json()).themes || [];
+    } catch (e) { /* подсказка недоступна — останется ручной ввод */ }
+}
+
+function themeMenuHTML(id, currentTheme) {
+    const items = KNOWN_THEMES.map(t => {
+        const active = t.theme === currentTheme ? " active" : "";
+        return `<button class="dropdown-item small py-1${active}" type="button"
+                        onclick="pickTheme(${id}, this.dataset.theme)" data-theme="${esc(t.theme)}">
+                    ${esc(t.theme)} <span class="text-muted">· ${t.count}</span>
+                </button>`;
+    }).join("");
+    return `
+        <div class="dropdown-header py-1">Выбери тему (по частоте) или впиши новую</div>
+        ${items || '<div class="px-3 py-1 small text-muted">известных тем пока нет</div>'}
+        <div class="dropdown-divider"></div>
+        <div class="input-group input-group-sm px-2">
+            <input type="text" class="form-control" placeholder="новая тема…" data-theme-new="${id}"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();applyNewTheme(${id});}">
+            <button class="btn btn-outline-primary" type="button" onclick="applyNewTheme(${id})">✓</button>
+        </div>`;
+}
+
+function closeThemeDropdown(id) {
+    const toggle = document.querySelector(`[data-theme-dd="${id}"] [data-bs-toggle="dropdown"]`);
+    if (toggle && window.bootstrap) bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
+}
+
+function pickTheme(id, theme) {
+    closeThemeDropdown(id);
+    if (theme && theme.trim()) correctTheme(id, theme.trim());
+}
+
+function applyNewTheme(id) {
+    const inp = document.querySelector(`[data-theme-new="${id}"]`);
+    const t = (inp?.value || "").trim();
+    if (!t) return;
+    closeThemeDropdown(id);
+    correctTheme(id, t);
+}
+
+// ─────────── Склейка/разъединение: показываем ТОЛЬКО когда ИИ дал сигнал ───────────
+// merge_with = ИИ предлагает объединить этот пост с перечисленными lip в одну
+// публикацию сводки (дубли/продолжения одной новости). split = ИИ считает, что
+// внутри поста несколько разных новостей и их лучше разнести.
+function lipLink(lip) {
+    const m = String(lip).match(/^(-?\d+)_(\d+)$/);
+    const url = m ? `https://vk.com/wall${m[1]}_${m[2]}` : null;
+    return url ? `<a href="${url}" target="_blank" rel="noopener">${esc(lip)}</a>` : esc(lip);
+}
+
+function mergeBlock(it, v) {
+    if (v.merge_with && v.merge_with.length) {
+        return `<div class="small mb-2 border rounded p-2 bg-warning-subtle">
+            <span class="badge bg-warning text-dark">🔗 склейка</span>
+            ИИ предлагает объединить этот пост с: ${v.merge_with.map(lipLink).join(", ")}
+            <span class="text-muted">— в сводке они выйдут одной новостью (как дубли/части одного события).</span>
+        </div>`;
+    }
+    if (v.split) {
+        return `<div class="small mb-2 border rounded p-2 bg-warning-subtle">
+            <span class="badge bg-warning text-dark">✂ разъединение</span>
+            ИИ считает, что внутри этого поста <b>несколько разных новостей</b> и предлагает разнести их по отдельности.
+        </div>`;
+    }
+    return "";
+}
+
+function mergeButtonsHTML(id, v) {
+    if (v.merge_with && v.merge_with.length) {
+        return `<button class="btn btn-outline-warning btn-sm" onclick="correctSplit(${id})"
+                        title="не объединять с другими постами — публиковать этот пост отдельной новостью">
+                    ✂ Не склеивать</button>`;
+    }
+    if (v.split) {
+        return `<button class="btn btn-outline-warning btn-sm" onclick="correctNoSplit(${id})"
+                        title="ИИ предложил разнести пост на несколько новостей — не согласен, оставить одним постом">
+                    🔗 Оставить одним</button>`;
+    }
+    return "";  // сигнала склейки нет — кнопка не нужна
 }
 
 async function post(id, path, body) {
@@ -243,11 +335,13 @@ function correctAction(id, action) {
     correctReact(id, "action", action, "действие → " + (ACTIONS[action] || action));
 }
 function correctSplit(id) {
-    correctReact(id, "merge", {split: true}, "разъединить");
+    correctReact(id, "merge", {split: true}, "не склеивать — публиковать отдельно");
 }
-function correctTheme(id) {
-    const t = prompt("Правильная тема:");
-    if (t && t.trim()) correctReact(id, "theme", t.trim(), "тема → " + t.trim());
+function correctNoSplit(id) {
+    correctReact(id, "merge", {split: false}, "оставить одним постом");
+}
+function correctTheme(id, theme) {
+    if (theme && theme.trim()) correctReact(id, "theme", theme.trim(), "тема → " + theme.trim());
 }
 
 // ─────────── Петля обучения: выученные правила (ADR-0005) ───────────
@@ -328,13 +422,13 @@ async function loadRules() {
     }
 }
 
-document.getElementById("cf-refresh").addEventListener("click", () => { loadFeed(); loadStats(); loadHealth(); });
+document.getElementById("cf-refresh").addEventListener("click", () => { loadThemes().then(loadFeed); loadStats(); loadHealth(); });
 document.getElementById("cf-unreacted").addEventListener("change", loadFeed);
 document.getElementById("cf-rules-refresh").addEventListener("click", loadRules);
 document.getElementById("cf-rule-add").addEventListener("click", addRule);
 loadStats();
 loadHealth();
-loadFeed();
+loadThemes().then(loadFeed);  // темы нужны меню карточек — грузим до ленты
 loadRules();
 </script>
 {% endblock %}
