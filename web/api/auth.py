@@ -52,6 +52,13 @@ class RegisterIn(BaseModel):
     invite_code: str = Field(..., min_length=1, max_length=128)
 
 
+def _cookie_domain() -> str | None:
+    # SSO между поддоменами (вход./радар.вмалмыже.рф — один app): env
+    # SESSION_COOKIE_DOMAIN=.<punycode-домен> расшаривает cookie на все
+    # поддомены. Пусто (дефолт) = host-only, как раньше.
+    return os.getenv("SESSION_COOKIE_DOMAIN") or None
+
+
 def _set_session_cookie(response: Response, user: RadarUser) -> None:
     # password_hash nullable с миграции 052 (соц-only аккаунты) — fragment от "".
     token = issue_session_token(user.id, user.role, password_fragment(user.password_hash or ""))
@@ -63,6 +70,7 @@ def _set_session_cookie(response: Response, user: RadarUser) -> None:
         samesite="lax",
         # На проде cookie ходит только по HTTPS; локальный dev (http) выключает env'ом.
         secure=os.getenv("SESSION_COOKIE_SECURE", "1") == "1",
+        domain=_cookie_domain(),
     )
 
 
@@ -88,7 +96,7 @@ async def login(body: LoginIn, response: Response):
 @router.post("/logout")
 async def logout(response: Response):
     """Погасить сессию (удалить cookie; токен stateless — сам истечёт)."""
-    response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(SESSION_COOKIE, domain=_cookie_domain())
     return {"ok": True}
 
 

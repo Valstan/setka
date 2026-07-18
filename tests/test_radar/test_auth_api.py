@@ -156,6 +156,24 @@ async def test_logout_deletes_cookie():
     assert auth_core.SESSION_COOKIE in set_cookie  # expired-cookie выставлена
 
 
+@pytest.mark.asyncio
+async def test_logout_deletes_cookie_with_domain(monkeypatch):
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", ".xn--80adkdyec4j.xn--p1ai")
+    response = Response()
+    await auth_api.logout(response)
+    set_cookie = response.headers.get("set-cookie", "")
+    assert "Domain=.xn--80adkdyec4j.xn--p1ai" in set_cookie
+
+
+def test_cookie_domain_env(monkeypatch):
+    monkeypatch.delenv("SESSION_COOKIE_DOMAIN", raising=False)
+    assert auth_api._cookie_domain() is None
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", "")
+    assert auth_api._cookie_domain() is None  # пустая строка = host-only
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", ".example.com")
+    assert auth_api._cookie_domain() == ".example.com"
+
+
 def test_register_in_validates_login_charset():
     with pytest.raises(Exception):
         auth_api.RegisterIn(login="bad login!", password="12345678", invite_code="x")
