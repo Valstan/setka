@@ -181,8 +181,16 @@ async def root(request: Request):
 
 @app.get("/login")
 async def login_page(request: Request):
-    """Логин/регистрация (Ф0.1) — единственная публичная страница."""
-    return templates.TemplateResponse("login.html", {"request": request})
+    """Логин/регистрация (Ф0.1) — единственная публичная страница.
+
+    Единый вход экосистемы: страница распознаёт, откуда пришёл посетитель
+    (OIDC-клиент из next= / сервисный поддомен), и показывает «Войти в <Сервис>»
+    (modules/radar_id/branding.py).
+    """
+    from modules.radar_id.branding import resolve_brand
+
+    brand = await resolve_brand(request.query_params.get("next"), request.headers.get("host"))
+    return templates.TemplateResponse("login.html", {"request": request, "brand": brand})
 
 
 @app.get("/radar")

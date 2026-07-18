@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Вход — SETKA</title>
+    <title>Войти в {{ brand.title }}</title>
     <script>
         (function () {
             try {
@@ -19,8 +19,15 @@
     <div class="container" style="max-width: 420px;">
         <div class="card shadow-sm">
             <div class="card-body p-4">
-                <h1 class="h4 mb-1 text-center">SETKA</h1>
-                <p class="text-secondary text-center mb-4" id="form-subtitle">Вход в систему</p>
+                <div class="text-center mb-1" style="font-size: 2.5rem; line-height: 1;">
+                    {%- if brand.icon and brand.icon.startswith('http') -%}
+                    <img src="{{ brand.icon }}" alt="" style="height: 48px;">
+                    {%- else -%}
+                    {{ brand.icon }}
+                    {%- endif -%}
+                </div>
+                <h1 class="h4 mb-1 text-center">Войти в {{ brand.title }}</h1>
+                <p class="text-secondary text-center mb-4" id="form-subtitle">{{ brand.sub }}</p>
 
                 <div class="alert alert-danger d-none" id="error-box" role="alert"></div>
 
@@ -38,12 +45,23 @@
                         <label class="form-label" for="invite">Инвайт-код</label>
                         <input class="form-control" id="invite" autocomplete="off">
                     </div>
-                    <button class="btn btn-primary w-100" id="submit-btn" type="submit">Войти</button>
+                    <button class="btn btn-primary w-100" id="submit-btn" type="submit"
+                            style="background-color: {{ brand.accent }}; border-color: {{ brand.accent }};">Войти</button>
                 </form>
+
+                <div class="d-flex align-items-center my-3">
+                    <hr class="flex-grow-1"><span class="mx-2 text-secondary small">или</span><hr class="flex-grow-1">
+                </div>
+                <a class="btn btn-outline-primary w-100" id="vk-login-btn" href="/auth/vk/login">
+                    <i class="bi bi-chat-fill me-1"></i>Войти через ВКонтакте
+                </a>
 
                 <div class="text-center mt-3">
                     <a href="#" class="link-secondary small" id="mode-toggle">Регистрация по инвайт-коду</a>
                 </div>
+                <p class="text-center text-secondary small mt-3 mb-0">
+                    Единый вход «Сервисы Малмыжа» — один аккаунт для всех сервисов на вмалмыже.рф
+                </p>
             </div>
         </div>
     </div>
@@ -51,6 +69,13 @@
     <script>
         let registerMode = false;
         const errorBox = document.getElementById('error-box');
+
+        // next= пробрасывается и в форму, и в ВК-вход; только свои относительные пути.
+        const rawNext = new URLSearchParams(location.search).get('next');
+        const safeNext = rawNext && rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : null;
+        if (safeNext) {
+            document.getElementById('vk-login-btn').href = '/auth/vk/login?next=' + encodeURIComponent(safeNext);
+        }
 
         document.getElementById('mode-toggle').addEventListener('click', (e) => {
             e.preventDefault();
@@ -84,9 +109,12 @@
                     errorBox.classList.remove('d-none');
                     return;
                 }
-                // Оператор — в дашборд (или на исходную страницу), radar-юзер — в радар.
-                const next = new URLSearchParams(location.search).get('next');
-                location.href = data.role === 'operator' ? (next || '/') : '/radar';
+                // Оператор — в дашборд (или на исходную страницу); radar-юзер — в радар,
+                // НО OIDC-возврат (next=/oidc/authorize?...) уважается для всех ролей —
+                // иначе рвётся round-trip единого входа внешних сервисов.
+                location.href = data.role === 'operator'
+                    ? (safeNext || '/')
+                    : (safeNext && safeNext.startsWith('/oidc/') ? safeNext : '/radar');
             } catch (err) {
                 errorBox.textContent = 'Сеть недоступна: ' + err;
                 errorBox.classList.remove('d-none');
