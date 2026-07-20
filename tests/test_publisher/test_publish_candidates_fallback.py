@@ -192,6 +192,46 @@ async def test_community_error_10_falls_back_to_candidates():
 
 
 @pytest.mark.asyncio
+async def test_rotates_between_community_tokens_before_user_fallback():
+    """Frozen VALSTAN community key → MAMA community key, user MAMA untouched."""
+    publisher = VKPublisher.__new__(VKPublisher)
+    publisher._community_tokens = {158: "tok_comm_valstan"}
+    publisher._community_candidates = {
+        158: [
+            ("COMM_158", "tok_comm_valstan"),
+            ("COMM_158_MAMA", "tok_comm_mama"),
+        ]
+    }
+    first = _client_returning([_vk_error(10, "admin banned")])
+    second = _client_returning([{"response": {"post_id": 901}}])
+    user = _client_returning([{"response": {"post_id": 902}}])
+    publisher._community_clients = {
+        "COMM_158": first,
+        "COMM_158_MAMA": second,
+    }
+    publisher._user_clients = {"MAMA": user}
+    publisher._publish_candidates = [("MAMA", "tok_user_mama")]
+    publisher._active_publish_name = None
+    publisher.vk_client = None
+    policy = MagicMock()
+    policy.report_error = AsyncMock()
+    policy.report_success = AsyncMock()
+    publisher._policy = policy
+
+    response, via = await publisher._call_wall_post(
+        params={"owner_id": -158, "message": "x"},
+        method="wall.post",
+        client=first,
+    )
+
+    assert response == {"post_id": 901}
+    assert via == "community-token:COMM_158_MAMA"
+    policy.report_error.assert_awaited_once_with("COMM_158", 10)
+    policy.report_success.assert_awaited_once_with("COMM_158_MAMA")
+    user.api_call.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_rotates_publish_token_on_code_10(monkeypatch):
     """User-токен (забаненный VALSTAN) → error 10 → следующий кандидат (MAMA).
 

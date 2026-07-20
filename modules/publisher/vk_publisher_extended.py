@@ -37,11 +37,10 @@ class VKPublisher:
     IMPORTANT: This class creates its OWN VK client with the PUBLISH token.
     Never reuse a parsing client for publishing.
 
-    Community access tokens (опционально): передаются как
-    `community_tokens={abs(group_id): token}`. Если для целевой группы есть
-    community-токен — публикуем под ним. Это и снимает нагрузку с VALSTAN/VITA,
-    и работает корректно даже если у user-токена нет нужных прав на стену
-    этой группы.
+    Community access tokens (опционально) передаются либо legacy-картой
+    ``community_tokens={abs(group_id): token}``, либо пулом
+    ``community_candidates={abs(group_id): [(name, token), ...]}``. Пул
+    перебирается целиком до перехода на user-токены.
     """
 
     # VK API limits
@@ -82,6 +81,7 @@ class VKPublisher:
         test_polygon_mode: bool = False,
         test_polygon_group_id: int = -137760500,
         community_tokens: Optional[Dict[int, str]] = None,
+        community_candidates: Optional[Dict[int, List[Tuple[str, str]]]] = None,
         publish_candidates: Optional[List[Tuple[str, str]]] = None,
     ):
         """
@@ -93,6 +93,8 @@ class VKPublisher:
             test_polygon_group_id: Test polygon VK group ID
             community_tokens: {abs(group_id): token} per-community access tokens —
                 имеют приоритет над общим publish-токеном для своих групп.
+            community_candidates: именованный каскад community-токенов для
+                каждой группы. Имеет приоритет над legacy ``community_tokens``.
             publish_candidates: упорядоченный список ``(name, token)`` user-токенов
                 для wall.post / wall.repost. Используется как fallback, если
                 community-токен не подходит. Если не задан — берётся legacy
@@ -143,8 +145,11 @@ class VKPublisher:
         self.test_polygon_group_id = test_polygon_group_id
         self._last_post_time = {}  # group_id -> datetime
         self._community_tokens = dict(community_tokens or {})
+        self._community_candidates: Dict[int, List[Tuple[str, str]]] = {
+            int(cid): list(items) for cid, items in (community_candidates or {}).items()
+        }
         # Кеш community-клиентов (VKClient инициализирует session, не хочется делать заново).
-        self._community_clients: Dict[int, Any] = {}
+        self._community_clients: Dict[Any, Any] = {}
         # Кеш user-клиентов по имени токена (для fallback'а между кандидатами).
         self._user_clients: Dict[str, Any] = {}
         if self._active_publish_name and self.vk_client is not None:
@@ -178,7 +183,10 @@ class VKPublisher:
 
         policy = TokenPolicy(session)
         comm_map = await policy._load_communities()  # noqa: SLF001 — intended internal use
-        community_tokens = {cid: vt.token for cid, vt in comm_map.items()}
+        community_candidates = {
+            cid: [(vt.name, vt.token) for vt in rows] for cid, rows in comm_map.items()
+        }
+        community_tokens = {cid: rows[0].token for cid, rows in comm_map.items() if rows}
 
         candidates = await policy.pick(
             TokenOp.COMMUNITY_WRITE,
@@ -189,6 +197,7 @@ class VKPublisher:
         ]
         inst = cls(
             community_tokens=community_tokens,
+            community_candidates=community_candidates,
             publish_candidates=publish_user_candidates,
             **kwargs,
         )
@@ -529,6 +538,14 @@ class VKPublisher:
             response = await self._invoke(self.vk_client, method, params)
             return response, "publish-token"
 
+        owner_id = params.get("owner_id")
+        cid = abs(int(owner_id)) if owner_id is not None else None
+        community_candidates = (
+            getattr(self, "_community_candidates", {}).get(cid, []) if cid else []
+        )
+        if community_candidates:
+            return await self._try_community_candidates(method, params, community_candidates)
+
         primary_client = client if client is not None else self.vk_client
         is_publish_token = primary_client is self.vk_client and primary_client is not None
 
@@ -589,6 +606,58 @@ class VKPublisher:
                     method, params, via_prefix="publish-token"
                 )
             raise Exception(f"VK API error: {e.message}") from e
+
+    async def _try_community_candidates(
+        self,
+        method: str,
+        params: Dict[str, Any],
+        candidates: List[Tuple[str, str]],
+    ) -> Tuple[Dict, str]:
+        """Перебрать все токены сообщества, затем перейти к user-каскаду."""
+        from modules.vk_monitor.vk_client import VKClient
+
+        policy = getattr(self, "_policy", None)
+        rotate_codes = self._COMMUNITY_FALLBACK_CODES | set(_PUBLISH_ROTATE_CODES)
+        for name, token in candidates:
+            client = self._community_clients.get(name)
+            if client is None:
+                client = VKClient(token)
+                self._community_clients[name] = client
+            try:
+                response = await self._invoke(client, method, params)
+                if policy is not None:
+                    try:
+                        await policy.report_success(name)
+                    except Exception:  # pragma: no cover - defensive
+                        logger.exception("policy.report_success failed")
+                return response, f"community-token:{name}"
+            except _VKApiCallError as e:
+                if e.code not in rotate_codes:
+                    raise Exception(f"VK API error: {e.message}") from e
+                logger.warning(
+                    "community-token %s failed with code %s on %s — rotating",
+                    name,
+                    e.code,
+                    method,
+                )
+                if policy is not None:
+                    try:
+                        await policy.report_error(name, e.code)
+                    except Exception:  # pragma: no cover - defensive
+                        logger.exception("policy.report_error failed")
+
+        publish_candidates = getattr(self, "_publish_candidates", None) or []
+        if publish_candidates:
+            return await self._try_publish_candidates(
+                method, params, via_prefix="community-fallback-publish"
+            )
+        if self.vk_client is not None:
+            await self._enforce_publish_token_rate_limit()
+            response = await self._invoke(self.vk_client, method, params)
+            return response, "community-fallback-publish"
+        raise RuntimeError(
+            f"VKPublisher: all community tokens failed and no publish-token available for {method}."
+        )
 
     def _drop_active_publish_candidate(self) -> None:
         """Удалить ``_active_publish_name`` из списка кандидатов и сбросить vk_client."""
