@@ -2,31 +2,25 @@
 
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
-**Status:** ACTIVE (ждём действия оператора: утвердить 5 черновиков правил в `/classifier`)
-**Updated:** 2026-07-20
-**Branch:** chore/distill-2026-07-20
-**Last release in prod:** код HEAD **`2254297`** (#368), все сервисы active, health 200.
-Этой сессией прод **не менялся** — только read-only замеры и подача черновиков правил
-через существующий API `/api/classifier/rule-proposals`. Деплой не требуется.
+**Status:** CLOSED (2026-07-21)
+**Updated:** 2026-07-21
+**Branch:** main
+**Last release in prod:** код HEAD **`e6a519c`** (#372), docs HEAD **`acfa269`** (#374), все сервисы active, health 200.
+Этой сессией задеплоены multi-token community cascade, свежий VALSTAN user-token и
+активирован первый батч районов.
 
 ---
 
 ## Текущая нитка
 
-**HITL-классификатор: аудит цикла рутины + дистилляция Корпуса за неделю правок.**
+**VK-токены и первый батч экспансии:**
 Заказ владельца 2026-07-20: проверить, правильно ли рутина отрабатывает цикл, и
 подправить правила фильтрации по накопленным правкам.
 
-**Аудит — цикл исправен целиком:** сбор → `collected_post_audit` → `/api/classifier/pending`
-(round-robin по регионам) → рутина → `POST /verdicts` → `content_classifications`
-(6430 вердиктов, дедуп по `lip`, хранение вечное) → лента `/classifier` → правки оператора
-в `classification_corrections` (2102 записи) → дистилляция → overlay `classification_rules`
-→ обратно в промпт. **Покрытие 96%** (107 неразмеченных из 2867 за 3 дня) — рутина за
-мультирегиональным потоком успевает, закрыт watch-пункт PENDING.
-
-**Дистилляция:** 200 коррекций (18–20.07, регионы ur/vp/tuzha/tatarstan_obl — первая
-после мультирегиона) → 5 правил, `recorded: 5, skipped: 0`. Журнал —
-[`docs/ops/DISTILL_LOG.md`](ops/DISTILL_LOG.md).
+PR #372 добавил ordered `COMM_<id>` pools, named-token API/UI и fallback
+`community → VALSTAN → MAMA`; 1744 теста и CI зелёные. На проде записаны VALSTAN,
+`COMM_240386781`, `COMM_240386796`, `COMM_240386802`; активированы `yaransk`,
+`sanchursk`, `kiknur`. Dry-run: 36/1/17 постов, без реальной публикации.
 
 ## Следующий шаг
 
@@ -37,8 +31,8 @@
    сборы на личные карты. Утверждённые уйдут в промпт следующим прогоном рутины.
 2. **Через неделю после утверждения — пере-замерить agree-rate** по `action` (сейчас просел до
    ~48%, см. PENDING §HITL). Если не вырос — формулировки правил слабые, дистиллировать снова.
-3. Параллельно — ⏸ **активация районов**, как только владелец начнёт создавать VK-группы
-   «- ИНФО» (триггер наступил 20.07, разбан VALSTAN). Детали — PENDING §«Экспансия».
+3. Параллельно — ⏸ **следующие 24 VK-группы** порциями 2–4/день. Затем привязать регионы,
+   community-токены и провести dry-run.
 
 ## Контекст
 
@@ -46,8 +40,8 @@
 - **Связанные коммиты сессии:** `chore/distill-2026-07-20` — журнал дистилляции + PENDING +
   handoff + порт правил проекта под Codex (`AGENTS.md`, `.agents/skills/`, `.codex/hooks.json`,
   лежали неотслеживаемыми — по решению владельца закоммичены, чтобы разъехались на все машины).
-- **Прод:** HEAD `2254297`, setka / celery-worker / celery-beat active, health 200 за 1.0 s.
-  Правки кода в этой сессии не делались.
+- **Прод:** HEAD `e6a519c`, setka / celery-worker / celery-beat active, health 200 после рестарта.
+  Документация синхронизирована через PR #373/#374.
 - **Полезные запросы для следующего замера** (read-only, через `ssh setka "sudo -u postgres psql -d setka -tAc '…'"`):
   распределение `verdict->>'action'` за 7 дней; `classification_corrections` по
   `(verdict_type, outcome)`; покрытие — `collected_post_audit LEFT JOIN content_classifications`
@@ -55,6 +49,11 @@
   действие лежит в `verdict` (jsonb), правки — в отдельной таблице.
 
 ## Failed approaches (этой нитки)
+
+- **Community-token от МАМЫ:** даже временная роль администратора не открыла раздел VK
+  «Работа с API»; прямой URL вернул «Ошибка доступа». Роль МАМЫ возвращена к редактору.
+- **Перенос Chrome-сессии:** копия профиля с app-bound cookies не восстановила авторизацию;
+  временная копия профиля осталась на локальной машине и требует ручного удаления.
 
 - **`curl` к `/api/classifier-review/health` с прода** — отдаёт `{"detail":"Not authenticated"}`
   (эндпоинт за AuthGate, сессионная кука). Для замеров ходить **напрямую в psql**, а не через
