@@ -62,8 +62,8 @@ async def resolve_brand(next_url: Optional[str], host: Optional[str]) -> dict:
         try:
             from sqlalchemy import select
 
-            from database.models_extended import OAuthClient
             from database.connection import AsyncSessionLocal
+            from database.models_extended import OAuthClient
 
             async with AsyncSessionLocal() as session:
                 client = (
