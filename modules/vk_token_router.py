@@ -119,11 +119,12 @@ _AUTO_DISABLE_CODES_HOURS: Dict[int, float] = {
 
 
 async def load_community_tokens(session: AsyncSession) -> Dict[int, str]:
-    """Вернуть ``{abs(group_id): token}`` для всех active community-токенов.
+    """Вернуть legacy-карту ``{abs(group_id): первый active token}``.
 
-    Не фильтрует ``disabled_until`` — community-токены сейчас отключать через
-    cooldown нечем (если group-token внезапно сломался, VKPublisher просто
-    получит error 15/27 и упадёт на user-fallback тем же запросом).
+    Полный пул загружает :meth:`TokenPolicy._load_communities`. Эта функция
+    сохранена для старых читателей, которым нужен ровно один токен на группу;
+    выбор детерминированный: legacy ``COMM_<id>`` идёт раньше именованных
+    резервов ``COMM_<id>_<ACCOUNT>``.
     """
     q = await session.execute(
         select(VKToken).where(
@@ -131,7 +132,11 @@ async def load_community_tokens(session: AsyncSession) -> Dict[int, str]:
             VKToken.is_active.is_(True),
         )
     )
-    return {t.community_id: t.token for t in q.scalars()}
+    rows = sorted(q.scalars(), key=lambda t: (int(t.community_id), t.name.count("_"), t.name))
+    out: Dict[int, str] = {}
+    for t in rows:
+        out.setdefault(int(t.community_id), t.token)
+    return out
 
 
 async def load_vk_routing() -> "tuple[Optional[str], Dict[int, str]]":
@@ -186,7 +191,7 @@ class TokenPolicy:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._active_cache: Optional[Dict[str, VKToken]] = None
-        self._community_cache: Optional[Dict[int, VKToken]] = None
+        self._community_cache: Optional[Dict[int, List[VKToken]]] = None
 
     # ------------------------------------------------------------------
     # Запросы состояния
@@ -216,7 +221,13 @@ class TokenPolicy:
         self._active_cache = out
         return out
 
-    async def _load_communities(self) -> Dict[int, VKToken]:
+    async def _load_communities(self) -> Dict[int, List[VKToken]]:
+        """Active community-токены, сгруппированные в каскад по сообществу.
+
+        ``COMM_<id>`` — существующий основной токен (исторически VALSTAN),
+        именованные резервы вроде ``COMM_<id>_MAMA`` идут следом. Остальные
+        имена сортируются детерминированно.
+        """
         if self._community_cache is not None:
             return self._community_cache
         now = datetime.utcnow()
@@ -226,11 +237,20 @@ class TokenPolicy:
                 VKToken.is_active.is_(True),
             )
         )
-        out: Dict[int, VKToken] = {}
+        out: Dict[int, List[VKToken]] = {}
         for t in q.scalars():
             if t.disabled_until is not None and t.disabled_until > now:
                 continue
-            out[int(t.community_id)] = t
+            out.setdefault(int(t.community_id), []).append(t)
+        for cid, rows in out.items():
+            legacy_name = f"COMM_{cid}"
+            rows.sort(
+                key=lambda t: (
+                    0 if t.name.upper() == legacy_name else 1,
+                    0 if t.name.upper().endswith("_MAMA") else 1,
+                    t.name.upper(),
+                )
+            )
         self._community_cache = out
         return out
 
@@ -348,8 +368,8 @@ class TokenPolicy:
         if group_id is not None:
             cid = abs(int(group_id))
             comms = await self._load_communities()
-            ct = comms.get(cid)
-            if ct is not None:
+            community_rows = comms.get(cid, [])
+            for ct in community_rows:
                 out.append(
                     TokenCandidate(
                         name=ct.name,
@@ -400,9 +420,7 @@ class TokenPolicy:
         disabled_until = now + timedelta(hours=hours) if hours else None
 
         # Ищем существующую запись
-        q = await self._session.execute(
-            select(VKToken).where(VKToken.name == upper, VKToken.community_id.is_(None))
-        )
+        q = await self._session.execute(select(VKToken).where(VKToken.name == upper))
         row = q.scalar_one_or_none()
 
         if row is None:
@@ -447,7 +465,7 @@ class TokenPolicy:
         upper = name.upper()
         await self._session.execute(
             update(VKToken)
-            .where(VKToken.name == upper, VKToken.community_id.is_(None))
+            .where(VKToken.name == upper)
             .values(consecutive_errors=0, last_used=datetime.utcnow())
         )
         await self._session.commit()

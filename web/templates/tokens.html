@@ -121,14 +121,14 @@
         </div>
     </div>
 
-    <!-- Community access tokens (для чтения сообщений сообществ) -->
+    <!-- Community access tokens (пул публикации + сообщения) -->
     <div class="row mt-4">
         <div class="col-12">
             <div class="card border-info">
                 <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">
                         <i class="bi bi-chat-square-text"></i>
-                        Токены сообществ — чтение сообщений
+                        Токены сообществ — основной + резерв
                     </h5>
                     <button class="btn btn-outline-info btn-sm" onclick="refreshCommunityTokens()">
                         <i class="bi bi-arrow-clockwise"></i> Обновить
@@ -140,27 +140,28 @@
                         Эти токены берутся в VK по каждому сообществу отдельно:
                         <code>vk.com/club{ID}</code> → <b>Управление</b> →
                         <b>Работа с API</b> → <b>Создать ключ</b>.
-                        Дай ключу права <b>«Сообщения сообщества»</b>, скопируй
-                        полученное значение и вставь в поле нужной строки ниже.
-                        SETKA будет ходить под этим токеном в
-                        <code>messages.getConversations</code> для этой группы
-                        (без ограничения scope user-токена).
+                        Дай ключу права <b>«Стена»</b>, <b>«Фотографии»</b> и
+                        <b>«Сообщения сообщества»</b>. Для отказоустойчивости
+                        выпусти два ключа: основной из-под VALSTAN и резервный
+                        из-под МАМЫ. SETKA перебирает оба ключа сообщества, а
+                        затем user-токены VALSTAN → МАМА.
                     </div>
 
                     <div class="table-responsive">
                         <table class="table table-sm align-middle" id="community-tokens-table">
                             <thead>
                                 <tr>
-                                    <th style="width:25%">Регион</th>
-                                    <th style="width:15%">VK group</th>
-                                    <th style="width:35%">Токен</th>
+                                    <th style="width:22%">Регион</th>
+                                    <th style="width:13%">VK group</th>
+                                    <th style="width:10%">Аккаунт</th>
+                                    <th style="width:30%">Токен</th>
                                     <th style="width:15%">Статус</th>
                                     <th style="width:10%">Действия</th>
                                 </tr>
                             </thead>
                             <tbody id="community-tokens-tbody">
                                 <tr>
-                                    <td colspan="5" class="text-center text-muted">
+                                    <td colspan="6" class="text-center text-muted">
                                         <div class="spinner-border spinner-border-sm" role="status"></div>
                                         Загрузка...
                                     </td>
@@ -302,7 +303,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function refreshCommunityTokens() {
     const tbody = document.getElementById('community-tokens-tbody');
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">
         <div class="spinner-border spinner-border-sm" role="status"></div> Загрузка...
     </td></tr>`;
     try {
@@ -311,52 +312,68 @@ async function refreshCommunityTokens() {
         const rows = await r.json();
         renderCommunityTokens(rows);
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="5" class="text-danger">Ошибка: ${escapeHtml(e.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="text-danger">Ошибка: ${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
 function renderCommunityTokens(rows) {
     const tbody = document.getElementById('community-tokens-tbody');
     if (!rows || rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">Нет регионов с VK group</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">Нет регионов с VK group</td></tr>`;
         return;
     }
-    tbody.innerHTML = rows.map(row => communityTokenRowHtml(row)).join('');
+    tbody.innerHTML = rows.map(row => communityTokenRowsHtml(row)).join('');
 }
 
-function communityTokenRowHtml(row) {
-    const statusBadge = communityStatusBadge(row.validation_status);
-    const hasToken = !!row.token_id;
+function communityTokenRowsHtml(row) {
     const cid = row.community_id;
-    const inputId = `ctok-input-${cid}`;
-    const placeholder = hasToken ? row.token_masked || '(сохранён)' : 'вставь access_token из настроек сообщества';
+    const byName = Object.fromEntries((row.tokens || []).map(token => [token.token_name, token]));
+    const expected = [
+        {name: `COMM_${cid}`, account: 'VALSTAN'},
+        {name: `COMM_${cid}_MAMA`, account: 'МАМА'},
+    ];
+    const expectedNames = new Set(expected.map(slot => slot.name));
+    const extras = (row.tokens || [])
+        .filter(token => !expectedNames.has(token.token_name))
+        .map(token => ({name: token.token_name, account: token.token_name.split('_').slice(2).join('_') || 'другой'}));
+    const slots = expected.concat(extras);
+    return slots.map((slot, index) => communityTokenSlotHtml(row, slot, byName[slot.name], index === 0)).join('');
+}
+
+function communityTokenSlotHtml(row, slot, tokenRow, firstForRegion) {
+    const cid = row.community_id;
+    const hasToken = !!tokenRow;
+    const statusBadge = communityStatusBadge(hasToken ? tokenRow.validation_status : 'missing');
+    const inputId = `ctok-input-${cid}-${slot.name}`;
+    const placeholder = hasToken ? tokenRow.token_masked || '(сохранён)' : 'вставь access_token';
     return `
-        <tr data-cid="${cid}">
+        <tr data-cid="${cid}" data-token-name="${escapeHtml(slot.name)}">
             <td>
-                <div><strong>${escapeHtml(row.region_name || '')}</strong></div>
-                <small class="text-muted">${escapeHtml(row.region_code || '')}</small>
+                ${firstForRegion ? `<div><strong>${escapeHtml(row.region_name || '')}</strong></div>
+                <small class="text-muted">${escapeHtml(row.region_code || '')}</small>` : ''}
             </td>
             <td>
-                <a href="https://vk.com/club${cid}/managers" target="_blank" rel="noopener">
+                ${firstForRegion ? `<a href="https://vk.com/club${cid}/managers" target="_blank" rel="noopener">
                     club${cid}
                 </a>
-                <div><small class="text-muted">vk_group_id = ${row.vk_group_id}</small></div>
+                <div><small class="text-muted">vk_group_id = ${row.vk_group_id}</small></div>` : ''}
             </td>
+            <td><strong>${escapeHtml(slot.account)}</strong><div><small class="text-muted">${escapeHtml(slot.name)}</small></div></td>
             <td>
                 <input type="text" class="form-control form-control-sm" id="${inputId}"
                        placeholder="${escapeHtml(placeholder)}" autocomplete="off">
-                ${row.error_message ? `<small class="text-danger d-block mt-1">${escapeHtml(row.error_message)}</small>` : ''}
+                ${tokenRow && tokenRow.error_message ? `<small class="text-danger d-block mt-1">${escapeHtml(tokenRow.error_message)}</small>` : ''}
             </td>
-            <td>${statusBadge}${row.last_validated ? `<div><small class="text-muted">${new Date(row.last_validated).toLocaleString('ru-RU')}</small></div>` : ''}</td>
+            <td>${statusBadge}${tokenRow && tokenRow.last_validated ? `<div><small class="text-muted">${new Date(tokenRow.last_validated).toLocaleString('ru-RU')}</small></div>` : ''}</td>
             <td>
                 <div class="btn-group btn-group-sm" role="group">
-                    <button class="btn btn-outline-success" title="Сохранить" onclick="saveCommunityToken(${cid})">
+                    <button class="btn btn-outline-success" title="Сохранить" onclick="saveCommunityToken(${cid}, '${escapeHtml(slot.name)}')">
                         <i class="bi bi-save"></i>
                     </button>
-                    <button class="btn btn-outline-primary" title="Проверить" onclick="validateCommunityTokenRow(${cid})" ${hasToken ? '' : 'disabled'}>
+                    <button class="btn btn-outline-primary" title="Проверить" onclick="validateCommunityTokenRow(${cid}, '${escapeHtml(slot.name)}')" ${hasToken ? '' : 'disabled'}>
                         <i class="bi bi-check-circle"></i>
                     </button>
-                    <button class="btn btn-outline-danger" title="Удалить" onclick="deleteCommunityToken(${cid})" ${hasToken ? '' : 'disabled'}>
+                    <button class="btn btn-outline-danger" title="Удалить" onclick="deleteCommunityToken(${cid}, '${escapeHtml(slot.name)}')" ${hasToken ? '' : 'disabled'}>
                         <i class="bi bi-trash"></i>
                     </button>
                 </div>
@@ -376,15 +393,15 @@ function communityStatusBadge(status) {
     return `<span class="badge bg-${cls}">${label}</span>`;
 }
 
-async function saveCommunityToken(cid) {
-    const input = document.getElementById(`ctok-input-${cid}`);
+async function saveCommunityToken(cid, tokenName) {
+    const input = document.getElementById(`ctok-input-${cid}-${tokenName}`);
     const token = (input.value || '').trim();
     if (!token) {
         showError('Вставь токен в поле перед сохранением');
         return;
     }
     try {
-        const r = await fetch(`/api/tokens/communities/${cid}`, {
+        const r = await fetch(`/api/tokens/communities/${cid}/tokens/${encodeURIComponent(tokenName)}`, {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({token: token, validate_token: true}),
@@ -395,7 +412,7 @@ async function saveCommunityToken(cid) {
         }
         const updated = await r.json();
         if (updated.validation_status === 'valid') {
-            showSuccess(`Токен сохранён и валиден для ${updated.region_name}`);
+            showSuccess(`${tokenName}: токен сохранён и валиден`);
         } else {
             showError(`Сохранён, но валидация не прошла: ${updated.error_message || updated.validation_status}`);
         }
@@ -406,9 +423,9 @@ async function saveCommunityToken(cid) {
     }
 }
 
-async function validateCommunityTokenRow(cid) {
+async function validateCommunityTokenRow(cid, tokenName) {
     try {
-        const r = await fetch(`/api/tokens/communities/${cid}/validate`, {method: 'POST'});
+        const r = await fetch(`/api/tokens/communities/${cid}/tokens/${encodeURIComponent(tokenName)}/validate`, {method: 'POST'});
         if (!r.ok) {
             const err = await r.json().catch(() => ({}));
             throw new Error(err.detail || `HTTP ${r.status}`);
@@ -425,10 +442,10 @@ async function validateCommunityTokenRow(cid) {
     }
 }
 
-async function deleteCommunityToken(cid) {
-    if (!confirm('Удалить community-токен этой группы?')) return;
+async function deleteCommunityToken(cid, tokenName) {
+    if (!confirm(`Удалить community-токен ${tokenName}?`)) return;
     try {
-        const r = await fetch(`/api/tokens/communities/${cid}`, {method: 'DELETE'});
+        const r = await fetch(`/api/tokens/communities/${cid}/tokens/${encodeURIComponent(tokenName)}`, {method: 'DELETE'});
         if (!r.ok) {
             const err = await r.json().catch(() => ({}));
             throw new Error(err.detail || `HTTP ${r.status}`);

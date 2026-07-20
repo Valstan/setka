@@ -4,6 +4,7 @@ API для управления токенами VK через веб-интер
 """
 
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -160,11 +161,23 @@ async def get_token_stats(db: AsyncSession = Depends(get_db_session)):
 
 
 # ---------------------------------------------------------------------------
-# Community access tokens: один токен на сообщество для messages.getConversations.
-# UI на /tokens рисует таблицу регионов и позволяет вставить токен для каждой.
+# Community access tokens: пул токенов на сообщество для публикации и сообщений.
+# Legacy ``COMM_<id>`` считается основным (VALSTAN), резервные получают имя
+# ``COMM_<id>_<ACCOUNT>`` (например ``COMM_158787639_MAMA``).
 # Эти роуты должны быть зарегистрированы РАНЬШЕ `/{token_name}`-обработчиков —
 # иначе FastAPI поймает `/communities` как `token_name="communities"`.
 # ---------------------------------------------------------------------------
+
+
+class CommunityTokenEntry(BaseModel):
+    token_id: int
+    token_name: str
+    token_masked: str
+    is_active: bool
+    validation_status: str
+    last_validated: str | None = None
+    error_message: str | None = None
+    permissions: List[str] | None = None
 
 
 class CommunityTokenRow(BaseModel):
@@ -181,6 +194,7 @@ class CommunityTokenRow(BaseModel):
     last_validated: str | None = None
     error_message: str | None = None
     permissions: List[str] | None = None
+    tokens: List[CommunityTokenEntry] = Field(default_factory=list)
 
 
 class CommunityTokenUpsert(BaseModel):
@@ -203,12 +217,19 @@ async def list_community_tokens(db: AsyncSession = Depends(get_db_session)):
     regions = list(regions_q.scalars())
 
     tokens_q = await db.execute(select(VKToken).where(VKToken.community_id.isnot(None)))
-    tokens_by_cid: Dict[int, VKToken] = {t.community_id: t for t in tokens_q.scalars()}
+    tokens_by_cid: Dict[int, List[VKToken]] = {}
+    for token in tokens_q.scalars():
+        tokens_by_cid.setdefault(int(token.community_id), []).append(token)
 
     rows: List[CommunityTokenRow] = []
     for r in regions:
         cid = abs(int(r.vk_group_id))
-        t = tokens_by_cid.get(cid)
+        community_tokens = tokens_by_cid.get(cid, [])
+        community_tokens.sort(
+            key=lambda t: (0 if t.name.upper() == f"COMM_{cid}" else 1, t.name.upper())
+        )
+        entries = [_community_token_entry(t) for t in community_tokens]
+        t = community_tokens[0] if community_tokens else None
         if t:
             rows.append(
                 CommunityTokenRow(
@@ -229,6 +250,7 @@ async def list_community_tokens(db: AsyncSession = Depends(get_db_session)):
                     last_validated=(t.last_validated.isoformat() if t.last_validated else None),
                     error_message=t.error_message,
                     permissions=(t.permissions if isinstance(t.permissions, list) else None),
+                    tokens=entries,
                 )
             )
         else:
@@ -239,6 +261,7 @@ async def list_community_tokens(db: AsyncSession = Depends(get_db_session)):
                     region_code=r.code,
                     vk_group_id=r.vk_group_id,
                     community_id=cid,
+                    tokens=[],
                 )
             )
     return rows
@@ -262,12 +285,13 @@ async def upsert_community_token(
     if not region:
         raise HTTPException(status_code=404, detail=f"No region with vk_group_id={community_id}")
 
-    existing_q = await db.execute(select(VKToken).where(VKToken.community_id == cid))
+    legacy_name = f"COMM_{cid}"
+    existing_q = await db.execute(select(VKToken).where(VKToken.name == legacy_name))
     token = existing_q.scalar_one_or_none()
 
     if token is None:
         token = VKToken(
-            name=f"COMM_{cid}",
+            name=legacy_name,
             token=request.token.strip(),
             community_id=cid,
             is_active=True,
@@ -307,7 +331,139 @@ async def upsert_community_token(
         last_validated=(token.last_validated.isoformat() if token.last_validated else None),
         error_message=token.error_message,
         permissions=token.permissions if isinstance(token.permissions, list) else None,
+        tokens=[_community_token_entry(token)],
     )
+
+
+def _community_token_entry(token: VKToken) -> CommunityTokenEntry:
+    masked = (
+        (token.token[:12] + "…" + token.token[-4:])
+        if token.token and len(token.token) > 20
+        else "(short)"
+    )
+    return CommunityTokenEntry(
+        token_id=token.id,
+        token_name=token.name,
+        token_masked=masked,
+        is_active=bool(token.is_active),
+        validation_status=token.validation_status or "unknown",
+        last_validated=(token.last_validated.isoformat() if token.last_validated else None),
+        error_message=token.error_message,
+        permissions=token.permissions if isinstance(token.permissions, list) else None,
+    )
+
+
+def _validate_community_token_name(community_id: int, token_name: str) -> str:
+    """Нормализовать имя и не дать управлять чужой строкой через URL."""
+    cid = abs(int(community_id))
+    upper = token_name.strip().upper()
+    prefix = f"COMM_{cid}"
+    if upper != prefix and not re.fullmatch(re.escape(prefix) + r"_[A-Z0-9_]+", upper):
+        raise HTTPException(status_code=400, detail=f"Token name must start with {prefix}")
+    return upper
+
+
+async def _region_for_community(db: AsyncSession, cid: int):
+    from database.models import Region
+
+    q = await db.execute(
+        select(Region).where((Region.vk_group_id == cid) | (Region.vk_group_id == -cid))
+    )
+    region = q.scalar_one_or_none()
+    if not region:
+        raise HTTPException(status_code=404, detail=f"No region with vk_group_id={cid}")
+    return region
+
+
+@router.put("/communities/{community_id}/tokens/{token_name}", response_model=CommunityTokenEntry)
+async def upsert_named_community_token(
+    community_id: int,
+    token_name: str,
+    request: CommunityTokenUpsert,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Создать/заменить именованный резерв community-токена."""
+    cid = abs(int(community_id))
+    name = _validate_community_token_name(cid, token_name)
+    await _region_for_community(db, cid)
+
+    q = await db.execute(select(VKToken).where(VKToken.name == name))
+    token = q.scalar_one_or_none()
+    if token is not None and int(token.community_id or 0) != cid:
+        raise HTTPException(status_code=409, detail="Token name belongs to another community")
+    if token is None:
+        token = VKToken(
+            name=name,
+            token=request.token.strip(),
+            community_id=cid,
+            is_active=True,
+            validation_status="unknown",
+        )
+        db.add(token)
+    else:
+        token.token = request.token.strip()
+        token.is_active = True
+
+    if request.validate_token:
+        validation = await validate_community_token(token.token, cid)
+        token.validation_status = "valid" if validation["is_valid"] else "invalid"
+        token.error_message = validation.get("error_message")
+        token.user_info = validation.get("user_info")
+        token.permissions = validation.get("permissions")
+        token.last_validated = datetime.now()
+
+    await db.commit()
+    await db.refresh(token)
+    return _community_token_entry(token)
+
+
+@router.post(
+    "/communities/{community_id}/tokens/{token_name}/validate",
+    response_model=TokenValidationResponse,
+)
+async def validate_named_community_token(
+    community_id: int,
+    token_name: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    cid = abs(int(community_id))
+    name = _validate_community_token_name(cid, token_name)
+    q = await db.execute(select(VKToken).where(VKToken.name == name, VKToken.community_id == cid))
+    token = q.scalar_one_or_none()
+    if not token:
+        raise HTTPException(status_code=404, detail=f"No community token {name}")
+    validation = await validate_community_token(token.token, cid)
+    token.validation_status = "valid" if validation["is_valid"] else "invalid"
+    token.error_message = validation.get("error_message")
+    token.user_info = validation.get("user_info")
+    token.permissions = validation.get("permissions")
+    token.last_validated = datetime.now()
+    await db.commit()
+    return TokenValidationResponse(
+        name=token.name,
+        is_valid=validation["is_valid"],
+        validation_status=token.validation_status,
+        error_message=validation.get("error_message"),
+        user_info=validation.get("user_info"),
+        permissions=validation.get("permissions"),
+    )
+
+
+@router.delete("/communities/{community_id}/tokens/{token_name}")
+async def delete_named_community_token(
+    community_id: int,
+    token_name: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    cid = abs(int(community_id))
+    name = _validate_community_token_name(cid, token_name)
+    q = await db.execute(select(VKToken).where(VKToken.name == name, VKToken.community_id == cid))
+    token = q.scalar_one_or_none()
+    if not token:
+        raise HTTPException(status_code=404, detail=f"No community token {name}")
+    await db.execute(delete(VKToken).where(VKToken.id == token.id))
+    await db.commit()
+    return {"success": True, "community_id": cid, "token_name": name}
 
 
 @router.post("/communities/{community_id}/validate", response_model=TokenValidationResponse)
@@ -316,7 +472,7 @@ async def validate_community_token_endpoint(
     db: AsyncSession = Depends(get_db_session),
 ):
     cid = abs(int(community_id))
-    q = await db.execute(select(VKToken).where(VKToken.community_id == cid))
+    q = await db.execute(select(VKToken).where(VKToken.name == f"COMM_{cid}"))
     token = q.scalar_one_or_none()
     if not token:
         raise HTTPException(status_code=404, detail=f"No community token for {community_id}")
@@ -345,7 +501,7 @@ async def delete_community_token(
     db: AsyncSession = Depends(get_db_session),
 ):
     cid = abs(int(community_id))
-    q = await db.execute(select(VKToken).where(VKToken.community_id == cid))
+    q = await db.execute(select(VKToken).where(VKToken.name == f"COMM_{cid}"))
     token = q.scalar_one_or_none()
     if not token:
         raise HTTPException(status_code=404, detail=f"No community token for {community_id}")

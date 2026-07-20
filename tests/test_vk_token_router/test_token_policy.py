@@ -197,6 +197,39 @@ async def test_pick_community_write_prefers_community_token():
 
 
 @pytest.mark.asyncio
+async def test_pick_community_write_returns_all_community_tokens_before_users():
+    """VALSTAN+MAMA community pool precedes the user-token cascade."""
+    user_rows = [_vk_token_row("VALSTAN", "tok_user")]
+    comm_rows = [
+        _vk_token_row("COMM_158_MAMA", "tok_comm_mama", community_id=158),
+        _vk_token_row("COMM_158", "tok_comm_valstan", community_id=158),
+    ]
+    session = _make_session_with_rows(rows_by_query=[user_rows, comm_rows])
+    with patch.dict(
+        os.environ,
+        {
+            "DATABASE_URL": os.environ["DATABASE_URL"],
+            "REDIS_URL": os.environ["REDIS_URL"],
+            "VK_TOKEN_VALSTAN": "tok_user",
+            "VK_PUBLISH_TOKEN_NAMES": "VALSTAN",
+        },
+        clear=True,
+    ):
+        import importlib
+
+        import config.runtime as rt
+
+        importlib.reload(rt)
+        out = await TokenPolicy(session).pick(TokenOp.COMMUNITY_WRITE, group_id=-158)
+
+    assert [(candidate.name, candidate.source) for candidate in out] == [
+        ("COMM_158", "community"),
+        ("COMM_158_MAMA", "community"),
+        ("VALSTAN", "user"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_db_role_publish_augments_env_whitelist():
     """role='publish' в БД добавляет токен к env-whitelist'у (аддитивно)."""
     rows_active = [
