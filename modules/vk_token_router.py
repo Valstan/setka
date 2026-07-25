@@ -101,6 +101,44 @@ class TokenCandidate:
     community_id: Optional[int] = None
 
 
+def _register_name_safe(token: str, name: str) -> None:
+    """Объявить учёту расхода, какому имени соответствует строка токена.
+
+    ``VKClient`` знает только строку токена, поэтому имя для счётчиков
+    (:mod:`modules.vk_monitor.token_usage`) объявляется здесь — там, где имя и
+    значение видны одновременно. Best-effort: если модуль учёта недоступен,
+    маршрутизация продолжает работать как раньше.
+    """
+    try:
+        from modules.vk_monitor.token_usage import register_token_name
+
+        register_token_name(token, name)
+    except Exception:  # pragma: no cover — учёт не имеет права ломать выбор
+        logger.debug("register_token_name failed for %s", name)
+
+
+def _candidate(
+    name: str,
+    token: str,
+    source: str,
+    community_id: Optional[int] = None,
+) -> TokenCandidate:
+    """Собрать кандидата и заодно объявить его имя учёту расхода."""
+    _register_name_safe(token, name)
+    return TokenCandidate(name=name, token=token, source=source, community_id=community_id)
+
+
+def _calls_today_safe() -> Dict[str, int]:
+    """``{имя: запросов сегодня}``; пустой словарь, если учёт недоступен."""
+    try:
+        from modules.vk_monitor.token_usage import get_calls_today
+
+        return get_calls_today()
+    except Exception:  # pragma: no cover — балансировка деградирует до last_used
+        logger.debug("get_calls_today failed — balancing falls back to last_used")
+        return {}
+
+
 # VK error codes, по которым TokenPolicy автоматически кладёт токен в cooldown.
 # Каждому соответствует длительность блокировки (часы).
 #
@@ -315,20 +353,30 @@ class TokenPolicy:
         )
 
         if op == TokenOp.READ:
-            # READ: любой active token, Vita разрешена. Карусель (решение
-            # владельца 2026-07-12): порядок — давно не использованные первыми
-            # (last_used ASC, NULL = никогда → в голову), чтобы нагрузка чтения
-            # распределялась по токенам равномерно, а не била в один. Ротацию
-            # замыкает pick_healthy_read_token: успешный выбор штампует
-            # last_used через report_success → следующий вызов возьмёт другой.
-            def _last_used_key(name: str):
+            # READ: любой active user-токен — читать умеют только они
+            # (community-токен на wall.get отвечает error 27, замер
+            # 2026-07-25, см. docs/VK_TOKEN_ROADMAP.md).
+            #
+            # Порядок — балансировка нагрузки (заказ владельца 2026-07-25):
+            # первым идёт токен, который сегодня сделал МЕНЬШЕ запросов
+            # (``token_usage``), при равенстве — давно не использованный
+            # (last_used ASC, NULL = никогда → в голову).
+            #
+            # Почему одного last_used мало: READ-токен выбирается один на
+            # волну парсинга, а волны разные по весу — район с 60 донорами и
+            # район с 8 донорами стоят одинакового штампа, но отличаются по
+            # расходу почти на порядок. Счётчик запросов выравнивает именно
+            # расход, а не число выборов.
+            calls_today = _calls_today_safe()
+
+            def _balance_key(name: str):
                 row = active_db.get(name)
                 lu = getattr(row, "last_used", None) if row is not None else None
-                return (lu is not None, lu or datetime.min)
+                return (calls_today.get(name, 0), lu is not None, lu or datetime.min)
 
             out: List[TokenCandidate] = []
-            for name in sorted(user_tokens.keys(), key=_last_used_key):
-                out.append(TokenCandidate(name=name, token=user_tokens[name], source="user"))
+            for name in sorted(user_tokens.keys(), key=_balance_key):
+                out.append(_candidate(name, user_tokens[name], "user"))
             return out
 
         # Каскад публикации (решение владельца 2026-07-12):
@@ -359,7 +407,7 @@ class TokenPolicy:
             for name in _user_write_names():
                 tok = user_tokens.get(name)
                 if tok:
-                    out.append(TokenCandidate(name=name, token=tok, source="user"))
+                    out.append(_candidate(name, tok, "user"))
             return out
 
         # COMMUNITY_WRITE: community-token (если group_id передан) первым,
@@ -370,18 +418,11 @@ class TokenPolicy:
             comms = await self._load_communities()
             community_rows = comms.get(cid, [])
             for ct in community_rows:
-                out.append(
-                    TokenCandidate(
-                        name=ct.name,
-                        token=ct.token,
-                        source="community",
-                        community_id=cid,
-                    )
-                )
+                out.append(_candidate(ct.name, ct.token, "community", cid))
         for name in _user_write_names():
             tok = user_tokens.get(name)
             if tok:
-                out.append(TokenCandidate(name=name, token=tok, source="user"))
+                out.append(_candidate(name, tok, "user"))
         return out
 
     async def _token_exists_but_disabled(self, name: str) -> bool:
@@ -574,7 +615,12 @@ async def get_active_parse_tokens(session: AsyncSession) -> Dict[str, str]:
             continue
         if t.validation_status == "invalid":
             continue
-        out[t.name.upper()] = t.token
+        name = t.name.upper()
+        out[name] = t.token
+        # Legacy-места крутят токены сами (VKTokenRotatorAsync), минуя pick() —
+        # имя для учёта расхода объявляем здесь, иначе их запросы уедут в
+        # «UNKNOWN:<fp>» и отчёт покажет расход мимо роутера.
+        _register_name_safe(t.token, name)
     return out
 
 

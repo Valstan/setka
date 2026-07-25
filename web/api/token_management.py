@@ -160,6 +160,78 @@ async def get_token_stats(db: AsyncSession = Depends(get_db_session)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/usage")
+async def get_token_usage(days: int = 7, db: AsyncSession = Depends(get_db_session)):
+    """Таблица контроля расхода: сколько VK-запросов сжёг каждый токен.
+
+    Считает :mod:`modules.vk_monitor.token_usage` — по одному инкременту на
+    фактический вызов VK API (узкое место ``VKClient._enforce_rate_limit``).
+    Ответ: ``today`` (разбивка по методам), ``window`` (посуточно за ``days``)
+    и ``roles`` — какую роль токен играет в каскаде публикации, чтобы расход
+    и назначение читались в одной таблице.
+
+    Строка с именем вида ``UNKNOWN:<fp>`` означает расход мимо маршрутизатора
+    (клиент собран с токеном напрямую) — это сигнал к правке кода, а не сбой.
+
+    Регистрируется ДО ``/{token_name}`` — иначе FastAPI поймает ``/usage`` как
+    имя токена.
+    """
+    from config.runtime import (
+        get_never_publish_token_names,
+        get_publish_token_names,
+        get_reserve_publish_token_names,
+    )
+    from modules.vk_monitor.token_usage import get_usage, get_usage_window
+
+    try:
+        window = get_usage_window(max(1, min(int(days), 31)))
+        today = get_usage()
+
+        never = get_never_publish_token_names()
+        primary = get_publish_token_names()
+        reserve = get_reserve_publish_token_names()
+
+        def _role(name: str) -> str:
+            upper = name.upper()
+            if upper.startswith("COMM_"):
+                return "community: публикует только в своё сообщество"
+            if upper in never:
+                return "только чтение (публикация запрещена)"
+            if upper in primary:
+                return "основной публикатор"
+            if upper in reserve:
+                return "резерв публикации"
+            return "чтение"
+
+        result = await db.execute(select(VKToken).where(VKToken.is_active.is_(True)))
+        rows = result.scalars().all()
+        known = {t.name.upper(): t for t in rows}
+
+        names = sorted(set(known) | set(today))
+        return {
+            "today": {
+                name: {
+                    "total": int(today.get(name, {}).get("total", 0)),
+                    "methods": {
+                        k[2:]: v for k, v in today.get(name, {}).items() if k.startswith("m:")
+                    },
+                    "role": _role(name),
+                    "known": name in known,
+                    "last_used": (
+                        known[name].last_used.isoformat()
+                        if name in known and known[name].last_used
+                        else None
+                    ),
+                }
+                for name in names
+            },
+            "window": window,
+        }
+    except Exception as e:
+        logger.error(f"Error computing token usage: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---------------------------------------------------------------------------
 # Community access tokens: пул токенов на сообщество для публикации и сообщений.
 # Legacy ``COMM_<id>`` считается основным (VALSTAN), резервные получают имя

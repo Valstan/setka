@@ -163,23 +163,33 @@ if isinstance(VK_TOKENS_JSON, dict):
 # whitelist ``VK_PUBLISH_TOKEN_NAMES`` (основной эшелон) и из
 # ``VK_RESERVE_PUBLISH_TOKEN_NAMES`` (резервный эшелон — пробуется строго
 # ПОСЛЕДНИМ, только когда community-токен и все основные публикаторы
-# недоступны; решение владельца 2026-07-12: каскад community → VALSTAN →
-# VITA). Жёсткий deny-list ``VK_NEVER_PUBLISH_TOKEN_NAMES`` исключает имена
-# даже если они попали в whitelist/резерв.
+# недоступны). Жёсткий deny-list ``VK_NEVER_PUBLISH_TOKEN_NAMES`` исключает
+# имена даже если они попали в whitelist/резерв.
+#
+# Каскад публикации (решение владельца 2026-07-25):
+#   community-токен группы → МАМА → VALSTAN;  VITA не публикует никогда.
+# Смысл порядка: штатно публикует сама группа (ни один личный аккаунт не
+# подставляется под антиспам); если ключ группы недоступен — подменяет МАМА,
+# «рабочая лошадь» публикации; VALSTAN — последний рубеж, потому что это
+# основной аккаунт владельца (переписка с рекламодателями, владение всеми
+# сообществами) и его бан дороже всего. Прошлый порядок был
+# community → VALSTAN → МАМА (2026-07-12), то есть ровно наоборот.
 #
 # Env vars:
-#   VK_PUBLISH_TOKEN_NAMES="VALSTAN"            # CSV; основные публикаторы
-#   VK_RESERVE_PUBLISH_TOKEN_NAMES="VITA"       # CSV; резерв (последний шанс)
-#   VK_NEVER_PUBLISH_TOKEN_NAMES=""             # CSV; кто никогда (override)
-#   VK_PUBLISH_TOKEN_NAME="VALSTAN"             # legacy single; читается если
+#   VK_PUBLISH_TOKEN_NAMES="MAMA"               # CSV; основные публикаторы
+#   VK_RESERVE_PUBLISH_TOKEN_NAMES="VALSTAN"    # CSV; резерв (последний шанс)
+#   VK_NEVER_PUBLISH_TOKEN_NAMES="VITA"         # CSV; кто никогда (override)
+#   VK_PUBLISH_TOKEN_NAME="MAMA"                # legacy single; читается если
 #                                                 # VK_PUBLISH_TOKEN_NAMES пусто
 #
 # Динамическое состояние (cooldown после VK error 5/17/29, ручной disable
 # через UI) живёт в БД ``vk_tokens.disabled_until`` — см.
 # ``modules.vk_token_router.TokenPolicy``. Здесь — только статический
 # whitelist/deny-list, который НЕ читается из БД.
+#
+# Что какой токен вообще умеет (замер 2026-07-25) — `docs/VK_TOKEN_ROADMAP.md`.
 
-VK_PUBLISH_TOKEN_NAME = _getenv("VK_PUBLISH_TOKEN_NAME", "VALSTAN")
+VK_PUBLISH_TOKEN_NAME = _getenv("VK_PUBLISH_TOKEN_NAME", "MAMA")
 
 
 def _csv_token_names(raw: Optional[str]) -> list:
@@ -208,30 +218,39 @@ def get_publish_token_names() -> list:
 def get_never_publish_token_names() -> set:
     """Имена токенов, которым НИКОГДА нельзя публиковать (hard deny).
 
-    По умолчанию — пусто. До 2026-07-12 default был ``{"VITA"}``; по решению
-    владельца Vita переведена в РЕЗЕРВНЫЙ эшелон публикации (см.
-    :func:`get_reserve_publish_token_names`) — публикует только когда
-    community-токен и все основные публикаторы недоступны. Env
-    ``VK_NEVER_PUBLISH_TOKEN_NAMES`` (CSV) возвращает жёсткий запрет при
-    необходимости.
+    Default — ``{"VITA"}`` (решение владельца 2026-07-25): Vita только
+    собирает информацию по всему VK и не публикует ни при каких
+    обстоятельствах, даже когда все остальные кандидаты мертвы. История
+    метаний: до 2026-07-12 default был ``{"VITA"}``, затем Vita ненадолго
+    перевели в резервный эшелон, 2026-07-25 вернули в запрет — теперь резерв
+    занимает VALSTAN. Env ``VK_NEVER_PUBLISH_TOKEN_NAMES`` (CSV) переопределяет
+    список целиком; чтобы разрешить всем, задайте пустую строку.
+
+    Читаем ``os.environ`` напрямую, а не через ``_getenv``: тот схлопывает
+    пустую строку в default, а здесь пустая строка — осмысленное значение
+    («запрещённых нет») и должна отличаться от «переменная не задана».
     """
-    return set(_csv_token_names(_getenv("VK_NEVER_PUBLISH_TOKEN_NAMES")))
+    raw = os.environ.get("VK_NEVER_PUBLISH_TOKEN_NAMES")
+    if raw is None:
+        return {"VITA"}
+    return set(_csv_token_names(raw))
 
 
 def get_reserve_publish_token_names() -> list:
     """Резервные публикаторы — пробуются строго ПОСЛЕДНИМИ (last resort).
 
-    Каскад публикации (решение владельца 2026-07-12):
-    community-токен группы → основной whitelist (VALSTAN) → резерв (VITA).
+    Каскад публикации (решение владельца 2026-07-25):
+    community-токен группы → основной whitelist (МАМА) → резерв (VALSTAN).
     Резерв срабатывает только когда все предыдущие кандидаты недоступны
-    (мёртвый токен / cooldown / VK-ошибка) — в штатном режиме Vita не
-    публикует. Env ``VK_RESERVE_PUBLISH_TOKEN_NAMES`` (CSV), default VITA.
-    Имена из hard deny-list вычищаются на уровне TokenPolicy/validate.
+    (мёртвый токен / cooldown / VK-ошибка) — в штатном режиме основной аккаунт
+    владельца не публикует вовсе. Env ``VK_RESERVE_PUBLISH_TOKEN_NAMES`` (CSV),
+    default VALSTAN. Имена из hard deny-list вычищаются на уровне
+    TokenPolicy/validate.
     """
     names = _csv_token_names(_getenv("VK_RESERVE_PUBLISH_TOKEN_NAMES"))
     if names:
         return names
-    return ["VITA"]
+    return ["VALSTAN"]
 
 
 def get_publish_token() -> Optional[str]:
