@@ -174,6 +174,10 @@ async def load_community_tokens(session: AsyncSession) -> Dict[int, str]:
     out: Dict[int, str] = {}
     for t in rows:
         out.setdefault(int(t.community_id), t.token)
+        # Публикация ходит этой legacy-картой (VKPublisher._client_for_group),
+        # минуя pick() — без регистрации весь расход wall.post уезжал бы в
+        # «UNKNOWN:<отпечаток>» вместо имени сообщества (замер 2026-07-25).
+        _register_name_safe(t.token, t.name.upper())
     return out
 
 

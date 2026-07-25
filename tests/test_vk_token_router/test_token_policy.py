@@ -947,3 +947,24 @@ async def test_pick_registers_token_names_for_usage_accounting():
 
     assert token_usage.resolve_token_name("tok_mama") == "MAMA"
     token_usage.reset_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_load_community_tokens_registers_names_for_usage():
+    """Публикация ходит legacy-картой мимо pick() — имена всё равно нужны.
+
+    Без регистрации здесь весь расход ``wall.post`` уезжал в
+    ``UNKNOWN:<отпечаток>``: издатель строит клиент прямо из этой карты.
+    """
+    from modules.vk_monitor import token_usage
+    from modules.vk_token_router import load_community_tokens
+
+    token_usage.reset_for_tests()
+    comm_rows = [_vk_token_row("COMM_777", "tok_comm", community_id=777)]
+    session = _make_session_with_rows(rows_by_query=[comm_rows])
+
+    out = await load_community_tokens(session)
+
+    assert out == {777: "tok_comm"}
+    assert token_usage.resolve_token_name("tok_comm") == "COMM_777"
+    token_usage.reset_for_tests()
