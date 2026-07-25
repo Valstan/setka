@@ -11,6 +11,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple
 import vk_api
 
 from modules.vk_monitor.rate_limiter import RateLimiter, build_rate_limiter
+from modules.vk_monitor.token_usage import record_call
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class VKClient:
                     cls._rate_limiter = build_rate_limiter(cls.GLOBAL_PARSE_INTERVAL_SECONDS)
         return cls._rate_limiter
 
-    def _enforce_rate_limit(self) -> None:
+    def _enforce_rate_limit(self, method: str = "") -> None:
         """Block (sleep) until `GLOBAL_PARSE_INTERVAL_SECONDS` since the last
         VK API call under the same token. Делегирует в shared RateLimiter.
 
@@ -80,8 +81,15 @@ class VKClient:
         Async wrappers (`get_posts`, `get_groups`, `get_messages`) — тоже
         прокидываются через `asyncio.to_thread(self._enforce_rate_limit)`,
         чтобы не блокировать event loop.
+
+        Здесь же считается расход запросов по токенам
+        (:mod:`modules.vk_monitor.token_usage`): это единственная точка, через
+        которую проходит каждый вызов клиента, поэтому счётчик получается
+        полным без обвешивания каждого метода. ``method`` — имя VK-метода для
+        разбивки в отчёте; учёт best-effort и никогда не роняет вызов.
         """
         self._get_rate_limiter().wait(self.token)
+        record_call(self.token, method)
 
     def _init_session(self):
         """Initialize VK session"""
@@ -108,7 +116,7 @@ class VKClient:
             List of posts
         """
         try:
-            self._enforce_rate_limit()
+            self._enforce_rate_limit("wall.get")
             response = self.vk.wall.get(owner_id=owner_id, count=min(count, 100), offset=offset)
 
             posts = response.get("items", [])
@@ -140,7 +148,7 @@ class VKClient:
             chunk = refs[i : i + batch_size]
             posts_str = ",".join(f"{oid}_{pid}" for oid, pid in chunk)
             try:
-                self._enforce_rate_limit()
+                self._enforce_rate_limit("wall.getById")
                 resp = self.vk.wall.getById(posts=posts_str)
                 if resp:
                     out.extend(resp)
@@ -162,7 +170,7 @@ class VKClient:
             Post data or None
         """
         try:
-            self._enforce_rate_limit()
+            self._enforce_rate_limit("wall.getById")
             posts_str = f"{owner_id}_{post_id}"
             response = self.vk.wall.getById(posts=[posts_str])
 
@@ -191,7 +199,7 @@ class VKClient:
             # Convert to positive ID if needed
             group_id = abs(group_id)
 
-            self._enforce_rate_limit()
+            self._enforce_rate_limit("groups.getById")
             response = self.vk.groups.getById(group_id=group_id)
 
             if response:
@@ -225,7 +233,7 @@ class VKClient:
         if not (query or "").strip():
             return []
         try:
-            self._enforce_rate_limit()
+            self._enforce_rate_limit("groups.search")
             kwargs: Dict[str, Any] = {
                 "q": query,
                 "count": min(int(count), 1000),
@@ -273,7 +281,7 @@ class VKClient:
         for i in range(0, len(ids), batch_size):
             chunk = ids[i : i + batch_size]
             try:
-                self._enforce_rate_limit()
+                self._enforce_rate_limit("groups.getById")
                 kwargs: Dict[str, Any] = {"group_ids": chunk}
                 if fields:
                     kwargs["fields"] = fields
@@ -313,7 +321,7 @@ class VKClient:
         for i in range(0, len(clean), batch_size):
             chunk = clean[i : i + batch_size]
             try:
-                self._enforce_rate_limit()
+                self._enforce_rate_limit("groups.getById")
                 kwargs: Dict[str, Any] = {"group_ids": ",".join(chunk)}
                 if fields:
                     kwargs["fields"] = fields
@@ -350,7 +358,7 @@ class VKClient:
         page = 1000
         while offset < max_members:
             try:
-                self._enforce_rate_limit()
+                self._enforce_rate_limit("groups.getMembers")
                 resp = self.vk.groups.getMembers(group_id=gid, offset=offset, count=page)
             except vk_api.exceptions.ApiError as e:
                 _log_vk_api_error(f"VK groups.getMembers error (gid={gid}, offset={offset})", e)
@@ -394,7 +402,7 @@ class VKClient:
         if not (query or "").strip():
             return []
         try:
-            self._enforce_rate_limit()
+            self._enforce_rate_limit("database.getCities")
             response = self.vk.database.getCities(
                 country_id=int(country_id),
                 q=query,
@@ -497,7 +505,7 @@ class VKClient:
             User info or None
         """
         try:
-            await asyncio.to_thread(self._enforce_rate_limit)
+            await asyncio.to_thread(self._enforce_rate_limit, "users.get")
             response = self.vk.users.get()
             if response:
                 return response[0]
@@ -522,7 +530,7 @@ class VKClient:
             Posts data or None
         """
         try:
-            await asyncio.to_thread(self._enforce_rate_limit)
+            await asyncio.to_thread(self._enforce_rate_limit, "wall.get")
             response = self.vk.wall.get(
                 owner_id=owner_id, count=min(count, 100), offset=offset, extended=extended
             )
@@ -543,7 +551,7 @@ class VKClient:
             Groups data or None
         """
         try:
-            await asyncio.to_thread(self._enforce_rate_limit)
+            await asyncio.to_thread(self._enforce_rate_limit, "groups.get")
             response = self.vk.groups.get(count=count, extended=extended)
             return response
         except Exception as e:
@@ -559,7 +567,7 @@ class VKClient:
         succeeds when the token actually carries the `messages` scope.
         """
         try:
-            await asyncio.to_thread(self._enforce_rate_limit)
+            await asyncio.to_thread(self._enforce_rate_limit, "messages.getConversations")
             response = self.vk.messages.getConversations(count=count)
             return response
         except vk_api.exceptions.ApiError as e:
@@ -586,7 +594,7 @@ class VKClient:
         via `extended=1`) or None on error — the caller decides how to degrade.
         """
         try:
-            await asyncio.to_thread(self._enforce_rate_limit)
+            await asyncio.to_thread(self._enforce_rate_limit, "messages.getHistory")
             params: Dict[str, Any] = {
                 "peer_id": int(peer_id),
                 "count": min(int(count), 200),
@@ -629,7 +637,7 @@ class VKClient:
             VK API response dict
         """
         try:
-            self._enforce_rate_limit()
+            self._enforce_rate_limit(method)
             response = self.session.method(method, params)
             return response
         except vk_api.exceptions.ApiError as e:

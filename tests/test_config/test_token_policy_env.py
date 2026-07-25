@@ -1,12 +1,15 @@
 """Tests for env-side of TokenPolicy: publish whitelist / reserve / deny-list.
 
-Не требуют БД. Семантика с 2026-07-12 (решение владельца — каскад публикации
-community → VALSTAN → VITA):
-- ``get_never_publish_token_names`` по умолчанию ПУСТ (env-override остаётся).
-- ``get_reserve_publish_token_names`` — резервные публикаторы (default VITA),
+Не требуют БД. Семантика с 2026-07-25 (решение владельца — каскад публикации
+community → МАМА → VALSTAN, VITA не публикует никогда):
+- ``get_never_publish_token_names`` по умолчанию ``{"VITA"}``; пустая строка в
+  env — осмысленное «запрещённых нет» и отличается от «переменная не задана».
+- ``get_reserve_publish_token_names`` — резервные публикаторы (default VALSTAN),
   пробуются строго последними.
 - ``get_publish_token`` возвращает резерв только когда основных токенов нет.
 - ``validate_publish_token`` пропускает резерв (порядок держит TokenPolicy).
+
+Раскладку и обоснование см. в ``docs/VK_TOKEN_ROADMAP.md``.
 """
 
 import importlib
@@ -61,13 +64,13 @@ class TestPublishTokenNames:
             clear=True,
         ):
             rt = _reload_runtime()
-            # legacy default — VALSTAN, даже если в env нет
-            assert rt.get_publish_token_names() == ["VALSTAN"]
+            # legacy default — МАМА (основной публикатор с 2026-07-25)
+            assert rt.get_publish_token_names() == ["MAMA"]
 
 
 class TestNeverPublishTokenNames:
-    def test_empty_by_default(self):
-        """С 2026-07-12 deny-list по умолчанию пуст — Vita стала резервом."""
+    def test_vita_denied_by_default(self):
+        """С 2026-07-25 Vita — чистый сборщик: публикация запрещена всегда."""
         with patch.dict(
             os.environ,
             {
@@ -77,7 +80,7 @@ class TestNeverPublishTokenNames:
             clear=True,
         ):
             rt = _reload_runtime()
-            assert rt.get_never_publish_token_names() == set()
+            assert rt.get_never_publish_token_names() == {"VITA"}
 
     def test_override_via_env(self):
         with patch.dict(
@@ -93,7 +96,7 @@ class TestNeverPublishTokenNames:
             assert rt.get_never_publish_token_names() == {"VITA", "OLGA"}
 
     def test_empty_env_is_empty(self):
-        """Пустой env-var = пустой deny-list (default тоже пуст)."""
+        """Пустая строка в env — явное «запрещённых нет», а не «не задано»."""
         with patch.dict(
             os.environ,
             {
@@ -108,7 +111,7 @@ class TestNeverPublishTokenNames:
 
 
 class TestReservePublishTokenNames:
-    def test_vita_by_default(self):
+    def test_valstan_by_default(self):
         with patch.dict(
             os.environ,
             {
@@ -118,7 +121,7 @@ class TestReservePublishTokenNames:
             clear=True,
         ):
             rt = _reload_runtime()
-            assert rt.get_reserve_publish_token_names() == ["VITA"]
+            assert rt.get_reserve_publish_token_names() == ["VALSTAN"]
 
     def test_override_via_env(self):
         with patch.dict(
@@ -152,19 +155,19 @@ class TestGetPublishToken:
             assert rt.get_publish_token() == "tok_val"
 
     def test_vita_as_last_resort_when_only_vita_present(self):
-        """Основных токенов нет — резерв (Vita) подхватывает публикацию."""
+        """Основного публикатора нет — резерв (VALSTAN) подхватывает публикацию."""
         with patch.dict(
             os.environ,
             {
                 "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x",
                 "REDIS_URL": "redis://localhost:6379/0",
-                "VK_PUBLISH_TOKEN_NAMES": "VALSTAN",
-                "VK_TOKEN_VITA": "tok_vita",
+                "VK_PUBLISH_TOKEN_NAMES": "MAMA",
+                "VK_TOKEN_VALSTAN": "tok_val",
             },
             clear=True,
         ):
             rt = _reload_runtime()
-            assert rt.get_publish_token() == "tok_vita"
+            assert rt.get_publish_token() == "tok_val"
 
     def test_never_deny_beats_reserve(self):
         """Hard deny через env выключает даже резерв."""
@@ -185,21 +188,21 @@ class TestGetPublishToken:
 
 class TestValidatePublishToken:
     def test_vita_accepted_as_reserve(self):
-        """Vita — легитимный резервный публикатор (порядок держит TokenPolicy)."""
+        """VALSTAN — легитимный резервный публикатор (порядок держит TokenPolicy)."""
         with patch.dict(
             os.environ,
             {
                 "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x",
                 "REDIS_URL": "redis://localhost:6379/0",
-                "VK_PUBLISH_TOKEN_NAMES": "VALSTAN",
-                "VK_TOKEN_VITA": "tok_vita",
+                "VK_PUBLISH_TOKEN_NAMES": "MAMA",
+                "VK_TOKEN_MAMA": "tok_mama",
                 "VK_TOKEN_VALSTAN": "tok_val",
             },
             clear=True,
         ):
             rt = _reload_runtime()
-            assert rt.validate_publish_token("tok_vita", token_name="VITA") is True
             assert rt.validate_publish_token("tok_val", token_name="VALSTAN") is True
+            assert rt.validate_publish_token("tok_mama", token_name="MAMA") is True
 
     def test_vita_rejected_when_hard_denied(self):
         with patch.dict(
@@ -238,12 +241,12 @@ class TestValidatePublishToken:
             {
                 "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x",
                 "REDIS_URL": "redis://localhost:6379/0",
-                "VK_TOKEN_VITA": "tok_vita",
+                "VK_TOKEN_MAMA": "tok_mama",
                 "VK_TOKEN_VALSTAN": "tok_val",
             },
             clear=True,
         ):
             rt = _reload_runtime()
-            assert rt.validate_publish_token("tok_vita") is True  # reserve — допустима
-            assert rt.validate_publish_token("tok_val") is True
+            assert rt.validate_publish_token("tok_val") is True  # reserve — допустим
+            assert rt.validate_publish_token("tok_mama") is True
             assert rt.validate_publish_token("tok_stranger") is False

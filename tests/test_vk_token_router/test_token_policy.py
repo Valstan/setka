@@ -1,9 +1,10 @@
 """Tests for :class:`modules.vk_token_router.TokenPolicy`.
 
 Покрывают:
-- pick(READ): возвращает все active user-токены, включая Vita.
-- pick(COMMUNITY_WRITE): каскад 2026-07-12 — community-токен первым, потом
-  whitelist (VALSTAN), резерв (VITA) строго последним.
+- pick(READ): возвращает все active user-токены, включая Vita; порядок —
+  балансировка по фактическому расходу запросов за сутки (2026-07-25).
+- pick(COMMUNITY_WRITE): каскад 2026-07-25 — community-токен первым, потом
+  whitelist (МАМА), резерв (VALSTAN) строго последним; Vita под hard deny.
 - pick(USER_WRITE): whitelist, затем резерв; hard deny-list побеждает всё.
 - Valstan в cooldown (disabled_until > now) → выпадает из всех op'ов.
 - pick_healthy_read_token: probe отсеивает мёртвый токен (cooldown) и отдаёт
@@ -346,9 +347,11 @@ async def test_pick_skips_valstan_in_cooldown():
         assert "VALSTAN" not in read_names
 
         write_out = await policy.pick(TokenOp.USER_WRITE)
-        # Valstan в cooldown; Vita — резерв (2026-07-12) → единственный кандидат,
-        # каскад community → VALSTAN → VITA дошёл до последнего эшелона.
-        assert [c.name for c in write_out] == ["VITA"]
+        # Valstan в cooldown, а Vita с 2026-07-25 — hard deny на публикацию
+        # (чистый сборщик). Значит публиковать user-токеном нечем: пустой
+        # список — правильный ответ, а не деградация к Vita. Caller обязан
+        # вернуть внятную ошибку «сейчас публиковать нечем».
+        assert [c.name for c in write_out] == []
 
 
 # ---------------------------------------------------------------------------
@@ -594,16 +597,19 @@ async def test_active_parse_tokens_skips_empty_token():
 
 
 # ---------------------------------------------------------------------------
-# Каскад публикации 2026-07-12: community → VALSTAN → VITA (резерв последним)
+# Каскад публикации 2026-07-25: community → МАМА → VALSTAN.
+# VITA не публикует никогда (hard deny), даже когда все остальные мертвы.
+# Обоснование порядка — docs/VK_TOKEN_ROADMAP.md.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_pick_community_write_cascade_order():
-    """COMMUNITY_WRITE: community-токен → whitelist (VALSTAN) → резерв (VITA)."""
+    """COMMUNITY_WRITE: community-токен → whitelist (МАМА) → резерв (VALSTAN)."""
     rows_active = [
         _vk_token_row("VITA", "tok_vita"),  # нарочно первым в БД — порядок задаёт каскад
         _vk_token_row("VALSTAN", "tok_v"),
+        _vk_token_row("MAMA", "tok_mama"),
     ]
     comm_rows = [_vk_token_row("COMM_777", "tok_comm", community_id=777)]
     session = _make_session_with_rows(rows_by_query=[rows_active, comm_rows])
@@ -614,7 +620,8 @@ async def test_pick_community_write_cascade_order():
             "REDIS_URL": os.environ["REDIS_URL"],
             "VK_TOKEN_VALSTAN": "tok_v",
             "VK_TOKEN_VITA": "tok_vita",
-            "VK_PUBLISH_TOKEN_NAMES": "VALSTAN",
+            "VK_TOKEN_MAMA": "tok_mama",
+            "VK_PUBLISH_TOKEN_NAMES": "MAMA",
         },
         clear=True,
     ):
@@ -628,17 +635,18 @@ async def test_pick_community_write_cascade_order():
 
     assert [(c.name, c.source) for c in out] == [
         ("COMM_777", "community"),
+        ("MAMA", "user"),
         ("VALSTAN", "user"),
-        ("VITA", "user"),
     ]
 
 
 @pytest.mark.asyncio
 async def test_pick_user_write_reserve_last():
-    """USER_WRITE: whitelist сначала, резерв (VITA) строго последним."""
+    """USER_WRITE: whitelist (МАМА) сначала, резерв (VALSTAN) строго последним."""
     rows_active = [
         _vk_token_row("VITA", "tok_vita"),
         _vk_token_row("VALSTAN", "tok_v"),
+        _vk_token_row("MAMA", "tok_mama"),
     ]
     session = _make_session_with_rows(rows_by_query=[rows_active])
     with patch.dict(
@@ -648,7 +656,8 @@ async def test_pick_user_write_reserve_last():
             "REDIS_URL": os.environ["REDIS_URL"],
             "VK_TOKEN_VALSTAN": "tok_v",
             "VK_TOKEN_VITA": "tok_vita",
-            "VK_PUBLISH_TOKEN_NAMES": "VALSTAN",
+            "VK_TOKEN_MAMA": "tok_mama",
+            "VK_PUBLISH_TOKEN_NAMES": "MAMA",
         },
         clear=True,
     ):
@@ -659,7 +668,8 @@ async def test_pick_user_write_reserve_last():
         importlib.reload(rt)
         out = await TokenPolicy(session).pick(TokenOp.USER_WRITE)
 
-    assert [c.name for c in out] == ["VALSTAN", "VITA"]
+    # Vita в списке БД есть, но она под hard deny — в кандидаты не попадает.
+    assert [c.name for c in out] == ["MAMA", "VALSTAN"]
 
 
 @pytest.mark.asyncio
@@ -861,3 +871,79 @@ async def test_pick_healthy_read_token_stamps_rotation():
             cand = await vtr.pick_healthy_read_token(session)
     assert cand is not None and cand.name == "VITA"
     assert success_calls == ["VITA"]
+
+
+# ---------------------------------------------------------------------------
+# Балансировка READ по фактическому расходу запросов (заказ владельца 2026-07-25)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pick_read_orders_by_calls_today():
+    """READ: первым идёт токен, потративший сегодня меньше запросов.
+
+    Раньше порядок задавал только ``last_used``, но READ-токен выбирается один
+    на волну парсинга — волны разного веса давали одинаковый штамп. Теперь
+    балансируется расход: VITA сегодня сожгла больше всех и уходит в хвост,
+    хотя по ``last_used`` была бы первой.
+    """
+    old = datetime.utcnow() - timedelta(hours=5)
+    recent = datetime.utcnow()
+    rows_active = [
+        _vk_token_row("VITA", "tok_vita"),
+        _vk_token_row("VALSTAN", "tok_v"),
+        _vk_token_row("MAMA", "tok_mama"),
+    ]
+    rows_active[0].last_used = old  # давно не использовалась → была бы первой
+    rows_active[1].last_used = recent
+    rows_active[2].last_used = recent
+
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+    with patch(
+        "modules.vk_monitor.token_usage.get_calls_today",
+        return_value={"VITA": 900, "VALSTAN": 120, "MAMA": 40},
+    ):
+        out = await TokenPolicy(session).pick(TokenOp.READ)
+
+    assert [c.name for c in out] == ["MAMA", "VALSTAN", "VITA"]
+
+
+@pytest.mark.asyncio
+async def test_pick_read_falls_back_to_last_used_without_usage():
+    """Учёт расхода недоступен (Redis лёг) → прежний порядок по last_used."""
+    older = datetime.utcnow() - timedelta(hours=9)
+    newer = datetime.utcnow()
+    rows_active = [
+        _vk_token_row("MAMA", "tok_mama"),
+        _vk_token_row("VITA", "tok_vita"),
+    ]
+    rows_active[0].last_used = newer
+    rows_active[1].last_used = older
+
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+    with patch(
+        "modules.vk_monitor.token_usage.get_calls_today",
+        side_effect=RuntimeError("redis down"),
+    ):
+        out = await TokenPolicy(session).pick(TokenOp.READ)
+
+    assert [c.name for c in out] == ["VITA", "MAMA"]
+
+
+@pytest.mark.asyncio
+async def test_pick_registers_token_names_for_usage_accounting():
+    """pick() объявляет соответствие «строка токена → имя» учёту расхода.
+
+    Без этого ``VKClient`` не знает, чей запрос считать, и весь расход уезжает
+    в ``UNKNOWN:<отпечаток>``.
+    """
+    from modules.vk_monitor import token_usage
+
+    token_usage.reset_for_tests()
+    rows_active = [_vk_token_row("MAMA", "tok_mama")]
+    session = _make_session_with_rows(rows_by_query=[rows_active])
+
+    await TokenPolicy(session).pick(TokenOp.READ)
+
+    assert token_usage.resolve_token_name("tok_mama") == "MAMA"
+    token_usage.reset_for_tests()
