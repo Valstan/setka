@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
 )
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import relationship
 
 from database.connection import Base
@@ -400,8 +401,19 @@ class RadarUser(Base):
     is_active = Column(Boolean, nullable=False, default=True)
 
     # Радар-ID / OIDC аккаунт-слой (миграция 052, ADR-0002 §2).
-    # sub — opaque OIDC subject (UUID строкой), НЕ serial PK.
-    sub = Column(String(36), nullable=False, unique=True, index=True, default=_new_sub)
+    # sub — opaque OIDC subject, НЕ serial PK.
+    #
+    # Тип обязан быть ``UUID``, а не ``String``: миграция 052 создала колонку
+    # как ``sub UUID``, и Postgres отвергает вставку строки в uuid-колонку
+    # («column "sub" is of type uuid but expression is of type character
+    # varying»). Рассинхрон модели и схемы **молча ломал создание любого
+    # аккаунта** — вход через ВК доходил до INSERT и падал 500; вскрыто
+    # 2026-07-25 на первом же живом входе.
+    #
+    # ``as_uuid=False`` оставляет питоновскую сторону строкой — ровно так
+    # ``sub`` и используется дальше (claim в JWT, сравнения в
+    # ``modules/radar_id/service.py``), поэтому остальной код не меняется.
+    sub = Column(PgUUID(as_uuid=False), nullable=False, unique=True, index=True, default=_new_sub)
     email = Column(String(255), nullable=True)  # unique по lower(email) в БД
     email_verified = Column(Boolean, nullable=False, default=False)
     display_name = Column(String(128), nullable=True)
