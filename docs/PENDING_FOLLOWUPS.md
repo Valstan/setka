@@ -22,7 +22,37 @@
 
 ## 🔴 Блокеры
 
-_Сейчас нет._
+### 🔴 Радар остался без VK-интейка: удалён `COMM_137760500` (моя ошибка, 2026-07-25)
+
+`⏱ 2026-07-25 · snooze 0 · fresh · нужен ход владельца (выпустить ключ из-под VALSTAN)`
+
+При чистке таблицы токенов удалён `COMM_137760500`. Я подал его владельцу как
+«осиротевший токен неактивного региона `test`», потому что проверил только связь
+с таблицей `regions`. Проверка была неполной: **эта группа — не регион**, её держит
+env `RADAR_VK_COMMUNITY_ID=137760500`, и токен обслуживал две живые функции Радара:
+
+1. **VK-интейк** (`tasks.radar_tasks.poll_radar_vk_intake`, каждую минуту) — приём
+   кодов привязки VK-лички через Bots Long Poll. До удаления отрабатывал успешно
+   (`ok: True`), после — `skipped: no community token for 137760500`.
+2. **Доставка `vk_dm`** (`modules/radar/delivery.py:_make_default_vk_dm_sender`) —
+   есть **1 активный** output типа `vk_dm`, его дайджесты сейчас не уходят.
+
+**Восстановить нечем:** значение токена жило только в удалённой строке БД,
+дампов на боксе нет (`/home/valstan/backups` пуст), в env его не было.
+
+**Как чинить** (нужен владелец — ключ сообщества выпускает только владелец группы):
+1. Под VALSTAN: `vk.com/club137760500` → Управление → Настройки → Работа с API →
+   Ключи доступа → создать ключ со scope `messages` + `manage` (как было:
+   photos/docs/messages/wall/manage/stories/market).
+2. Внести в `/tokens`: строка «Тестовый полигон» присутствует в списке
+   community-токенов (`list_community_tokens` берёт **все** регионы с
+   `vk_group_id`, включая неактивные), статус сейчас `missing`.
+3. Проверить: `ssh setka "grep -a radar_vk_intake logs/celery-worker.log | tail -3"` —
+   должно вернуться `ok: True` вместо `skipped`.
+
+**Урок:** перед удалением community-токена сверять не только с `regions`, но и с
+env-переменными, которые указывают на community_id (`RADAR_VK_COMMUNITY_ID`,
+`VK_TEST_GROUP_ID`) — иначе «осиротевший» токен окажется рабочим.
 
 - ~~**VK-токен VALSTAN не имеет scope `wall`/`likes`**~~ Закрыто 2026-05-26 (этот PR): попытка получить токен с `wall`+`groups` через четыре разных способа провалилась — VK 2026 (а) у публичных mobile-app_id (Kate Mobile, VK Messenger, VK Mobile) либо режет scope (отдаёт `[photos, email, ads, offline]`), либо привязывает токен к IP-адресу выпуска (error 5 `access_token was given to another ip address` при обращении с прод-VPS); (б) для своего Standalone-приложения VK закрыл новую форму создания (на dev.vk.com доступны только Мини-приложение / Игра / Плагин для сообществ), legacy URL `vk.com/editapp?act=create` тоже больше не показывает Standalone; (в) `likes.add` через community-token VK явно отказывается обслуживать с error 27 `Group authorization failed: method is unavailable with group auth`. **Решение**: кнопка ♥ в `/notifications` теперь — обычная ссылка-deeplink `https://vk.com/wall{owner}_{post}?reply={cid}&thread={cid}`, открывает пост в VK с фокусом на комменте, лайк ставится руками в VK. Backend endpoint `/api/notifications/comments/like` оставлен в коде на случай если когда-нибудь scope `wall` снова станет доступен для физлиц.
 - ~~**Discovery trigger длится >180s — nginx обрывает клиента**~~ Закрыто 2026-05-25 ([PR #49](https://github.com/Valstan/setka/pull/49), `0edf84b`): trigger переведён на Celery + UI polling через `/api/discovery/task/{id}/status`. UI больше не виснет. Nginx полу-фикс 600s в `/etc/nginx/conf.d/setka.conf` остался — не мешает, можно при желании откатить на 180s.
