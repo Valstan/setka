@@ -117,11 +117,91 @@ def verify_oauth_state(blob: str, *, _now: Optional[float] = None) -> Optional[D
         return None
 
 
+def _cookie_domain_suffix() -> Optional[str]:
+    """Суффикс, на который выдаётся сессионная кука (``.вмалмыже.рф`` в punycode).
+
+    ``None`` — кука host-only (локальная разработка), межхостовых возвратов нет.
+    """
+    raw = (os.getenv("SESSION_COOKIE_DOMAIN") or "").strip().lower()
+    return raw or None
+
+
+def _host_shares_session(host: str) -> bool:
+    """True, если на этот хост уже распространяется наша сессионная кука.
+
+    Граница доверия для возврата = граница действия сессии. Шире пускать нельзя
+    (open-redirect), уже — бессмысленно: если кука там не действует, пользователь
+    всё равно приедет неавторизованным.
+    """
+    suffix = _cookie_domain_suffix()
+    if not suffix:
+        return False
+    host = (host or "").strip().lower().rstrip(".")
+    if not host:
+        return False
+    # Кириллический хост и его punycode — одно и то же; сравниваем в ASCII.
+    try:
+        host = host.encode("idna").decode("ascii")
+    except (UnicodeError, UnicodeDecodeError):
+        return False
+    bare = suffix.lstrip(".")
+    return host == bare or host.endswith("." + bare)
+
+
 def safe_next(next_url: Optional[str]) -> str:
-    """Разрешаем только внутренние относительные пути (анти open-redirect)."""
-    if next_url and next_url.startswith("/") and not next_url.startswith("//"):
+    """Куда вернуть пользователя после ВК-входа.
+
+    Пускаем два вида значений:
+
+    1. **Относительный путь** (``/radar``) — как было.
+    2. **Абсолютный URL на хосте, который уже делит с нами сессионную куку**
+       (``https://радар.вмалмыже.рф/radar``).
+
+    Зачем второе (заказ владельца 2026-07-25). ВК-callback по устройству
+    единого входа всегда приземляется на issuer-хост ``вход.вмалмыже.рф``, и
+    относительный ``next`` разворачивается уже относительно него — пользователь,
+    начавший на ``радар.вмалмыже.рф``, оставался на чужом адресе. Абсолютный
+    возврат отправляет его ровно туда, откуда он пришёл; сессия при этом не
+    теряется, потому что кука выдана на весь ``.вмалмыже.рф``.
+
+    Анти-open-redirect. Список разрешённых хостов не задаётся отдельно, а
+    выводится из ``SESSION_COOKIE_DOMAIN``: возврат разрешён ровно туда, где
+    наша сессия и так действует. Любой чужой хост, схема кроме http/https,
+    протокол-относительный ``//evil`` — отбрасываются в дефолт.
+    """
+    if not next_url:
+        return "/radar"
+    if next_url.startswith("/") and not next_url.startswith("//"):
         return next_url
+    if next_url.startswith("http://") or next_url.startswith("https://"):
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(next_url)
+        if parts.scheme in ("http", "https") and _host_shares_session(parts.hostname or ""):
+            return next_url
     return "/radar"
+
+
+def absolutize_next(next_url: Optional[str], origin_host: Optional[str]) -> str:
+    """Привязать относительный ``next`` к хосту, с которого начали вход.
+
+    Вызывается на ``/auth/vk/login``: там ``Host`` — это ещё родной хост сервиса
+    (радар / сарафан), а на callback'е его уже не узнать (он всегда issuer).
+
+    Схему берём **https**, а не из запроса: nginx на боксе слушает 80, TLS
+    терминируется на edge провайдера, поэтому ``X-Forwarded-Proto`` приезжает
+    ``http`` и вернул бы пользователя на небезопасный адрес. Публичные хосты
+    экосистемы https-only — так же жёстко задан и issuer в ``config/radar_id.py``.
+
+    Хост не из нашей куки-зоны → оставляем путь относительным: деградация к
+    прежнему поведению, а не открытый редирект.
+    """
+    path = next_url if (next_url and next_url.startswith("/")) else "/radar"
+    if path.startswith("//"):
+        path = "/radar"
+    if origin_host and _host_shares_session(origin_host):
+        return f"https://{origin_host.strip().rstrip('.')}{path}"
+    return path
 
 
 # ---------------------------------------------------------------------------

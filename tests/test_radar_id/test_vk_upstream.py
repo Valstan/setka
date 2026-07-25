@@ -188,3 +188,81 @@ async def test_inactive_linked_user_rejected(db_session):
     await db_session.commit()
     with pytest.raises(vku.VkUpstreamError):
         await vku.find_or_create_user(db_session, {"user_id": 5})
+
+
+# ---------------------------------------------------------------------------
+# Возврат на родной домен сервиса после ВК-входа (заказ владельца 2026-07-25).
+#
+# Единый вход устроен так, что ВК-callback ВСЕГДА приземляется на issuer
+# (вход.вмалмыже.рф). Относительный next разворачивался относительно него, и
+# пользователь, начавший на радар.вмалмыже.рф, оставался на чужом адресе.
+# Граница доверия для абсолютного возврата = SESSION_COOKIE_DOMAIN: пускаем
+# ровно туда, где наша сессионная кука и так действует.
+# ---------------------------------------------------------------------------
+
+_COOKIE_DOMAIN = ".xn--80adkdyec4j.xn--p1ai"  # .вмалмыже.рф
+_RADAR = "xn--80aal0cd.xn--80adkdyec4j.xn--p1ai"  # радар.вмалмыже.рф
+_SARAFAN = "xn--80aaa6cmey.xn--80adkdyec4j.xn--p1ai"  # сарафан.вмалмыже.рф
+
+
+@pytest.fixture
+def cookie_domain(monkeypatch):
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    return _COOKIE_DOMAIN
+
+
+class TestSafeNextAbsolute:
+    def test_allows_sibling_service_host(self, cookie_domain):
+        url = f"https://{_RADAR}/radar"
+        assert vku.safe_next(url) == url
+
+    def test_allows_apex_of_cookie_domain(self, cookie_domain):
+        url = "https://xn--80adkdyec4j.xn--p1ai/radar"
+        assert vku.safe_next(url) == url
+
+    def test_rejects_foreign_host(self, cookie_domain):
+        assert vku.safe_next("https://evil.test/radar") == "/radar"
+
+    def test_rejects_lookalike_suffix(self, cookie_domain):
+        """`…xn--p1ai.evil.test` не должен пройти как «наш» суффикс."""
+        assert vku.safe_next("https://xn--80adkdyec4j.xn--p1ai.evil.test/x") == "/radar"
+
+    def test_rejects_non_http_scheme(self, cookie_domain):
+        assert vku.safe_next(f"javascript://{_RADAR}/x") == "/radar"
+
+    def test_relative_still_works(self, cookie_domain):
+        assert vku.safe_next("/tokens?a=1") == "/tokens?a=1"
+
+    def test_without_cookie_domain_absolute_is_rejected(self, monkeypatch):
+        """Локальная разработка: кука host-only → межхостовых возвратов нет."""
+        monkeypatch.delenv("SESSION_COOKIE_DOMAIN", raising=False)
+        assert vku.safe_next(f"https://{_RADAR}/radar") == "/radar"
+
+
+class TestAbsolutizeNext:
+    def test_binds_path_to_origin_host(self, cookie_domain):
+        assert vku.absolutize_next("/radar", _RADAR) == f"https://{_RADAR}/radar"
+
+    def test_forces_https_even_though_box_listens_on_80(self, cookie_domain):
+        """TLS терминируется на edge — схему берём жёстко, а не из запроса."""
+        assert vku.absolutize_next("/tokens", _SARAFAN).startswith("https://")
+
+    def test_foreign_origin_falls_back_to_relative(self, cookie_domain):
+        assert vku.absolutize_next("/radar", "evil.test") == "/radar"
+
+    def test_protocol_relative_path_is_dropped(self, cookie_domain):
+        assert vku.absolutize_next("//evil.test", _RADAR) == f"https://{_RADAR}/radar"
+
+    def test_missing_host_keeps_relative(self, cookie_domain):
+        assert vku.absolutize_next("/radar", None) == "/radar"
+
+    def test_cyrillic_origin_host_is_accepted(self, cookie_domain):
+        """Хост может прийти в кириллице — сравниваем в punycode."""
+        out = vku.absolutize_next("/radar", "радар.вмалмыже.рф")
+        assert out.endswith("/radar") and out.startswith("https://")
+
+
+def test_round_trip_returns_to_originating_service(cookie_domain):
+    """Сценарий целиком: начали на радаре → вернулись на радар, не на вход."""
+    target = vku.absolutize_next("/radar", _RADAR)
+    assert vku.safe_next(target) == f"https://{_RADAR}/radar"
