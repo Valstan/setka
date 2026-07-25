@@ -230,13 +230,21 @@ async def token(
 
 @router.get("/auth/vk/login")
 async def vk_login(request: Request, next: str = "/radar"):  # noqa: A002 - query name
-    """Старт ВК-входа: PKCE+state в подписанную cookie → redirect на id.vk.ru."""
+    """Старт ВК-входа: PKCE+state в подписанную cookie → redirect на id.vk.ru.
+
+    ``next`` привязываем к хосту, с которого вход начали: callback по устройству
+    единого входа всегда приземляется на issuer (``вход.вмалмыже.рф``), и там
+    родной хост сервиса уже не восстановить. Здесь же ``request.base_url`` — ещё
+    радар / сарафан, поэтому origin запоминаем в state вместе с путём.
+    """
     _check_enabled()
     _enforce_ip_rate(request, "vk-login")
     from modules.radar_id import vk_upstream
 
+    next_target = vk_upstream.absolutize_next(next, request.url.hostname)
+
     try:
-        url, blob = vk_upstream.build_vk_authorize(next)
+        url, blob = vk_upstream.build_vk_authorize(next_target)
     except vk_upstream.VkUpstreamError as e:
         raise HTTPException(status_code=503, detail=str(e))
     resp = RedirectResponse(url, status_code=302)
