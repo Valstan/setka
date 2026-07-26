@@ -185,7 +185,25 @@ def radar_canonical_redirect(current_host: Optional[str]) -> Optional[str]:
         return None
     if not (_host_shares_session(host) and _host_shares_session(canonical)):
         return None
-    return f"https://{canonical}/radar"
+    # Радар живёт на КОРНЕ своего поддомена (заказ владельца 2026-07-26):
+    # адрес — радар.вмалмыже.рф, без лишнего «/radar» в строке.
+    return f"https://{canonical}/"
+
+
+def is_radar_host(current_host: Optional[str]) -> bool:
+    """True, если запрос пришёл на канонический хост Радара (радар.вмалмыже.рф).
+
+    На этом хосте интерфейс Радара отдаётся с корня ``/``, а ``/radar``
+    редиректится на корень. Сравнение — в punycode (кириллица == punycode).
+    """
+    canonical = os.getenv("RADAR_CANONICAL_HOST", RADAR_CANONICAL_HOST_DEFAULT).strip().lower()
+    host = (current_host or "").strip().lower().rstrip(".")
+    if not canonical or not host:
+        return False
+    try:
+        return host.encode("idna").decode("ascii") == canonical.encode("idna").decode("ascii")
+    except (UnicodeError, UnicodeDecodeError):
+        return False
 
 
 def safe_next(next_url: Optional[str]) -> str:
