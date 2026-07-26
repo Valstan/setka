@@ -257,7 +257,7 @@ async def activate(raw_targets: list[str], *, apply: bool, force: bool) -> int:
 
     from database.connection import AsyncSessionLocal
     from database.models import Region
-    from modules.vk_token_router import get_healthy_read_token
+    from modules.vk_token_router import get_active_parse_tokens, get_healthy_read_token
 
     targets = [parse_target(raw) for raw in raw_targets]
 
@@ -267,15 +267,23 @@ async def activate(raw_targets: list[str], *, apply: bool, force: bool) -> int:
         return 1
     vk = vk_api.VkApi(token=token).get_api()
 
-    admin_ids: set[int] = set()
-    try:
-        admin = vk.groups.get(filter="admin", count=200)
-        admin_ids = {-abs(int(gid)) for gid in admin.get("items", [])}
-    except Exception as exc:  # не блокер: просто не сможем проверить админство
-        logger.warning("groups.get(filter=admin) упал: %s", exc)
-
     failed = 0
     async with AsyncSessionLocal() as session:
+        # Админство собираем по ВСЕМ активным токенам, а не по одному READ-токену,
+        # который выдал роутер. Группы заводит владелец под своим аккаунтом, а
+        # читать может резервный (МАМА/VITA) — на первой же живой раскатке
+        # 2026-07-26 это дало ложное «токен не администрирует группу» на всех
+        # четырёх районах сразу, хотя права были у VALSTAN.
+        admin_ids: set[int] = set()
+        for name, candidate in (await get_active_parse_tokens(session)).items():
+            try:
+                admin = (
+                    vk_api.VkApi(token=candidate).get_api().groups.get(filter="admin", count=200)
+                )
+                admin_ids |= {-abs(int(gid)) for gid in admin.get("items", [])}
+            except Exception as exc:  # не блокер: просто не проверим этот токен
+                logger.warning("groups.get(filter=admin) под %s упал: %s", name, exc)
+
         for target in targets:
             verdict, region = await _collect_facts(session, target, vk, admin_ids)
             if force:
