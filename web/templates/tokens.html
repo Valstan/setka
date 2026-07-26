@@ -137,10 +137,12 @@
                 <div class="card-body">
                     <div class="alert alert-light mb-3">
                         <i class="bi bi-info-circle"></i>
-                        Один инкремент на фактический вызов VK API. Чтение
-                        балансируется по этому счётчику (первым идёт тот, кто
-                        сегодня потратил меньше), поэтому у живых user-токенов
-                        числа должны быть примерно равны.
+                        Один инкремент на фактический вызов VK API. Счёт
+                        посуточный и <b>обнуляется в 00:00 по Москве</b> —
+                        накопительной статистики тут нет. Чтение балансируется
+                        по этому счётчику (первым идёт тот, кто сегодня
+                        потратил меньше), поэтому у живых user-токенов числа
+                        должны быть примерно равны.
                         Строка <code>UNKNOWN:…</code> — расход мимо
                         маршрутизатора, то есть место в коде, которое строит
                         VK-клиент напрямую; это сигнал к правке, а не сбой.
@@ -159,6 +161,35 @@
                             <tbody id="token-usage-tbody">
                                 <tr>
                                     <td colspan="4" class="text-center text-muted">
+                                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                                        Загрузка...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <h6 class="mb-2">
+                        <i class="bi bi-clipboard-check"></i>
+                        Права токенов — замер опытом
+                        <small class="text-muted" id="capabilities-measured-at"></small>
+                    </h6>
+                    <p class="text-muted small mb-3">
+                        Раз в месяц (1-го в 04:10) beat гоняет read-only пробы и
+                        сравнивает с прошлым замером; расхождения уходят в
+                        Telegram-алерт. <code>ok</code> — метод доступен,
+                        <code>errNN</code> — код отказа VK (<code>err27</code> =
+                        метод недоступен групповому токену, <code>err15</code> =
+                        нет доступа). Community-токены ведут себя одинаково,
+                        поэтому меряются все user-токены и два community.
+                    </p>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered align-middle small" id="token-capabilities-table">
+                            <tbody id="token-capabilities-tbody">
+                                <tr>
+                                    <td class="text-center text-muted">
                                         <div class="spinner-border spinner-border-sm" role="status"></div>
                                         Загрузка...
                                     </td>
@@ -367,6 +398,50 @@ async function refreshTokenUsage() {
     } catch (e) {
         tbody.innerHTML = `<tr><td colspan="4" class="text-danger">Ошибка: ${escapeHtml(e.message)}</td></tr>`;
     }
+    refreshTokenCapabilities();
+}
+
+async function refreshTokenCapabilities() {
+    const tbody = document.getElementById('token-capabilities-tbody');
+    const stamp = document.getElementById('capabilities-measured-at');
+    try {
+        const r = await fetch('/api/tokens/capabilities');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        if (!data.measured_at) {
+            stamp.textContent = '';
+            tbody.innerHTML = `<tr><td class="text-muted">
+                Замера ещё не было — первый пройдёт 1-го числа в 04:10 по расписанию beat
+            </td></tr>`;
+            return;
+        }
+        stamp.textContent = '· ' + new Date(data.measured_at).toLocaleString('ru-RU');
+        renderTokenCapabilities(data.matrix || {});
+    } catch (e) {
+        stamp.textContent = '';
+        tbody.innerHTML = `<tr><td class="text-danger">Ошибка: ${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+function renderTokenCapabilities(matrix) {
+    const tbody = document.getElementById('token-capabilities-tbody');
+    const names = Object.keys(matrix).sort();
+    if (names.length === 0) {
+        tbody.innerHTML = `<tr><td class="text-muted">Снапшот пуст</td></tr>`;
+        return;
+    }
+    // Пробы берём из первой строки: набор одинаков для всех токенов замера.
+    const probes = Object.keys(matrix[names[0]] || {});
+    const head = `<tr><th>Проба</th>${names.map(n => `<th>${escapeHtml(n)}</th>`).join('')}</tr>`;
+    const rows = probes.map(probe => {
+        const cells = names.map(name => {
+            const value = (matrix[name] || {})[probe] || '—';
+            const cls = value === 'ok' ? 'text-success' : 'text-danger';
+            return `<td class="${cls}">${escapeHtml(value)}</td>`;
+        }).join('');
+        return `<tr><td>${escapeHtml(probe)}</td>${cells}</tr>`;
+    }).join('');
+    tbody.innerHTML = head + rows;
 }
 
 function renderTokenUsage(today) {

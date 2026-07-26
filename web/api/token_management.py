@@ -232,6 +232,25 @@ async def get_token_usage(days: int = 7, db: AsyncSession = Depends(get_db_sessi
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/capabilities")
+async def get_token_capabilities():
+    """Последний замер прав «токен × метод» (beat, раз в месяц).
+
+    Отдаёт снапшот, снятый ``tasks.celery_app.probe_token_capabilities``:
+    ``measured_at`` + матрица ``{имя_токена: {проба: ok|errNN|net:*}}``.
+    ``null`` в ``measured_at`` — замера ещё не было (первый пройдёт 1-го числа).
+
+    Регистрируется ДО ``/{token_name}`` — иначе FastAPI поймает ``/capabilities``
+    как имя токена.
+    """
+    from modules.vk_monitor.token_capabilities import load_snapshot
+
+    snapshot = load_snapshot()
+    if not snapshot:
+        return {"measured_at": None, "matrix": {}}
+    return {"measured_at": snapshot.get("measured_at"), "matrix": snapshot.get("matrix", {})}
+
+
 # ---------------------------------------------------------------------------
 # Community access tokens: пул токенов на сообщество для публикации и сообщений.
 # Legacy ``COMM_<id>`` считается основным (VALSTAN), резервные получают имя
