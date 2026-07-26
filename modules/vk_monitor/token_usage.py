@@ -109,8 +109,22 @@ def _get_redis():
     return _redis_client
 
 
+def _today_moscow() -> date:
+    """Текущие сутки по Москве — граница обнуления счётчиков.
+
+    Счётчики посуточные, то есть балансировка чтения смотрит на расход
+    «с полуночи». Полночь должна быть **московской**, как и всё расписание
+    проекта: прод-сервер сейчас в MSK, и ``date.today()`` давал верный ответ
+    случайно — переезд машины в UTC молча сдвинул бы обнуление на 03:00 MSK и
+    перекосил бы балансировку на три часа каждую ночь. Привязываемся явно.
+    """
+    from utils.timezone import now_moscow
+
+    return now_moscow().date()
+
+
 def _day_key(day: Optional[date] = None) -> str:
-    return (day or date.today()).isoformat()
+    return (day or _today_moscow()).isoformat()
 
 
 def _record_in_memory(day: str, name: str, method: str) -> None:
@@ -171,7 +185,7 @@ def get_usage(day: Optional[date] = None) -> Dict[str, Dict[str, int]]:
 
 def get_usage_window(days: int = 7) -> Dict[str, Dict[str, Dict[str, int]]]:
     """Расход за последние ``days`` суток: ``{дата: {имя: {поле: N}}}``."""
-    today = date.today()
+    today = _today_moscow()
     return {
         _day_key(today - timedelta(days=offset)): get_usage(today - timedelta(days=offset))
         for offset in range(max(1, int(days)))

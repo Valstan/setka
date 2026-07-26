@@ -142,10 +142,11 @@ env-переменными, которые указывают на community_id 
   ⚠️ **Грабля VK (в журнал регионов записана):** на **четвёртой** группе подряд включается капча
   «Я не робот» — ассистент её не проходит, четвёртую заводил владелец. Следующие порции планировать
   по **3 группы за заход**.
-  ⏸ **Хвост за владельцем:** ключи `COMM_<id>` для четырёх новых групп (раздел «Работа с API»
-  виден только владельцу) + МАМА редактором. До этого публикация идёт каскадом VALSTAN → МАМА —
-  рабочий режим, не блокер.
-  `⏱ 2026-07-26 · snooze 0 · fresh · ждёт хода владельца (ключи+МАМА)`
+  ✅ **Хвост закрыт владельцем в тот же день:** ключи `COMM_<id>` выпущены для всех четырёх групп
+  (права `wall/photos/docs/messages/manage/stories/market`, маска 134623237 — проверено живым
+  `groups.getTokenPermissions`, токены уже в пуле и расходуются), МАМА — руководитель во всех
+  четырёх (проверено `groups.get filter=moder`). Каскад публикации боеготов целиком:
+  community → МАМА → VALSTAN.
 - ✅ **Батч №1 активирован на проде 2026-07-21:** `vk_group_id` + `is_active=true`, двусторонние
   `neighbors`, свежие `COMM_<id>` и user-токен VALSTAN. Dry-run: Яранск 36 постов,
   Санчурск 1, Кикнур 17; у всех `would_publish=1`, без реальной публикации.
@@ -1134,6 +1135,14 @@ _Все запланированные этапы (0, 1, 2, 3, 4a-mini, 4b, 5) �
 - ~~**Разбор первого триажа: ~120 dead-кандидатов**~~ — закрыто 2026-06-12 четырьмя пакетными PR (делегировано владельцем «на твой выбор»): [#211](https://github.com/Valstan/setka/pull/211) carousel-цепочка (`vk_carousel_tasks.py` + orphan `carousel_manager.py`), [#212](https://github.com/Valstan/setka/pull/212) старые publisher'ы (`wordpress_publisher`/`telegram_publisher`/`event_distribution` + orphan `base_publisher`), [#213](https://github.com/Valstan/setka/pull/213) postopus-слой `modules/core` (остался только живой `calculate_post_score`), [#214](https://github.com/Valstan/setka/pull/214) россыпь utils/ + 6 декораторов metrics (−556 строк). Все цепочки orphan'ов прослежены (#028), подавления вычищены из `deadcode_known.txt`, 1236 тестов зелёные. ~~Мини-хвост `utils/post_utils.py::format_number`~~ — снят прогоном 2026-06-14 (см. выше).
 - ✅ **Обратная сверка имён Celery-задач — ПОСТАВЛЕНА** (caveat brain 2026-07-26 `deadcode-gate-caveat-string-bound-channels`, `suggest`; G184 — соседу удаление «мёртвого» файла со ~52 строково-адресуемыми задачами уронило прод). У нас **первая половина защиты уже была**: `scripts/deadcode_scan.py::collect_celery_task_names` вносит декорированные функции и строки `"task"` из beat в allowlist, поэтому vulture не предлагает удалить задачу, которую зовут строкой. Не было **обратной** сверки — «строка ведёт к живому обработчику»; она и добавлена: `tests/test_celery_task_names.py` резолвит beat-расписание (80 записей) и все `send_task`/`signature`-вызовы по AST (включая имя через модульную константу, как `scripts/smoke_test.py::TASK_NAME`) против `app.tasks` (43 задачи после `import_default_modules`). Сейчас сирот **0**; проверено негативно — ловит и опечатку в beat-имени, и сироту в `send_task`. Заодно ловит опечатки в именах, которые раньше не ловило ничто.
 - ~~🟢 **Мёртвые строковые имена задач в UI-подписях**~~ Закрыто 2026-07-26 ([PR #390](https://github.com/Valstan/setka/pull/390)): `modules/celery_task_monitor.py::_format_task_name` и `modules/system_status_notifier.py::_format_task_name_for_user` держали словари человекочитаемых названий на **8 имён, ни одно из которых не было зарегистрировано** (модулей `tasks.notification_tasks` / `tasks.publishing_tasks` / `tasks.real_vk_workflow` нет в репо вовсе; в остальных нет перечисленных задач) — то есть подписывать словари ничего не подписывали, каждое живое имя уходило в fallback. Оба словаря удалены, fallback оставлен как был (разный у двух методов, поэтому в общий хелпер **не** сводил — это изменило бы вывод одного из них). В жёсткий гейт `tests/test_celery_task_names.py` такие словари сознательно не включены: там имя — ключ поиска с fallback'ом, а не вызов.
+- 🟡 `⏱ 2026-07-26 · snooze 0 · fresh` **`tasks/monitoring_tasks.py` не подключён к воркеру** —
+  найдено гейтом имён задач при постановке месячного замера прав: модуля нет в `include` Celery-app
+  (`tasks/celery_app.py:171`), поэтому его четыре задачи (`scan_all_communities`, `scan_region`,
+  `health_check`, `cleanup_old_data`) воркеру недоступны — beat их не зовёт, `send_task` по имени
+  упал бы `No handler registered`. Мою задачу я перенёс в `celery_app.py`, но сам модуль остался
+  висеть: решить, включать его в `include` (тогда задачи оживут) или удалить как мёртвый слой.
+  Именно тот класс, о котором предупреждал brain в caveat G184, только с другой стороны: не
+  «строка без символа», а «символ без канала».
 - 🟢 `⏱ 2026-06-14 · snooze 0 · fresh` **5 Prometheus-метрик без продьюсера** (`vk_api_request_duration_seconds`, `db_queries_total`, `db_query_duration_seconds`, `posts_processed_total`, `posts_published_total`) — определены, но никем не инкрементятся (экспортятся пустыми). Помечены `sleeping` в known.txt (не удалял молча — удаление меняет surface `/metrics`). Кандидат на чистку при желании владельца (или дождаться, пока инструментируем).
 
 ### Рекламный кабинет (MVP 2026-06-02)

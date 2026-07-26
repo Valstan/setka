@@ -1218,6 +1218,67 @@ def snapshot_learned_rules():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.probe_token_capabilities")
+def probe_token_capabilities():
+    """Замер прав VK-токенов опытом — раз в месяц (владелец 2026-07-26).
+
+    Только read-only пробы (``modules.vk_monitor.token_capabilities``): ничего
+    не публикует, не комментирует, не шлёт сообщений. Результат — снапшот в
+    Redis, виден на ``/tokens``; расхождения с прошлым замером уходят в лог и
+    Telegram-алерт. Ежедневный прогон не нужен — права меняются редко, а
+    ценность в том, чтобы дрейф («вчера читал стену, сегодня error 27») не
+    прошёл незамеченным до сломанного сбора.
+
+    Живёт здесь, а не в ``tasks/monitoring_tasks.py``, потому что тот модуль не
+    входит в ``include`` этого приложения: beat позвал бы имя, для которого у
+    воркера нет обработчика (поймано гейтом ``tests/test_celery_task_names``).
+    """
+    logger.info("Probing VK token capabilities (monthly)...")
+    try:
+        from database.connection import AsyncSessionLocal
+        from modules.vk_monitor import token_capabilities as caps
+        from modules.vk_token_router import (
+            _send_telegram_alert_safe,
+            get_active_parse_tokens,
+            load_community_tokens,
+        )
+        from utils.timezone import now_moscow
+
+        async def run():
+            async with AsyncSessionLocal() as session:
+                tokens = dict(await get_active_parse_tokens(session))
+                for community_id, token in (await load_community_tokens(session)).items():
+                    tokens[f"COMM_{community_id}"] = token
+
+            selected = caps.select_tokens(tokens)
+            if not selected:
+                logger.warning("token capabilities: активных токенов нет — замер пропущен")
+                return {"success": True, "tokens": 0, "changes": []}
+
+            previous = caps.load_snapshot() or {}
+            matrix = caps.measure(selected)
+            measured_at = now_moscow().isoformat(timespec="seconds")
+            caps.save_snapshot(matrix, measured_at)
+
+            changes = caps.diff_snapshots(previous.get("matrix"), matrix)
+            if changes:
+                logger.warning("token capabilities drift:\n%s", "\n".join(changes))
+                await _send_telegram_alert_safe(
+                    "⚠️ Права VK-токенов изменились с прошлого замера:\n" + "\n".join(changes[:20])
+                )
+            return {
+                "success": True,
+                "tokens": len(matrix),
+                "measured_at": measured_at,
+                "changes": changes,
+            }
+
+        return run_coro(run())
+    except Exception as e:
+        logger.error(f"probe_token_capabilities failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 # Расписания (Beat Schedule)
 app.conf.beat_schedule = {
     # Проверка предложенных постов каждый час с 8:00 до 22:00 в X:15
@@ -1737,6 +1798,16 @@ app.conf.beat_schedule = {
             "expires": 6 * 3600,
             "catchup": False,
         },
+    },
+    # Замер прав токенов опытом — раз в месяц, 1-го в 04:10 (решение владельца
+    # 2026-07-26). Только read-only пробы; ежедневный прогон не нужен — права
+    # меняются редко, а ценность в том, чтобы дрейф («вчера читал стену, сегодня
+    # error 27») не прошёл незамеченным до сломанного сбора. Изменения с
+    # прошлого замера уходят в лог и Telegram-алерт, снапшот виден на /tokens.
+    "probe-token-capabilities-monthly": {
+        "task": "tasks.celery_app.probe_token_capabilities",
+        "schedule": crontab(minute=10, hour=4, day_of_month="1"),
+        "options": {"expires": 6 * 3600, "catchup": False},
     },
     # Rolling discovery — ОТКЛЮЧЕНО 2026-06-02 (по решению владельца).
     # Алгоритмический авто-подбор кандидатов БЕЗ нейро-классификации (Groq 403)
