@@ -296,20 +296,20 @@ class CeleryTaskMonitor:
             return task
 
     def _format_task_name(self, task_name: str) -> str:
-        """Форматировать название задачи для отображения"""
-        name_mapping = {
-            (
-                "tasks.production_workflow_tasks.run_production_workflow_all_regions"
-            ): "Автоматическая карусель обработки",
-            "tasks.production_workflow_tasks.test_simple_task": "Тестовая задача",
-            "tasks.monitoring_tasks.health_check": "Проверка здоровья системы",
-            "tasks.monitoring_tasks.scan_region": "Сканирование региона",
-            "tasks.notification_tasks.check_vk_notifications": "Проверка уведомлений VK",
-            "tasks.analysis_tasks.analyze_new_posts": "Анализ новых постов",
-            "tasks.publishing_tasks.publish_post": "Публикация поста",
-        }
+        """Название задачи для отображения — последний сегмент точечного имени.
 
-        return name_mapping.get(task_name, task_name.split(".")[-1])
+        Здесь был словарь подписей на 7 имён, и **ни одно из них не
+        существовало**: модулей ``tasks.notification_tasks`` /
+        ``tasks.publishing_tasks`` нет в проекте вовсе, а в остальных нет
+        перечисленных задач. То есть словарь ничего не подписывал — каждое
+        живое имя уходило в fallback. Найдено обратной сверкой строковых имён
+        задач (``tests/test_celery_task_names.py``, 2026-07-26).
+
+        Если подписи понадобятся снова, держать их стоит рядом с самими
+        задачами (атрибут/константа у таски), а не отдельным списком имён,
+        который некому синхронизировать при переезде кода.
+        """
+        return task_name.split(".")[-1]
 
     def _get_task_details(self, task: Dict) -> Dict:
         """Получить детали задачи"""

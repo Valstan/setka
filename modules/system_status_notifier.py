@@ -344,21 +344,15 @@ class SystemStatusNotifier:
             )
 
     def _format_task_name_for_user(self, task_name: str) -> str:
-        """Форматировать название задачи для пользователя"""
-        name_mapping = {
-            (
-                "tasks.production_workflow_tasks.run_production_workflow_all_regions"
-            ): "Автоматическая карусель",
-            "tasks.production_workflow_tasks.test_simple_task": "Тестовая задача",
-            "tasks.monitoring_tasks.health_check": "Проверка системы",
-            "tasks.monitoring_tasks.scan_region": "Сканирование региона",
-            "tasks.notification_tasks.check_vk_notifications": "Проверка уведомлений VK",
-            "tasks.analysis_tasks.analyze_new_posts": "Анализ постов",
-            "tasks.publishing_tasks.publish_post": "Публикация поста",
-            "tasks.real_vk_workflow.collect_and_publish_test": "Тест VK workflow",
-        }
+        """Название задачи для пользователя — последний сегмент, словами.
 
-        return name_mapping.get(task_name, task_name.split(".")[-1].replace("_", " ").title())
+        Здесь был словарь подписей на 8 имён, и **ни одно из них не
+        существовало** (те же мёртвые имена, что в
+        ``modules/celery_task_monitor.py`` — см. пояснение там). Словарь
+        удалён; fallback, который и так обслуживал все живые задачи, оставлен
+        как есть: ``scan_region`` → «Scan Region».
+        """
+        return task_name.split(".")[-1].replace("_", " ").title()
 
     def add_service_activity_status(self):
         """Добавить статус активности сервисов (новая система)"""
