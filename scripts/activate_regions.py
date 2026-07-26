@@ -145,7 +145,7 @@ def evaluate_readiness(
         if not has_community_token:
             verdict.warnings.append(
                 "нет community-токена COMM_<id> — публикация пойдёт каскадом "
-                "(VALSTAN → МАМА), выпустить ключ может только владелец группы"
+                "(МАМА → VALSTAN), выпустить ключ может только владелец группы"
             )
         if token_is_admin is False:
             verdict.warnings.append(
