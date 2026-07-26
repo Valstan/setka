@@ -70,9 +70,10 @@
         let registerMode = false;
         const errorBox = document.getElementById('error-box');
 
-        // next= пробрасывается и в форму, и в ВК-вход; только свои относительные пути.
-        const rawNext = new URLSearchParams(location.search).get('next');
-        const safeNext = rawNext && rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : null;
+        // next= провалидирован сервером (main.py /login → safe_next): свои
+        // относительные пути ИЛИ абсолютный URL сервисного поддомена зоны
+        // (единый вход — возврат на родной домен). Чужое сервер уже отбросил.
+        const safeNext = {{ safe_next | tojson }};
         if (safeNext) {
             document.getElementById('vk-login-btn').href = '/auth/vk/login?next=' + encodeURIComponent(safeNext);
         }
@@ -110,11 +111,13 @@
                     return;
                 }
                 // Оператор — в дашборд (или на исходную страницу); radar-юзер — в радар,
-                // НО OIDC-возврат (next=/oidc/authorize?...) уважается для всех ролей —
-                // иначе рвётся round-trip единого входа внешних сервисов.
+                // НО уважаем для всех ролей: OIDC-возврат (next=/oidc/authorize?... —
+                // round-trip внешних сервисов) и абсолютный возврат на родной поддомен
+                // (единый вход: кука действует на весь .вмалмыже.рф).
+                const crossHost = safeNext && (safeNext.startsWith('https://') || safeNext.startsWith('http://'));
                 location.href = data.role === 'operator'
                     ? (safeNext || '/')
-                    : (safeNext && safeNext.startsWith('/oidc/') ? safeNext : '/radar');
+                    : ((safeNext && safeNext.startsWith('/oidc/')) || crossHost ? safeNext : '/radar');
             } catch (err) {
                 errorBox.textContent = 'Сеть недоступна: ' + err;
                 errorBox.classList.remove('d-none');

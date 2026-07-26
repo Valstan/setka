@@ -187,10 +187,23 @@ async def login_page(request: Request):
     (OIDC-клиент из next= / сервисный поддомен), и показывает «Войти в <Сервис>»
     (modules/radar_id/branding.py).
     """
+    from modules.radar_id import vk_upstream
     from modules.radar_id.branding import resolve_brand
 
-    brand = await resolve_brand(request.query_params.get("next"), request.headers.get("host"))
-    return templates.TemplateResponse("login.html", {"request": request, "brand": brand})
+    raw_next = request.query_params.get("next")
+    # Валидация next на сервере (клиентский JS ей только пользуется): свои
+    # относительные пути и абсолютные URL в зоне сессионной куки (единый вход:
+    # AuthGate сервисного поддомена шлёт сюда next=https://<родной-хост>/...).
+    # Чужое/битое → None (safe_next вернул дефолт, а не сам вход).
+    safe_next = None
+    if raw_next:
+        resolved = vk_upstream.safe_next(raw_next)
+        safe_next = resolved if resolved == raw_next else None
+
+    brand = await resolve_brand(raw_next, request.headers.get("host"))
+    return templates.TemplateResponse(
+        "login.html", {"request": request, "brand": brand, "safe_next": safe_next}
+    )
 
 
 @app.get("/radar")

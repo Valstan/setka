@@ -167,3 +167,69 @@ def test_password_change_invalidates_session(client):
 def test_kill_switch_disables_gate(client, monkeypatch):
     monkeypatch.setenv("WEB_AUTH_ENABLED", "0")
     assert client.get("/api/regions").status_code == 200
+
+
+# ─── Единый вход: редирект на центральный /login (заказ владельца 2026-07-26) ─
+
+_COOKIE_DOMAIN = ".xn--80adkdyec4j.xn--p1ai"  # .вмалмыже.рф
+_ISSUER_HOST = "xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai"  # вход.вмалмыже.рф
+_RADAR_HOST = "xn--80aal0cd.xn--80adkdyec4j.xn--p1ai"  # радар.вмалмыже.рф
+
+
+def _client_for_host(host: str):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.add_middleware(AuthGateMiddleware, user_loader=_loader)
+
+    @app.get("/radar")
+    async def radar_page():
+        return {"page": "radar"}
+
+    return TestClient(app, base_url=f"https://{host}")
+
+
+def test_service_subdomain_redirects_to_central_login(monkeypatch):
+    """Неавторизованный на радар.вмалмыже.рф → вход.вмалмыже.рф с абсолютным next."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    resp = _client_for_host(_RADAR_HOST).get(
+        "/radar", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    loc = resp.headers["location"]
+    assert loc.startswith(f"https://{_ISSUER_HOST}/login?next=")
+    from urllib.parse import parse_qs, urlsplit
+
+    next_val = parse_qs(urlsplit(loc).query)["next"][0]
+    assert next_val == f"https://{_RADAR_HOST}/radar"
+
+
+def test_issuer_host_keeps_local_login(monkeypatch):
+    """На самом вход.вмалмыже.рф — прежний относительный /login."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    resp = _client_for_host(_ISSUER_HOST).get(
+        "/radar", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"].startswith("/login?next=")
+
+
+def test_foreign_host_keeps_local_login(monkeypatch):
+    """Хост вне куки-зоны (техдомен, локалка) — без межхостового редиректа."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    resp = _client_for_host("testserver.example").get(
+        "/radar", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"].startswith("/login?next=")
+
+
+def test_no_cookie_domain_keeps_local_login(monkeypatch):
+    """Локальная разработка (зона не задана) — поведение прежнее."""
+    monkeypatch.delenv("SESSION_COOKIE_DOMAIN", raising=False)
+    resp = _client_for_host(_RADAR_HOST).get(
+        "/radar", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"].startswith("/login?next=")

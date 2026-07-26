@@ -82,6 +82,18 @@ async def resolve_brand(next_url: Optional[str], host: Optional[str]) -> dict:
         except Exception as e:  # noqa: BLE001 - косметика, не роняем логин
             logger.warning("login branding lookup failed for %r: %s", client_id, e)
 
+    # Единый вход: пришли на центральный /login с абсолютным next
+    # (next=https://радар.вмалмыже.рф/...) — брендинг по хосту РОДНОГО
+    # сервиса, а не по хосту страницы входа.
+    if next_url and next_url.startswith(("http://", "https://")):
+        try:
+            next_host = (urlsplit(next_url).hostname or "").lower()
+            next_brand = HOST_BRANDS.get(next_host)
+            if next_brand:
+                return {**DEFAULT_BRAND, **next_brand}
+        except (ValueError, TypeError):
+            pass
+
     host_brand = HOST_BRANDS.get((host or "").split(":")[0].lower())
     if host_brand:
         return {**DEFAULT_BRAND, **host_brand}
