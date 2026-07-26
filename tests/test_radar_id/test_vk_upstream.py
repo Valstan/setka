@@ -275,3 +275,35 @@ def test_round_trip_returns_to_originating_service(cookie_domain):
     """Сценарий целиком: начали на радаре → вернулись на радар, не на вход."""
     target = vku.absolutize_next("/radar", _RADAR)
     assert vku.safe_next(target) == f"https://{_RADAR}/radar"
+
+
+# ---------------------------------------------------------------------------
+# Канонический хост Радара (заказ владельца 2026-07-26): /radar на issuer
+# уводится на радар.вмалмыже.рф; вход остаётся чистой страницей входа.
+# ---------------------------------------------------------------------------
+
+_ISSUER = "xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai"  # вход.вмалмыже.рф
+
+
+class TestRadarCanonicalRedirect:
+    def test_issuer_host_redirects_to_canonical(self, cookie_domain):
+        assert vku.radar_canonical_redirect(_ISSUER) == f"https://{_RADAR}/radar"
+
+    def test_canonical_host_stays(self, cookie_domain):
+        assert vku.radar_canonical_redirect(_RADAR) is None
+
+    def test_cyrillic_canonical_host_stays(self, cookie_domain):
+        assert vku.radar_canonical_redirect("радар.вмалмыже.рф") is None
+
+    def test_foreign_host_stays(self, cookie_domain):
+        """Техдомен myjino / localhost — кука туда не переедет, не дёргаем."""
+        assert vku.radar_canonical_redirect("3931b3fe50ab.vps.myjino.ru") is None
+        assert vku.radar_canonical_redirect("localhost") is None
+
+    def test_without_cookie_domain_stays(self, monkeypatch):
+        monkeypatch.delenv("SESSION_COOKIE_DOMAIN", raising=False)
+        assert vku.radar_canonical_redirect(_ISSUER) is None
+
+    def test_empty_canonical_env_disables(self, cookie_domain, monkeypatch):
+        monkeypatch.setenv("RADAR_CANONICAL_HOST", "")
+        assert vku.radar_canonical_redirect(_ISSUER) is None
