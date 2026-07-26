@@ -110,6 +110,51 @@ def _is_local_client(request: Request) -> bool:
     return bool(client and client.host in ("127.0.0.1", "::1"))
 
 
+def _idna(host: str) -> str:
+    """Хост в ASCII (кириллический и punycode — одно и то же имя)."""
+    host = (host or "").strip().lower().rstrip(".")
+    try:
+        return host.encode("idna").decode("ascii")
+    except (UnicodeError, UnicodeDecodeError):
+        return host
+
+
+def _login_redirect(request: Request, next_url: str) -> str:
+    """URL страницы входа для неаутентифицированного браузерного GET.
+
+    Единый вход экосистемы (заказ владельца 2026-07-26): пользователь на
+    сервисном поддомене ``*.вмалмыже.рф`` (радар, сарафан, ...) отправляется
+    не на локальный ``/login`` того же хоста, а на **центральную** страницу
+    входа issuer'а (``вход.вмалмыже.рф``) с абсолютным ``next`` — выбрал там
+    способ входа, вернулся на родной домен авторизованным (кука выдаётся на
+    весь ``.вмалмыже.рф``).
+
+    Граница доверия та же, что у возврата после ВК-входа: хост обязан делить
+    с нами сессионную куку (``SESSION_COOKIE_DOMAIN``). Хост вне зоны, сам
+    issuer или локальная разработка (зона не задана) → прежний относительный
+    ``/login`` — деградация, не смена поведения.
+    """
+    local = f"/login?next={quote(next_url)}"
+    try:
+        from urllib.parse import urlsplit
+
+        from config.radar_id import get_issuer
+        from modules.radar_id.vk_upstream import host_shares_session
+
+        host = _idna(request.url.hostname or "")
+        issuer = get_issuer()
+        issuer_host = _idna(urlsplit(issuer).hostname or "")
+        if not host or not issuer_host or host == issuer_host:
+            return local
+        if not host_shares_session(host):
+            return local
+        absolute_next = f"https://{host}{next_url}"
+        return f"{issuer}/login?next={quote(absolute_next)}"
+    except Exception:  # noqa: BLE001 - логин важнее косметики единого входа
+        logger.warning("AuthGate: central login resolve failed", exc_info=True)
+        return local
+
+
 class AuthGateMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, user_loader: Optional[UserLoader] = None):
         super().__init__(app)
@@ -142,7 +187,7 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
                 next_url = request.url.path
                 if request.url.query:
                     next_url += f"?{request.url.query}"
-                return RedirectResponse(f"/login?next={quote(next_url)}", status_code=302)
+                return RedirectResponse(_login_redirect(request, next_url), status_code=302)
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
         request.state.user = user

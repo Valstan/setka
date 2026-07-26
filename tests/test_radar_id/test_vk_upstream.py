@@ -261,6 +261,15 @@ class TestAbsolutizeNext:
         out = vku.absolutize_next("/radar", "радар.вмалмыже.рф")
         assert out.endswith("/radar") and out.startswith("https://")
 
+    def test_absolute_next_in_zone_passes_through(self, cookie_domain):
+        """Единый вход: центральный /login прислал уже абсолютный next."""
+        url = f"https://{_RADAR}/radar"
+        # origin_host здесь issuer (вход) — но абсолютный next важнее.
+        assert vku.absolutize_next(url, "xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai") == url
+
+    def test_absolute_next_foreign_host_is_dropped(self, cookie_domain):
+        assert vku.absolutize_next("https://evil.test/x", _RADAR) == "/radar"
+
 
 def test_round_trip_returns_to_originating_service(cookie_domain):
     """Сценарий целиком: начали на радаре → вернулись на радар, не на вход."""

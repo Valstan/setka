@@ -148,6 +148,12 @@ def _host_shares_session(host: str) -> bool:
     return host == bare or host.endswith("." + bare)
 
 
+def host_shares_session(host: str) -> bool:
+    """Публичная обёртка ``_host_shares_session`` (нужна AuthGate для решения
+    «отправлять ли на центральный /login вход.вмалмыже.рф»)."""
+    return _host_shares_session(host)
+
+
 def safe_next(next_url: Optional[str]) -> str:
     """Куда вернуть пользователя после ВК-входа.
 
@@ -195,7 +201,13 @@ def absolutize_next(next_url: Optional[str], origin_host: Optional[str]) -> str:
 
     Хост не из нашей куки-зоны → оставляем путь относительным: деградация к
     прежнему поведению, а не открытый редирект.
+
+    ``next`` может приехать уже абсолютным — с центральной страницы входа
+    (AuthGate шлёт туда ``next=https://<родной-хост>/...``). Такой пропускаем
+    через ``safe_next`` (тот же анти-open-redirect), не затирая в ``/radar``.
     """
+    if next_url and (next_url.startswith("http://") or next_url.startswith("https://")):
+        return safe_next(next_url)
     path = next_url if (next_url and next_url.startswith("/")) else "/radar"
     if path.startswith("//"):
         path = "/radar"
