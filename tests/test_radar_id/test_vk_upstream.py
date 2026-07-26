@@ -286,8 +286,9 @@ _ISSUER = "xn--b1ae3a1a.xn--80adkdyec4j.xn--p1ai"  # вход.вмалмыже.�
 
 
 class TestRadarCanonicalRedirect:
-    def test_issuer_host_redirects_to_canonical(self, cookie_domain):
-        assert vku.radar_canonical_redirect(_ISSUER) == f"https://{_RADAR}/radar"
+    def test_issuer_host_redirects_to_canonical_root(self, cookie_domain):
+        # Радар живёт на КОРНЕ поддомена — без «/radar» в адресе.
+        assert vku.radar_canonical_redirect(_ISSUER) == f"https://{_RADAR}/"
 
     def test_canonical_host_stays(self, cookie_domain):
         assert vku.radar_canonical_redirect(_RADAR) is None
@@ -307,3 +308,23 @@ class TestRadarCanonicalRedirect:
     def test_empty_canonical_env_disables(self, cookie_domain, monkeypatch):
         monkeypatch.setenv("RADAR_CANONICAL_HOST", "")
         assert vku.radar_canonical_redirect(_ISSUER) is None
+
+
+class TestIsRadarHost:
+    def test_canonical_punycode(self):
+        assert vku.is_radar_host(_RADAR) is True
+
+    def test_canonical_cyrillic(self):
+        assert vku.is_radar_host("радар.вмалмыже.рф") is True
+
+    def test_other_zone_host(self):
+        assert vku.is_radar_host(_ISSUER) is False
+
+    def test_foreign_and_empty(self):
+        assert vku.is_radar_host("localhost") is False
+        assert vku.is_radar_host(None) is False
+
+    def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("RADAR_CANONICAL_HOST", "example.test")
+        assert vku.is_radar_host("example.test") is True
+        assert vku.is_radar_host(_RADAR) is False

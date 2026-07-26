@@ -173,9 +173,31 @@ app.include_router(
 )
 
 
+def _radar_template_ctx(request: Request) -> dict:
+    """Контекст radar.html: home-ссылка и адрес каталога сервисов."""
+    from config.radar_id import get_issuer
+    from modules.radar_id import vk_upstream
+
+    at_root = vk_upstream.is_radar_host(request.url.hostname)
+    return {
+        "request": request,
+        "home": "/" if at_root else "/radar",
+        "services_url": f"{get_issuer()}/services",
+    }
+
+
 @app.get("/")
 async def root(request: Request):
-    """Main dashboard page"""
+    """Main dashboard page.
+
+    На каноническом хосте Радара (радар.вмалмыже.рф) корень — это сам Радар
+    (заказ владельца 2026-07-26: без лишнего «/radar» в адресе). На остальных
+    хостах — операторский дашборд, как раньше.
+    """
+    from modules.radar_id import vk_upstream
+
+    if vk_upstream.is_radar_host(request.url.hostname):
+        return templates.TemplateResponse("radar.html", _radar_template_ctx(request))
     return templates.TemplateResponse("index.html", {"request": request})
 
 
@@ -217,10 +239,13 @@ async def radar_page(request: Request):
     """
     from modules.radar_id import vk_upstream
 
+    if vk_upstream.is_radar_host(request.url.hostname):
+        # На своём поддомене Радар живёт на корне — «/radar» лишний.
+        return RedirectResponse("/", status_code=302)
     canonical = vk_upstream.radar_canonical_redirect(request.url.hostname)
     if canonical:
         return RedirectResponse(canonical, status_code=302)
-    return templates.TemplateResponse("radar.html", {"request": request})
+    return templates.TemplateResponse("radar.html", _radar_template_ctx(request))
 
 
 @app.get("/radar/sw.js")
@@ -231,6 +256,39 @@ async def radar_service_worker():
         str(BASE_DIR / "web" / "static" / "radar" / "sw.js"),
         media_type="application/javascript",
         headers={"Service-Worker-Allowed": "/radar"},
+    )
+
+
+@app.get("/sw.js")
+async def radar_root_service_worker(request: Request):
+    """Service worker Радара для корневого scope (радар.вмалмыже.рф/).
+
+    Только на каноническом радар-хосте: на операторских хостах корневой SW
+    не нужен и не отдаётся (404)."""
+    from fastapi import HTTPException
+
+    from modules.radar_id import vk_upstream
+
+    if not vk_upstream.is_radar_host(request.url.hostname):
+        raise HTTPException(status_code=404)
+    return FileResponse(
+        str(BASE_DIR / "web" / "static" / "radar" / "sw.js"),
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/"},
+    )
+
+
+@app.get("/services")
+async def services_catalog(request: Request):
+    """Каталог сервисов экосистемы вмалмыже.рф (public).
+
+    Заказ владельца 2026-07-26: на ЕСА (вход.вмалмыже.рф) — список всех
+    сайтов-сервисов Малмыжа, а на каждом сервисе — кнопка сюда, чтобы
+    пользователь быстро перемещался между сервисами."""
+    from config.services_catalog import get_services
+
+    return templates.TemplateResponse(
+        "services.html", {"request": request, "services": get_services()}
     )
 
 

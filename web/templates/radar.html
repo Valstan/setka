@@ -28,7 +28,7 @@
 <body>
     <nav class="navbar navbar-expand navbar-dark bg-primary sticky-top">
         <div class="container" style="max-width: 720px;">
-            <a class="navbar-brand" href="/radar"><i class="bi bi-broadcast"></i> Радар</a>
+            <a class="navbar-brand" href="{{ home | default('/radar') }}"><i class="bi bi-broadcast"></i> Радар</a>
             <ul class="nav nav-pills flex-row gap-1 me-auto" id="radar-tabs">
                 <li class="nav-item">
                     <a class="nav-link active text-white" data-tab="feed" role="button">
@@ -40,6 +40,13 @@
                 <li class="nav-item"><a class="nav-link text-white" data-tab="outputs" role="button">Радиоточка</a></li>
             </ul>
             <ul class="navbar-nav flex-row gap-3">
+                {% if services_url %}
+                <li class="nav-item">
+                    <a class="nav-link" href="{{ services_url }}" title="Все сервисы Малмыжа">
+                        <i class="bi bi-grid-3x3-gap"></i>
+                    </a>
+                </li>
+                {% endif %}
                 <li class="nav-item d-none" id="push-li">
                     <a class="nav-link" role="button" id="push-btn" title="Push-уведомления о новых элементах">
                         <i class="bi bi-bell" id="push-icon"></i>
@@ -241,7 +248,13 @@
 
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/radar/sw.js', { scope: '/radar' }).catch(() => {});
+            // На радар.вмалмыже.рф интерфейс живёт на корне — SW со scope '/';
+            // на прочих хостах (техдомен, локалка) — прежний /radar-scope.
+            const atRoot = !location.pathname.startsWith('/radar');
+            navigator.serviceWorker.register(
+                atRoot ? '/sw.js' : '/radar/sw.js',
+                { scope: atRoot ? '/' : '/radar' }
+            ).catch(() => {});
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>

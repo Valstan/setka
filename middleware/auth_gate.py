@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 # Открыто без auth (префиксное сравнение):
 PUBLIC_PREFIXES = (
     "/login",
+    "/services",  # каталог сервисов экосистемы — публичная витрина ссылок
     "/static/",
     "/favicon.ico",
     "/api/health",  # internal watchdogs/CI ходят на 127.0.0.1:8000 без cookie
@@ -117,6 +118,16 @@ def _idna(host: str) -> str:
         return host.encode("idna").decode("ascii")
     except (UnicodeError, UnicodeDecodeError):
         return host
+
+
+def _on_radar_host(request: Request) -> bool:
+    """Запрос пришёл на канонический хост Радара (радар.вмалмыже.рф)?"""
+    try:
+        from modules.radar_id.vk_upstream import is_radar_host
+
+        return is_radar_host(request.url.hostname)
+    except Exception:  # noqa: BLE001 - хост-детект не должен ронять гейт
+        return False
 
 
 def _login_redirect(request: Request, next_url: str) -> str:
@@ -193,12 +204,16 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         request.state.user = user
         if user.role == "operator":
             return await call_next(request)
-        if user.role == "radar" and _is_prefixed(path, RADAR_PREFIXES):
+        if user.role == "radar" and (
+            _is_prefixed(path, RADAR_PREFIXES) or (path == "/" and _on_radar_host(request))
+        ):
+            # На каноническом радар-хосте интерфейс Радара живёт на корне —
+            # для radar-роли «/» там своя зона, а не операторский дашборд.
             return await call_next(request)
 
         # Аутентифицирован, но зона не его: radar-юзер в операторском setka.
         if _wants_html(request) and request.method == "GET":
-            return RedirectResponse("/radar", status_code=302)
+            return RedirectResponse("/" if _on_radar_host(request) else "/radar", status_code=302)
         return JSONResponse({"detail": "Forbidden for this role"}, status_code=403)
 
     async def _authenticate(self, request: Request):
