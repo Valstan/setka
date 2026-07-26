@@ -163,19 +163,14 @@
     <footer class="footer mt-5 py-3 bg-body-tertiary">
         <div class="container text-center">
             <span class="text-muted">
-                SETKA {{ app_version }} |
-                <a href="https://3931b3fe50ab.vps.myjino.ru" target="_blank">Production</a> |
-                © 2025&ndash;<span id="footer-year">2026</span> Valstan
+                САРАФАН &mdash; автоматическая система медиаменеджмента |
+                <a href="https://валентин.вмалмыже.рф" target="_blank" rel="noopener">
+                    Разработчик Валентин Савиных, г. Малмыж
+                </a>
             </span>
         </div>
     </footer>
     <script>
-        // Год обновляется автоматически из браузера, чтобы footer не «застревал» при смене года.
-        (function() {
-            var el = document.getElementById('footer-year');
-            if (el) el.textContent = new Date().getFullYear();
-        })();
-
         // Переключатель темы (светлая/тёмная). Тема уже выставлена inline-скриптом
         // в <head>; здесь только синхронизируем иконку и обрабатываем клик.
         function setThemeIcon() {

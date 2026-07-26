@@ -129,8 +129,10 @@ app.add_middleware(MetricsMiddleware)
 # Setup templates and static files
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "web" / "templates"))
-# Make APP_VERSION available in every template (footer uses {{ app_version }}).
-templates.env.globals["app_version"] = APP_VERSION
+# APP_VERSION остаётся у FastAPI (поле `version` в OpenAPI), но шаблонам больше
+# не отдаётся: учёт версий в проекте не ведётся, и подвал их не показывает
+# (решение владельца 2026-07-26). Глобал убран, чтобы не воскрешать «1.5.0»,
+# которое давно ничего не значит.
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), name="static")
 
 # Include routers
