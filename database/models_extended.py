@@ -517,7 +517,16 @@ class OAuthRefreshToken(Base):
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     token_hash = Column(String(128), nullable=False, unique=True, index=True)
-    family_id = Column(String(36), nullable=False, index=True)
+    # Тот же рассинхрон модель↔схема, что был у ``RadarUser.sub`` (см. там):
+    # миграция 052 создала колонку как ``family_id UUID``, модель объявляла
+    # ``String(36)`` — Postgres отвергал INSERT («column "family_id" is of type
+    # uuid but expression is of type character varying»), и обмен кода на токены
+    # падал 500 на самом happy path. Вскрыто 2026-07-26 первым живым
+    # round-trip'ом клиента (trener): authorize/PKCE/креды проходили, ломалось
+    # на записи refresh-токена. ``as_uuid=False`` — питоновская сторона остаётся
+    # строкой (``str(uuid.uuid4())`` в modules/radar_id/service.py и сравнения
+    # по family), поэтому остальной код не меняется.
+    family_id = Column(PgUUID(as_uuid=False), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("radar_users.id", ondelete="CASCADE"), nullable=False)
     client_id = Column(String(64), nullable=False)
     scope = Column(String(255), nullable=False)
