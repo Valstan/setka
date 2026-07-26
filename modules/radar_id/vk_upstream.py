@@ -154,6 +154,40 @@ def host_shares_session(host: str) -> bool:
     return _host_shares_session(host)
 
 
+# Канонический публичный хост Радара (радар.вмалмыже.рф, punycode).
+RADAR_CANONICAL_HOST_DEFAULT = "xn--80aal0cd.xn--80adkdyec4j.xn--p1ai"
+
+
+def radar_canonical_redirect(current_host: Optional[str]) -> Optional[str]:
+    """Абсолютный URL радара на каноническом хосте — или ``None``, если редирект не нужен.
+
+    Заказ владельца 2026-07-26: интерфейс Радара живёт на ``радар.вмалмыже.рф``;
+    ``вход.вмалмыже.рф`` — только страница входа. Вход, начатый прямо на issuer
+    (без ``next`` с сервиса), по дефолту приземлял в ``/radar`` относительным
+    путём — пользователь оставался смотреть радар на адресе входа. Открытый на
+    любом не-каноническом хосте зоны ``/radar`` уводим на канонический
+    (сессия переживает переезд — кука на весь ``.вмалмыже.рф``).
+
+    ``None`` (= остаёмся на месте): уже на каноническом хосте; хост вне
+    куки-зоны (техдомен, localhost — там канонический адрес недостижим или
+    кука не переедет); зона/канон не настроены.
+    """
+    canonical = os.getenv("RADAR_CANONICAL_HOST", RADAR_CANONICAL_HOST_DEFAULT).strip().lower()
+    if not canonical:
+        return None
+    host = (current_host or "").strip().lower().rstrip(".")
+    try:
+        host = host.encode("idna").decode("ascii")
+        canonical = canonical.encode("idna").decode("ascii")
+    except (UnicodeError, UnicodeDecodeError):
+        return None
+    if not host or host == canonical:
+        return None
+    if not (_host_shares_session(host) and _host_shares_session(canonical)):
+        return None
+    return f"https://{canonical}/radar"
+
+
 def safe_next(next_url: Optional[str]) -> str:
     """Куда вернуть пользователя после ВК-входа.
 

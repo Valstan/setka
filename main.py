@@ -208,7 +208,18 @@ async def login_page(request: Request):
 
 @app.get("/radar")
 async def radar_page(request: Request):
-    """Радар (Ф0.4): PWA-лента по подпискам + архив + управление источниками."""
+    """Радар (Ф0.4): PWA-лента по подпискам + архив + управление источниками.
+
+    На не-каноническом хосте зоны (вход.вмалмыже.рф после логина без next)
+    уводим на радар.вмалмыже.рф — интерфейс живёт на своём поддомене,
+    issuer остаётся чистой страницей входа. Сессия переживает переезд
+    (кука на весь .вмалмыже.рф).
+    """
+    from modules.radar_id import vk_upstream
+
+    canonical = vk_upstream.radar_canonical_redirect(request.url.hostname)
+    if canonical:
+        return RedirectResponse(canonical, status_code=302)
     return templates.TemplateResponse("radar.html", {"request": request})
 
 
