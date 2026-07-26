@@ -121,6 +121,56 @@
         </div>
     </div>
 
+    <!-- Расход токенов: сколько VK-запросов сжёг каждый (Redis-счётчики) -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card border-secondary">
+                <div class="card-header bg-secondary bg-opacity-10 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-speedometer2"></i>
+                        Расход токенов за сегодня
+                    </h5>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="refreshTokenUsage()">
+                        <i class="bi bi-arrow-clockwise"></i> Обновить
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-light mb-3">
+                        <i class="bi bi-info-circle"></i>
+                        Один инкремент на фактический вызов VK API. Чтение
+                        балансируется по этому счётчику (первым идёт тот, кто
+                        сегодня потратил меньше), поэтому у живых user-токенов
+                        числа должны быть примерно равны.
+                        Строка <code>UNKNOWN:…</code> — расход мимо
+                        маршрутизатора, то есть место в коде, которое строит
+                        VK-клиент напрямую; это сигнал к правке, а не сбой.
+                        Подробнее — <a href="https://github.com/Valstan/setka/blob/main/docs/VK_TOKEN_ROADMAP.md" target="_blank" rel="noopener">дорожная карта токенов</a>.
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle" id="token-usage-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:22%">Токен</th>
+                                    <th style="width:28%">Роль в каскаде</th>
+                                    <th style="width:10%">Запросов</th>
+                                    <th style="width:40%">Методы</th>
+                                </tr>
+                            </thead>
+                            <tbody id="token-usage-tbody">
+                                <tr>
+                                    <td colspan="4" class="text-center text-muted">
+                                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                                        Загрузка...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Community access tokens (пул публикации + сообщения) -->
     <div class="row mt-4">
         <div class="col-12">
@@ -145,7 +195,9 @@
                         Ключ сообщества выпускает <b>только владелец группы</b> —
                         у администратора раздела «Работа с API» нет вовсе,
                         поэтому слот на группу один. Отказоустойчивость даёт
-                        каскад: ключ сообщества → user-токен VALSTAN → МАМА.
+                        каскад публикации: ключ сообщества → <b>МАМА</b> →
+                        <b>VALSTAN</b> (VITA не публикует никогда). Порядок и
+                        обоснование — <a href="https://github.com/Valstan/setka/blob/main/docs/VK_TOKEN_ROADMAP.md" target="_blank" rel="noopener">дорожная карта токенов</a>.
                     </div>
 
                     <div class="table-responsive">
@@ -293,10 +345,61 @@
 document.addEventListener('DOMContentLoaded', function() {
     loadTokens();
     refreshCommunityTokens();
+    refreshTokenUsage();
 
     // Add token form
     document.getElementById('add-token-form').addEventListener('submit', addToken);
 });
+
+// ===========================================================================
+// Расход токенов (Redis-счётчики, /api/tokens/usage)
+// ===========================================================================
+
+async function refreshTokenUsage() {
+    const tbody = document.getElementById('token-usage-tbody');
+    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">
+        <div class="spinner-border spinner-border-sm" role="status"></div> Загрузка...
+    </td></tr>`;
+    try {
+        const r = await fetch('/api/tokens/usage?days=1');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderTokenUsage((await r.json()).today || {});
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="4" class="text-danger">Ошибка: ${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+function renderTokenUsage(today) {
+    const tbody = document.getElementById('token-usage-tbody');
+    // Сортируем по расходу: сверху те, кто реально работает. Токены с нулём
+    // не прячем — «ноль за сутки» у публикатора это тоже диагностика.
+    const rows = Object.entries(today).sort((a, b) => (b[1].total || 0) - (a[1].total || 0));
+    if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">
+            Счётчиков нет — Redis недоступен или сегодня ещё не было запросов
+        </td></tr>`;
+        return;
+    }
+    tbody.innerHTML = rows.map(([name, info]) => {
+        const unknown = name.startsWith('UNKNOWN');
+        const methods = Object.entries(info.methods || {})
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4)
+            .map(([m, n]) => `${escapeHtml(m)}&nbsp;<span class="text-muted">${n}</span>`)
+            .join(', ') || '<span class="text-muted">—</span>';
+        return `
+            <tr${unknown ? ' class="table-warning"' : ''}>
+                <td>
+                    <strong>${escapeHtml(name)}</strong>
+                    ${info.known === false && !unknown ? '<div><small class="text-muted">нет в таблице токенов</small></div>' : ''}
+                </td>
+                <td><small>${escapeHtml(info.role || '')}</small></td>
+                <td><strong>${info.total || 0}</strong></td>
+                <td><small>${methods}</small></td>
+            </tr>
+        `;
+    }).join('');
+}
 
 // ===========================================================================
 // Community access tokens (для messages.getConversations)
@@ -358,7 +461,7 @@ function communityTokenSlotHtml(row, slot, tokenRow, firstForRegion) {
                 <small class="text-muted">${escapeHtml(row.region_code || '')}</small>` : ''}
             </td>
             <td>
-                ${firstForRegion ? `<a href="https://vk.com/club${cid}/managers" target="_blank" rel="noopener">
+                ${firstForRegion ? `<a href="https://vk.com/club${cid}" target="_blank" rel="noopener">
                     club${cid}
                 </a>
                 <div><small class="text-muted">vk_group_id = ${row.vk_group_id}</small></div>` : ''}
