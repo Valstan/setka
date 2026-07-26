@@ -128,7 +128,7 @@
                 <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">
                         <i class="bi bi-chat-square-text"></i>
-                        Токены сообществ — основной + резерв
+                        Токены сообществ — по одному на группу
                     </h5>
                     <button class="btn btn-outline-info btn-sm" onclick="refreshCommunityTokens()">
                         <i class="bi bi-arrow-clockwise"></i> Обновить
@@ -141,10 +141,11 @@
                         <code>vk.com/club{ID}</code> → <b>Управление</b> →
                         <b>Работа с API</b> → <b>Создать ключ</b>.
                         Дай ключу права <b>«Стена»</b>, <b>«Фотографии»</b> и
-                        <b>«Сообщения сообщества»</b>. Для отказоустойчивости
-                        выпусти два ключа: основной из-под VALSTAN и резервный
-                        из-под МАМЫ. SETKA перебирает оба ключа сообщества, а
-                        затем user-токены VALSTAN → МАМА.
+                        <b>«Сообщения сообщества»</b>.
+                        Ключ сообщества выпускает <b>только владелец группы</b> —
+                        у администратора раздела «Работа с API» нет вовсе,
+                        поэтому слот на группу один. Отказоустойчивость даёт
+                        каскад: ключ сообщества → user-токен VALSTAN → МАМА.
                     </div>
 
                     <div class="table-responsive">
@@ -328,9 +329,13 @@ function renderCommunityTokens(rows) {
 function communityTokenRowsHtml(row) {
     const cid = row.community_id;
     const byName = Object.fromEntries((row.tokens || []).map(token => [token.token_name, token]));
+    // Один слот на группу. Раньше рисовался и резервный `COMM_<id>_MAMA`, но
+    // ключ сообщества выдаёт только ВЛАДЕЛЕЦ группы (у администратора раздела
+    // «Работа с API» нет вовсе), поэтому такой слот не мог быть заполнен
+    // никогда — он лишь удваивал таблицу. Уже существующие именованные токены
+    // (если появятся) по-прежнему показываются ниже, в `extras`.
     const expected = [
         {name: `COMM_${cid}`, account: 'VALSTAN'},
-        {name: `COMM_${cid}_MAMA`, account: 'МАМА'},
     ];
     const expectedNames = new Set(expected.map(slot => slot.name));
     const extras = (row.tokens || [])
