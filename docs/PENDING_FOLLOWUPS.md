@@ -492,6 +492,16 @@ Sabantuy, малмыж×3, trener, будущие футбол/такси). tren
   Дальше я регистрирую клиента (`scripts/register_oidc_client.py`), кладу branding в БД, отдаю
   секрет через root-файл. Кука-шеринг чужим VPS **не** даём (секрет подписи = вся экосистема).
   `⏱ 2026-07-19 · snooze 0 · fresh (ждёт ответа проектов через brain)`
+- ✅ **`/oidc/token` 500 на боевом обмене — ПОЧИНЕНО** (письмо brain 2026-07-26 `radar-token-500-blocks-live-round-trip`,
+  urgency high; этот PR): первый живой round-trip клиента `trener` (26.07 15:44:49 / 15:45:38 MSK) порвался на
+  обмене кода. В прод-логе — `DatatypeMismatchError: column "family_id" is of type uuid but expression is of
+  type character varying`: миграция 052 создала `oauth_refresh_tokens.family_id UUID`, модель объявляла
+  `String(36)`. **Тот же класс, что `radar_users.sub` в PR #381** — вторая колонка той же схемы, первый фикс её
+  пропустил. Диагностика клиента была верной: 401-ветка (неверный секрет) отвечала штатно, падало **дальше по
+  коду**, на записи refresh-токена. Правка — моделью (`PgUUID(as_uuid=False)`), схему и данные не трогаем.
+  Чтобы третьего раза не было, вместо точечного теста поставлен **выведенный гейт**
+  `tests/test_schema_type_parity.py`: парсит все миграции и требует совпадения «UUID / не UUID» с ORM в обе
+  стороны (проверен негативно — ловит оба инцидента, 25.07 и 26.07). +5 тестов, 1797 зелёных.
 - 🟢 **Остаток Ф1:** (1) round-trip-smoke с trener (#011) — владелец передаёт trener client_secret из
   root-файла + issuer; когда trener построит свою сторону → пинг brain, подключит GONBA/Sabantuy.
   (2) владельцу — физически проверить `https://вход.вмалмыже.рф/auth/vk/login` (вход через ВК → /radar).
