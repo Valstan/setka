@@ -321,6 +321,29 @@ def is_hard_spam(text: str) -> bool:
     return messenger_hits >= 3
 
 
+def is_neighbor_bulletin(text: str) -> bool:
+    """Detect our own «Новости соседей …» bulletin reposted back into circulation.
+
+    Соседская сводка — конечный продукт: она уже составлена из чужих новостей
+    и опубликована в целевой группе региона. Если её репостнуть/собрать снова,
+    в чужой сводке появляется матрёшка «сводка в сводке» (инцидент Малмыж
+    2026-07-27: четыре вложенных «Новости соседей …» в одном посте). Детектор
+    узнаёт такой пост по шапке-оглавлению — первая строка начинается с
+    «Новости соседей» (заголовок из ``_THEME_TITLE`` тем ``sosed``/``neighbors``,
+    см. ``modules/publisher/postopus_bulletin_headers.py``).
+
+    Returns:
+        True, если текст начинается с шапки соседской сводки (независимо от
+        популярности поста — он исключается из любого дальнейшего оборота).
+    """
+    if not text:
+        return False
+    first_line = text.lstrip().split("\n", 1)[0]
+    # Допускаем декоративный префикс перед заголовком (эмодзи, «📰» и т.п.).
+    stripped = re.sub(r"^[^а-яёА-ЯЁa-zA-Z]+", "", first_line)
+    return stripped.lower().startswith("новости соседей")
+
+
 def check_blacklist(text: str, blacklist: List[str]) -> Optional[str]:
     """
     Check if text contains any blacklisted words/phrases.

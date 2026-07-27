@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from utils.text_utils import is_advertisement, is_hard_spam, truncate_text
+from utils.text_utils import is_advertisement, is_hard_spam, is_neighbor_bulletin, truncate_text
 
 
 def test_truncate_text_short_text_unchanged():
@@ -226,3 +226,41 @@ def test_is_hard_spam_obfuscation_threshold_spares_legit(text):
 def test_is_hard_spam_empty():
     assert is_hard_spam("") is False
     assert is_hard_spam(None) is False  # type: ignore[arg-type]
+
+
+# ───────── is_neighbor_bulletin: своя сводка соседей не идёт обратно в оборот ─────────
+# Инцидент Малмыж 2026-07-27: опубликованная сводка «Новости соседей …» была
+# собрана заново соседским обменом другого региона → матрёшка «сводка в сводке»
+# с четырьмя вложенными шапками в одном посте.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Новости соседей СОВЕТСК - ИНФО:\n\nНовости Уржума:\n…",
+        "Новости соседей МАЛМЫЖ - ИНФО:\nтело сводки",
+        "новости соседей ЛЕБЯЖЬЕ - ИНФО:",  # регистр не важен
+        "📰 Новости соседей КИРС - ИНФО:\nтело",  # декоративный префикс-эмодзи
+        "  \nНовости соседей УРЖУМ - ИНФО:\n…",  # ведущие пробелы/перевод строки
+    ],
+)
+def test_is_neighbor_bulletin_catches_own_bulletin(text):
+    assert is_neighbor_bulletin(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "Новости Уржума:\nобычная районная сводка",
+        "Соседи по даче затопили подвал — что делать?",
+        "В Малмыже обсудили новости соседей по подъезду",  # не в начале
+        "Новости соседнего региона важны для всех",  # не тот заголовок
+    ],
+)
+def test_is_neighbor_bulletin_spares_regular_posts(text):
+    assert is_neighbor_bulletin(text) is False
+
+
+def test_is_neighbor_bulletin_none():
+    assert is_neighbor_bulletin(None) is False  # type: ignore[arg-type]
