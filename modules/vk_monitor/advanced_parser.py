@@ -33,7 +33,7 @@ from modules.deduplication.fingerprints import (
 )
 from modules.vk_monitor.vk_client import VKClient
 from utils.post_utils import clear_copy_history, lip_of_post, post_popularity
-from utils.text_utils import check_blacklist, is_advertisement, is_hard_spam
+from utils.text_utils import check_blacklist, is_advertisement, is_hard_spam, is_neighbor_bulletin
 from utils.vk_attachments import extract_vk_attachments, has_attachments
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,7 @@ class AdvancedVKParser:
             "posts_filtered_no_region_words": 0,
             "posts_filtered_advertisement": 0,
             "posts_filtered_hard_spam": 0,
+            "posts_filtered_neighbor_bulletin": 0,
             "posts_filtered_classifier": 0,
             "posts_filtered_no_attachments": 0,
             "posts_filtered_blacklist_text": 0,
@@ -471,6 +472,13 @@ class AdvancedVKParser:
         #     попадают — is_hard_spam узкий, ловит только скам/увод в обход VK.
         if is_hard_spam(text):
             self.stats["posts_filtered_hard_spam"] += 1
+            return None
+
+        # 5b. Своя же соседская сводка «Новости соседей …» — конечный продукт,
+        #     обратно в оборот не берём НИКОГДА (каким бы популярным пост ни был):
+        #     иначе матрёшка «сводка в сводке» (инцидент Малмыж 2026-07-27).
+        if is_neighbor_bulletin(text):
+            self.stats["posts_filtered_neighbor_bulletin"] += 1
             return None
 
         # 5. Advertisement filter
