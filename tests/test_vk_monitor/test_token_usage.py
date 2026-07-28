@@ -7,7 +7,7 @@ Redis в тестах не поднимается, поэтому модуль �
 """
 
 import os
-from datetime import date, timedelta
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -16,6 +16,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 from modules.vk_monitor import token_usage  # noqa: E402
+from utils.timezone import now_moscow  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -96,11 +97,20 @@ class TestUsageWindow:
         token_usage.record_call("tok_v", "wall.get")
 
         window = token_usage.get_usage_window(3)
-        today = date.today().isoformat()
+        # Сутки берём МОСКОВСКИЕ — тем же способом, что и сам модуль
+        # (``_today_moscow``). Раньше здесь стоял ``date.today()``, то есть дата
+        # в таймзоне процесса, и с 21:00 до 24:00 UTC тест разъезжался с
+        # продуктовым кодом на сутки: запись легла в московское «завтра», а
+        # проверка искала UTC-«сегодня» → KeyError. Поймано красным прогоном CI
+        # в 21:01 UTC (= 00:01 MSK) при ревизии гейтов #104; локально в MSK
+        # такой прогон зелёный круглосуточно, поэтому мина и дожила до сюда.
+        # Продуктовое поведение верное и намеренное (см.
+        # tests/test_monitoring/test_token_usage_day_boundary.py) — правится тест.
+        today = now_moscow().date()
         assert len(window) == 3
-        assert window[today]["VITA"]["total"] == 1
+        assert window[today.isoformat()]["VITA"]["total"] == 1
         # Вчерашний день пуст — записей не было.
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday = (today - timedelta(days=1)).isoformat()
         assert window[yesterday] == {}
 
     def test_window_minimum_one_day(self):
