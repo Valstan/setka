@@ -38,25 +38,34 @@ jobs:
           # `from modules.X import Y` works without sys.path.insert hacks
           # in scripts/* and tests/*.
           pip install -e .
-          pip install pytest pytest-asyncio pytest-cov flake8 black isort
+          pip install pytest pytest-asyncio pytest-cov pre-commit
 
-      # Ниже три шага БЕЗ continue-on-error: до 2026-07-28 он тут стоял, и
-      # required-check `test (3.12)` зеленел независимо от того, что говорили
-      # линтеры — то есть на стороне CI гейта качества не существовало вовсе
-      # (ревизия #104). Локальный pre-commit ловил это первым, но он ручной:
-      # PR с чужой машины или коммит мимо хука проезжали.
-      - name: Lint with flake8
-        run: |
-          flake8 . --max-line-length=100 --extend-ignore=E203,W503 \
-            --exclude=venv,build,dist,.git
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: ${{ runner.os }}-pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
 
-      - name: Check formatting with black
-        run: |
-          black --check --line-length 100 .
-
-      - name: Check import order with isort
-        run: |
-          isort --check-only --profile black --line-length 100 .
+      # Линт гоняется ОДНИМ шагом через pre-commit и БЕЗ continue-on-error
+      # (ревизия гейтов #104, 2026-07-28). Что было до:
+      #
+      #   * три отдельных шага (flake8/black/isort) стояли под
+      #     `continue-on-error: true` — печатали ошибки и не влияли на итог
+      #     job'а. Required-check ветки main — ровно `test (3.12)`, то есть
+      #     контур санкционировал мерж по одним тестам, а зелёный значок
+      #     читался как «линт прошёл»;
+      #   * инструменты ставились `pip install flake8 black isort` БЕЗ версий,
+      #     то есть набор правил в CI плавал сам по себе и расходился с
+      #     пришпиленными ревизиями в .pre-commit-config.yaml. Свежий black
+      #     хотел переформатировать ~40 файлов, которые pinned black 24.10.0
+      #     считает нормальными, — шаг падал на чистом коде, и этого никто не
+      #     видел ровно из-за continue-on-error.
+      #
+      # Отсюда правило: один источник правил линтинга. CI исполняет тот же
+      # .pre-commit-config.yaml с теми же ревизиями, что и локальный хук, —
+      # разойтись им больше нечем.
+      - name: Lint (pre-commit — black, isort, flake8)
+        run: pre-commit run --all-files --show-diff-on-failure
 
       - name: Run unit tests
         run: |
