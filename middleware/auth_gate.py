@@ -57,6 +57,9 @@ PUBLIC_PREFIXES = (
     "/api/classifier/",  # HITL-классификатор ingest (облачная рутина): своя
     # X-API-Key защита (web/api/classifier_ingest.py). Аналогично шлюзу,
     # trailing slash важен: /api/classifier-review НЕ public (операторская лента).
+    "/api/ecosystem/",  # self-serve подключение проектов (ADR-0010): своя
+    # X-Ecosystem-Key защита (web/api/ecosystem.py). Заявку шлёт сервер
+    # проекта-клиента, сессионной cookie у него нет и быть не может.
     "/api/auth/login",
     "/api/auth/register",
     "/.well-known/",

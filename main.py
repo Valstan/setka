@@ -29,6 +29,7 @@ from web.api import (
     classifier_review,
     communities,
     discovery,
+    ecosystem,
     filtration,
     gateway,
     gateway_stats,
@@ -167,6 +168,9 @@ app.include_router(
 app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Discovery"])
 app.include_router(gateway.router, prefix="/api/gateway", tags=["VK Gateway"])
 app.include_router(gateway_stats.router, prefix="/api/gateway-stats", tags=["VK Gateway Stats"])
+# Self-serve подключение проектов экосистемы (ADR-0010): своя X-Ecosystem-Key
+# защита, поэтому префикс — публичный в middleware/auth_gate.py.
+app.include_router(ecosystem.router, prefix="/api/ecosystem", tags=["Ecosystem Self-Serve"])
 # HITL-классификатор (ADR-0003). Ingest — публичный (X-API-Key рутины), в PUBLIC_PREFIXES;
 # review — операторская сессия (как gateway / gateway-stats).
 app.include_router(classifier_ingest.router, prefix="/api/classifier", tags=["Classifier Ingest"])
