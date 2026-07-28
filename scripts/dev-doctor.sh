@@ -101,13 +101,24 @@ else
 fi
 
 # --- 4. pre-commit ---
+# Проверяем ОБА типа хуков. Раньше смотрели только pre-commit — и доктор
+# рапортовал «ok» на машине, где commit-msg-хука не было вовсе (он появился в
+# конфиге позже установки хуков, а `default_install_hook_types` действует лишь
+# в момент `pre-commit install`). Гейт качества commit message при этом молча
+# не запускался — ровно тот класс дыры, что и #104: проверка есть в конфиге,
+# но не в контуре.
 section "pre-commit"
-if [[ -f ".git/hooks/pre-commit" ]] && grep -q "pre-commit" ".git/hooks/pre-commit" 2>/dev/null; then
-    ok "git-хук pre-commit установлен"
-else
-    warn "git-хук pre-commit не установлен — black/isort/flake8 не гоняются на commit"
-    hint "./venv/bin/pre-commit install"
-fi
+for hook in pre-commit commit-msg; do
+    if [[ -f ".git/hooks/$hook" ]] && grep -q "pre-commit" ".git/hooks/$hook" 2>/dev/null; then
+        ok "git-хук $hook установлен"
+    elif [[ "$hook" == "pre-commit" ]]; then
+        warn "git-хук pre-commit не установлен — black/isort/flake8 не гоняются на commit"
+        hint "./venv/bin/pre-commit install"
+    else
+        warn "git-хук commit-msg не установлен — Conventional Commits не проверяются"
+        hint "./venv/bin/pre-commit install  # ставит оба типа хуков"
+    fi
+done
 
 # --- 5. psql-клиент ---
 section "PostgreSQL-клиент"

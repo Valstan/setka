@@ -40,19 +40,21 @@ jobs:
           pip install -e .
           pip install pytest pytest-asyncio pytest-cov flake8 black isort
 
+      # Ниже три шага БЕЗ continue-on-error: до 2026-07-28 он тут стоял, и
+      # required-check `test (3.12)` зеленел независимо от того, что говорили
+      # линтеры — то есть на стороне CI гейта качества не существовало вовсе
+      # (ревизия #104). Локальный pre-commit ловил это первым, но он ручной:
+      # PR с чужой машины или коммит мимо хука проезжали.
       - name: Lint with flake8
-        continue-on-error: true
         run: |
           flake8 . --max-line-length=100 --extend-ignore=E203,W503 \
             --exclude=venv,build,dist,.git
 
       - name: Check formatting with black
-        continue-on-error: true
         run: |
           black --check --line-length 100 .
 
       - name: Check import order with isort
-        continue-on-error: true
         run: |
           isort --check-only --profile black --line-length 100 .
 
