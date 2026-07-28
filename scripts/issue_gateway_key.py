@@ -1,4 +1,12 @@
-"""Self-serve выдача API-ключей VK-шлюза (мандат brain 2026-07-12).
+"""API-ключи VK-шлюза — операторский путь (self-serve см. ADR-0010).
+
+С 2026-07-28 проект экосистемы получает ключ **сам**:
+``POST /api/ecosystem/gateway-keys`` с экосистемным ключом. Скрипт остался для
+операторских действий, которых в self-serve нет по смыслу: отключить/включить
+чужой ключ, ротировать за потребителя, импортировать env-ключи в БД.
+
+Валидация и запись — общие с HTTP (:mod:`modules.ecosystem.provisioning`):
+один механизм на оба пути, разъехаться правилами им нечем.
 
 Ключи живут в БД ``gateway_keys`` (единый источник, миграция 059); env
 ``GATEWAY_KEY_<PROJECT>`` — только bootstrap-fallback. Рестарт web НЕ нужен:
@@ -21,68 +29,22 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import secrets
 import sys
-from datetime import datetime
 
 from sqlalchemy import select
 
 from config.gateway import get_gateway_keys as get_env_gateway_keys
-from database import models  # noqa: F401 — конфигурация мапперов
-from database.connection import AsyncSessionLocal
-from database.models import GatewayKey
-from modules.gateway.usage import record_request
+from modules.ecosystem.provisioning import ProvisioningError, provision_gateway_key
 
 
 async def _log_event(project: str, action: str) -> None:
     """Записать событие выдачи в usage-лог (best-effort, #018)."""
+    from modules.gateway.usage import record_request
+
     try:
         await record_request(project, "issue-key", action, None, status=200, ok=True)
     except Exception as e:  # pragma: no cover - defensive
         print(f"warning: usage-log failed: {e}", file=sys.stderr)
-
-
-async def _upsert_key(
-    name: str, rotate: bool, disable: bool, enable: bool, note: str | None
-) -> int:
-    secret_plain = None
-    async with AsyncSessionLocal() as session:
-        row = (
-            await session.execute(select(GatewayKey).where(GatewayKey.name == name))
-        ).scalar_one_or_none()
-        if row is None:
-            secret_plain = secrets.token_urlsafe(32)
-            row = GatewayKey(name=name, secret=secret_plain, is_active=not disable, note=note)
-            session.add(row)
-            action = "created"
-        elif rotate:
-            secret_plain = secrets.token_urlsafe(32)
-            row.secret = secret_plain
-            row.rotated_at = datetime.utcnow()
-            action = "rotated"
-        elif disable:
-            row.is_active = False
-            action = "disabled"
-        elif enable:
-            row.is_active = True
-            action = "enabled"
-        else:
-            action = "unchanged"
-        if note is not None:
-            row.note = note
-        await session.commit()
-        active = bool(row.is_active)
-
-    await _log_event(name, action)
-    print(f"project: {name}")
-    print(f"action: {action}")
-    print(f"active: {active}")
-    if secret_plain:
-        print("secret (показывается ОДИН раз, передать потребителю по защищённому каналу):")
-        print(secret_plain)
-    elif action == "unchanged":
-        print("secret: без изменений (--rotate для перегенерации)")
-    return 0
 
 
 async def _import_env() -> int:
@@ -91,6 +53,10 @@ async def _import_env() -> int:
     Значения берутся как есть (потребители продолжают работать без ре-выдачи).
     После переноса env-строки можно удалять — БД главнее при совпадении имени.
     """
+    from database import models  # noqa: F401 — конфигурация мапперов
+    from database.connection import AsyncSessionLocal
+    from database.models import GatewayKey
+
     env_keys = get_env_gateway_keys()
     if not env_keys:
         print("env: ключей GATEWAY_KEY_* не найдено")
@@ -128,8 +94,34 @@ async def main() -> int:
         parser.error("нужен PROJECT (или --import-env)")
     if sum([args.rotate, args.disable, args.enable]) > 1:
         parser.error("--rotate/--disable/--enable взаимоисключающие")
-    name = args.project.strip().upper()
-    return await _upsert_key(name, args.rotate, args.disable, args.enable, args.note)
+
+    set_active = None
+    if args.disable:
+        set_active = False
+    elif args.enable:
+        set_active = True
+
+    try:
+        result = await provision_gateway_key(
+            project=args.project,
+            note=args.note,
+            rotate=args.rotate,
+            allow_update=True,
+            set_active=set_active,
+        )
+    except ProvisioningError as e:
+        print(f"отказ ({e.code}): {e.message}", file=sys.stderr)
+        return 2
+
+    print(f"project: {result.identifier}")
+    print(f"action: {result.action}")
+    print(f"active: {result.details.get('active')}")
+    if result.secret:
+        print("secret (показывается ОДИН раз, передать потребителю по защищённому каналу):")
+        print(result.secret)
+    elif result.action == "unchanged":
+        print("secret: без изменений (--rotate для перегенерации)")
+    return 0
 
 
 if __name__ == "__main__":
