@@ -283,7 +283,13 @@
         .sel-count b { color: var(--violet); }
         .sel-reach b { color: var(--green); }
         .sel-price { color: var(--accent-dark); font-weight: 700; }
-        .sel-price .hint { font-weight: 400; color: var(--ink-soft); font-size: .82rem; }
+        .sel-price .hint { font-weight: 400; color: var(--ink-soft); font-size: .82rem; margin-left: 6px; }
+        .sel-price .saved {
+            display: inline-block; margin-left: 8px;
+            background: var(--mint); color: #116b4c;
+            border: 1.5px solid #b7e6d2;
+            border-radius: 999px; padding: 2px 10px; font-size: .82rem; font-weight: 700;
+        }
         .sel-price .nudge {
             display: inline-block; margin-left: 8px;
             background: linear-gradient(90deg, var(--green), #35c491); color: #fff;
@@ -335,6 +341,16 @@
         .pkg ul li { font-size: .88rem; color: var(--ink-soft); padding: 4px 0 4px 20px; position: relative; }
         .pkg ul li::before { content: "✿"; position: absolute; left: 0; color: var(--gold); }
         .pkg .btn { width: 100%; }
+
+        .ladder {
+            background: linear-gradient(120deg, var(--lilac), #fbf9ff);
+            border: 2px solid #e2d8ff; border-left: 6px solid var(--violet);
+            border-radius: 18px; padding: 18px 22px; margin-bottom: 20px;
+        }
+        .ladder h3 { font-size: 1.15rem; margin-bottom: 8px; color: var(--violet); }
+        .ladder p { font-size: .95rem; }
+        .ladder b { color: var(--accent-dark); }
+        .ladder-hint { margin-top: 8px; font-size: .88rem; color: var(--ink-soft); font-style: italic; }
 
         .two-col {
             display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
@@ -522,7 +538,7 @@
         </div>
     </div>
 
-    <script type="application/json" id="pkg-data">{{ packages_json }}</script>
+    <script type="application/json" id="price-table">{{ price_table_json }}</script>
 
     <!-- ══ ВКЛАДКА: РЕКЛАМА ══ -->
     <section class="tab-pane" id="pane-ads">
@@ -560,6 +576,23 @@
                 </button>
             </div>
             {% endfor %}
+        </div>
+
+        <div class="ladder">
+            <h3>📉 Как работает опт</h3>
+            <p>
+                Цена набегает по <b>{{ price_single }} ₽</b> за сообщество, но на рубежах включается
+                пакетная цена и счётчик <b>сбрасывается вниз</b>:
+                <b>5 сообществ — 1300 ₽</b> (дешевле, чем четыре!), дальше снова по {{ price_single }} ₽ …
+                <b>10 сообществ — 2500 ₽</b>, и снова поштучно …
+                {% if cap_from %}а с <b>{{ cap_from }} сообществ — 5000 ₽ за всю сеть</b>, и выше цена
+                уже не поднимается, сколько бы сообществ вы ни добавили.{% endif %}
+            </p>
+            <p class="ladder-hint">
+                Отмечайте сообщества галочками на вкладке «Сообщества сети» — счётчик внизу
+                сам покажет цену, размер скидки и подскажет, когда до следующего рубежа
+                остался один шаг.
+            </p>
         </div>
 
         <div class="two-col">
