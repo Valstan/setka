@@ -139,14 +139,39 @@ def _sort_key(value: str) -> str:
     return value.lower().replace("ё", "е")
 
 
-def _item(region: Any, members: Optional[int] = None) -> Dict[str, Any]:
-    return {
+def parse_neighbors(raw: Optional[str]) -> List[str]:
+    """``Region.neighbors`` («bal,klz,mi») → список кодов."""
+    if not raw:
+        return []
+    return [t.strip().lower() for t in str(raw).replace(";", ",").split(",") if t.strip()]
+
+
+def build_neighbor_graph(regions: Sequence[Any]) -> Dict[str, List[str]]:
+    """Граф соседства ``{code: [codes]}`` по **всем** переданным регионам.
+
+    Сознательно строится и по неактивным регионам: соседство физическое, и
+    район без своей группы (заготовка) остаётся транзитным узлом. Выкинь его —
+    и, например, Луза перестанет «дотягиваться» до Мурашей и дальше, а
+    сортировка по соседству молча порвётся на куски.
+    """
+    return {r.code: parse_neighbors(getattr(r, "neighbors", None)) for r in regions}
+
+
+def _item(
+    region: Any, members: Optional[int] = None, oblast: Optional[str] = None
+) -> Dict[str, Any]:
+    item = {
         "code": region.code,
         "kind": getattr(region, "kind", "raion"),
         "name": short_name(region.name, getattr(region, "center_city", None)),
         "members": members,
         "url": community_url(region.vk_group_id, _region_screen_name(region)),
+        "oblast": oblast,
     }
+    # Готовая строка списка — чтобы клиент, пересортировывая, склеивал текст из
+    # серверных строк, а не собирал формат заново (один источник формата).
+    item["line"] = render_item_line(item)
+    return item
 
 
 def build_blocks(
@@ -187,9 +212,10 @@ def build_blocks(
 
     blocks: List[Dict[str, Any]] = []
     for oblast in sorted(oblasts.values(), key=lambda r: _sort_key(base_title(r.name))):
-        items = [_item(oblast, members.get(oblast.id))]
+        oblast_title = base_title(oblast.name)
+        items = [_item(oblast, members.get(oblast.id), oblast_title)]
         items += [
-            _item(r, members.get(r.id))
+            _item(r, members.get(r.id), oblast_title)
             for r in sorted(
                 children.get(oblast.id, []),
                 key=lambda r: _sort_key(short_name(r.name, getattr(r, "center_city", None))),
@@ -209,7 +235,7 @@ def build_blocks(
                 "code": OTHER_BLOCK_CODE,
                 "title": OTHER_BLOCK_TITLE,
                 "items": [
-                    _item(r, members.get(r.id))
+                    _item(r, members.get(r.id), OTHER_BLOCK_TITLE)
                     for r in sorted(
                         orphans,
                         key=lambda r: _sort_key(

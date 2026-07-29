@@ -316,11 +316,15 @@ async def region_links_page(request: Request):
     Данные списка — ``GET /api/regions/vk-links``, подписчики и красивые адреса
     групп обновляются ночной таской ``collect_member_snapshots``.
     """
+    import json
+
     from config.ad_landing import get_ad_landing_context
 
-    return templates.TemplateResponse(
-        "region_links.html", {"request": request, **get_ad_landing_context()}
-    )
+    ctx = get_ad_landing_context()
+    # Тарифы уходят и в вёрстку, и в <script type=application/json> — панель
+    # выбора считает по ним ориентировочную цену отмеченных сообществ.
+    ctx["packages_json"] = json.dumps(ctx["packages"], ensure_ascii=False)
+    return templates.TemplateResponse("region_links.html", {"request": request, **ctx})
 
 
 @app.get("/posts")

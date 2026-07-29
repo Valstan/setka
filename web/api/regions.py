@@ -783,6 +783,10 @@ class VkLinkItem(BaseModel):
     name: str
     members: int | None = None
     url: str
+    oblast: str | None = None
+    # Готовая текстовая строка — клиент склеивает из них текст при любой
+    # сортировке, не пересобирая формат у себя.
+    line: str
 
 
 class VkLinkBlock(BaseModel):
@@ -801,6 +805,9 @@ class VkLinksResponse(BaseModel):
     text: str
     total: int
     total_members: int
+    # Граф соседства {code: [codes]} по ВСЕМ регионам, включая те, что ещё без
+    # группы: они транзитные узлы, без них сортировка «по соседству» рвётся.
+    neighbors: Dict[str, List[str]]
 
 
 # ВАЖНО: как и «suggest-neighbors» — объявлено ДО ``@router.get("/{region_code}")``,
@@ -825,11 +832,16 @@ async def get_vk_links(db: AsyncSession = Depends(get_db_session)):
     отдаётся людям без входа.
     """
     from database.models import RegionMemberSnapshot
-    from modules.region_links import build_blocks, render_block_text, render_text
-
-    result = await db.execute(
-        select(Region).where(Region.is_active.is_(True), Region.vk_group_id.isnot(None))
+    from modules.region_links import (
+        build_blocks,
+        build_neighbor_graph,
+        render_block_text,
+        render_text,
     )
+
+    # Берём ВСЕ регионы: build_blocks сам отфильтрует показываемые (активные с
+    # группой), а графу соседства нужны и заготовки — как транзитные узлы.
+    result = await db.execute(select(Region))
     regions = result.scalars().all()
 
     # Последний снапшот на регион: DISTINCT ON эквивалент через оконный max.
@@ -861,6 +873,7 @@ async def get_vk_links(db: AsyncSession = Depends(get_db_session)):
         "total_members": sum(
             i["members"] for b in blocks for i in b["items"] if i["members"] is not None
         ),
+        "neighbors": build_neighbor_graph(regions),
     }
 
 

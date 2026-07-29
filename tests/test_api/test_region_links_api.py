@@ -10,7 +10,7 @@ import pytest
 from web.api import regions as regions_api
 
 
-def _region(code, name, vk_group_id, kind="raion", parent_region_id=None, rid=0):
+def _region(code, name, vk_group_id, kind="raion", parent_region_id=None, rid=0, neighbors=None):
     return SimpleNamespace(
         id=rid,
         code=code,
@@ -20,6 +20,8 @@ def _region(code, name, vk_group_id, kind="raion", parent_region_id=None, rid=0)
         parent_region_id=parent_region_id,
         is_active=True,
         center_city=None,
+        neighbors=neighbors,
+        config=None,
     )
 
 
@@ -73,7 +75,11 @@ async def test_vk_links_block_carries_its_own_text():
 @pytest.mark.asyncio
 async def test_vk_links_empty_when_nothing_published():
     resp = await regions_api.get_vk_links(db=_db_returning([]))
-    assert resp == {"blocks": [], "text": "", "total": 0, "total_members": 0}
+    assert resp["blocks"] == []
+    assert resp["text"] == ""
+    assert resp["total"] == 0
+    assert resp["total_members"] == 0
+    assert resp["neighbors"] == {}
 
 
 def test_vk_links_route_declared_before_region_code_catch_all():
@@ -84,3 +90,41 @@ def test_vk_links_route_declared_before_region_code_catch_all():
     """
     paths = [r.path for r in regions_api.router.routes]
     assert paths.index("/vk-links") < paths.index("/{region_code}")
+
+
+@pytest.mark.asyncio
+async def test_vk_links_ships_neighbor_graph_including_unlaunched():
+    """Граф соседства едет целиком — включая район без своей группы.
+
+    Он транзитный узел: без него «по соседству» на лендинге порвёт цепочку
+    (Луза дотягивается до Нагорска только через Мураши).
+    """
+    db = _db_returning(
+        [
+            _region("kirov_obl", "КИРОВСКАЯ ОБЛАСТЬ - ИНФО", -168170001, kind="oblast", rid=21),
+            _region(
+                "luza",
+                "ЛУЗА - ИНФО",
+                -240505724,
+                parent_region_id=21,
+                rid=48,
+                neighbors="murashi,oparino",
+            ),
+            _region(
+                "murashi",
+                "МУРАШИ - ИНФО",
+                None,
+                parent_region_id=21,
+                rid=43,
+                neighbors="luza,nagorsk",
+            ),
+        ]
+    )
+
+    resp = await regions_api.get_vk_links(db=db)
+
+    # Мураши без группы — в списке их нет, а в графе есть.
+    codes = [i["code"] for b in resp["blocks"] for i in b["items"]]
+    assert "murashi" not in codes
+    assert resp["neighbors"]["murashi"] == ["luza", "nagorsk"]
+    assert resp["neighbors"]["luza"] == ["murashi", "oparino"]

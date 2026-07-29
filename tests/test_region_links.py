@@ -12,7 +12,9 @@ from types import SimpleNamespace
 from modules.region_links import (
     base_title,
     build_blocks,
+    build_neighbor_graph,
     community_url,
+    parse_neighbors,
     render_block_text,
     render_item_line,
     render_text,
@@ -39,6 +41,8 @@ def _region(
         parent_region_id=parent_region_id,
         is_active=is_active,
         center_city=center_city,
+        neighbors=None,
+        config=None,
     )
 
 
@@ -208,3 +212,38 @@ def test_text_has_bare_urls_for_vk_autolinking():
         if "vk.com" in line:
             assert line.endswith("https://vk.com/club" + line.rsplit("club", 1)[1])
             assert "[" not in line and "(" not in line
+
+
+# --- граф соседства (сортировка «по соседству» на лендинге) -------------------
+
+
+def test_parse_neighbors_splits_and_normalizes():
+    assert parse_neighbors("bal, klz ;MI") == ["bal", "klz", "mi"]
+    assert parse_neighbors(None) == []
+    assert parse_neighbors("") == []
+
+
+def test_neighbor_graph_includes_regions_without_group():
+    """Заготовка без группы обязана остаться в графе транзитным узлом.
+
+    Выкинь её — и цепочка соседства рвётся: Луза дотягивается до Нагорска
+    только через Мураши, у которых своей группы пока нет.
+    """
+    luza = _region("luza", "ЛУЗА - ИНФО", -240505724, rid=48)
+    luza.neighbors = "murashi,oparino"
+    murashi = _region("murashi", "МУРАШИ - ИНФО", None, is_active=False, rid=43)
+    murashi.neighbors = "luza,nagorsk"
+
+    graph = build_neighbor_graph([luza, murashi])
+
+    assert graph["murashi"] == ["luza", "nagorsk"]
+    assert graph["luza"] == ["murashi", "oparino"]
+
+
+def test_item_carries_ready_line_and_oblast():
+    """У строки есть готовый text (line) и имя области — клиент пересортировывает
+    порядок, но формат строки остаётся серверным."""
+    blocks = build_blocks(_sample_regions(), members={1: 3657})
+    item = [i for b in blocks for i in b["items"] if i["code"] == "mi"][0]
+    assert item["line"] == "Малмыж ИНФО — 3657 — https://vk.com/club158787639"
+    assert item["oblast"] == "Кировская область"

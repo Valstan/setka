@@ -25,6 +25,8 @@
             --line: #f0e8da;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        /* display:flex у .anchor-pick/.selbar перебивает атрибут hidden — возвращаем ему силу */
+        [hidden] { display: none !important; }
         body {
             font-family: Georgia, 'Times New Roman', serif;
             background:
@@ -148,6 +150,52 @@
         .chip.link { background: var(--sky); color: var(--blue); }
         .legend .dash { color: var(--ink-soft); }
 
+        /* ── Подсказки ─────────────────────────────────────────── */
+        .tips {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 12px; margin-bottom: 22px;
+        }
+        .tip {
+            display: flex; gap: 12px; align-items: flex-start;
+            border-radius: 16px; padding: 14px 18px;
+            font-size: .93rem; line-height: 1.5;
+        }
+        .tip-ico { font-size: 1.4rem; line-height: 1; }
+        .tip-sort { background: linear-gradient(120deg, var(--sky), #f7fbff); border: 2px solid #d5e6ff; }
+        .tip-pick { background: linear-gradient(120deg, var(--lilac), #faf7ff); border: 2px solid #e2d8ff; }
+        .tip b { color: var(--accent-dark); }
+        .tip-pick b { color: var(--violet); }
+
+        /* ── Сортировка ────────────────────────────────────────── */
+        .sortbar {
+            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            margin-bottom: 18px;
+            font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+        }
+        .sortbar-label { font-size: .9rem; color: var(--ink-soft); font-family: Georgia, serif; }
+        .seg {
+            display: inline-flex; background: #fff; border: 2px solid var(--line);
+            border-radius: 999px; padding: 3px; gap: 2px; flex-wrap: wrap;
+        }
+        .seg-btn {
+            border: none; background: transparent; cursor: pointer;
+            border-radius: 999px; padding: 7px 15px;
+            font-size: .88rem; font-weight: 600; color: var(--ink-soft);
+            transition: all .15s ease;
+        }
+        .seg-btn:hover { color: var(--accent); }
+        .seg-btn.active {
+            background: linear-gradient(90deg, var(--violet), #9a7ce8);
+            color: #fff; box-shadow: 0 3px 10px rgba(124,92,214,.35);
+        }
+        .anchor-pick { font-size: .88rem; color: var(--ink-soft); display: flex; align-items: center; gap: 6px; }
+        .anchor-pick select {
+            font-family: 'Segoe UI', sans-serif; font-size: .88rem; font-weight: 600;
+            color: var(--violet); background: #fff;
+            border: 2px solid #e2d8ff; border-radius: 999px; padding: 6px 12px;
+            cursor: pointer;
+        }
+
         /* ── Список сообществ ──────────────────────────────────── */
         .toolbar {
             display: flex; justify-content: space-between; align-items: center;
@@ -200,6 +248,48 @@
         .c-link { color: var(--blue); text-decoration: none; word-break: break-all; font-size: .93rem; }
         .c-link:hover { text-decoration: underline; color: var(--accent); }
         .c-dash { color: #dcd2bd; }
+        .c-oblast { font-size: .8rem; color: var(--ink-soft); font-style: italic; }
+
+        /* Галочка выбора сообщества */
+        .c-check { width: 18px; height: 18px; accent-color: var(--violet); cursor: pointer; flex-shrink: 0; }
+        .community-list li.picked { background: var(--lilac) !important; }
+        .head-check { display: flex; align-items: center; gap: 6px; font-size: .82rem; color: #8a5a00; cursor: pointer; }
+        .head-check input { width: 16px; height: 16px; accent-color: var(--violet); cursor: pointer; }
+
+        /* Разделитель колец соседства */
+        .ring-head {
+            padding: 10px 20px 6px; font-weight: 700; color: var(--violet);
+            background: linear-gradient(90deg, var(--lilac), #fff);
+            border-bottom: 1px solid #e6ddff; font-size: .95rem;
+        }
+
+        /* ── Панель выбора ─────────────────────────────────────── */
+        .selbar {
+            position: sticky; bottom: 0; z-index: 60;
+            padding: 10px 16px 16px;
+        }
+        .selbar-inner {
+            max-width: 980px; margin: 0 auto;
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 12px; flex-wrap: wrap;
+            background: linear-gradient(120deg, #fff5d8, #ffe9e2);
+            border: 2px solid var(--gold);
+            border-radius: 18px; padding: 12px 18px;
+            box-shadow: 0 8px 28px rgba(197,138,32,.28);
+            font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+        }
+        .selbar-facts { display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; font-size: .92rem; }
+        .selbar-facts b { font-size: 1.15rem; }
+        .sel-count b { color: var(--violet); }
+        .sel-reach b { color: var(--green); }
+        .sel-price { color: var(--accent-dark); font-weight: 700; }
+        .sel-price .hint { font-weight: 400; color: var(--ink-soft); font-size: .82rem; }
+        .sel-price .nudge {
+            display: inline-block; margin-left: 8px;
+            background: linear-gradient(90deg, var(--green), #35c491); color: #fff;
+            border-radius: 999px; padding: 2px 10px; font-size: .8rem; font-weight: 700;
+        }
+        .selbar-actions { display: flex; gap: 8px; }
 
         /* ── Реклама ───────────────────────────────────────────── */
         .pitch {
@@ -371,17 +461,68 @@
             </div>
         </div>
 
+        <div class="tips">
+            <div class="tip tip-sort">
+                <span class="tip-ico">🔀</span>
+                <div>
+                    <b>Попробуйте разные сортировки!</b> Список умеет перестраиваться:
+                    <b>по алфавиту</b> — привычный порядок, <b>по подписчикам</b> — где вас
+                    прочитает больше людей, <b>по соседству</b> — выберите свой район, и
+                    сеть выстроится от ближних к дальним. Так быстрее всего собрать
+                    «свой куст» районов вокруг вас.
+                </div>
+            </div>
+            <div class="tip tip-pick">
+                <span class="tip-ico">☑️</span>
+                <div>
+                    <b>Отмечайте галочками</b> сообщества, в которые хотите дать рекламу.
+                    Внизу появится счётчик с охватом и <b>ориентировочной ценой</b>, а кнопка
+                    «Скопировать заказ» соберёт готовое сообщение — останется прислать его нам.
+                </div>
+            </div>
+        </div>
+
         <div class="toolbar">
-            <h2>Сообщества по областям</h2>
-            <div style="display:flex; gap:8px;">
+            <h2>Сообщества сети</h2>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
                 <button class="btn btn-ghost" id="rl-refresh">⟳ Обновить</button>
                 <button class="btn btn-primary" id="rl-copy-all">⎘ Копировать весь список</button>
             </div>
         </div>
 
+        <div class="sortbar">
+            <span class="sortbar-label">Сортировка:</span>
+            <div class="seg" id="rl-sort">
+                <button class="seg-btn active" data-sort="alpha">🔤 По алфавиту</button>
+                <button class="seg-btn" data-sort="members">👥 По подписчикам</button>
+                <button class="seg-btn" data-sort="neighbors">🧭 По соседству</button>
+            </div>
+            <label class="anchor-pick" id="rl-anchor-wrap" hidden>
+                мой район:
+                <select id="rl-anchor"></select>
+            </label>
+        </div>
+
         <div id="rl-status" class="loading">Загружаем сеть…</div>
         <div id="rl-blocks"></div>
     </section>
+
+    <!-- Липкая панель выбора: появляется, когда отмечено хотя бы одно сообщество -->
+    <div class="selbar" id="rl-selbar" hidden>
+        <div class="selbar-inner">
+            <div class="selbar-facts">
+                <span class="sel-count"><b id="sel-n">0</b> сообществ</span>
+                <span class="sel-reach">охват <b id="sel-reach">0</b></span>
+                <span class="sel-price" id="sel-price"></span>
+            </div>
+            <div class="selbar-actions">
+                <button class="btn btn-ghost" id="sel-clear">Снять выбор</button>
+                <button class="btn btn-primary" id="sel-copy">⎘ Скопировать заказ</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="application/json" id="pkg-data">{{ packages_json }}</script>
 
     <!-- ══ ВКЛАДКА: РЕКЛАМА ══ -->
     <section class="tab-pane" id="pane-ads">
@@ -481,6 +622,6 @@
     Разработчик Валентин Савиных, г. Малмыж
 </footer>
 
-<script src="/static/js/region_links.js?v=20260729_colors"></script>
+<script src="/static/js/region_links.js?v=20260729_sort_pick"></script>
 </body>
 </html>
