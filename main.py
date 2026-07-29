@@ -304,6 +304,18 @@ async def regions_page(request: Request):
     return templates.TemplateResponse("regions.html", {"request": request})
 
 
+@app.get("/regions/links")
+async def region_links_page(request: Request):
+    """Список VK-сообществ сети одним куском — «куда выходят сводки».
+
+    Заказ владельца 2026-07-29: чтобы отдать людям список всех районных групп,
+    его надо сначала где-то собрать. Страница показывает готовый текст и кладёт
+    его в буфер обмена — дальше он вставляется в пост/сообщение VK как есть.
+    Данные — ``GET /api/regions/vk-links``.
+    """
+    return templates.TemplateResponse("region_links.html", {"request": request})
+
+
 @app.get("/posts")
 async def posts_page(request: Request):
     """Posts page"""

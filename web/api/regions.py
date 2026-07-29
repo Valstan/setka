@@ -775,6 +775,63 @@ async def suggest_neighbors(
     }
 
 
+class VkLinkItem(BaseModel):
+    """Одна строка списка: короткое имя сообщества + ссылка на группу VK."""
+
+    code: str
+    kind: str
+    name: str
+    url: str
+
+
+class VkLinkBlock(BaseModel):
+    """Блок списка — область со своими группами (сама область идёт первой)."""
+
+    code: str
+    title: str
+    items: List[VkLinkItem]
+    text: str
+
+
+class VkLinksResponse(BaseModel):
+    """Готовый к копированию список сообществ сети."""
+
+    blocks: List[VkLinkBlock]
+    text: str
+    total: int
+
+
+# ВАЖНО: как и «suggest-neighbors» — объявлено ДО ``@router.get("/{region_code}")``,
+# иначе FastAPI примет «vk-links» за код региона.
+@router.get("/vk-links", response_model=VkLinksResponse)
+async def get_vk_links(db: AsyncSession = Depends(get_db_session)):
+    """Список всех VK-сообществ сети, куда выходят сводки — для рассылки людям.
+
+    Отдаёт и структуру (для UI), и уже собранный плоский ``text`` — его страница
+    ``/regions/links`` кладёт в буфер обмена, а владелец вставляет одним куском
+    в пост или сообщение VK. Формат строки — «Малмыж ИНФО — https://vk.com/clubN»:
+    ссылка отдельным токеном, VK делает её кликабельной сам.
+
+    В список попадают только **активные** регионы с заданным ``vk_group_id``:
+    заготовка района без созданной группы читателю бесполезна. Форматирование —
+    в ``modules/region_links.py`` (чистые функции, покрыты юнит-тестами).
+    """
+    from modules.region_links import build_blocks, render_block_text, render_text
+
+    result = await db.execute(
+        select(Region).where(Region.is_active.is_(True), Region.vk_group_id.isnot(None))
+    )
+    blocks = build_blocks(result.scalars().all())
+    for block in blocks:
+        block["text"] = render_block_text(block)
+
+    return {
+        "blocks": blocks,
+        "text": render_text(blocks),
+        "total": sum(len(b["items"]) for b in blocks),
+    }
+
+
 @router.get("/{region_code}", response_model=RegionResponse)
 @cache(ttl=600, key_prefix="regions")  # Cache for 10 minutes
 async def get_region(region_code: str, db: AsyncSession = Depends(get_db_session)):
