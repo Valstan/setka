@@ -2,10 +2,18 @@
 
 Заказ владельца 2026-07-29: нужен компактный список всех региональных групп,
 куда SETKA публикует сводки, в виде, который можно **целиком скопировать и
-отправить одним сообщением/постом в VK**. Формат строки — «Малмыж ИНФО —
-https://vk.com/club158787639»: имя коротким (город + ИНФО), ссылка отдельным
-токеном, чтобы VK сам сделал её кликабельной. Список разбит на области;
-областная группа идёт первой строкой своего блока.
+отправить одним сообщением/постом в VK**. Формат строки — «Малмыж ИНФО — 3657 —
+https://vk.com/malmyzh_info»: имя коротким (город + ИНФО), затем число
+подписчиков, затем ссылка отдельным токеном, чтобы VK сам сделал её
+кликабельной. Список разбит на области; областная группа идёт первой строкой
+своего блока.
+
+Ссылка предпочитает красивый адрес группы (``screen_name``, задаётся владельцем
+в настройках VK) — его кэширует в ``Region.config['screen_name']`` ночная таска
+``collect_member_snapshots`` (modules/members_snapshot.py). Нет в кэше →
+fallback ``club<id>``. Подписчики — из последнего дневного снапшота
+``region_member_snapshots`` той же таски; свежее число появляется каждую ночь
+само, как и новые регионы (список читает БД live).
 
 Здесь только чистые функции форматирования (без БД и FastAPI) — их зовёт
 ``web/api/regions.py`` (эндпоинт ``GET /api/regions/vk-links``) и они же
@@ -60,9 +68,21 @@ OTHER_BLOCK_TITLE = "Другие"
 OTHER_BLOCK_CODE = "_other"
 
 
-def community_url(vk_group_id: int) -> str:
-    """Ссылка на группу VK по её owner_id (знак не важен)."""
+def community_url(vk_group_id: int, screen_name: Optional[str] = None) -> str:
+    """Ссылка на группу VK: красивый адрес, если известен, иначе club<id>."""
+    if screen_name:
+        return f"https://vk.com/{screen_name}"
     return f"https://vk.com/club{abs(int(vk_group_id))}"
+
+
+def _region_screen_name(region: Any) -> Optional[str]:
+    """``config['screen_name']``, если кэширован ночной таской."""
+    cfg = getattr(region, "config", None)
+    if isinstance(cfg, dict):
+        sn = cfg.get("screen_name")
+        if isinstance(sn, str) and sn:
+            return sn
+    return None
 
 
 def _titlecase_ru(text: str) -> str:
@@ -119,16 +139,19 @@ def _sort_key(value: str) -> str:
     return value.lower().replace("ё", "е")
 
 
-def _item(region: Any) -> Dict[str, Any]:
+def _item(region: Any, members: Optional[int] = None) -> Dict[str, Any]:
     return {
         "code": region.code,
         "kind": getattr(region, "kind", "raion"),
         "name": short_name(region.name, getattr(region, "center_city", None)),
-        "url": community_url(region.vk_group_id),
+        "members": members,
+        "url": community_url(region.vk_group_id, _region_screen_name(region)),
     }
 
 
-def build_blocks(regions: Sequence[Any]) -> List[Dict[str, Any]]:
+def build_blocks(
+    regions: Sequence[Any], members: Optional[Dict[Any, int]] = None
+) -> List[Dict[str, Any]]:
     """Сгруппировать регионы по областям в блоки списка.
 
     На входе — ORM-объекты ``Region`` (нужны поля ``code``, ``name``, ``kind``,
@@ -139,7 +162,11 @@ def build_blocks(regions: Sequence[Any]) -> List[Dict[str, Any]]:
     Порядок: блоки по названию области, внутри блока — сама область первой
     строкой, затем районы по алфавиту. Районы, чья область неизвестна или сама
     неактивна, собираются в блок «Другие», который идёт последним.
+
+    ``members`` — ``{region_id: members_count}`` из последнего снапшота
+    (может быть None/неполным — тогда у строки просто нет числа).
     """
+    members = members or {}
     usable = [
         r
         for r in regions
@@ -160,9 +187,9 @@ def build_blocks(regions: Sequence[Any]) -> List[Dict[str, Any]]:
 
     blocks: List[Dict[str, Any]] = []
     for oblast in sorted(oblasts.values(), key=lambda r: _sort_key(base_title(r.name))):
-        items = [_item(oblast)]
+        items = [_item(oblast, members.get(oblast.id))]
         items += [
-            _item(r)
+            _item(r, members.get(r.id))
             for r in sorted(
                 children.get(oblast.id, []),
                 key=lambda r: _sort_key(short_name(r.name, getattr(r, "center_city", None))),
@@ -182,7 +209,7 @@ def build_blocks(regions: Sequence[Any]) -> List[Dict[str, Any]]:
                 "code": OTHER_BLOCK_CODE,
                 "title": OTHER_BLOCK_TITLE,
                 "items": [
-                    _item(r)
+                    _item(r, members.get(r.id))
                     for r in sorted(
                         orphans,
                         key=lambda r: _sort_key(
@@ -195,10 +222,23 @@ def build_blocks(regions: Sequence[Any]) -> List[Dict[str, Any]]:
     return blocks
 
 
+def render_item_line(item: Dict[str, Any]) -> str:
+    """Строка списка: «Малмыж ИНФО — 3657 — https://vk.com/malmyzh_info».
+
+    Число подписчиков — из последнего ночного снапшота; если его ещё нет
+    (регион добавлен сегодня), строка выходит без числа, а не с нулём.
+    """
+    parts = [item["name"]]
+    if item.get("members") is not None:
+        parts.append(str(item["members"]))
+    parts.append(item["url"])
+    return _ITEM_SEPARATOR.join(parts)
+
+
 def render_block_text(block: Dict[str, Any]) -> str:
-    """Текст одного блока: заголовок области + строки «Имя — ссылка»."""
-    lines = [block["title"]]
-    lines += [f"{item['name']}{_ITEM_SEPARATOR}{item['url']}" for item in block["items"]]
+    """Текст одного блока: заголовок «Область:» + строки сообществ."""
+    lines = [f"{block['title']}:"]
+    lines += [render_item_line(item) for item in block["items"]]
     return "\n".join(lines)
 
 

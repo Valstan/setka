@@ -306,14 +306,21 @@ async def regions_page(request: Request):
 
 @app.get("/regions/links")
 async def region_links_page(request: Request):
-    """Список VK-сообществ сети одним куском — «куда выходят сводки».
+    """Публичный лендинг сети САРАФАН — сообщества + реклама.
 
-    Заказ владельца 2026-07-29: чтобы отдать людям список всех районных групп,
-    его надо сначала где-то собрать. Страница показывает готовый текст и кладёт
-    его в буфер обмена — дальше он вставляется в пост/сообщение VK как есть.
-    Данные — ``GET /api/regions/vk-links``.
+    Заказ владельца 2026-07-29 (вторая итерация): страница открыта без входа
+    (allowlist в ``middleware/auth_gate.py`` — только этот путь и его API,
+    остальной интерфейс под сессией). Две вкладки: список сообществ по областям
+    (имя — подписчики — ссылка, готов к копированию в пост/сообщение VK) и
+    расценки на рекламу с контактами. Цены/контакты — ``config/ad_landing.py``.
+    Данные списка — ``GET /api/regions/vk-links``, подписчики и красивые адреса
+    групп обновляются ночной таской ``collect_member_snapshots``.
     """
-    return templates.TemplateResponse("region_links.html", {"request": request})
+    from config.ad_landing import get_ad_landing_context
+
+    return templates.TemplateResponse(
+        "region_links.html", {"request": request, **get_ad_landing_context()}
+    )
 
 
 @app.get("/posts")

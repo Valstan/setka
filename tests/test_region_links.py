@@ -14,6 +14,7 @@ from modules.region_links import (
     build_blocks,
     community_url,
     render_block_text,
+    render_item_line,
     render_text,
     short_name,
 )
@@ -154,22 +155,50 @@ def test_empty_oblast_produces_no_block():
     assert len(blocks) == 1 and len(blocks[0]["items"]) == 1
 
 
+# --- подписчики и красивый адрес ---------------------------------------------
+
+
+def test_item_line_with_members():
+    """Формат владельца: «Имя ИНФО — 3657 — ссылка»."""
+    blocks = build_blocks(_sample_regions(), members={1: 3657})
+    line = [render_item_line(i) for b in blocks for i in b["items"] if i["code"] == "mi"][0]
+    assert line == "Малмыж ИНФО — 3657 — https://vk.com/club158787639"
+
+
+def test_item_line_without_snapshot_has_no_number():
+    """Региону без снапшота (добавлен сегодня) число не рисуем — и не ноль."""
+    blocks = build_blocks(_sample_regions())
+    line = [render_item_line(i) for b in blocks for i in b["items"] if i["code"] == "mi"][0]
+    assert line == "Малмыж ИНФО — https://vk.com/club158787639"
+
+
+def test_screen_name_preferred_over_club_id():
+    region = _region("mi", "МАЛМЫЖ - ИНФО", -158787639, rid=1)
+    region.config = {"screen_name": "malmyzh_info"}
+    blocks = build_blocks([region])
+    assert blocks[-1]["items"][0]["url"] == "https://vk.com/malmyzh_info"
+
+
+def test_community_url_with_screen_name():
+    assert community_url(-158787639, "malmyzh_info") == "https://vk.com/malmyzh_info"
+
+
 # --- текст ------------------------------------------------------------------
 
 
 def test_block_text_shape():
-    blocks = build_blocks(_sample_regions())
+    blocks = build_blocks(_sample_regions(), members={22: 677, 14: 1431})
     text = render_block_text(blocks[1])
     assert text.splitlines() == [
-        "Татарстан",
-        "Татарстан ИНФО — https://vk.com/club239149826",
-        "Балтаси ИНФО — https://vk.com/club179203620",
+        "Татарстан:",
+        "Татарстан ИНФО — 677 — https://vk.com/club239149826",
+        "Балтаси ИНФО — 1431 — https://vk.com/club179203620",
     ]
 
 
 def test_full_text_separates_blocks_with_blank_line():
     text = render_text(build_blocks(_sample_regions()))
-    assert "\n\nТатарстан\n" in text
+    assert "\n\nТатарстан:\n" in text
 
 
 def test_text_has_bare_urls_for_vk_autolinking():
