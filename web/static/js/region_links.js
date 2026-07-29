@@ -261,41 +261,52 @@ function pickedItems() {
     return rlItems.filter(i => rlPicked.has(i.code));
 }
 
-// Дешёвший вариант для N сообществ: поштучно или подходящий пакет.
-// covers = на сколько сообществ рассчитан тариф (null = вся сеть).
-function bestPrice(n) {
-    let packages = [];
+// Таблица цен приходит с сервера (config/ad_landing.py): правило скидок живёт
+// в одном месте и покрыто тестами, клиент только показывает готовое число.
+let priceTable = null;
+
+function loadPriceTable() {
+    if (priceTable) return priceTable;
     try {
-        packages = JSON.parse(document.getElementById('pkg-data').textContent);
+        priceTable = JSON.parse(document.getElementById('price-table').textContent);
     } catch (e) {
-        return null;
+        priceTable = [];
     }
-    const single = packages.find(p => p.covers === 1);
-    if (!single) return null;
-    const options = [{ price: single.price * n, title: `${n} × ${single.price} ₽ поштучно` }];
-    packages.forEach(p => {
-        if (p.covers === 1) return;
-        const covers = p.covers === null ? Infinity : p.covers;
-        if (covers >= n) options.push({ price: p.price, title: p.title.toLowerCase() });
-    });
-    options.sort((a, b) => a.price - b.price);
-    return options[0];
+    return priceTable;
 }
 
-// Тариф «вся сеть», если до него рукой подать: выбрано почти всё и доплата
-// невелика — честнее показать это, чем молча посчитать поштучно дороже.
-function wholeNetworkNudge(n, bestPriceValue) {
-    let packages = [];
-    try {
-        packages = JSON.parse(document.getElementById('pkg-data').textContent);
-    } catch (e) {
-        return null;
+function quote(n) {
+    const table = loadPriceTable();
+    if (!table.length || n < 1) return null;
+    // Сверх таблицы цена уже упёрлась в потолок — берём последнюю строку.
+    return table[Math.min(n, table.length) - 1];
+}
+
+// Подсказка «доберите до рубежа»: на 5-м и 10-м сообществе цена сбрасывается
+// до пакетной, поэтому 9 штук дороже 10. Молчать об этом нечестно — ищем
+// ближайший шаг вперёд, где итог становится дешевле или бесплатно шире.
+function ladderNudge(n) {
+    const table = loadPriceTable();
+    const now = quote(n);
+    if (!now || !table.length) return null;
+
+    // Уже на потолке «всей сети» — оставшиеся сообщества ничего не стоят.
+    if (now.capped && rlItems.length > n) {
+        return { kind: 'free', rest: rlItems.length - n };
     }
-    const whole = packages.find(p => p.covers === null);
-    if (!whole || !rlItems.length || n >= rlItems.length) return null;
-    const diff = whole.price - bestPriceValue;
-    if (diff <= 0 || diff > bestPriceValue * 0.25) return null;
-    return { price: whole.price, diff, rest: rlItems.length - n };
+    const limit = Math.min(table.length, rlItems.length || table.length);
+    for (let k = n + 1; k <= Math.min(n + 6, limit); k++) {
+        const next = quote(k);
+        if (!next) break;
+        if (next.price < now.price) {
+            return { kind: 'cheaper', add: k - n, diff: now.price - next.price, price: next.price };
+        }
+        if (next.capped) {
+            // Следующий шаг упирается в потолок: дальше добор ничего не стоит.
+            return { kind: 'reaches-cap', add: k - n, extra: next.price - now.price };
+        }
+    }
+    return null;
 }
 
 function updateSelbar() {
@@ -309,31 +320,54 @@ function updateSelbar() {
     const reach = items.reduce((s, i) => s + (i.members || 0), 0);
     document.getElementById('sel-n').textContent = fmt(items.length);
     document.getElementById('sel-reach').textContent = fmt(reach);
-    const best = bestPrice(items.length);
-    if (!best) {
-        document.getElementById('sel-price').innerHTML = '';
+    const q = quote(items.length);
+    const box = document.getElementById('sel-price');
+    if (!q) {
+        box.innerHTML = '';
         return;
     }
-    const nudge = wholeNetworkNudge(items.length, best.price);
-    document.getElementById('sel-price').innerHTML =
-        `≈ ${fmt(best.price)} ₽ <span class="hint">(${escapeHtml(best.title)}; точную цену подтвердим при заказе)</span>` +
-        (nudge
-            ? `<span class="nudge">🔥 +${fmt(nudge.diff)} ₽ — и вся сеть, ещё ${nudge.rest} ${plural(nudge.rest, 'сообщество', 'сообщества', 'сообществ')}</span>`
-            : '');
+    const nudge = ladderNudge(items.length);
+    box.innerHTML =
+        `≈ ${fmt(q.price)} ₽` +
+        (q.saved
+            ? `<span class="saved">скидка ${fmt(q.saved)} ₽ · −${q.percent}%</span>`
+            : '') +
+        `<span class="hint">(${escapeHtml(q.anchor || '')}; точную цену подтвердим при заказе)</span>` +
+        nudgeHtml(nudge);
+}
+
+function nudgeHtml(nudge) {
+    if (!nudge) return '';
+    if (nudge.kind === 'free') {
+        return `<span class="nudge">🔥 это уже цена всей сети — добавьте оставшиеся ${nudge.rest} ${plural(nudge.rest, 'сообщество', 'сообщества', 'сообществ')} бесплатно</span>`;
+    }
+    if (nudge.kind === 'reaches-cap') {
+        const add = `${nudge.add} ${plural(nudge.add, 'сообщество', 'сообщества', 'сообществ')}`;
+        return `<span class="nudge">🔥 ещё ${add}${nudge.extra ? ` (+${fmt(nudge.extra)} ₽)` : ''} — и это цена всей сети, дальше добор бесплатный</span>`;
+    }
+    return `<span class="nudge">🔥 добавьте ещё ${nudge.add} ${plural(nudge.add, 'сообщество', 'сообщества', 'сообществ')} — и станет дешевле на ${fmt(nudge.diff)} ₽</span>`;
 }
 
 function orderText() {
     const items = pickedItems();
     const reach = items.reduce((s, i) => s + (i.members || 0), 0);
-    const best = bestPrice(items.length);
+    const q = quote(items.length);
     const lines = [
-        `Здравствуйте! Хочу разместить рекламу в сети САРАФАН — выбрал ${items.length} сообществ:`,
+        `Здравствуйте! Хочу разместить рекламу в сети САРАФАН — выбрал ${items.length} ` +
+            `${plural(items.length, 'сообщество', 'сообщества', 'сообществ')}:`,
         '',
     ];
     lines.push(...items.map(i => i.line));
     lines.push('');
     lines.push(`Суммарный охват: ${fmt(reach)} подписчиков.`);
-    if (best) lines.push(`Ориентировочно по вашим расценкам: ${fmt(best.price)} ₽ (${best.title}).`);
+    if (q) {
+        lines.push(
+            `Ориентировочно по вашим расценкам: ${fmt(q.price)} ₽` +
+            (q.anchor ? ` (${q.anchor})` : '') +
+            (q.saved ? `, скидка ${fmt(q.saved)} ₽ к поштучной цене` : '') +
+            '.'
+        );
+    }
     return lines.join('\n');
 }
 

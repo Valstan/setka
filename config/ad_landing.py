@@ -159,6 +159,80 @@ PAYMENTS: List[Dict[str, Any]] = [
 AD_IMAGE_URL: str | None = None
 
 
+# Максимум строк в таблице цен. Считаем с запасом: сеть растёт, а таблица
+# должна покрывать любой выбор посетителя (сверх потолка цена всё равно та же).
+PRICE_TABLE_MAX = 80
+
+
+def quote_price(n: int) -> Dict[str, Any]:
+    """Цена заказа на ``n`` сообществ — ровно так, как её считает владелец.
+
+    Правило (заказ владельца 2026-07-29): цена набегает по ``PRICE_SINGLE_RUB``
+    за сообщество, но на рубежах пакетов **сбрасывается** до пакетной цены и
+    дальше снова растёт поштучно; сверху всё ограничено ценой «вся сеть».
+
+    Отсюда 9 сообществ (1300 + 4×350 = 2700) дороже 10 (2500) — это не баг, а
+    смысл акции: на рубеже включается опт. Лендинг на таких местах прямо
+    подсказывает «добавьте ещё одно — станет дешевле».
+
+    Возвращает ``{n, price, anchor, saved, percent, capped}``: ``anchor`` — из
+    какого тарифа считали, ``saved``/``percent`` — выгода против поштучной
+    цены, ``capped`` — упёрлись в потолок «всей сети».
+    """
+    n = max(0, int(n))
+    plain = PRICE_SINGLE_RUB * n
+    if n == 0:
+        return {"n": 0, "price": 0, "anchor": None, "saved": 0, "percent": 0, "capped": False}
+
+    whole = next((p for p in PACKAGES if p.get("covers") is None), None)
+    cap = whole["price"] if whole else None
+
+    # Якорь — самый большой пакет, который уже «покрыт» выбором (covers <= n).
+    anchor = None
+    for pkg in PACKAGES:
+        covers = pkg.get("covers")
+        if covers is None or covers > n:
+            continue
+        if anchor is None or covers > anchor["covers"]:
+            anchor = pkg
+    if anchor is None:  # тарифов нет вовсе — считаем поштучно
+        price, anchor_title = plain, None
+    else:
+        price = anchor["price"] + PRICE_SINGLE_RUB * (n - anchor["covers"])
+        anchor_title = anchor["title"]
+
+    capped = cap is not None and price >= cap
+    if capped:
+        price, anchor_title = cap, whole["title"]
+
+    saved = max(0, plain - price)
+    return {
+        "n": n,
+        "price": price,
+        "anchor": anchor_title,
+        "saved": saved,
+        "percent": round(saved / plain * 100) if plain else 0,
+        "capped": capped,
+    }
+
+
+def build_price_table(max_n: int = PRICE_TABLE_MAX) -> List[Dict[str, Any]]:
+    """Предрасчитанные цены 1..max_n — их читает панель выбора на лендинге.
+
+    Считает сервер, а не браузер: правило скидок живёт в одном месте (эта
+    функция, покрытая тестами), клиент только показывает готовое число.
+    """
+    return [quote_price(n) for n in range(1, max_n + 1)]
+
+
+def cap_starts_at(max_n: int = PRICE_TABLE_MAX) -> int | None:
+    """С какого количества сообществ цена упирается в потолок «всей сети»."""
+    for row in build_price_table(max_n):
+        if row["capped"]:
+            return row["n"]
+    return None
+
+
 def get_ad_landing_context() -> Dict[str, Any]:
     """Готовый контекст для шаблона лендинга."""
     return {
@@ -170,4 +244,6 @@ def get_ad_landing_context() -> Dict[str, Any]:
         "contacts": CONTACTS,
         "payments": PAYMENTS,
         "ad_image_url": AD_IMAGE_URL,
+        "price_table": build_price_table(),
+        "cap_from": cap_starts_at(),
     }

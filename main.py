@@ -321,9 +321,10 @@ async def region_links_page(request: Request):
     from config.ad_landing import get_ad_landing_context
 
     ctx = get_ad_landing_context()
-    # Тарифы уходят и в вёрстку, и в <script type=application/json> — панель
-    # выбора считает по ним ориентировочную цену отмеченных сообществ.
-    ctx["packages_json"] = json.dumps(ctx["packages"], ensure_ascii=False)
+    # Таблица цен считается на сервере (config/ad_landing.py, покрыта тестами) и
+    # уезжает в <script type=application/json>: панель выбора только показывает
+    # готовое число, чтобы правило скидок не жило в двух местах.
+    ctx["price_table_json"] = json.dumps(ctx["price_table"], ensure_ascii=False)
     return templates.TemplateResponse("region_links.html", {"request": request, **ctx})
 
 
