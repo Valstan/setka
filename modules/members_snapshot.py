@@ -11,6 +11,12 @@ beat task fetches ``groups.getById(fields=members_count)`` for active regions
 Re-running for the same day is idempotent: the upsert targets the unique
 (region_id, snapshot_date) index and overwrites the count.
 
+Side quest (owner-request 2026-07-29, public /regions/links page): the same
+``groups.getById`` response carries ``screen_name`` — the pretty address the
+owner sets in VK («vk.com/kirovskaya_info»). We cache it into
+``Region.config['screen_name']`` on every nightly run, so the public list can
+show human URLs instead of ``club<id>``, and renames self-heal within a day.
+
 The pure mapping (`build_snapshot_rows`) is split out so it can be unit-tested
 without a DB or VK — the orchestration (`collect_member_snapshots`) wires
 tokens, session and the VK client around it.
@@ -103,6 +109,30 @@ def build_snapshot_rows(
     return rows, missing
 
 
+def build_screen_name_map(vk_info: Optional[List[Dict[str, Any]]]) -> Dict[int, str]:
+    """Map ``groups.getById`` items → ``{gid: screen_name}``.
+
+    Skips deactivated groups and auto-generated names (``club<id>`` /
+    ``public<id>`` mean the owner never set a pretty address — caching those
+    adds nothing over the fallback URL).
+    """
+    out: Dict[int, str] = {}
+    for item in vk_info or []:
+        if not isinstance(item, dict) or item.get("deactivated"):
+            continue
+        try:
+            gid = abs(int(item.get("id")))
+        except (TypeError, ValueError):
+            continue
+        sn = item.get("screen_name")
+        if not sn or not isinstance(sn, str):
+            continue
+        if sn in (f"club{gid}", f"public{gid}", f"event{gid}"):
+            continue
+        out[gid] = sn
+    return out
+
+
 async def _default_fetch_members(token: str, gids: List[int]) -> List[Dict[str, Any]]:
     """Real VK fetch: build a client and batch ``groups.getById``.
 
@@ -165,24 +195,42 @@ async def collect_member_snapshots(
     vk_info = await fetch_members(gids)
 
     rows, missing = build_snapshot_rows(regions, vk_info, snapshot_day)
+    screen_names = build_screen_name_map(vk_info)
 
     written = 0
-    if rows:
+    renamed = 0
+    if rows or screen_names:
         async with session_factory() as session:
-            stmt = pg_insert(RegionMemberSnapshot).values(rows)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["region_id", "snapshot_date"],
-                set_={"members_count": stmt.excluded.members_count},
-            )
-            await session.execute(stmt)
+            if rows:
+                stmt = pg_insert(RegionMemberSnapshot).values(rows)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["region_id", "snapshot_date"],
+                    set_={"members_count": stmt.excluded.members_count},
+                )
+                await session.execute(stmt)
+                written = len(rows)
+            if screen_names:
+                # Кэшируем красивый адрес группы в config['screen_name'] —
+                # публичный список (/regions/links) показывает vk.com/<имя>
+                # вместо club<id>; переименование самолечится за сутки.
+                result = await session.execute(
+                    select(Region).where(Region.is_active.is_(True), Region.vk_group_id.isnot(None))
+                )
+                for region in result.scalars().all():
+                    sn = screen_names.get(abs(int(region.vk_group_id)))
+                    cfg = dict(region.config) if isinstance(region.config, dict) else {}
+                    if sn and cfg.get("screen_name") != sn:
+                        cfg["screen_name"] = sn
+                        region.config = cfg  # реприсвоение — иначе JSON-мутация не видна ORM
+                        renamed += 1
             await session.commit()
-            written = len(rows)
 
     logger.info(
-        "member-snapshots: %d active regions, %d written, %d missing (day=%s)",
+        "member-snapshots: %d active regions, %d written, %d missing, %d renamed (day=%s)",
         len(regions),
         written,
         len(missing),
+        renamed,
         snapshot_day,
     )
     return {
@@ -190,5 +238,6 @@ async def collect_member_snapshots(
         "regions": len(regions),
         "written": written,
         "missing": len(missing),
+        "renamed": renamed,
         "snapshot_date": snapshot_day.isoformat(),
     }

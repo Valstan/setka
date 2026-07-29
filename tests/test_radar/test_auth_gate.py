@@ -53,6 +53,14 @@ def client():
     async def regions():
         return {"operator": "zone"}
 
+    @app.get("/regions/links")
+    async def region_links_landing():
+        return {"page": "landing"}
+
+    @app.get("/api/regions/vk-links")
+    async def region_links_data():
+        return {"blocks": []}
+
     @app.get("/")
     async def dashboard():
         return {"page": "dashboard"}
@@ -83,6 +91,14 @@ def _cookie_for(user) -> dict:
 def test_public_paths_open_without_cookie(client):
     assert client.get("/login").status_code == 200
     assert client.get("/api/health/full").status_code == 200
+
+
+def test_public_landing_open_but_operator_regions_stay_closed(client):
+    """/regions/links + его API публичны (лендинг 2026-07-29); сам /regions
+    и остальной операторский API остаются под замком."""
+    assert client.get("/regions/links").status_code == 200
+    assert client.get("/api/regions/vk-links").status_code == 200
+    assert client.get("/api/regions").status_code == 401
 
 
 # ─── Неаутентифицированные ───────────────────────────────────────

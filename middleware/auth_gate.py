@@ -48,6 +48,11 @@ logger = logging.getLogger(__name__)
 PUBLIC_PREFIXES = (
     "/login",
     "/services",  # каталог сервисов экосистемы — публичная витрина ссылок
+    "/regions/links",  # публичный лендинг «сообщества сети + реклама» (заказ
+    # владельца 2026-07-29). ТОЛЬКО этот точный путь: префикс-матчер сравнивает
+    # p.rstrip("/") или startswith("/regions/links"), сам /regions и
+    # /regions/{code} остаются операторскими.
+    "/api/regions/vk-links",  # данные того же лендинга (read-only список групп)
     "/static/",
     "/favicon.ico",
     "/api/health",  # internal watchdogs/CI ходят на 127.0.0.1:8000 без cookie

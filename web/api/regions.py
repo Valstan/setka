@@ -776,11 +776,12 @@ async def suggest_neighbors(
 
 
 class VkLinkItem(BaseModel):
-    """Одна строка списка: короткое имя сообщества + ссылка на группу VK."""
+    """Одна строка списка: имя, подписчики (последний снапшот), ссылка."""
 
     code: str
     kind: str
     name: str
+    members: int | None = None
     url: str
 
 
@@ -799,6 +800,7 @@ class VkLinksResponse(BaseModel):
     blocks: List[VkLinkBlock]
     text: str
     total: int
+    total_members: int
 
 
 # ВАЖНО: как и «suggest-neighbors» — объявлено ДО ``@router.get("/{region_code}")``,
@@ -815,13 +817,40 @@ async def get_vk_links(db: AsyncSession = Depends(get_db_session)):
     В список попадают только **активные** регионы с заданным ``vk_group_id``:
     заготовка района без созданной группы читателю бесполезна. Форматирование —
     в ``modules/region_links.py`` (чистые функции, покрыты юнит-тестами).
+
+    Подписчики — из последнего дневного снапшота ``region_member_snapshots``
+    (ночная beat-таска ``collect_member_snapshots``, 04:00 MSK); она же кэширует
+    красивый адрес группы в ``config['screen_name']``. Эндпоинт публичный
+    (allowlist в ``middleware/auth_gate.py``) — страница ``/regions/links``
+    отдаётся людям без входа.
     """
+    from database.models import RegionMemberSnapshot
     from modules.region_links import build_blocks, render_block_text, render_text
 
     result = await db.execute(
         select(Region).where(Region.is_active.is_(True), Region.vk_group_id.isnot(None))
     )
-    blocks = build_blocks(result.scalars().all())
+    regions = result.scalars().all()
+
+    # Последний снапшот на регион: DISTINCT ON эквивалент через оконный max.
+    latest = (
+        select(
+            RegionMemberSnapshot.region_id,
+            RegionMemberSnapshot.members_count,
+            func.row_number()
+            .over(
+                partition_by=RegionMemberSnapshot.region_id,
+                order_by=RegionMemberSnapshot.snapshot_date.desc(),
+            )
+            .label("rn"),
+        )
+    ).subquery()
+    members_rows = await db.execute(
+        select(latest.c.region_id, latest.c.members_count).where(latest.c.rn == 1)
+    )
+    members = {region_id: count for region_id, count in members_rows.all()}
+
+    blocks = build_blocks(regions, members)
     for block in blocks:
         block["text"] = render_block_text(block)
 
@@ -829,6 +858,9 @@ async def get_vk_links(db: AsyncSession = Depends(get_db_session)):
         "blocks": blocks,
         "text": render_text(blocks),
         "total": sum(len(b["items"]) for b in blocks),
+        "total_members": sum(
+            i["members"] for b in blocks for i in b["items"] if i["members"] is not None
+        ),
     }
 
 

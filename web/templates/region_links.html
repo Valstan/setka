@@ -1,33 +1,394 @@
-{% extends "base.html" %}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>САРАФАН — новости всех районов | сообщества и реклама</title>
+    <meta name="description" content="Сеть районных новостных сообществ ВКонтакте: Кировская область и Татарстан. Список групп и размещение рекламы.">
+    <style>
+        :root {
+            --ink: #1c2333;
+            --ink-soft: #5a6478;
+            --paper: #f6f4ef;
+            --card: #ffffff;
+            --accent: #d6452c;      /* сарафановый красный */
+            --accent-dark: #b23520;
+            --gold: #e9a13b;
+            --green: #2e7d5b;
+            --blue: #2b5aa7;
+            --line: #e6e1d6;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Georgia, 'Times New Roman', serif;
+            background: var(--paper);
+            color: var(--ink);
+            line-height: 1.55;
+        }
+        .sans { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; }
 
-{% block title %}Ссылки на сообщества - SETKA{% endblock %}
-{% block nav_region_links %}active{% endblock %}
-{% block nav_section_content %}active{% endblock %}
+        /* ── Шапка ─────────────────────────────────────────────── */
+        header.hero {
+            background:
+                radial-gradient(1200px 400px at 20% -10%, rgba(233,161,59,.35), transparent 60%),
+                radial-gradient(900px 400px at 90% 0%, rgba(214,69,44,.28), transparent 55%),
+                linear-gradient(160deg, #232a3d 0%, #1c2333 60%, #171d2b 100%);
+            color: #fff;
+            padding: 44px 20px 88px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        header.hero::after {           /* «сарафанная» кайма-зигзаг */
+            content: "";
+            position: absolute; left: 0; right: 0; bottom: 0; height: 14px;
+            background:
+                linear-gradient(135deg, var(--paper) 25%, transparent 25%) 0 0/28px 28px,
+                linear-gradient(225deg, var(--paper) 25%, transparent 25%) 0 0/28px 28px;
+            background-repeat: repeat-x;
+        }
+        .hero .kicker {
+            display: inline-block;
+            letter-spacing: .35em;
+            text-transform: uppercase;
+            font-size: .78rem;
+            color: var(--gold);
+            margin-bottom: 14px;
+        }
+        .hero h1 {
+            font-size: clamp(2.6rem, 7vw, 4.6rem);
+            letter-spacing: .12em;
+            font-weight: 700;
+            text-shadow: 0 3px 18px rgba(0,0,0,.45);
+        }
+        .hero h1 .accent { color: var(--accent); text-shadow: 0 2px 14px rgba(214,69,44,.55); }
+        .hero .tagline {
+            margin-top: 12px;
+            font-size: clamp(1.02rem, 2.6vw, 1.3rem);
+            color: #e8e4da;
+            font-style: italic;
+        }
+        .hero .stats {
+            margin-top: 26px;
+            display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
+        }
+        .hero .stat {
+            background: rgba(255,255,255,.08);
+            border: 1px solid rgba(255,255,255,.18);
+            border-radius: 14px;
+            padding: 10px 22px;
+            backdrop-filter: blur(3px);
+        }
+        .hero .stat b { display: block; font-size: 1.5rem; color: var(--gold); }
+        .hero .stat span { font-size: .82rem; color: #cfd4de; }
 
-{% block content %}
-<div class="region-links-page mx-auto" style="max-width: 900px;">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h1><i class="bi bi-link-45deg"></i> Ссылки на сообщества</h1>
-        <div class="d-flex gap-2">
-            <button class="btn btn-outline-secondary btn-sm" id="rl-refresh">
-                <i class="bi bi-arrow-clockwise"></i> Обновить
-            </button>
-            <button class="btn btn-primary btn-sm" id="rl-copy-all">
-                <i class="bi bi-clipboard"></i> Копировать всё
-            </button>
-        </div>
+        /* ── Вкладки ───────────────────────────────────────────── */
+        .tabs-bar {
+            position: sticky; top: 0; z-index: 50;
+            background: rgba(246,244,239,.94);
+            backdrop-filter: blur(6px);
+            border-bottom: 2px solid var(--line);
+            display: flex; justify-content: center; gap: 8px;
+            padding: 10px 12px;
+        }
+        .tab-btn {
+            font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+            font-size: 1rem; font-weight: 600;
+            border: 2px solid var(--line);
+            background: var(--card);
+            color: var(--ink-soft);
+            border-radius: 999px;
+            padding: 10px 26px;
+            cursor: pointer;
+            transition: all .18s ease;
+        }
+        .tab-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .tab-btn.active {
+            background: var(--accent); border-color: var(--accent); color: #fff;
+            box-shadow: 0 4px 14px rgba(214,69,44,.35);
+        }
+        .tab-pane { display: none; }
+        .tab-pane.show { display: block; }
+
+        main { max-width: 980px; margin: 0 auto; padding: 34px 16px 70px; }
+
+        /* ── Легенда ───────────────────────────────────────────── */
+        .legend {
+            background: var(--card);
+            border: 1px dashed var(--gold);
+            border-radius: 14px;
+            padding: 16px 20px;
+            margin-bottom: 26px;
+            font-size: .95rem;
+        }
+        .legend .row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; margin-top: 8px; }
+        .legend .chip { border-radius: 8px; padding: 2px 10px; font-weight: 600; white-space: nowrap; }
+        .chip.name { background: #fdeeea; color: var(--accent-dark); }
+        .chip.members { background: #eaf3ee; color: var(--green); }
+        .chip.link { background: #eaf0fa; color: var(--blue); }
+        .legend .dash { color: var(--ink-soft); }
+
+        /* ── Список сообществ ──────────────────────────────────── */
+        .toolbar {
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 10px; margin-bottom: 18px;
+        }
+        .toolbar h2 { font-size: 1.5rem; }
+        .btn {
+            font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+            border: none; border-radius: 10px; cursor: pointer;
+            font-size: .92rem; font-weight: 600; padding: 10px 18px;
+            transition: transform .12s ease, box-shadow .12s ease;
+        }
+        .btn:active { transform: scale(.97); }
+        .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 3px 10px rgba(214,69,44,.3); }
+        .btn-primary:hover { background: var(--accent-dark); }
+        .btn-ghost { background: transparent; border: 1.5px solid var(--line); color: var(--ink-soft); }
+        .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+        .oblast-card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            margin-bottom: 26px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(28,35,51,.05);
+        }
+        .oblast-head {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 10px; flex-wrap: wrap;
+            padding: 14px 20px;
+            background: linear-gradient(90deg, #fdeeea, #fff8ee);
+            border-bottom: 2px solid var(--gold);
+        }
+        .oblast-head h3 { font-size: 1.25rem; color: var(--accent-dark); }
+        .oblast-head .count { font-size: .85rem; color: var(--ink-soft); font-style: italic; }
+        .community-list { list-style: none; }
+        .community-list li {
+            display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+            padding: 9px 20px;
+            border-bottom: 1px solid #f0ece3;
+            font-size: 1.02rem;
+        }
+        .community-list li:last-child { border-bottom: none; }
+        .community-list li:hover { background: #fbf9f4; }
+        .community-list li.oblast-row { background: #fff8ee; font-weight: 700; }
+        .c-name { color: var(--ink); font-weight: 600; min-width: 0; }
+        .c-members { color: var(--green); font-weight: 700; font-variant-numeric: tabular-nums; }
+        .c-members::after { content: " чел."; font-weight: 400; font-size: .8em; color: var(--ink-soft); }
+        .c-link { color: var(--blue); text-decoration: none; word-break: break-all; font-size: .93rem; }
+        .c-link:hover { text-decoration: underline; color: var(--accent); }
+        .c-dash { color: #c8c2b4; }
+
+        /* ── Реклама ───────────────────────────────────────────── */
+        .pitch {
+            text-align: center; margin-bottom: 30px;
+        }
+        .pitch h2 { font-size: clamp(1.5rem, 4vw, 2.1rem); margin-bottom: 8px; }
+        .pitch h2 em { color: var(--accent); font-style: normal; }
+        .pitch p { color: var(--ink-soft); max-width: 640px; margin: 0 auto; }
+        .packages {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+            gap: 16px; margin-bottom: 30px;
+        }
+        .pkg {
+            background: var(--card);
+            border: 1.5px solid var(--line);
+            border-radius: 16px;
+            padding: 22px 18px 18px;
+            position: relative;
+            display: flex; flex-direction: column;
+            transition: transform .15s ease, box-shadow .15s ease;
+        }
+        .pkg:hover { transform: translateY(-4px); box-shadow: 0 10px 24px rgba(28,35,51,.12); }
+        .pkg.hot { border-color: var(--accent); box-shadow: 0 6px 20px rgba(214,69,44,.18); }
+        .pkg .badge {
+            position: absolute; top: -12px; right: 14px;
+            background: var(--accent); color: #fff;
+            font-family: 'Segoe UI', sans-serif; font-size: .78rem; font-weight: 700;
+            border-radius: 999px; padding: 4px 12px;
+            box-shadow: 0 3px 8px rgba(214,69,44,.4);
+        }
+        .pkg h4 { font-size: 1.12rem; margin-bottom: 2px; }
+        .pkg .sub { font-size: .85rem; color: var(--ink-soft); margin-bottom: 12px; }
+        .pkg .price { font-size: 1.9rem; font-weight: 700; color: var(--accent-dark); }
+        .pkg .price small { font-size: 1rem; font-weight: 400; }
+        .pkg .old { text-decoration: line-through; color: #b3ab99; font-size: .95rem; margin-left: 8px; }
+        .pkg ul { list-style: none; margin: 12px 0 16px; flex: 1; }
+        .pkg ul li { font-size: .88rem; color: var(--ink-soft); padding: 4px 0 4px 20px; position: relative; }
+        .pkg ul li::before { content: "✿"; position: absolute; left: 0; color: var(--gold); }
+        .pkg .btn { width: 100%; }
+
+        .extras {
+            background: var(--card); border-left: 5px solid var(--gold);
+            border-radius: 0 14px 14px 0;
+            padding: 18px 22px; margin-bottom: 30px;
+        }
+        .extras h3 { margin-bottom: 8px; font-size: 1.15rem; }
+        .extras li { margin-left: 20px; padding: 3px 0; color: var(--ink-soft); }
+
+        .draft-note {
+            text-align: center; font-size: .85rem; color: var(--ink-soft);
+            font-style: italic; margin-bottom: 26px;
+        }
+
+        .ad-image { text-align: center; margin-bottom: 30px; }
+        .ad-image img { max-width: 100%; border-radius: 14px; box-shadow: 0 6px 24px rgba(28,35,51,.18); }
+
+        .contacts {
+            background: linear-gradient(160deg, #232a3d, #171d2b);
+            color: #fff; border-radius: 18px;
+            padding: 30px 24px; text-align: center;
+        }
+        .contacts h3 { font-size: 1.4rem; margin-bottom: 6px; }
+        .contacts p { color: #cfd4de; margin-bottom: 18px; font-size: .95rem; }
+        .contact-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+        .contact-card {
+            display: flex; flex-direction: column; align-items: center; gap: 2px;
+            background: rgba(255,255,255,.07);
+            border: 1px solid rgba(255,255,255,.16);
+            border-radius: 14px;
+            padding: 14px 22px; min-width: 160px;
+            color: #fff; text-decoration: none;
+            transition: background .15s ease, transform .15s ease;
+        }
+        .contact-card:hover { background: rgba(214,69,44,.25); transform: translateY(-3px); }
+        .contact-card .ico { font-size: 1.5rem; }
+        .contact-card .lbl { font-size: .78rem; color: var(--gold); text-transform: uppercase; letter-spacing: .08em; }
+        .contact-card .val { font-family: 'Segoe UI', sans-serif; font-weight: 600; font-size: .95rem; }
+
+        footer {
+            text-align: center; padding: 26px 16px 34px;
+            color: var(--ink-soft); font-size: .85rem;
+            border-top: 1px solid var(--line);
+        }
+        .loading, .error-box { text-align: center; padding: 40px 0; color: var(--ink-soft); font-style: italic; }
+        .error-box { color: var(--accent-dark); }
+        @media (max-width: 560px) {
+            .community-list li { font-size: .92rem; padding: 8px 12px; }
+            .oblast-head { padding: 12px 12px; }
+        }
+    </style>
+</head>
+<body>
+
+<header class="hero">
+    <span class="kicker sans">народная сеть новостей</span>
+    <h1>С<span class="accent">А</span>РАФ<span class="accent">А</span>Н</h1>
+    <p class="tagline">Все новости района — в одном сообществе. Все районы — в одной сети.</p>
+    <div class="stats sans" id="hero-stats">
+        <div class="stat"><b id="stat-groups">…</b><span>сообществ</span></div>
+        <div class="stat"><b id="stat-members">…</b><span>подписчиков</span></div>
+        <div class="stat"><b>24/7</b><span>новости выходят сами</span></div>
     </div>
-    <p class="text-muted">
-        Все группы VK, куда сеть публикует сводки — по областям, областная первой строкой блока.
-        Текст готов к отправке: вставляйте как есть в пост или сообщение VK, ссылки станут
-        кликабельными автоматически. В списке только активные регионы с созданной группой.
-    </p>
+</header>
 
-    <div id="rl-status" class="text-muted small mb-3">Загрузка…</div>
-    <div id="rl-blocks"></div>
-</div>
-{% endblock %}
+<nav class="tabs-bar" id="tabs">
+    <button class="tab-btn active" data-tab="communities">📜 Сообщества сети</button>
+    <button class="tab-btn" data-tab="ads">📣 Реклама и цены</button>
+</nav>
 
-{% block extra_scripts %}
-<script src="/static/js/region_links.js?v=20260729"></script>
-{% endblock %}
+<main>
+    <!-- ══ ВКЛАДКА: СООБЩЕСТВА ══ -->
+    <section class="tab-pane show" id="pane-communities">
+        <div class="legend">
+            <b>Как читать список</b> — каждая строка устроена так:
+            <div class="row sans">
+                <span class="chip name">Малмыж ИНФО</span><span class="dash">—</span>
+                <span class="chip members">3657</span><span class="dash">—</span>
+                <span class="chip link">vk.com/malmyzh_info</span>
+            </div>
+            <div class="row" style="font-size:.85rem; color: var(--ink-soft);">
+                <span><span style="color:var(--accent-dark);">■</span> название сообщества</span>
+                <span><span style="color:var(--green);">■</span> число подписчиков (обновляется каждую ночь)</span>
+                <span><span style="color:var(--blue);">■</span> ссылка — откроется в новой вкладке</span>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <h2>Сообщества по областям</h2>
+            <div style="display:flex; gap:8px;">
+                <button class="btn btn-ghost" id="rl-refresh">⟳ Обновить</button>
+                <button class="btn btn-primary" id="rl-copy-all">⎘ Копировать весь список</button>
+            </div>
+        </div>
+
+        <div id="rl-status" class="loading">Загружаем сеть…</div>
+        <div id="rl-blocks"></div>
+    </section>
+
+    <!-- ══ ВКЛАДКА: РЕКЛАМА ══ -->
+    <section class="tab-pane" id="pane-ads">
+        <div class="pitch">
+            <h2>Ваша реклама — в ленте <em>каждого района</em></h2>
+            <p>
+                САРАФАН читают там, где нет городских газет и билбордов: в районных
+                центрах и сёлах двух областей. Одно сообщение — и о вас узнают
+                именно те, кто живёт рядом с вами.
+            </p>
+        </div>
+
+        {% if ad_image_url %}
+        <div class="ad-image">
+            <img src="{{ ad_image_url }}" alt="Реклама в сети САРАФАН">
+        </div>
+        {% endif %}
+
+        <div class="packages sans">
+            {% for pkg in packages %}
+            <div class="pkg{% if pkg.badge %} hot{% endif %}">
+                {% if pkg.badge %}<span class="badge">{{ pkg.badge }}</span>{% endif %}
+                <h4>{{ pkg.title }}</h4>
+                <div class="sub">{{ pkg.subtitle }}</div>
+                <div>
+                    <span class="price">{{ pkg.price }} <small>₽</small></span>
+                    {% if pkg.old_price %}<span class="old">{{ pkg.old_price }} ₽</span>{% endif %}
+                </div>
+                <ul>
+                    {% for f in pkg.features %}<li>{{ f }}</li>{% endfor %}
+                </ul>
+                <button class="btn btn-primary pkg-order" data-pkg="{{ pkg.title }} — {{ pkg.price }} ₽">
+                    Заказать
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="extras">
+            <h3>🎁 Скидки и бонусы</h3>
+            <ul>
+                {% for line in extras %}<li>{{ line }}</li>{% endfor %}
+            </ul>
+        </div>
+
+        {% if prices_are_draft %}
+        <p class="draft-note">Актуальные цены уточняйте при заказе — под вашу задачу соберём и индивидуальный пакет.</p>
+        {% endif %}
+
+        <div class="contacts">
+            <h3>Заказать размещение</h3>
+            <p>
+                Напишите, что рекламируем и какие районы интересуют — ответим с расчётом.
+                Кнопка «Заказать» выше уже скопировала выбранный тариф: просто вставьте его в сообщение.
+            </p>
+            <div class="contact-grid">
+                {% for c in contacts %}
+                <a class="contact-card" {% if c.url %}href="{{ c.url }}" target="_blank" rel="noopener"{% endif %}>
+                    <span class="ico">{% if c.type == 'vk' %}💬{% elif c.type == 'telegram' %}✈️{% elif c.type == 'phone' %}📞{% else %}✉️{% endif %}</span>
+                    <span class="lbl">{{ c.label }}</span>
+                    <span class="val">{{ c.value }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+</main>
+
+<footer>
+    САРАФАН — автоматическая сеть районных новостей · Кировская область и Татарстан<br>
+    Разработчик Валентин Савиных, г. Малмыж
+</footer>
+
+<script src="/static/js/region_links.js?v=20260729_landing"></script>
+</body>
+</html>
