@@ -324,7 +324,15 @@ async def region_links_page(request: Request):
     # Таблица цен считается на сервере (config/ad_landing.py, покрыта тестами) и
     # уезжает в <script type=application/json>: панель выбора только показывает
     # готовое число, чтобы правило скидок не жило в двух местах.
-    ctx["price_table_json"] = json.dumps(ctx["price_table"], ensure_ascii=False)
+    #
+    # Markup внутри <script> экранировать НЕЛЬЗЯ (в шаблоне стоит |safe): это
+    # raw-text элемент, HTML-сущности в нём не декодируются, и autoescape Jinja
+    # превращает кавычки в &#34; — JSON.parse падает, а панель молча остаётся
+    # без цены (так и было на проде, пока не поймали curl'ом). Экранируем
+    # только «<», чтобы строка вида "</script>" не закрыла тег.
+    ctx["price_table_json"] = json.dumps(ctx["price_table"], ensure_ascii=False).replace(
+        "<", "\\u003c"
+    )
     return templates.TemplateResponse("region_links.html", {"request": request, **ctx})
 
 

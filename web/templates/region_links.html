@@ -538,7 +538,9 @@
         </div>
     </div>
 
-    <script type="application/json" id="price-table">{{ price_table_json }}</script>
+    {# |safe обязателен: внутри <script> HTML-сущности не декодируются, и
+       заэкранированные кавычки ломают JSON.parse. «<» экранирован в main.py. #}
+    <script type="application/json" id="price-table">{{ price_table_json | safe }}</script>
 
     <!-- ══ ВКЛАДКА: РЕКЛАМА ══ -->
     <section class="tab-pane" id="pane-ads">
