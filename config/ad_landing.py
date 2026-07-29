@@ -20,12 +20,16 @@ PRICES_ARE_DRAFT = False
 PRICE_SINGLE_RUB = 350
 
 # Тарифы по сети. Каждый: название, что входит, цена, старая цена (для
-# зачёркнутой экономии; None = не показывать), бейдж, список фич.
+# зачёркнутой экономии; None = не показывать), бейдж, список фич и ``covers`` —
+# на сколько сообществ рассчитан тариф (None = вся сеть). ``covers`` читает
+# панель выбора на лендинге: отметил N сообществ галочками — она считает
+# дешёвший вариант «N × 350 ₽ или подходящий пакет».
 PACKAGES: List[Dict[str, Any]] = [
     {
         "title": "Один пост",
         "subtitle": "в одном сообществе на выбор",
         "price": 350,
+        "covers": 1,
         "old_price": None,
         "badge": None,
         "features": [
@@ -38,6 +42,7 @@ PACKAGES: List[Dict[str, Any]] = [
         "title": "Пакет «Куст»",
         "subtitle": "5 соседних районов",
         "price": 1300,
+        "covers": 5,
         "old_price": 1750,
         "badge": "выгода 450 ₽",
         "features": [
@@ -50,6 +55,7 @@ PACKAGES: List[Dict[str, Any]] = [
         "title": "Пакет «Десятка»",
         "subtitle": "10 сообществ",
         "price": 2500,
+        "covers": 10,
         "old_price": 3500,
         "badge": "выгода 1000 ₽",
         "features": [
@@ -62,6 +68,7 @@ PACKAGES: List[Dict[str, Any]] = [
         "title": "Вся сеть",
         "subtitle": "все сообщества САРАФАНА",
         "price": 5000,
+        "covers": None,
         "old_price": 9100,
         "badge": "лучшая цена",
         "features": [
