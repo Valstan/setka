@@ -63,6 +63,7 @@ flowchart LR
 - CRUD: `GET /`, `GET /{region_code}`, `POST /`, `PUT /{region_id}`, `DELETE /{region_id}`
 - Управление активностью: `PATCH /{region_id}/toggle-status`
 - Bulletin template: `GET/PUT /{region_code}/bulletin-template`, `POST /{region_code}/bulletin-template/reset`, `POST /{region_code}/bulletin-template/reset-topic`
+- Список сообществ сети для рассылки людям: `GET /vk-links` (страница `/regions/links`, формат — `modules/region_links.py`)
 
 ### Communities (`/api/communities`)
 
@@ -122,4 +123,4 @@ flowchart LR
 
 ## 5) UI (страницы)
 
-`/`, `/regions`, `/posts`, `/communities`, `/notifications`, `/tokens`, `/publisher`, `/monitoring`, `/schedule`, `/parsing`
+`/`, `/regions`, `/regions/links`, `/posts`, `/communities`, `/notifications`, `/tokens`, `/publisher`, `/monitoring`, `/schedule`, `/parsing`
