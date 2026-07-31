@@ -21,9 +21,14 @@ from config.services_catalog import SERVICES, get_services
 
 REQUIRED_KEYS = {"title", "emoji", "url", "desc"}
 
-# Домен экосистемы. Сервис вне него — осознанное исключение: добавляя такой,
+# Домены экосистемы. Сервис вне них — осознанное исключение: добавляя такой,
 # правь этот список вместе с карточкой, чтобы решение осталось видимым.
-ECOSYSTEM_DOMAIN = "вмалмыже.рф"
+#
+# «гоньба.рф» — участник экосистемы со своей доменной зоной (карточка добавлена
+# 2026-07-31 по директиве brain). Проверено живьём с прод-бокса: 200 без
+# редиректа, <title> «Гоньба — жемчужина Вятки» — то есть исключение сделано
+# для реального адреса, а не для опечатки.
+ECOSYSTEM_DOMAINS = ("вмалмыже.рф", "гоньба.рф")
 
 
 class TestCatalogEntries:
@@ -45,8 +50,8 @@ class TestCatalogEntries:
         """Регрессия на съехавший домен Сабантуя (см. docstring модуля)."""
         for entry in SERVICES:
             host = urlsplit(entry["url"]).hostname or ""
-            assert host.endswith(ECOSYSTEM_DOMAIN), (
-                f"{entry['title']}: {host} вне {ECOSYSTEM_DOMAIN} — "
+            assert host.endswith(ECOSYSTEM_DOMAINS), (
+                f"{entry['title']}: {host} вне {' / '.join(ECOSYSTEM_DOMAINS)} — "
                 "либо домен устарел, либо исключение нужно внести в тест осознанно"
             )
 
