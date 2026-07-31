@@ -1,15 +1,21 @@
 # SETKA Project .gitignore
 
-# Claude Code working directory
-# Игнорируем всё, кроме того, что должно жить в репо вместе с проектом:
-# - .claude/commands/  — slash-команды (/start, /reliz, /check, /sql, /celery, /logs, /close_session)
+# Tool-local AI state (общие инструкции трекаются намеренно, ADR-0011)
+# Правило: кэши/сессии/локальные настройки инструмента — мимо репо; общие
+# инструкции и хуки, которые обязаны разъехаться на все машины, — в репо.
+#
+# - .claude/commands/  — исполняемые памятки процедур (start, reliz, close_session, …)
 # - .claude/agents/    — кастомные субагенты (если появятся)
 # - .claude/settings.json — командная политика permissions (ssh setka allowlist) + hooks (SessionStart git-sync)
+# - .codex/hooks.json  — тот же SessionStart-хук git-sync для Codex (аналог settings.json)
 # Остальное (worktrees, локальная сессия, settings.local.json конкретного компа) — локально.
 .claude/*
 !.claude/commands/
 !.claude/agents/
 !.claude/settings.json
+.codex/*
+!.codex/hooks.json
+.gemini/
 
 # Secure configuration files
 config/config_secure.py

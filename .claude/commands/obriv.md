@@ -40,7 +40,7 @@ node -e "const fs=require('fs');const f=process.argv[1];const b=fs.readFileSync(
 
 ## 5. Если трогался код — перепроверь гейты
 
-Стек SETKA — Python (black/isort/flake8 + pytest, см. [`CLAUDE.md`](../../CLAUDE.md) §«Жизненный цикл задачи»):
+Стек SETKA — Python (black/isort/flake8 + pytest, см. [`AGENTS.md`](../../AGENTS.md) §«Жизненный цикл задачи»):
 ```bash
 pre-commit run --all-files                       # black / isort / flake8 (стиль)
 ./venv/Scripts/python.exe -m pytest tests/ -q    # все тесты зелёные (Linux: ./venv/bin/python)
