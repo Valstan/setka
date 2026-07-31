@@ -1,6 +1,8 @@
-# AGENTS.md — entry point для AI-сессий SETKA
+# AGENTS.md — единые правила для AI-агентов SETKA
 
-Этот файл — первое, что Codex должен прочитать в любой новой сессии разработки. Он подсказывает, **где взять контекст** и **как правильно работать**, не повторяя ошибки прошлых сессий.
+Этот файл — **единственный канонический вход для любой нейросети**: Claude Code, Codex, Gemini CLI и других агентов. Инструкции конкретного инструмента (`CLAUDE.md`, `GEMINI.md`) могут дополнять его, но **не должны дублировать или переопределять** проектные правила: две копии канона расходятся молча.
+
+Правила ниже сформулированы через **намерение**, а не через механизм конкретного инструмента. Где у Claude Code есть машинное выражение правила (permissions, хуки, slash-команды) — это указано как *способ исполнения*. **Агент без такого механизма соблюдает то же правило вручную:** неприменим инструмент, а не правило.
 
 ---
 
@@ -11,29 +13,41 @@
 
 ---
 
+## Состояние проекта
+
+- **Продукт:** SETKA («САРАФАН») — сеть районных VK-сообществ Кировской области: сбор постов, HITL-классификация, автосводки, продажа рекламы.
+- **Стадия:** боевой прод, ежедневные публикации; ~2000 тестов, около 30 районов в разной степени активации.
+- **Стек:** Python 3.12 (локально 3.11 тоже ок), FastAPI + Jinja2, PostgreSQL, Celery + Redis, systemd на VPS.
+- **Прод:** SSH-хост `setka`, каталог `/home/valstan/SETKA`, сервисы `setka`, `setka-celery-worker`, `setka-celery-beat`.
+- **Экосистема:** SETKA держит ЕСА (единый вход `вход.вмалмыже.рф`), каталог сервисов `/services`, VK-шлюз и Радар для соседних проектов @valstan.
+- **Стратегический hub:** [`../brain_matrica/`](../brain_matrica/), карточка проекта — [`projects/setka.md`](../brain_matrica/projects/setka.md) (**read-only** с нашей стороны).
+- **Незавершённая работа:** [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) — читать первым в каждой сессии.
+
+---
+
 ## Источники правды (читать в начале каждой сессии)
 
 | Файл | Что в нём |
 |---|---|
-| [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) | **Sticky-note между сессиями** — текущая активная нитка, следующий шаг, failed approaches. Перезаписывается через `/close_session`. |
+| [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) | **Sticky-note между сессиями** — текущая активная нитка, следующий шаг, failed approaches. Перезаписывается процедурой закрытия сессии. |
 | [`docs/START_HERE.md`](docs/START_HERE.md) | Быстрый старт, сервисы, команды на проде, чек-листы. |
 | [`docs/AI_DEV_GUIDE.md`](docs/AI_DEV_GUIDE.md) | Полный архитектурный гайд: модули, потоки данных, типизация, антипаттерны. |
 | [`docs/REGIONS_HIERARCHY.md`](docs/REGIONS_HIERARCHY.md) | Иерархия регионов `strana → oblast → raion`, словарь терминов, каскадная сводка. |
 | [`docs/REGION_REFRESH_LOG.md`](docs/REGION_REFRESH_LOG.md) | **Журнал освежения регионов** — когда какой район/область освежался по канонам (добор/чистка доноров, новые фичи). Канон-чеклист + таблица приоритета + журнал событий. «Обновим следующий устаревший регион» → берём верх таблицы. |
 | [`docs/adr/`](docs/adr/) | Architectural Decision Records — «почему именно так» (см. [ADR-0001](docs/adr/0001-archive-dev-history.md) про минимализм AI-docs 2026). |
 | [`docs/PENDING_FOLLOWUPS.md`](docs/PENDING_FOLLOWUPS.md) | Открытые задачи и техдолги с приоритетами 🔴⏳🟡🟢. |
-| [`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md) | Прод-доступ — **только SSH** через `setka`. MCP не использовать. |
+| [`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md) | Прод-доступ — **только SSH** через `setka`; никаких MCP/remote-exec инструментов агента. |
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Эксплуатация, systemd, логи, troubleshooting. |
 | [`docs/TESTING.md`](docs/TESTING.md) | pytest, фикстуры, как гонять тесты. |
 | [`docs/paths.md`](docs/paths.md) | Карта файлов и API endpoints. |
 
-Slash-команда `/start` всё это читает автоматически и выдаёт сводку.
+Стартовая процедура ([`.claude/commands/start.md`](.claude/commands/start.md)) читает всё это и выдаёт сводку; у Claude Code она вызывается как `/start`, любой другой агент выполняет её шаги вручную.
 
 ---
 
 ## Интеграция с brain_matrica
 
-setka управляется meta-репо [brain_matrica](../brain_matrica/) (стратегический hub для всех проектов @valstan). Связь — **асимметричная**: каждая сторона пишет **только в свой репо**, читает чужой через `git pull --ff-only` ([ADR-0001 v3](../brain_matrica/adr/0001-brain-projects-mailboxes.md) от 2026-05-23, [asymmetry-fix письмо](../brain_matrica/mailboxes/setka/from-brain/2026-05-23-mailbox-asymmetry-fix.md)).
+SETKA управляется meta-репо [brain_matrica](../brain_matrica/) (стратегический hub для всех проектов @valstan). Связь — **асимметричная**: каждая сторона пишет **только в свой репо**, читает чужой через `git pull --ff-only` ([ADR-0001 v3](../brain_matrica/adr/0001-brain-projects-mailboxes.md) от 2026-05-23).
 
 | Направление | Кто пишет | Куда | Кто читает |
 |---|---|---|---|
@@ -50,73 +64,124 @@ setka управляется meta-репо [brain_matrica](../brain_matrica/) (�
 
 **Жизненный цикл письма от brain:**
 
-1. `/start` Шаг 0: `cd ../brain_matrica && git pull --ff-only` → сканить `mailboxes/setka/from-brain/*.md` (без `DRAFTS/` и `ARCHIVE/`), доклад в формате `[urgency COMPLIANCE]`.
+1. **Шаг 0 любой сессии, независимо от агента:** `cd ../brain_matrica && git pull --ff-only` → сканить `mailboxes/setka/from-brain/*.md` (без `DRAFTS/` и `ARCHIVE/`), доклад в формате `[urgency COMPLIANCE]`.
 2. Пользователь решает обработать → применяем директиву согласно compliance.
 3. **Ответ** (acknowledgement / feedback / report) — в **свой репо** `setka/mailbox/to-brain/YYYY-MM-DD-<slug>.md`, коммит в setka через PR.
 4. **Архивацию исходных писем делает brain у себя** — не моя зона.
 
-**Проактивный шеринг находок (рефлекс #009):** значимые **переносимые** находки (скилл / фича / паттерн / решённая нетривиальная боль) сам отправляю в мозг через `mailbox/to-brain/` — не дожидаясь просьбы. Условный шаг + анти-спам-фильтр (значимо ∧ переносимо ∧ неочевидно) — в [`/close_session`](.Codex/commands/close_session.md) Шаг 5.5 (pool [#009](../brain_matrica/cross-project-ideas/ideas/009-share-findings-reflex.md)). По умолчанию — молчим.
+**Проактивный шеринг находок (рефлекс #009):** значимые **переносимые** находки (скилл / фича / паттерн / решённая нетривиальная боль) сам отправляю в мозг через `mailbox/to-brain/` — не дожидаясь просьбы. Условный шаг + анти-спам-фильтр (значимо ∧ переносимо ∧ неочевидно) — шаг 5.5 процедуры закрытия сессии ([`.claude/commands/close_session.md`](.claude/commands/close_session.md), pool [#009](../brain_matrica/cross-project-ideas/ideas/009-share-findings-reflex.md)). По умолчанию — молчим.
 
-**Консультация с библиотекой Мозга (рефлекс #014):** read-сторона того же шкафа, что и #009 (тот пишет, этот читает). **Не** безусловный шаг `/start` (token economy, [ADR-0003](../brain_matrica/adr/0003-token-economy-principles.md)) — а **условный триггер**, срабатывает ровно в двух случаях:
+**Консультация с библиотекой Мозга (рефлекс #014):** read-сторона того же шкафа, что и #009 (тот пишет, этот читает). **Не** безусловный шаг старта сессии (token economy, [ADR-0003](../brain_matrica/adr/0003-token-economy-principles.md)) — а **условный триггер**, срабатывает ровно в двух случаях:
 1. **Перед вводом нового/нетривиального** (паттерн, инструмент, инфра-подход, миграция данных, кросс-cutting рефактор) — *до* проектирования бегло просмотреть [`../brain_matrica/cross-project-ideas/INDEX.md`](../brain_matrica/cross-project-ideas/INDEX.md) + [`../brain_matrica/tech-radar/INDEX.md`](../brain_matrica/tech-radar/INDEX.md): нет ли готового опыта.
 2. **При незнакомой грабле инструмента/инфры/деплоя** (не доменный баг, а «почему CI / Payload / git / VK так себя ведёт») — *до* долгого дебага грепнуть [`../brain_matrica/cross-project-ideas/GOTCHAS.md`](../brain_matrica/cross-project-ideas/GOTCHAS.md) по симптому.
 
-Нашёл релевантное → переиспользуй (и при желании отпишись в `mailbox/to-brain/`, что применил). Не нашёл → продолжай как обычно. `git pull --ff-only` brain'а уже делается на `/start`, повторно не платим. **Тишина = норма** (триггер не сработал → 0 лишних чтений). Pool [#014](../brain_matrica/cross-project-ideas/ideas/014-consult-library-reflex.md).
+Нашёл релевантное → переиспользуй (и при желании отпишись в `mailbox/to-brain/`, что применил). Не нашёл → продолжай как обычно. `git pull --ff-only` brain'а уже делается на старте сессии, повторно не платим. **Тишина = норма** (триггер не сработал → 0 лишних чтений). Pool [#014](../brain_matrica/cross-project-ideas/ideas/014-consult-library-reflex.md).
 
 **Тактика напрямую (ADR-0007 мозга, 2026-07-05):** любой sibling-репо (`../<project>/`) можно читать **read-only** напрямую, без письма в мозг (`git pull --ff-only` перед чтением): API-контракты, docs, handoff соседа, его `mailbox/to-brain/`. Эвристика: «нужно ЗНАТЬ про соседа → читай сам; нужно, чтобы сосед/экосистема что-то СДЕЛАЛИ или ЗАПОМНИЛИ → письмо в мозг». Начал **зависеть** от чужого API/формата (интеграция, не разовое чтение) → сообщить мозгу письмом (прочитанное — не контракт).
 
 **Что нельзя:**
 - ❌ Писать в `brain_matrica/` (ни в `mailboxes/setka/to-brain/`, ни в `.last-seen`, ни в `ARCHIVE/`, ни куда-либо ещё). Доступ — только `git pull --ff-only`.
 - ❌ Клонировать `brain_matrica` для записи; ходить в чужие mailbox'ы; удалять архивные письма у brain'а.
+- ❌ Исполнять что-либо на чужом боксе. Соседний репо читаем — соседний сервер трогаем только через его опубликованный HTTP-интерфейс.
 
 ---
 
 ## Жизненный цикл задачи
 
-1. **Старт сессии** — `/start`. Сводка: mailbox от brain_matrica, что нового на main, какие хвосты, состояние прода.
+1. **Старт сессии** — стартовая процедура ([`.claude/commands/start.md`](.claude/commands/start.md)). Результат обязателен независимо от агента: сводка mailbox от brain_matrica, что нового на `main`, какие хвосты, состояние прода.
 2. **Feature-ветка** — `git checkout -b <type>/<slug>` (`feat/`, `fix/`, `chore/`, `docs/`, `refactor/`). Direct push в `main` запрещён ([ADR-0002](../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)).
 3. **Работа над фичей** — обычные правки кода. После них:
-   - `pytest tests/ -q` — все 360+ тестов должны быть зелёными.
+   - `pytest tests/ -q` — все тесты зелёные. **Сверяй и количество собранных** (порядок — в §«Состояние проекта»): «12 passed» вместо ~2000 — это не зелёный прогон, а не тот путь или сломанный сбор.
    - `pre-commit run --all-files` — black/isort/flake8.
 4. **PR** — `gh pr create` с Summary + Test plan. **Описательное тело PR заменяет старую DEV_HISTORY** ([ADR-0001](docs/adr/0001-archive-dev-history.md)) — что меняли, почему, какие тесты, какое применение на проде. **Авто-мерж под гейтами** ([#027](#автономия-под-гейтами-027)): зелёные `pre-commit` + `pytest` + CI → `gh pr merge --squash --delete-branch` без ручного «окей» (черта — destructive прод-операции с данными, см. ниже).
-5. **Релиз на прод** — `/reliz` ведёт через: обновление `PENDING_FOLLOWUPS.md` (если есть новые техдолги) → commit с описательным сообщением → push на feature-ветку → `gh pr create` с полным описанием → review → merge → SSH `git pull` → миграции (если есть) → `systemctl restart` → curl health. Один шаг = один диалог.
-6. **Закрытие сессии** — `/close_session` (**единственная** команда закрытия). Коммитит и пушит **всю** работу (код + доки) на GitHub через PR, обновляет `SESSION_HANDOFF.md` + `PENDING_FOLLOWUPS.md`, проверяет sync-гейт (`scripts/git_sync_check.sh --gate`) — сессия не считается закрытой, пока всё не на `origin`. Деплой — отдельно через `/reliz`.
+5. **Релиз на прод** — релизная процедура ([`.claude/commands/reliz.md`](.claude/commands/reliz.md)), обязательная последовательность для любого агента: обновление `PENDING_FOLLOWUPS.md` (если есть новые техдолги) → commit с описательным сообщением → push на feature-ветку → `gh pr create` с полным описанием → review → merge → SSH `git pull` → миграции (если есть) → `systemctl restart` → curl health. Один шаг = один диалог.
+6. **Закрытие сессии** — процедура закрытия ([`.claude/commands/close_session.md`](.claude/commands/close_session.md)), **единственный** признанный способ закрыть сессию. Коммитит и пушит **всю** работу (код + доки) на GitHub через PR, обновляет `SESSION_HANDOFF.md` + `PENDING_FOLLOWUPS.md`, проверяет sync-гейт (`scripts/git_sync_check.sh --gate`) — сессия не считается закрытой, пока всё не на `origin`. Деплой — отдельно, релизной процедурой.
 
 ---
 
 ## Автономия под гейтами (#027)
 
-Brain-мандат [#027](../brain_matrica/cross-project-ideas/ideas/027-gate-replaced-autonomy.md) (2026-06-06): **человеческий «окей на дифф/мерж/деплой» заменён автоматическими гейтами.** Не «убрать проверку», а «заменить ритуал на машинную проверку»: автономия безопасна ⟺ гейты сильны. Настройка живёт в коммитимом [`.Codex/settings.json`](.Codex/settings.json) (`defaultMode: auto` + ярусные `permissions.allow`/`deny`).
+Brain-мандат [#027](../brain_matrica/cross-project-ideas/ideas/027-gate-replaced-autonomy.md) (2026-06-06): **человеческий «окей на дифф/мерж/деплой» заменён автоматическими гейтами.** Не «убрать проверку», а «заменить ритуал на машинную проверку»: автономия безопасна ⟺ гейты сильны.
 
-**Ярусы по риску:**
+**Ярусы риска — проектное правило, а не настройка инструмента.** Claude Code выражает их машинно в коммитимом [`.claude/settings.json`](.claude/settings.json) (`defaultMode: auto` + ярусные `permissions.allow`/`deny`). **Агент без такого механизма соблюдает те же ярусы вручную:** автономен там, где ярус говорит «авто», и останавливается за подтверждением там, где ярус этого требует. Отсутствие машинного выражения не отменяет ни одного яруса.
 
 | Операция | Режим | Гейт = подтверждение |
 |---|---|---|
 | Правки файлов, ветки, коммиты | **авто** | — |
 | Push feature-ветки, `gh pr create`, **`gh pr merge --squash`** | **авто** | `pre-commit run --all-files` (black/isort/flake8) + `pytest tests/ -q` + CI зелёные |
-| Деплой не-схемных правок (`git pull` + `systemctl restart` + health-curl) | **авто под гейтом** | `/reliz` smoke + health 200; деплои **сериализованы** (не внахлёст) |
-| **Миграции на проде с данными, `ALTER`/`DROP`/`DELETE`/`UPDATE`, ротация токенов, необратимые trigger'ы** | **подтверждать в том же ходе** | **эту черту не пересекаем — гейт остаётся человеческим** ([#025](../brain_matrica/cross-project-ideas/ideas/025-destructive-prod-confirm-same-turn.md), `AskUserQuestion`) |
+| Деплой не-схемных правок (`git pull` + `systemctl restart` + health-curl) | **авто под гейтом** | smoke-прогон пайплайна (`scripts/smoke_test.py --region <r> --theme <t>`, dry-run поверх `parse_and_publish_theme`; подробности — Шаг 8.5 памятки [`reliz`](.claude/commands/reliz.md)) + health 200; деплои **сериализованы** (не внахлёст) |
+| **Миграции на проде с данными, `ALTER`/`DROP`/`DELETE`/`UPDATE`, ротация токенов, необратимые trigger'ы** | **подтверждать в том же ходе** | **эту черту не пересекаем — гейт остаётся человеческим** ([#025](../brain_matrica/cross-project-ideas/ideas/025-destructive-prod-confirm-same-turn.md)): спросить пользователя и дождаться явного «да» **до** операции, в том же ходе |
 
-**Что заблокировано машинно** (`permissions.deny`, побеждает всё): `git push --force`, `git push origin main/master` (только через PR, [ADR-0002](../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)), `git reset --hard`, `rm -rf`.
+**Запрещено безусловно** (Claude Code выражает это машинно через `permissions.deny`, который побеждает всё; агент без такого механизма держит тот же запрет поведенчески — сила запрета одинакова): `git push --force`, `git push origin main/master` (только через PR, [ADR-0002](../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)), `git reset --hard`, `rm -rf`.
 
-**Важный нюанс инструмента:** правила Codex сопоставляются **по префиксу** и **по имени инструмента** (`Bash(...)` ≠ `PowerShell(...)` — в `settings.json` есть оба набора, т.к. Windows-машины гоняют команды через PowerShell). Префикс **не различает** read-only `ssh setka "..."` от destructive `ssh setka "...psql DROP..."` (дискриминатор внутри кавычек). Поэтому **гейт destructive-прода остаётся поведенческим** (`AskUserQuestion` перед любой необратимой прод-операцией) — он не выражается deny-правилом, и нарушать его нельзя. `/sql` гейтит DML, `/reliz` ведёт миграции под подтверждением.
+**Почему человеческий гейт не выражается конфигом.** У Claude Code разрешительные правила сопоставляются по префиксу команды; у других агентов фильтр устроен иначе, а часто его нет вовсе. Общее одно: **destructive-дискриминатор сидит внутри кавычек** — префикс не отличает read-only `ssh setka "..."` от `ssh setka "...psql DROP..."`. Поэтому черту держит **поведение агента, а не конфиг**, и нарушать её нельзя. Памятка [`sql`](.claude/commands/sql.md) гейтит DML, релизная процедура ведёт миграции под подтверждением.
+
+**Не полагайся на то, что фильтр инструмента остановит тебя перед продом** — у разных агентов фильтры разные или их нет вовсе. Ответственность за подтверждение прод-операций лежит на агенте, а не на конфиге.
 
 > NB ([#018](../brain_matrica/cross-project-ideas/ideas/018-liveness-watchdog-durable-heartbeat.md)): раз мерж/деплой идут автономнее, «приём/публикация молча встала» дороже — держать heartbeat-watchdog и его вывод в дашборд живым.
 
 ---
 
-## Slash-команды
+## Git и совместная работа нескольких агентов
 
-| Команда | Назначение |
+Владелец открывает репо разными нейросетями. Правила ниже — чтобы агенты не затаптывали друг друга ([ADR-0011](../brain_matrica/adr/0011-vendor-neutral-agent-contract.md) §Decision п.4):
+
+- `main` защищён логически: ветка → коммит → push → PR → squash merge. Прямой push в `main`, force-push и `reset --hard` запрещены.
+- Один агент — одна задача, отдельная ветка и, при одновременной работе, отдельный `git worktree`. **Не запускай двух пишущих агентов в одном рабочем дереве.**
+- Каталог worktree должен быть вне индекса. Текущая конвенция — `.claude/worktrees/<имя>` (уже покрыта `.gitignore`); любой другой игнорируемый каталог тоже годится, но добавь его в `.gitignore` тем же PR.
+- Перед правкой проверяй `git status`. **Незнакомые изменения считай чужими:** не удаляй, не форматируй попутно, не включай в свой коммит и не прячь в stash.
+- Не переключай ветку в рабочем дереве, которое может использовать другой агент.
+- Объявляй границы файлов/задачи в описании PR. Если границы пересекаются — второй агент ждёт merge первого и ребейзит свою ветку до начала правок.
+- Один PR решает одну задачу. Коммиты — Conventional Commits.
+- После обрыва сначала восстанавливай фактическое состояние из Git/PR, не повторяй действия по памяти (памятка [`obriv`](.claude/commands/obriv.md)).
+
+**Межмодельная память — только артефакты** ([ADR-0011](../brain_matrica/adr/0011-vendor-neutral-agent-contract.md) §Decision п.5): Git/PR, [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md), `mailbox/`, ADR. **Чат одной модели не является источником истины для другой** — что обсуждалось в другой сессии, существует ровно настолько, насколько записано в файл. Долговечные решения живут в документации/ADR, состояние незавершённой работы — в `SESSION_HANDOFF`, история — в коммитах и PR.
+
+---
+
+## Исполняемые памятки процедур
+
+В [`.claude/commands/*.md`](.claude/commands/) лежат подробные исполняемые памятки. **Несмотря на имя каталога, их workflow применим к любому агенту** ([ADR-0011](../brain_matrica/adr/0011-vendor-neutral-agent-contract.md) §Decision п.6): агент со slash-командами вызывает `/start`, агент без такого механизма открывает `.claude/commands/start.md` и выполняет шаги. Vendor-нейтральные порты двух памяток лежат в `.agents/skills/source-command-{obriv,reliz}/SKILL.md`.
+
+**Как читать памятку, если ты не Claude Code.** Она написана на языке этого инструмента — это способ исполнения, а не условие применимости:
+
+- `allowed-tools:` во фронтматтере — игнорируй;
+- `/команда` — «выполни шаги этого файла»;
+- **`AskUserQuestion: «…»` — «задай пользователю этот вопрос обычным сообщением и дождись явного ответа, прежде чем продолжить».** Форма вопроса любая, **сам шаг подтверждения обязателен всегда**. Это важнее прочего: 29 упоминаний `AskUserQuestion` в памятках — это гейты на destructive-операциях (`sql`, `reliz`, `close_session`), а не украшение. Прочитать «инструмента нет → гейта нет» — самая дорогая ошибка чтения этих файлов.
+
+| Памятка | Назначение |
 |---|---|
-| [`/start`](.Codex/commands/start.md) | Открыть сессию: git fetch, прочитать SoT, прод-probe, отчёт. |
-| [`/check`](.Codex/commands/check.md) | Health-check одной кнопкой: pytest + prod systemd + curl + Celery. |
-| [`/celery`](.Codex/commands/celery.md) | Состояние Celery: workers, beat, последние публикации, Redis cooldown. |
-| [`/logs`](.Codex/commands/logs.md) | Просмотр прод-логов: `app`/`worker`/`beat`/`nginx` с `--grep` и `--since`. |
-| [`/sql`](.Codex/commands/sql.md) | psql на проде с обязательным подтверждением для DML. |
-| [`/reliz`](.Codex/commands/reliz.md) | Релиз: PENDING (если нужно) → commit с описанием → push → PR с полным телом → prod pull → миграции → restart → проверки. |
-| [`/close_session`](.Codex/commands/close_session.md) | **Единственная команда закрытия сессии.** Закоммитить+запушить ВСЁ (код+доки) на GitHub через PR, обновить SESSION_HANDOFF.md + PENDING, sync-гейт «всё ли на origin». Триггерится и фразами «закрой сессию [разработки]», «заверши сессию». |
-| [`/obriv`](.Codex/commands/obriv.md) | Восстановление после обрыва связи: реконструировать состояние из git/PR (ground truth), проверить целостность записанных файлов, реконсилировать последнее действие, перепроверить гейты (black/isort/flake8 + pytest), продолжить нить — **не переделывая сделанное**. Кросс-проектный мандат brain (pool #021). |
+| [`start`](.claude/commands/start.md) | Открыть сессию: mailbox brain, git fetch, прочитать SoT, прод-probe, отчёт. |
+| [`check`](.claude/commands/check.md) | Health-check одной кнопкой: pytest + prod systemd + curl + Celery. |
+| [`celery`](.claude/commands/celery.md) | Состояние Celery: workers, beat, последние публикации, Redis cooldown. |
+| [`logs`](.claude/commands/logs.md) | Просмотр прод-логов: `app`/`worker`/`beat`/`nginx` с `--grep` и `--since`. |
+| [`sql`](.claude/commands/sql.md) | psql на проде с обязательным подтверждением для DML. |
+| [`reliz`](.claude/commands/reliz.md) | Релиз: PENDING (если нужно) → commit с описанием → push → PR с полным телом → prod pull → миграции → restart → проверки. |
+| [`close_session`](.claude/commands/close_session.md) | **Единственная процедура закрытия сессии.** Закоммитить+запушить ВСЁ (код+доки) на GitHub через PR, обновить SESSION_HANDOFF.md + PENDING, sync-гейт «всё ли на origin». Триггерится и фразами «закрой сессию [разработки]», «заверши сессию». |
+| [`obriv`](.claude/commands/obriv.md) | Восстановление после обрыва связи: реконструировать состояние из git/PR (ground truth), проверить целостность записанных файлов, реконсилировать последнее действие, перепроверить гейты (black/isort/flake8 + pytest), продолжить нить — **не переделывая сделанное**. Кросс-проектный мандат brain (pool #021). |
+| [`distill`](.claude/commands/distill.md) | Дистилляция Корпуса классификатора в правила файла-корректировщика (из чата). |
+| [`deadcode`](.claude/commands/deadcode.md) | Ежемесячный гигиенический прогон dead-code (#036). |
+| [`discover_communities`](.claude/commands/discover_communities.md) | Подбор и нейро-классификация VK-сообществ в пул региона. |
+| [`curate`](.claude/commands/curate.md) | Shadow LLM-курация сводок (PoC). |
+
+---
+
+## Какие AI-файлы хранить в Git
+
+**Коммитить:**
+- `AGENTS.md` — этот файл, единственный источник истины по правилам;
+- `CLAUDE.md`, `GEMINI.md` — короткие адаптеры к `AGENTS.md`;
+- `.claude/commands/`, `.claude/agents/`, `.claude/settings.json` — общие памятки и командная политика разрешений;
+- `.codex/hooks.json` — общий SessionStart-хук git-sync для Codex (тот же `scripts/git_sync_check.sh`, что у Claude Code в `settings.json`);
+- `.agents/skills/` — vendor-нейтральные порты памяток;
+- `docs/`, `mailbox/`, `docs/SESSION_HANDOFF.md`.
+
+**Не коммитить:**
+- локальные разрешения и персональные настройки (`.claude/settings.local.json`);
+- кэши, сессии и планы конкретного инструмента (`.claude/*` кроме перечисленного выше, `.codex/*` кроме `hooks.json`, `.gemini/`);
+- worktrees, `.env*`, ключи, токены, логи, временные файлы.
+
+**Секреты не должны жить в репозитории даже под защитой `.gitignore`.** Их место — `/etc/setka/setka.env` на VPS (см. ниже).
 
 ---
 
@@ -124,21 +189,20 @@ Brain-мандат [#027](../brain_matrica/cross-project-ideas/ideas/027-gate-re
 
 ### GitHub — источник истины между машинами
 - Пользователь работает на **разных компьютерах** (днём один, вечером другой). GitHub (`origin`) — единственный общий источник истины. Версии разъезжаются, если работа осталась незапушенной на одной машине.
-- **Никогда не оставляй сессию с несинхронизированной работой.** Закрытие сессии = всё закоммичено и **запушено** на `origin`. Это делает `/close_session` (единственная команда закрытия) — у неё жёсткий sync-гейт `scripts/git_sync_check.sh --gate` (exit 1, пока дерево не чистое и не запушено).
-- При входе в сессию SessionStart-хук (`scripts/git_sync_check.sh --warn`, прописан в `.Codex/settings.json`, коммитится и разъезжается на все машины) предупреждает, если на этой машине осталась несинхронизированная работа или `origin` ушёл вперёд (другая машина запушила → нужен `git pull`).
-- **Естественная фраза** «закрой сессию», «закрой сессию разработки», «заверши сессию», «закрываемся» → запускать `/close_session`.
-- Авто-архивацию сессий (Codex Desktop → вкладка **Cowork** → «Classify session states») при желании отключить вручную — это UI-настройка, не ключ `settings.json`; но sync-гейт и SessionStart-хук защищают независимо от неё.
+- **Никогда не оставляй сессию с несинхронизированной работой.** Закрытие сессии = всё закоммичено и **запушено** на `origin`. Гейт — `scripts/git_sync_check.sh --gate` (exit 1, пока дерево не чистое и не запушено); его обязан прогнать любой агент перед объявлением сессии закрытой. Процедура-носитель — [`close_session`](.claude/commands/close_session.md).
+- **При входе в сессию должен отработать `scripts/git_sync_check.sh --warn`** — он предупреждает, если на этой машине осталась несинхронизированная работа или `origin` ушёл вперёд (другая машина запушила → нужен `git pull`). Скрипт vendor-neutral, способ его запуска инструмент-специфичен: Claude Code — SessionStart-хук в `.claude/settings.json`, Codex — `.codex/hooks.json`. **Агент без механизма хуков запускает скрипт первой командой сессии вручную** — требование не отменяется отсутствием хуков.
+- **Естественная фраза** «закрой сессию», «закрой сессию разработки», «заверши сессию», «закрываемся» → выполнять процедуру закрытия сессии.
 
 ### Прод-доступ — только SSH
 - Прод-хост в `~/.ssh/config` — `setka` (`/home/valstan/SETKA`).
-- **НЕ использовать MCP-серверы IDE** для деплоя/диагностики SETKA. Они путают разные VPS.
+- **Единственный признанный канал к проду — `ssh setka`. Любой другой канал удалённого выполнения запрещён**: MCP-серверы IDE, встроенные remote-exec инструменты агента, веб-консоли хостера — все они путают разные VPS. Если у агента есть свой способ «выполнить на сервере» — он не применяется к SETKA.
 - Перед любой удалённой командой убедиться, что попал в SETKA: `ssh setka 'test -f /home/valstan/SETKA/main.py && echo OK_SETKA'`.
-- Auto-mode classifier Codex блокирует SSH-команды на прод как «Production Reads» — нужно явно подтверждать через `AskUserQuestion` либо разрешать через `settings.json` для конкретной сессии.
+- Прод соседних проектов — **не наш прод**. Их серверы трогаем только через опубликованный HTTP-интерфейс, а не по SSH.
 
 ### Безопасность
-- Секреты — **только** в `/etc/setka/setka.env` на VPS. Никогда не коммитить, не писать в чат.
+- Секреты — **только** в `/etc/setka/setka.env` на VPS. Никогда не коммитить, не писать в чат, не выводить в лог.
 - VK-токены собираются по префиксу `VK_TOKEN_<NAME>` (см. `config/runtime.py`).
-- Любая destructive операция на проде (`ALTER`, `DROP`, `DELETE`, `UPDATE`, `systemctl stop`, `rm`, ротация токенов) — через `AskUserQuestion`. Это **человеческий гейт #025**, который **остаётся** даже под автономией #027 (см. [«Автономия под гейтами»](#автономия-под-гейтами-027)): префиксные `deny`-правила не различают destructive `ssh setka "..."` от read-only, поэтому черту держит поведение, а не `settings.json`.
+- Любая destructive операция на проде (`ALTER`, `DROP`, `DELETE`, `UPDATE`, `systemctl stop`, `rm`, ротация токенов) — только после явного подтверждения пользователя **в том же ходе**. Это человеческий гейт #025, который **остаётся** даже под автономией #027 (см. [«Автономия под гейтами»](#автономия-под-гейтами-027)).
 
 ### Документация
 - **Хронология изменений живёт в git** (`git log --oneline -20`) — Conventional Commits + описательное тело коммита + PR Summary заменяют старый `docs/DEV_HISTORY.md` ([ADR-0001](docs/adr/0001-archive-dev-history.md)).
@@ -148,8 +212,8 @@ Brain-мандат [#027](../brain_matrica/cross-project-ideas/ideas/027-gate-re
 - **Открытые задачи и техдолги** — в `docs/PENDING_FOLLOWUPS.md` с приоритетами 🔴⏳🟡🟢. При закрытии — удалять строку (или пометить ~~strikethrough~~ если кратко зафиксировать «закрыто в PR #N»).
 
 ### Локальная разработка
-- ОС: Windows 11, PowerShell 5.1. Bash доступен через инструмент `Bash`.
-- Worktree: `.Codex/worktrees/<имя>` на отдельной ветке.
+- ОС: Windows 11; основная оболочка — PowerShell 5.1, POSIX-скрипты гоняются через Git Bash. Это две разные среды (пути, кавычки, `NUL` vs `/dev/null`) — если у агента отдельные инструменты под каждую, не смешивай синтаксис.
+- Worktree: `.claude/worktrees/<имя>` на отдельной ветке (см. [«Git и совместная работа нескольких агентов»](#git-и-совместная-работа-нескольких-агентов)).
 - Python: `py -3.11` локально для тестов (preferred), `py -3.12` тоже OK (=прод). `scripts/setup-dev.ps1` сам выбирает 3.11 → 3.12 → дефолтный `py`. venv в корне worktree.
 - Запуск тестов: `.\venv\Scripts\python.exe -m pytest tests/ -q` (или через активированный venv).
 - **`main.py` локально** — логи идут в stderr через `logging.basicConfig` (LOG_LEVEL env, дефолт `INFO`). На проде systemd редиректит stdout/stderr в `/home/valstan/SETKA/logs/uvicorn_production.log`. Полный запуск всё равно требует Postgres + Redis локально; обычно достаточно тестов.
@@ -168,11 +232,13 @@ Conventional commits + соответствующий префикс ветки:
 
 Slug — kebab-case, описательный. Ветка удаляется после merge (`gh pr merge --delete-branch`). Force-push в feature-ветку разрешён, в `main` — никогда.
 
-Тело коммита — что и почему. В конце:
+Тело коммита — что и почему. В конце — трейлер с **именем и версией агента, которым велась работа**: каждый агент подписывается собой, трейлер фиксирует, кто реально писал.
 
 ```
-Co-Authored-By: Codex Opus 4.7 (1M context) <noreply@anthropic.com>
+Co-Authored-By: <агент и версия> <noreply@...>
 ```
+
+Например: `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 
 ---
 
@@ -200,10 +266,10 @@ ssh setka "sudo -u postgres pg_dump -Fc setka > /tmp/setka-$(date +%Y%m%d).dump"
 ## Когда что-то идёт не так
 
 - **Прод 502 / health не отвечает** → `ssh setka "journalctl -u setka -n 100 --no-pager"`. Чаще всего — `setka.service` упал, нужен `systemctl restart`.
-- **Сводки не выходят** → проверить через `/celery`: жив ли beat, нет ли регионов на cooldown, нет ли ошибок в `celery-worker.log`.
+- **Сводки не выходят** → проверить по памятке [`celery`](.claude/commands/celery.md): жив ли beat, нет ли регионов на cooldown, нет ли ошибок в `celery-worker.log`.
 - **`pytest` падает локально** → проверить, что worktree свежий (`git pull origin <ветка>`), venv обновлён (`pip install -r requirements.txt`), есть `pytest pytest-asyncio`.
-- **Миграция не применилась** → SQL-файлы в `database/migrations/*.sql`, применяются вручную через `ssh setka 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/NNN_*.sql'`. Команда `/sql` это умеет.
+- **Миграция не применилась** → SQL-файлы в `database/migrations/*.sql`, применяются вручную через `ssh setka 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/NNN_*.sql'`. Памятка [`sql`](.claude/commands/sql.md) это умеет.
 
 ---
 
-**В сомнениях — спроси пользователя через `AskUserQuestion`, не делай предположений на проде.**
+**В сомнениях — спроси пользователя и дождись ответа, не делай предположений на проде.**

@@ -126,7 +126,7 @@ gh pr list --state open --limit 20 2>/dev/null | head -20  # опц.
 Прочитай **полностью** в одном параллельном блоке:
 
 1. [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md) — sticky-note с прошлой сессии: `Status`, текущая нитка, следующий шаг, failed approaches. **Если файла нет** или `Status: IDLE` — нет активной нитки, идём по обычному onboarding. Сверь `Updated:` с датой последнего коммита — устаревшему handoff (старше последних merged PR) не доверять слепо, ground truth — `git log`.
-2. [`CLAUDE.md`](../../CLAUDE.md) — entry point, правила, lessons learned
+2. [`AGENTS.md`](../../AGENTS.md) — **канон проектных правил** (границы, git-flow, mailbox, ярусы автономии, чего не делать). `CLAUDE.md` — тонкий адаптер к нему с нюансами Claude Code, читать после и только его.
 3. [`docs/AI_DEV_GUIDE.md`](../../docs/AI_DEV_GUIDE.md) — архитектурная картина
 4. `git log --oneline -20` + `gh pr list --state merged --limit 10` — что сделано в последних сессиях (заменяет старый `DEV_HISTORY.md`, см. [ADR-0001](../../docs/adr/0001-archive-dev-history.md)). Для конкретного PR — `gh pr view <N>`.
 5. [`docs/PENDING_FOLLOWUPS.md`](../../docs/PENDING_FOLLOWUPS.md) — открытые задачи и техдолги
