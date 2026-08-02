@@ -118,6 +118,19 @@ async def register(body: RegisterIn, response: Response):
     if not hmac.compare_digest(body.invite_code, expected):
         raise HTTPException(status_code=403, detail="Неверный инвайт-код")
 
+    # Логины владельца зарезервированы и не регистрируются — ни в каком
+    # регистре. Гейт опознаёт владельца по логину в нижнем регистре
+    # (middleware/auth_gate.py::_is_owner), а уникальность login в Postgres
+    # регистрозависима: без этой проверки «VALSTAN» завёлся бы рядом с
+    # «valstan» и не дал бы 409. Гейт от такого аккаунта защищён и сам
+    # (владельческая ветка требует роль operator, а регистрация выдаёт radar),
+    # но имя владельца не должно быть занимаемым в принципе.
+    from middleware.auth_gate import OWNER_LOGINS_DEFAULT, _csv_env
+
+    if body.login.strip().lower() in _csv_env("SETKA_OWNER_LOGINS", OWNER_LOGINS_DEFAULT):
+        logger.warning("Register attempt on reserved owner login: %s", body.login)
+        raise HTTPException(status_code=409, detail="Логин занят")
+
     async with AsyncSessionLocal() as session:
         exists = (
             await session.execute(select(RadarUser.id).where(RadarUser.login == body.login))

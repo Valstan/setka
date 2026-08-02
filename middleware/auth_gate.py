@@ -5,7 +5,8 @@ Secure by default: ВСЁ приложение закрыто, кроме явн
 повесить зависимость невозможно, enforcement живёт в одном месте.
 
 Роли (директива brain 2026-06-11, решение владельца раунд 2 §1):
-- ``operator`` — весь setka (регионы/CRM/токены/мониторинг/...).
+- ``operator`` — весь setka (регионы/CRM/токены/мониторинг/...), **и только
+  для аккаунтов владельца** (заказ владельца 2026-08-02, см. ниже).
 - ``radar``    — только контент-радар (RADAR_PREFIXES) + auth-эндпоинты.
   Операторский setka для radar-юзера = 403.
 
@@ -28,10 +29,13 @@ Kill-switch: env ``WEB_AUTH_ENABLED=0`` отключает гейт целико
 /metrics — особый случай: Prometheus скрейпит с localhost; снаружи метрики
 не отдаём (оператору залогиненным — можно).
 
-Корень публичного домена сети (``сарафан.вмалмыже.рф``) для неаутентифи-
-цированного GET — не вход, а витрина: 302 на ``/regions/links`` (заказ
-владельца 2026-08-02, короткий адрес для покупателей рекламы). Оператор с
-сессией на том же хосте получает обычный дашборд.
+Владелец (заказ 2026-08-02): сайт САРАФАНА видит **только его аккаунт**, и
+только после входа через ЕСА. Роль ``operator`` сама по себе доступа больше
+не даёт — решает личность (``_is_owner``: логин или ВК-id, оба входа
+владельца обязаны работать). На домене сети ``сарафан.вмалмыже.рф``
+посторонний — хоть аноним, хоть залогиненный radar-юзер — видит ровно одну
+публичную ссылку ``/regions/links``; остальное, включая ``/services``,
+уходит за вход.
 """
 
 from __future__ import annotations
@@ -53,11 +57,6 @@ logger = logging.getLogger(__name__)
 PUBLIC_PREFIXES = (
     "/login",
     "/services",  # каталог сервисов экосистемы — публичная витрина ссылок
-    "/regions/links",  # публичный лендинг «сообщества сети + реклама» (заказ
-    # владельца 2026-07-29). ТОЛЬКО этот точный путь: префикс-матчер сравнивает
-    # p.rstrip("/") или startswith("/regions/links"), сам /regions и
-    # /regions/{code} остаются операторскими.
-    "/api/regions/vk-links",  # данные того же лендинга (read-only список групп)
     "/static/",
     "/favicon.ico",
     "/api/health",  # internal watchdogs/CI ходят на 127.0.0.1:8000 без cookie
@@ -82,11 +81,48 @@ PUBLIC_PREFIXES = (
     "/auth/vk/",
 )
 
-# Публичный домен сети и его витрина (заказ владельца 2026-08-02). Корень
-# сарафан.вмалмыже.рф — адрес «для покупателей рекламы»: он обязан открывать
-# лендинг, а не уводить неизвестного посетителя на страницу входа экосистемы.
+# Открыто без auth по ТОЧНОМУ совпадению пути (с точностью до хвостового «/»).
+# Публичный лендинг сети и его данные лежат здесь, а не в PUBLIC_PREFIXES:
+# префиксное сравнение открывало бы заодно любой будущий путь, начинающийся с
+# этих строк (`/regions/links-export` и т.п.). Пока лендинг был одной страницей
+# среди прочих, цена ошибки была мала; с 2026-08-02 это единственная публичная
+# дверь в домен, закрытый для всех, кроме владельца, — и она обязана быть узкой.
+PUBLIC_EXACT = (
+    "/regions/links",  # публичный лендинг «сообщества сети + реклама»
+    "/api/regions/vk-links",  # его же данные (read-only список групп)
+)
+
+# Публичный домен сети (сарафан.вмалмыже.рф) и единственная публичная ссылка
+# на нём. Заказ владельца 2026-08-02: сайт САРАФАНА виден только владельцу и
+# только после входа через ЕСА; посторонний получает ровно витрину рекламы.
 SARAFAN_CANONICAL_HOST_DEFAULT = "xn--80aaa6cmey.xn--80adkdyec4j.xn--p1ai"
 LANDING_PATH = "/regions/links"
+
+# Публично везде, КРОМЕ домена сети: на сарафане открыта ровно одна ссылка
+# (LANDING_PATH), остальные страницы — под входом. Каталог сервисов при этом
+# не пропадает из экосистемы: его публичная поверхность — вход.вмалмыже.рф
+# (мандат brain 2026-08-01), туда же ведут кнопки «Сервисы» с других сайтов.
+SARAFAN_CLOSED_PUBLIC = ("/services",)
+
+# Обслуживание сессии и OIDC — не «содержимое сайта», поэтому правило домена
+# сети их не глотает даже у постороннего. Иначе залогиненный чужой юзер не мог
+# бы с этого хоста выйти из сессии (403 на logout — тупик), а front-channel
+# OIDC-переход терял бы query и приезжал не туда. Дальше их всё равно судит
+# обычная ролевая логика — доступа к содержимому это не даёт.
+SARAFAN_ALLOWED_FOR_GUESTS = ("/api/auth/logout", "/api/auth/me", "/oidc/")
+
+# Аккаунты владельца — единственные, кому открыт операторский SETKA (заказ
+# владельца 2026-08-02: «внутренности сарафана видит только мой аккаунт»).
+# Роль ``operator`` сама по себе больше не пропуск: саморегистрация выдаёт
+# роль ``radar``, но роль в БД можно и поменять, а список аккаунтов — нет.
+#
+# Владелец входит ДВУМЯ путями, и оба обязаны работать, иначе он запрёт себя
+# сам: логином/паролем (аккаунт ``valstan``) и через ВКонтакте на
+# вход.вмалмыже.рф — там он приезжает своей ВК-личностью, у которой другой
+# аккаунт и роль ``radar``. Поэтому владельца опознаём по личности, а не по
+# роли: совпал логин ИЛИ ВК-id → пускаем в операторскую зону.
+OWNER_LOGINS_DEFAULT = "valstan"
+OWNER_VK_IDS_DEFAULT = "20002978"  # vk.ru/valstan_valstan, аккаунт «Валентин Савиных»
 
 # Front-channel GET-эндпоинты: в них ходят только через redirect браузера
 # (OIDC authorization endpoint). Неаутентифицированный GET сюда → ВСЕГДА 302 на
@@ -121,6 +157,12 @@ def _is_prefixed(path: str, prefixes: tuple) -> bool:
     return any(path == p.rstrip("/") or path.startswith(p) for p in prefixes)
 
 
+def _is_exact(path: str, paths: tuple) -> bool:
+    """Точное совпадение пути, с точностью до хвостового «/» (см. PUBLIC_EXACT)."""
+    normalized = path.rstrip("/") or "/"
+    return any(normalized == p.rstrip("/") for p in paths)
+
+
 def _wants_html(request: Request) -> bool:
     return "text/html" in request.headers.get("accept", "")
 
@@ -149,6 +191,22 @@ def _on_radar_host(request: Request) -> bool:
         return False
 
 
+def _radar_canonical_url(request: Request) -> Optional[str]:
+    """Абсолютный адрес Радара на его домене — или ``None``, если он не настроен.
+
+    Нужен, чтобы radar-юзера, забредшего на домен САРАФАНА, отправить домой,
+    а не на витрину рекламы. Кука общая на ``.вмалмыже.рф`` — сессия переезд
+    переживает.
+    """
+    try:
+        from modules.radar_id.vk_upstream import radar_canonical_redirect
+
+        return radar_canonical_redirect(request.url.hostname)
+    except Exception:  # noqa: BLE001 - косметика маршрутизации не роняет гейт
+        logger.warning("AuthGate: radar canonical resolve failed", exc_info=True)
+        return None
+
+
 def _on_sarafan_host(request: Request) -> bool:
     """Запрос пришёл на публичный домен сети (сарафан.вмалмыже.рф)?
 
@@ -159,6 +217,49 @@ def _on_sarafan_host(request: Request) -> bool:
     canonical = _idna(os.getenv("SARAFAN_CANONICAL_HOST", SARAFAN_CANONICAL_HOST_DEFAULT))
     host = _idna(request.url.hostname or "")
     return bool(canonical and host and host == canonical)
+
+
+def _csv_env(name: str, default: str) -> frozenset:
+    """Множество значений из env-списка через запятую, в нижнем регистре.
+
+    Пустая или пробельная переменная = «не задано» → берём дефолт. Это не
+    придирка: пустой ``SETKA_OWNER_LOGINS=`` в `/etc/setka/setka.env` иначе
+    означал бы «владельцев нет вообще» и запер бы владельца снаружи своего же
+    сайта. Отключать правило пустым значением нельзя — только сменить состав.
+    """
+    raw = (os.getenv(name) or "").strip() or default
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
+def _is_owner(user) -> bool:
+    """Аккаунт владельца? Опознаём по логину ИЛИ по ВК-id (см. константы выше).
+
+    Оба идентификатора необязательны у конкретного аккаунта: у ВК-входа логин
+    пустой, у парольного аккаунта нет ``vk_user_id``. Совпадения по пустому
+    значению быть не должно — отсюда явные проверки на непустоту.
+
+    ⚠️ Логин-ветка ДОПОЛНИТЕЛЬНО требует роль ``operator``, и это не
+    перестраховка. Логин выбирает тот, кто регистрируется: ``POST
+    /api/auth/register`` публичен, инвайт-код по решению владельца роздан
+    соседним проектам, а проверка занятости логина в Postgres регистро-
+    зависима — значит «VALSTAN» заводится рядом с «valstan» и без этой
+    проверки роли прошёл бы сюда как владелец. Роль же публичная регистрация
+    жёстко ставит ``radar`` (web/api/auth.py), поднять её можно только с бокса
+    (``scripts/create_radar_user.py --role operator``). ВК-ветке такая защита
+    не нужна: ``vk_user_id`` приезжает от ВКонтакте, пользователь его не
+    выбирает — поэтому владелец, вошедший через ВК с ролью ``radar``, проходит.
+    """
+    login = (getattr(user, "login", None) or "").strip().lower()
+    if (
+        login
+        and getattr(user, "role", "") == "operator"
+        and login in _csv_env("SETKA_OWNER_LOGINS", OWNER_LOGINS_DEFAULT)
+    ):
+        return True
+    vk_id = getattr(user, "vk_user_id", None)
+    if vk_id is not None and str(vk_id).strip():
+        return str(vk_id).strip().lower() in _csv_env("SETKA_OWNER_VK_IDS", OWNER_VK_IDS_DEFAULT)
+    return False
 
 
 def _login_redirect(request: Request, next_url: str) -> str:
@@ -208,7 +309,12 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
 
         path = request.url.path
 
-        if _is_prefixed(path, PUBLIC_PREFIXES):
+        on_sarafan = _on_sarafan_host(request)
+        if _is_exact(path, PUBLIC_EXACT):
+            return await call_next(request)
+        if _is_prefixed(path, PUBLIC_PREFIXES) and not (
+            on_sarafan and _is_prefixed(path, SARAFAN_CLOSED_PUBLIC)
+        ):
             return await call_next(request)
 
         # Prometheus скрейпит /metrics с localhost — пускаем без cookie.
@@ -217,12 +323,6 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
 
         user = await self._authenticate(request)
         if user is None:
-            # Корень публичного домена сети для постороннего = витрина, не вход.
-            # Покупателю рекламы дают короткий адрес «сарафан.вмалмыже.рф», и
-            # страница входа экосистемы на нём выглядит как «сюда нельзя».
-            # Оператор с сессией на том же хосте по-прежнему видит дашборд.
-            if request.method == "GET" and path == "/" and _on_sarafan_host(request):
-                return RedirectResponse(LANDING_PATH, status_code=302)
             # Редирект на login для браузерного GET, а также для front-channel
             # GET-путей (OIDC authorize) даже без браузерного Accept — они
             # достижимы только через redirect user-agent'а, 401 там бессмыслен.
@@ -239,8 +339,23 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
         request.state.user = user
-        if user.role == "operator":
+
+        # Владелец — единственный, кому открыт сайт САРАФАНА; его личность
+        # старше роли (ВК-вход даёт ему аккаунт с ролью radar, см. _is_owner).
+        if _is_owner(user):
             return await call_next(request)
+
+        # Дальше — все, кто НЕ владелец. На домене сети им не видно ничего,
+        # кроме витрины: заказ владельца 2026-08-02. Роль radar своей зоной
+        # пользуется на своём домене (радар.вмалмыже.рф), туда и отправляем.
+        if on_sarafan and not _is_prefixed(path, SARAFAN_ALLOWED_FOR_GUESTS):
+            if request.method == "GET" and _wants_html(request):
+                target = None
+                if user.role == "radar":
+                    target = _radar_canonical_url(request)
+                return RedirectResponse(target or LANDING_PATH, status_code=302)
+            return JSONResponse({"detail": "Forbidden on this host"}, status_code=403)
+
         if user.role == "radar" and (
             _is_prefixed(path, RADAR_PREFIXES) or (path == "/" and _on_radar_host(request))
         ):
@@ -248,7 +363,9 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             # для radar-роли «/» там своя зона, а не операторский дашборд.
             return await call_next(request)
 
-        # Аутентифицирован, но зона не его: radar-юзер в операторском setka.
+        # Аутентифицирован, но зона не его: не-владелец в операторском setka
+        # (роль radar — обычный случай; роль operator без владельческого
+        # аккаунта — тоже сюда, роль сама по себе доступа больше не даёт).
         if _wants_html(request) and request.method == "GET":
             return RedirectResponse("/" if _on_radar_host(request) else "/radar", status_code=302)
         return JSONResponse({"detail": "Forbidden for this role"}, status_code=403)

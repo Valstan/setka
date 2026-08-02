@@ -182,3 +182,28 @@ def test_register_in_validates_login_charset():
 def test_register_in_requires_min_password():
     with pytest.raises(Exception):
         auth_api.RegisterIn(login="okname", password="short", invite_code="x")
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_owner_login_in_any_case(monkeypatch):
+    """Логин владельца зарезервирован — «VALSTAN» не заводится рядом с «valstan».
+
+    Уникальность login в Postgres регистрозависима, а гейт опознаёт владельца
+    по логину в нижнем регистре: без этой проверки держатель инвайт-кода завёл
+    бы себе имя владельца и обошёл бы заказ «внутренности видит только мой
+    аккаунт». Второй замок — роль в `_is_owner`, но занимать имя нельзя вовсе.
+    """
+    monkeypatch.setenv("RADAR_INVITE_CODE", "right-code")
+    monkeypatch.setenv("SETKA_OWNER_LOGINS", "valstan")
+    fake = _FakeSession(scalar_result=None)  # в БД логин свободен
+    with patch.object(auth_api, "AsyncSessionLocal", lambda: fake):
+        for attempt in ("VALSTAN", "Valstan", "valstan"):
+            with pytest.raises(HTTPException) as exc:
+                await auth_api.register(
+                    auth_api.RegisterIn(
+                        login=attempt, password="12345678", invite_code="right-code"
+                    ),
+                    Response(),
+                )
+            assert exc.value.status_code == 409
+    assert not fake.added, "ни одна попытка не должна была дойти до вставки"
