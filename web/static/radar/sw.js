@@ -1,8 +1,18 @@
 /* Service worker Радара: оболочка PWA + сетевой приоритет (Ф0.4) +
  * web-push (Ф0.5). Контент всегда свежий (network-first), офлайн отдаём
  * закэшированную оболочку страницы. */
-const CACHE = 'radar-shell-v5';
-const SHELL = ['/radar'];
+/* Оболочка = корень своего scope, а не жёсткий '/radar'.
+ *
+ * На радар.вмалмыже.рф Радар живёт на КОРНЕ (переезд 2026-07-26), и SW там
+ * регистрируется со scope '/'. Прежний жёсткий '/radar' на этом хосте отдавал
+ * редирект 302 на '/', а Cache API по спеку отказывается класть redirected-ответ
+ * — install падал целиком, SW не активировался, и вместе с ним молча умирали
+ * офлайн-оболочка и web-push (`navigator.serviceWorker.ready` не резолвится
+ * никогда). До 2026-08-02 это было не видно вовсе: на голом http SW не
+ * регистрируется, а включение https дефект расконсервировало. */
+const SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/$/, '') || '/';
+const CACHE = 'radar-shell-v6';
+const SHELL = [SCOPE_PATH];
 
 self.addEventListener('install', (event) => {
     event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -47,9 +57,9 @@ self.addEventListener('notificationclick', (event) => {
 
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
-    // Кэшируем только GET оболочки /radar; API и медиа — всегда сеть.
+    // Кэшируем только GET самой оболочки (корень scope); API и медиа — всегда сеть.
     if (event.request.method !== 'GET' || url.pathname.startsWith('/api/')) return;
-    if (url.pathname === '/radar') {
+    if ((url.pathname.replace(/\/$/, '') || '/') === SCOPE_PATH) {
         event.respondWith(
             fetch(event.request)
                 .then((resp) => {

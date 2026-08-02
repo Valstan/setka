@@ -255,6 +255,15 @@ async def vk_login(request: Request, next: str = "/radar"):  # noqa: A002 - quer
         httponly=True,
         samesite="lax",  # cookie должна вернуться на top-level redirect от VK
         secure=os.getenv("SESSION_COOKIE_SECURE", "1") == "1",
+        # Кука обязана пережить переезд между поддоменами: вход можно начать с
+        # радара или сарафана (кнопка «Войти через ВК» относительная), а
+        # callback по устройству единого входа ВСЕГДА приземляется на issuer.
+        # Host-only кука туда не отправлялась, и первая попытка после каждого
+        # выхода честно падала в «Сессия ВК-входа истекла или state не совпал» —
+        # особенно больно ВК-only аккаунтам, у которых пароля нет вовсе.
+        # Расширение домена ничего не ослабляет: blob подписан HMAC и живёт
+        # 10 минут (modules/radar_id/vk_upstream.py).
+        domain=os.getenv("SESSION_COOKIE_DOMAIN") or None,
     )
     return resp
 
@@ -300,7 +309,11 @@ async def vk_callback(
     except vk_upstream.VkUpstreamError as e:
         return _fail(str(e))
 
-    resp.delete_cookie(vk_upstream.OAUTH_STATE_COOKIE)
+    # domain обязан совпасть с тем, на который куку ставили (см. vk_login),
+    # иначе браузер удалит не ту куку, а исходная доживёт свои 10 минут.
+    resp.delete_cookie(
+        vk_upstream.OAUTH_STATE_COOKIE, domain=os.getenv("SESSION_COOKIE_DOMAIN") or None
+    )
     return resp
 
 
