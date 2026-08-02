@@ -382,7 +382,9 @@ def test_sarafan_radar_user_is_sent_to_radar_host(monkeypatch):
     resp = client.get("/radar", headers={"Accept": "text/html"}, follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers["location"] == f"https://{_RADAR_HOST}/"
-    assert client.get("/api/radar/sources").status_code == 403
+    # Операторский API этому гостю закрыт; его собственная зона /api/radar/ —
+    # наоборот, открыта намеренно (см. test_radar_data_reachable_from_old_...).
+    assert client.get("/api/regions").status_code == 403
 
 
 def test_radar_user_keeps_own_host(monkeypatch):
@@ -601,3 +603,58 @@ def test_kill_switch_opens_everything_documented(monkeypatch):
     monkeypatch.setenv("WEB_AUTH_ENABLED", "0")
     client = _sarafan_client(_SARAFAN_HOST)
     assert client.get("/").status_code == 200
+
+
+def test_service_worker_is_public_on_radar_host():
+    """`/sw.js` публичен: под ролевым гейтом он отдавал 403 своим же юзерам.
+
+    Браузер перепроверяет service worker фоновым запросом, в том числе с
+    протухшей сессией, и запрос идёт без `Accept: text/html` — то есть даже
+    редиректа на вход не получалось, сразу 403. Следствия были неочевидные:
+    PWA не ставилось, офлайна не было, а web-push молча подвисал на
+    `navigator.serviceWorker.ready`, показав при этом кнопку-колокольчик.
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.add_middleware(AuthGateMiddleware, user_loader=_loader)
+
+    @app.get("/sw.js")
+    async def service_worker():
+        return {"file": "sw"}
+
+    for host in (_RADAR_HOST, _SARAFAN_HOST, _TECH_HOST):
+        client = TestClient(app, base_url=f"https://{host}")
+        assert client.get("/sw.js").status_code == 200, host
+
+
+def test_radar_data_reachable_from_old_sarafan_address(monkeypatch):
+    """Лента Радара — зона гостя, а не содержимое САРАФАНА.
+
+    Установленные PWA помнят старый адрес `сарафан.вмалмыже.рф/radar` (до
+    переезда 26.07): оболочка поднимается из кэша service worker'а, и её
+    запросы данных не должны упираться в 403. Страницы при этом по-прежнему
+    уводят гостя на его домен — редирект про навигацию, не про XHR.
+    """
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.add_middleware(AuthGateMiddleware, user_loader=_loader)
+
+    @app.get("/api/radar/feed")
+    async def feed():
+        return {"items": []}
+
+    @app.get("/radar")
+    async def radar_page():
+        return {"page": "radar"}
+
+    client = TestClient(app, base_url=f"https://{_SARAFAN_HOST}")
+    client.cookies.update(_cookie_for(RADAR))
+    assert client.get("/api/radar/feed").status_code == 200
+    page = client.get("/radar", headers={"Accept": "text/html"}, follow_redirects=False)
+    assert page.status_code == 302
+    assert page.headers["location"] == f"https://{_RADAR_HOST}/"
