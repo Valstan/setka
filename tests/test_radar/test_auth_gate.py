@@ -249,3 +249,67 @@ def test_no_cookie_domain_keeps_local_login(monkeypatch):
     )
     assert resp.status_code == 302
     assert resp.headers["location"].startswith("/login?next=")
+
+
+# ─── Корень публичного домена сети (сарафан.вмалмыже.рф) ─────────
+
+_SARAFAN_HOST = "xn--80aaa6cmey.xn--80adkdyec4j.xn--p1ai"  # сарафан.вмалмыже.рф
+
+
+def _sarafan_client(host: str):
+    """Мини-приложение с корнем и лендингом на заданном хосте."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.add_middleware(AuthGateMiddleware, user_loader=_loader)
+
+    @app.get("/")
+    async def dashboard():
+        return {"page": "dashboard"}
+
+    @app.get("/regions/links")
+    async def landing():
+        return {"page": "landing"}
+
+    @app.get("/api/regions")
+    async def regions():
+        return {"operator": "zone"}
+
+    return TestClient(app, base_url=f"https://{host}")
+
+
+def test_sarafan_root_shows_landing_to_anonymous(monkeypatch):
+    """Покупатель рекламы на сарафан.вмалмыже.рф видит витрину, а не вход."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    resp = _sarafan_client(_SARAFAN_HOST).get(
+        "/", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/regions/links"
+
+
+def test_sarafan_root_keeps_dashboard_for_operator(monkeypatch):
+    """Оператор с сессией на том же хосте по-прежнему получает дашборд."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    client = _sarafan_client(_SARAFAN_HOST)
+    client.cookies.update(_cookie_for(OPERATOR))
+    resp = client.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
+    assert resp.status_code == 200
+    assert resp.json() == {"page": "dashboard"}
+
+
+def test_sarafan_host_does_not_open_operator_api(monkeypatch):
+    """Публичен только корень — операторский API на этом хосте закрыт как раньше."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    assert _sarafan_client(_SARAFAN_HOST).get("/api/regions").status_code == 401
+
+
+def test_other_host_root_still_goes_to_login(monkeypatch):
+    """На техдомене и прочих хостах корень остаётся операторским входом."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    resp = _sarafan_client("3931b3fe50ab.vps.myjino.ru").get(
+        "/", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"].startswith("/login?next=")

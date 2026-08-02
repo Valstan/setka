@@ -27,6 +27,11 @@ Kill-switch: env ``WEB_AUTH_ENABLED=0`` отключает гейт целико
 
 /metrics — особый случай: Prometheus скрейпит с localhost; снаружи метрики
 не отдаём (оператору залогиненным — можно).
+
+Корень публичного домена сети (``сарафан.вмалмыже.рф``) для неаутентифи-
+цированного GET — не вход, а витрина: 302 на ``/regions/links`` (заказ
+владельца 2026-08-02, короткий адрес для покупателей рекламы). Оператор с
+сессией на том же хосте получает обычный дашборд.
 """
 
 from __future__ import annotations
@@ -76,6 +81,12 @@ PUBLIC_PREFIXES = (
     # ВК-вход Радар-ID: пользователь ещё НЕ аутентифицирован (это и есть вход).
     "/auth/vk/",
 )
+
+# Публичный домен сети и его витрина (заказ владельца 2026-08-02). Корень
+# сарафан.вмалмыже.рф — адрес «для покупателей рекламы»: он обязан открывать
+# лендинг, а не уводить неизвестного посетителя на страницу входа экосистемы.
+SARAFAN_CANONICAL_HOST_DEFAULT = "xn--80aaa6cmey.xn--80adkdyec4j.xn--p1ai"
+LANDING_PATH = "/regions/links"
 
 # Front-channel GET-эндпоинты: в них ходят только через redirect браузера
 # (OIDC authorization endpoint). Неаутентифицированный GET сюда → ВСЕГДА 302 на
@@ -138,6 +149,18 @@ def _on_radar_host(request: Request) -> bool:
         return False
 
 
+def _on_sarafan_host(request: Request) -> bool:
+    """Запрос пришёл на публичный домен сети (сарафан.вмалмыже.рф)?
+
+    Сравнение — в punycode: кириллический хост и его ASCII-форма это одно имя.
+    Переопределяется env ``SARAFAN_CANONICAL_HOST`` (пустое значение выключает
+    поведение — например, если домен когда-нибудь сменится).
+    """
+    canonical = _idna(os.getenv("SARAFAN_CANONICAL_HOST", SARAFAN_CANONICAL_HOST_DEFAULT))
+    host = _idna(request.url.hostname or "")
+    return bool(canonical and host and host == canonical)
+
+
 def _login_redirect(request: Request, next_url: str) -> str:
     """URL страницы входа для неаутентифицированного браузерного GET.
 
@@ -194,6 +217,12 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
 
         user = await self._authenticate(request)
         if user is None:
+            # Корень публичного домена сети для постороннего = витрина, не вход.
+            # Покупателю рекламы дают короткий адрес «сарафан.вмалмыже.рф», и
+            # страница входа экосистемы на нём выглядит как «сюда нельзя».
+            # Оператор с сессией на том же хосте по-прежнему видит дашборд.
+            if request.method == "GET" and path == "/" and _on_sarafan_host(request):
+                return RedirectResponse(LANDING_PATH, status_code=302)
             # Редирект на login для браузерного GET, а также для front-channel
             # GET-путей (OIDC authorize) даже без браузерного Accept — они
             # достижимы только через redirect user-agent'а, 401 там бессмыслен.
