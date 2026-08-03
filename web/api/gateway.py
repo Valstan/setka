@@ -32,7 +32,6 @@ Auth-гейт приложения (session-cookie) шлюз НЕ трогает
 from __future__ import annotations
 
 import asyncio
-import hmac
 import logging
 import time
 from typing import Any, Dict, Optional
@@ -65,7 +64,8 @@ async def require_api_key(
 ) -> str:
     """Проверить API-ключ; вернуть ИМЯ проекта (для квоты/логов).
 
-    401 при отсутствии или несовпадении. Сравнение constant-time
+    401 при отсутствии или несовпадении. Ключ ищется по SHA-256 (в БД самого
+    значения нет — миграции 074/075), сравнение constant-time
     (``hmac.compare_digest``). Секрет в логи не попадает.
 
     Логирование отказов (v2, страница статистики): **переданный, но неверный**
@@ -76,12 +76,11 @@ async def require_api_key(
     """
     if not x_api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key")
-    from modules.gateway.keys import get_effective_gateway_keys
+    from modules.gateway.keys import resolve_gateway_key_name
 
-    keys = await get_effective_gateway_keys()
-    for name, secret in keys.items():
-        if secret and hmac.compare_digest(x_api_key, secret):
-            return name
+    name = await resolve_gateway_key_name(x_api_key)
+    if name:
+        return name
     logger.warning("gateway: rejected request with unknown API key")
     from modules.gateway.usage import record_request
 

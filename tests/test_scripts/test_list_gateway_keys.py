@@ -46,6 +46,7 @@ DB_KEYS = [
         "is_active": True,
         "created_at": datetime(2026, 7, 13, 10, 30),
         "rotated_at": None,
+        "prefix": "abc123",
         "note": "портал вМалмыже",
     },
     {
@@ -69,6 +70,12 @@ class TestBuildRows:
     def test_key_present_in_both_db_and_env_is_marked(self):
         rows = {r["name"]: r for r in build_rows(DB_KEYS, ["vmalmyzhe"], {})}
         assert rows["VMALMYZHE"]["source"] == "db+env"
+
+    def test_prefix_identifies_the_key_without_revealing_it(self):
+        """После 074/075 значения нет — опознание идёт по началу ключа."""
+        rows = {r["name"]: r for r in build_rows(DB_KEYS, [], {})}
+        assert rows["VMALMYZHE"]["prefix"] == "abc123"
+        assert rows["KAZANSKAYA"]["prefix"] == "—"  # запись старше миграции 074
 
     def test_env_only_key_is_not_hidden(self):
         """Шлюз принимает env-ключ без записи в БД — перечень обязан его показать."""

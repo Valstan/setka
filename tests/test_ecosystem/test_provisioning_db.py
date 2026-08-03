@@ -23,6 +23,7 @@ from modules.ecosystem.provisioning import (
     provision_gateway_key,
     provision_oidc_client,
 )
+from modules.gateway.keys import gateway_secret_prefix, hash_gateway_secret
 from modules.radar.auth import hash_password
 
 PORTAL_URI = "https://xn--80adkdyec4j.xn--p1ai/auth/esa/callback"
@@ -71,8 +72,14 @@ def _client_row(secret="right-secret", active=True):
 
 
 def _key_row(secret="right-key", active=True):
-    row = GatewayKey(name="KAZANSKAYA", secret=secret, is_active=active, note=None)
-    return row
+    """Строка ключа после миграций 074/075: хранится хэш, не значение."""
+    return GatewayKey(
+        name="KAZANSKAYA",
+        secret_sha256=hash_gateway_secret(secret),
+        secret_prefix=gateway_secret_prefix(secret),
+        is_active=active,
+        note=None,
+    )
 
 
 async def _register(row, **kwargs):

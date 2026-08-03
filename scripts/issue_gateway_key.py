@@ -12,6 +12,10 @@
 ``GATEWAY_KEY_<PROJECT>`` — только bootstrap-fallback. Рестарт web НЕ нужен:
 шлюз читает ключи из БД на каждом запросе.
 
+С миграций 074/075 в БД хранится **только хэш** секрета: потерянный ключ
+нельзя подсмотреть, его можно лишь ротировать (``--rotate``) — и новый
+показывается один раз здесь же.
+
 Usage (на хосте setka, под env приложения):
     python scripts/issue_gateway_key.py KAZANSKAYA --note "письмо brain 2026-07-12"
     python scripts/issue_gateway_key.py KAZANSKAYA --rotate     # новый секрет
@@ -56,6 +60,7 @@ async def _import_env() -> int:
     from database import models  # noqa: F401 — конфигурация мапперов
     from database.connection import AsyncSessionLocal
     from database.models import GatewayKey
+    from modules.gateway.keys import gateway_secret_prefix, hash_gateway_secret
 
     env_keys = get_env_gateway_keys()
     if not env_keys:
@@ -67,7 +72,16 @@ async def _import_env() -> int:
         for name, secret in sorted(env_keys.items()):
             if name in existing or not secret:
                 continue
-            session.add(GatewayKey(name=name, secret=secret, note="imported from env"))
+            # В БД кладём только хэш (мандат brain 2026-08-01) — значение
+            # остаётся в env, откуда его сюда и принесли.
+            session.add(
+                GatewayKey(
+                    name=name,
+                    secret_sha256=hash_gateway_secret(secret),
+                    secret_prefix=gateway_secret_prefix(secret),
+                    note="imported from env",
+                )
+            )
             imported.append(name)
         await session.commit()
     for name in imported:
