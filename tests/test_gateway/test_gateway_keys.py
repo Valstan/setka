@@ -4,6 +4,10 @@
 Семантика merge — как у vk_tokens (#336): БД главнее env при совпадении
 имени; выключенный в БД ключ env НЕ воскрешает; env — bootstrap для имён,
 которых в БД нет; недоступная БД → чистый env (аварийный fallback).
+
+С миграций 074/075 (мандат brain 2026-08-01) в БД лежит **только SHA-256**
+секрета: проверка идёт по хэшу, само значение у нас не хранится. Поэтому
+строки в моках задают ``secret_sha256``, а не ``secret``.
 """
 
 from contextlib import asynccontextmanager
@@ -34,18 +38,49 @@ def _db_with_rows(rows):
 
 
 def _row(name, secret, active=True):
-    return SimpleNamespace(name=name, secret=secret, is_active=active)
+    """Строка БД так, как она выглядит после 074: хэш вместо значения."""
+    return SimpleNamespace(
+        name=name,
+        secret_sha256=gwkeys.hash_gateway_secret(secret),
+        secret_prefix=gwkeys.gateway_secret_prefix(secret),
+        is_active=active,
+    )
+
+
+# --- хэш вместо plaintext -------------------------------------------------
+class TestSecretHashing:
+    def test_hash_is_stable_and_hex_sha256(self):
+        h = gwkeys.hash_gateway_secret("abc")
+        assert h == gwkeys.hash_gateway_secret("abc")
+        assert len(h) == 64 and all(c in "0123456789abcdef" for c in h)
+
+    def test_hash_does_not_contain_the_secret(self):
+        assert "super-secret" not in gwkeys.hash_gateway_secret("super-secret")
+
+    def test_prefix_is_short_head_of_the_secret(self):
+        assert gwkeys.gateway_secret_prefix("abcdefghij") == "abcdef"
 
 
 # --- merge-семантика БД поверх env ---------------------------------------
 @pytest.mark.asyncio
-async def test_db_overrides_env_value(monkeypatch):
+async def test_db_key_resolves_by_hash(monkeypatch):
+    monkeypatch.delenv("GATEWAY_KEY_ALPHA", raising=False)
+    with patch(
+        "database.connection.AsyncSessionLocal", _db_with_rows([_row("ALPHA", "db-secret")])
+    ):
+        assert await gwkeys.resolve_gateway_key_name("db-secret") == "ALPHA"
+        assert await gwkeys.resolve_gateway_key_name("wrong") is None
+
+
+@pytest.mark.asyncio
+async def test_db_value_wins_over_env_for_same_name(monkeypatch):
+    """У имени есть строка в БД → env-значение этого имени не принимается."""
     monkeypatch.setenv("GATEWAY_KEY_ALPHA", "env-secret")
     with patch(
         "database.connection.AsyncSessionLocal", _db_with_rows([_row("ALPHA", "db-secret")])
     ):
-        keys = await gwkeys.get_effective_gateway_keys()
-    assert keys["ALPHA"] == "db-secret"
+        assert await gwkeys.resolve_gateway_key_name("db-secret") == "ALPHA"
+        assert await gwkeys.resolve_gateway_key_name("env-secret") is None
 
 
 @pytest.mark.asyncio
@@ -55,8 +90,8 @@ async def test_db_disabled_not_resurrected_by_env(monkeypatch):
         "database.connection.AsyncSessionLocal",
         _db_with_rows([_row("ALPHA", "db-secret", active=False)]),
     ):
-        keys = await gwkeys.get_effective_gateway_keys()
-    assert "ALPHA" not in keys
+        assert await gwkeys.resolve_gateway_key_name("db-secret") is None
+        assert await gwkeys.resolve_gateway_key_name("env-secret") is None
 
 
 @pytest.mark.asyncio
@@ -65,8 +100,7 @@ async def test_env_bootstrap_for_names_missing_in_db(monkeypatch):
     with patch(
         "database.connection.AsyncSessionLocal", _db_with_rows([_row("ALPHA", "db-secret")])
     ):
-        keys = await gwkeys.get_effective_gateway_keys()
-    assert keys == {"ALPHA": "db-secret", "BETA": "env-secret"}
+        assert await gwkeys.resolve_gateway_key_name("env-secret") == "BETA"
 
 
 @pytest.mark.asyncio
@@ -79,8 +113,23 @@ async def test_db_failure_falls_back_to_env(monkeypatch):
         yield  # pragma: no cover
 
     with patch("database.connection.AsyncSessionLocal", _boom):
-        keys = await gwkeys.get_effective_gateway_keys()
-    assert keys == {"GAMMA": "env-secret"}
+        assert await gwkeys.resolve_gateway_key_name("env-secret") == "GAMMA"
+
+
+@pytest.mark.asyncio
+async def test_empty_key_never_matches(monkeypatch):
+    monkeypatch.setenv("GATEWAY_KEY_DELTA", "")
+    with patch("database.connection.AsyncSessionLocal", _db_with_rows([])):
+        assert await gwkeys.resolve_gateway_key_name("") is None
+
+
+@pytest.mark.asyncio
+async def test_row_without_hash_is_skipped(monkeypatch):
+    """Строка, не прошедшая backfill 074, не должна авторизовать никого."""
+    monkeypatch.delenv("GATEWAY_KEY_OLD", raising=False)
+    stale = SimpleNamespace(name="OLD", secret_sha256=None, secret_prefix=None, is_active=True)
+    with patch("database.connection.AsyncSessionLocal", _db_with_rows([stale])):
+        assert await gwkeys.resolve_gateway_key_name("whatever") is None
 
 
 # --- auth шлюза через БД-ключ --------------------------------------------
@@ -108,6 +157,20 @@ def test_auth_accepts_db_key(client, monkeypatch):
         )
     assert r.status_code == 200
     assert r.json()["ok"] is True
+
+
+def test_auth_rejects_wrong_key(client, monkeypatch):
+    monkeypatch.delenv("GATEWAY_KEY_DBPROJ", raising=False)
+    with (
+        patch("database.connection.AsyncSessionLocal", _db_with_rows([_row("DBPROJ", "db-key")])),
+        patch("modules.gateway.usage.record_request", AsyncMock()),
+    ):
+        r = client.post(
+            "/api/gateway/call",
+            json={"method": "wall.get", "params": {}},
+            headers={"X-API-Key": "not-the-key"},
+        )
+    assert r.status_code == 401
 
 
 # --- агрегатный бюджет шлюза ----------------------------------------------

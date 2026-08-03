@@ -38,6 +38,10 @@ Usage (на хосте setka, под env приложения):
 - ``db+env`` — есть в обоих (значения могут различаться: при совпадении имени
   главнее БД, см. ``modules/gateway/keys.py``).
 
+Колонка ``prefix`` — первые символы самого ключа (миграции 074/075): значения
+у нас больше нет, но опознать «тот ли это ключ, что у потребителя» по началу
+строки можно. У env-ключей и у записей, заведённых до 074, там прочерк.
+
 Колонка ``last_used`` считается по ``gateway_requests`` и **не включает**
 события выдачи ключа (``endpoint='issue-key'``): выдача — действие оператора,
 а не потребителя, и засчитывать её за использование значило бы снова показывать
@@ -93,6 +97,7 @@ def build_rows(
                 "is_active": bool(key["is_active"]),
                 "created_at": key.get("created_at"),
                 "rotated_at": key.get("rotated_at"),
+                "prefix": key.get("prefix") or "—",
                 "last_used": stat.get("last_used"),
                 "calls": int(stat.get("calls") or 0),
                 "note": key.get("note") or "",
@@ -107,6 +112,7 @@ def build_rows(
                 "is_active": True,  # env-ключ шлюз принимает, пока не заведён в БД
                 "created_at": None,
                 "rotated_at": None,
+                "prefix": "—",
                 "last_used": stat.get("last_used"),
                 "calls": int(stat.get("calls") or 0),
                 "note": "только в env (bootstrap-fallback, в БД записи нет)",
@@ -123,7 +129,7 @@ def render(rows: List[Dict[str, Any]], fmt: str, retention_days: int) -> str:
             "retention_days": retention_days,
             "keys": [
                 {
-                    **{k: r[k] for k in ("name", "source", "is_active", "calls")},
+                    **{k: r[k] for k in ("name", "source", "is_active", "prefix", "calls")},
                     "created_at": r["created_at"].isoformat() if r["created_at"] else None,
                     "rotated_at": r["rotated_at"].isoformat() if r["rotated_at"] else None,
                     "last_used": r["last_used"].isoformat() if r["last_used"] else None,
@@ -142,6 +148,7 @@ def render(rows: List[Dict[str, Any]], fmt: str, retention_days: int) -> str:
             r["name"],
             r["source"],
             "да" if r["is_active"] else "НЕТ",
+            r.get("prefix") or "—",
             _fmt_dt(r["created_at"]),
             _fmt_dt(r["rotated_at"]),
             _fmt_dt(r["last_used"]),
@@ -149,7 +156,7 @@ def render(rows: List[Dict[str, Any]], fmt: str, retention_days: int) -> str:
         ]
         for r in rows
     ]
-    titles = ["name", "source", "active", "created", "rotated", "last_used", "calls"]
+    titles = ["name", "source", "active", "prefix", "created", "rotated", "last_used", "calls"]
 
     if fmt == "md":
         lines = [header, ""]
@@ -186,6 +193,7 @@ async def _load(
             GatewayKey.is_active,
             GatewayKey.created_at,
             GatewayKey.rotated_at,
+            GatewayKey.secret_prefix,
             GatewayKey.note,
         )
         if active_only:
@@ -196,6 +204,7 @@ async def _load(
                 "is_active": row.is_active,
                 "created_at": row.created_at,
                 "rotated_at": row.rotated_at,
+                "prefix": row.secret_prefix,
                 "note": row.note,
             }
             for row in (await session.execute(stmt)).all()

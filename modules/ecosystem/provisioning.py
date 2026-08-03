@@ -17,8 +17,11 @@
 409, и дальше либо владелец записи, либо оператор через CLI. У CLI такого
 ограничения нет: там root на хосте, он и так может всё.
 
-Секрет показывается ОДИН раз (у OIDC-клиента в БД лежит scrypt-hash, у ключа
-шлюза — plaintext, как у ``vk_tokens``; БД root-only).
+Секрет показывается ОДИН раз, и в БД его нет ни у одного из каналов:
+у OIDC-клиента лежит scrypt-hash пароля, у ключа шлюза — SHA-256
+(миграции 074/075, мандат brain 2026-08-01; почему разные алгоритмы —
+в докстринге ``modules/gateway/keys.py``). Потерянный секрет не
+восстанавливается, а ротируется.
 """
 
 from __future__ import annotations
@@ -360,6 +363,7 @@ async def provision_gateway_key(
     from database import models  # noqa: F401 — конфигурация мапперов
     from database.connection import AsyncSessionLocal
     from database.models import GatewayKey
+    from modules.gateway.keys import gateway_secret_prefix, hash_gateway_secret
     from modules.gateway.usage import record_request
 
     name = validate_project_name(project)
@@ -373,7 +377,11 @@ async def provision_gateway_key(
         if row is None:
             secret_plain = secrets.token_urlsafe(32)
             row = GatewayKey(
-                name=name, secret=secret_plain, is_active=set_active is not False, note=note
+                name=name,
+                secret_sha256=hash_gateway_secret(secret_plain),
+                secret_prefix=gateway_secret_prefix(secret_plain),
+                is_active=set_active is not False,
+                note=note,
             )
             session.add(row)
             action = "created"
@@ -385,13 +393,14 @@ async def provision_gateway_key(
                         f"ключ проекта {name!r} отключён оператором — включение только через него",
                         status=403,
                     )
-                if not current_secret or not row.secret:
+                if not current_secret or not row.secret_sha256:
                     raise ProvisioningError(
                         "key_exists",
                         f"ключ проекта {name!r} уже выдан; для ротации предъявите текущий ключ",
                         status=409,
                     )
-                if not hmac.compare_digest(current_secret, row.secret):
+                # Сверяем хэши: самого секрета у нас нет (миграции 074/075).
+                if not hmac.compare_digest(hash_gateway_secret(current_secret), row.secret_sha256):
                     raise ProvisioningError(
                         "key_mismatch",
                         f"ключ проекта {name!r} выдан, предъявленный ключ не подходит",
@@ -402,7 +411,9 @@ async def provision_gateway_key(
                 action = "enabled" if set_active else "disabled"
             elif rotate:
                 secret_plain = secrets.token_urlsafe(32)
-                row.secret = secret_plain
+                row.secret_sha256 = hash_gateway_secret(secret_plain)
+                row.secret_prefix = gateway_secret_prefix(secret_plain)
+                row.secret = None  # plaintext больше не хранится (мандат brain 2026-08-01)
                 row.rotated_at = datetime.utcnow()
                 action = "rotated"
             else:

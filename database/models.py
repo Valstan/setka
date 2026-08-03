@@ -517,13 +517,21 @@ class GatewayKey(Base):
     как у ``vk_tokens`` (#336): env добавляет лишь имена, которых нет в БД;
     выключенный в БД ключ env НЕ воскрешает. Выдача/ротация — через
     ``scripts/issue_gateway_key.py`` (событие пишется в usage-лог шлюза).
+
+    Миграции 074/075 (мандат brain 2026-08-01, 🔴): секрет **не хранится**.
+    В БД лежит ``secret_sha256`` (по нему идёт проверка, см.
+    ``modules/gateway/keys.py``) и ``secret_prefix`` — несколько первых
+    символов для опознания ключа человеком. Колонка ``secret`` осталась
+    занулённой на один цикл деплоя и удаляется миграцией 076.
     """
 
     __tablename__ = "gateway_keys"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50), unique=True, nullable=False, index=True)  # KAZANSKAYA, GONBA...
-    secret = Column(Text, nullable=False)  # ключ plaintext (как vk_tokens.token; БД root-only)
+    secret = Column(Text, nullable=True)  # DEPRECATED (075 занулила, 076 удалит колонку)
+    secret_sha256 = Column(String(64), nullable=True, index=True)  # hex sha256 — по нему проверка
+    secret_prefix = Column(String(16), nullable=True)  # первые символы, для опознания человеком
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     note = Column(Text, nullable=True)  # кто/зачем (заявка, письмо brain)
     created_at = Column(DateTime, default=datetime.utcnow)
