@@ -24,6 +24,12 @@ from typing import Dict, List
 
 SERVICES: List[Dict[str, str]] = [
     {
+        "title": "вМалмыже.РФ",
+        "emoji": "🏛",
+        "url": "https://вмалмыже.рф",
+        "desc": "Городской портал Малмыжа и района: новости, афиша, объявления, история.",
+    },
+    {
         "title": "Радар",
         "emoji": "📡",
         "url": "https://радар.вмалмыже.рф",
