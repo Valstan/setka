@@ -12,13 +12,17 @@
 --
 -- Предохранитель: зануляем только те строки, у которых хэш уже посчитан.
 -- Если 074 почему-то не отработала, эта миграция не тронет ничего.
+--
+-- Порядок внутри файла тоже важен: сначала снять NOT NULL, потом занулять.
+-- Обратный порядок падает на первой же строке (поймано при применении 03.08 —
+-- ON_ERROR_STOP отбил транзакцию, данные не пострадали).
+
+ALTER TABLE gateway_keys ALTER COLUMN secret DROP NOT NULL;
 
 UPDATE gateway_keys
    SET secret = NULL
  WHERE secret IS NOT NULL
    AND secret_sha256 IS NOT NULL;
-
-ALTER TABLE gateway_keys ALTER COLUMN secret DROP NOT NULL;
 
 -- Проверка после применения (должно быть 0 строк):
 --   SELECT name FROM gateway_keys WHERE secret IS NOT NULL;
