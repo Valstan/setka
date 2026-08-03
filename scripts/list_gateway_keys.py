@@ -18,9 +18,10 @@
 **Почему не HTTP-эндпоинт под экосистемным ключом** (вариант «а» из письма
 brain, для него удобнее). ``X-Ecosystem-Key`` один на всех участников, значит
 листинг за ним раздал бы перечень потребителей шлюза каждому держателю ключа —
-ровно класс [#124](../../brain_matrica/cross-project-ideas/ideas/124-privilege-added-to-an-existing-channel-inherits-its-auth.md):
-новое право в существующем аутентифицированном канале молча достаётся всем,
-кто уже держит его ключ. CLI на боксе новой сетевой поверхности не создаёт.
+ровно класс #124 мозга (``cross-project-ideas/ideas/124-privilege-added-to-an-
+existing-channel-inherits-its-auth.md``): новое право в существующем
+аутентифицированном канале молча достаётся всем, кто уже держит его ключ.
+CLI на боксе новой сетевой поверхности не создаёт.
 
 Usage (на хосте setka, под env приложения):
     python scripts/list_gateway_keys.py                 # таблица в терминал
@@ -54,8 +55,6 @@ import json
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-
-COLUMNS = ("name", "source", "is_active", "created_at", "rotated_at", "last_used", "calls")
 
 # Действия оператора в usage-логе — не использование ключа потребителем.
 _OPERATOR_ENDPOINTS = ("issue-key",)
@@ -159,7 +158,10 @@ def render(rows: List[Dict[str, Any]], fmt: str, retention_days: int) -> str:
         lines += ["| " + " | ".join(row) + " |" for row in cells]
         return "\n".join(lines)
 
-    widths = [max(len(titles[i]), *(len(row[i]) for row in cells)) if cells else len(titles[i]) for i in range(len(titles))]
+    widths = [
+        max(len(titles[i]), *(len(row[i]) for row in cells)) if cells else len(titles[i])
+        for i in range(len(titles))
+    ]
     lines = [header, ""]
     lines.append("  ".join(t.ljust(w) for t, w in zip(titles, widths)))
     lines.append("  ".join("-" * w for w in widths))
@@ -167,7 +169,9 @@ def render(rows: List[Dict[str, Any]], fmt: str, retention_days: int) -> str:
     return "\n".join(lines)
 
 
-async def _load(active_only: bool) -> tuple[List[Dict[str, Any]], List[str], Dict[str, Dict[str, Any]]]:
+async def _load(
+    active_only: bool,
+) -> tuple[List[Dict[str, Any]], List[str], Dict[str, Dict[str, Any]]]:
     """Прочитать БД и env. Секреты не читаются вовсе — колонка ``secret`` не выбирается."""
     from sqlalchemy import func, select
 
