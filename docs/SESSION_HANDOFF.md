@@ -3,66 +3,69 @@
 > Sticky-note для непрерывности между сессиями разработки SETKA. Перезаписывается через [`/close_session`](../.claude/commands/close_session.md) — историю смотри через `git log --follow -- docs/SESSION_HANDOFF.md`.
 
 **Status:** IDLE
-**Updated:** 2026-08-04
+**Updated:** 2026-08-05
 **Branch:** main
-**Last release in prod:** **`95e4513`** (#430) — подпись автора на публичных страницах ЕСА, задеплоено и проверено этой сессией.
+**Last release in prod:** **`b0e5b80`** (#435) — клиент vault КАРМАНа (сценарий A) + фикс уровня логирования восстановления; приёмка A (позитив + негатив) пройдена на проде этой сессией.
 
 ---
 
 ## Текущая нитка
 
-_Нет — вся взятая работа закрыта и задеплоена, открытая стартовая позиция._
-
-Сессия 2026-08-03 (4 PR: #425–#428) — вся про почту brain: разобраны три письма от 03.08
-и четыре зависших мандата от 26.07.
+_Закрыта: клиент vault КАРМАНа (сценарий A) внедрён, принят на проде, письмо-отчёт в мозг готовится._
 
 **Что изменилось в устройстве прода:**
 
-- **🔴 Ключи шлюза больше не хранятся открытым текстом.** В `gateway_keys` теперь
-  `secret_sha256` (по нему проверка — поиск по индексу вместо перебора всех строк на каждом
-  запросе) и `secret_prefix` для опознания человеком; `secret` занулён миграцией 075.
-  **sha256, а не scrypt** — ключ машинный (256 бит) и проверяется на каждом запросе;
-  причина записана в докстринге [`modules/gateway/keys.py`](../modules/gateway/keys.py),
-  чтобы следующий не «унифицировал» со схемой паролей и не положил шлюз.
-- **Перечень потребителей шлюза стал производным от БД** —
-  [`scripts/list_gateway_keys.py`](../scripts/list_gateway_keys.py). Выбран CLI, а не
-  HTTP-эндпоинт: `X-Ecosystem-Key` один на всех, и листинг за ним раздал бы перечень
-  потребителей каждому держателю ключа (класс #124 из письма brain того же дня).
-- **Карточка вМалмыже.РФ** (🏛) — первой позицией каталога `/services`.
+- **Клиент vault (PR #434, #435).** `modules/secrets_bootstrap.bootstrap_secrets()`
+  вызывается в `main.py` и `tasks/celery_app.py` **до** импорта `config.runtime` —
+  в норме ноль сети, при потере `/etc/setka/setka.env` тянет REQUIRED
+  (`DATABASE_URL`, `REDIS_URL`) из комнаты `setka` vault. Allowlist вместо
+  «всё, что пришло»; bootstrap-конфиг вне allowlist; `SECRETS_TOKEN` — в
+  отдельном файле.
+- **`SECRETS_TOKEN` вынесен** из `/etc/setka/setka.env` в
+  `/etc/setka/secrets-token.env` (права 600) + второй `EnvironmentFile` во все
+  три systemd-юнита. Бэкап `setka.env.bak-2026-08-05-karman-token`.
+- **systemd: `EnvironmentFile=/etc/setka/setka.env` → `=-/etc/setka/setka.env`**
+  во всех трёх юнитах. Найдено при приёмке: без `-` systemd вообще не стартует
+  юнит при отсутствии файла (`ignore_errors=no`), и bootstrap-код не достигается.
+  `secrets-token.env` остаётся обязательным.
+- **Комната vault наполнена** 36 ключами SETKA (ручная загрузка сценария B).
+  В ней остался лишний `NODE_OPTIONS` (тестовый мусор негативного прогона,
+  значение `requires-evil`): API vault не умеет удалять (только POST-upsert),
+  клиент его безопасно игнорирует, процедура удаления — UI vault руками владельца
+  (см. PENDING).
 
-Тестов **2035** (было 2016).
+Тестов **2045** (было 2035).
 
 ## Следующий шаг
 
 Активной нитки нет. Приоритет — в порядке убывания:
 
-1. **Клиент КАРМАНа, сценарий A** — мандат brain 2026-08-01 (волна 1), спека у них в
-   `docs/specs/vault-client.md`. ⚠️ обязательное расхождение с образцом trener: allowlist
-   ожидаемых ключей, а не «всё, что пришло».
-2. **Миграция 076** — `DROP COLUMN gateway_keys.secret` (колонка держится занулённой один
+1. **Миграция 076** — `DROP COLUMN gateway_keys.secret` (колонка держится занулённой один
    цикл, чтобы откат кода на предыдущий релиз не упёрся в её отсутствие).
+2. **Сценарий B автоматиза** (зеркалирование секретов в комнату из CI) — сейчас комната
+   наполнена разово вручную; спека требует шаг в `deploy-prod.yml` (не блокирующий).
 3. **Пилот П4 DeepSeek против Haiku** — мандат brain 2026-08-01, оффлайн, прод не трогать.
 4. 🟡 **Секрет-сканер (gitleaks)** — гейта нет вовсе, самый крупный незакрытый техдолг.
 
 ## Контекст
 
 - **План:** нет активного.
-- **Связанные коммиты сессии (2026-08-04):**
-  - `5d227f4` (#430) — подпись автора на публичных страницах ЕСА (branch → PR, squash `95e4513`).
+- **Связанные коммиты сессии (2026-08-05):**
+  - `ef87d84` → squash `fbda45e` (#434) — клиент vault сценарий A (модуль, интеграция, тесты, .env.example).
+  - `06b8920` → squash `b0e5b80` (#435) — уровень логирования восстановления WARNING (+ прод: `-` в EnvironmentFile).
 - **Прод:** `setka` / `celery-worker` / `celery-beat` active, `/api/health/full` 200,
-  HEAD `95e4513`. Подпись на живых страницах проверена curl (`rel="author"` на login + services).
-  **Env-ключи шлюза сняты 2026-08-04** (ПОД #025): все шесть `GATEWAY_KEY_*` удалены из
-  `/etc/setka/setka.env` (бэкап `setka.env.bak-2026-08-04-gateway-keys-removed`, права 600),
-  рестарт `setka`, `source=db` у всех шести (проверено листингом), отзыв теперь работает.
-  Трейд-офф: env-fallback при недоступной БД мёртв → шлюз вернёт 401 всем.
+  HEAD `b0e5b80`. Каталог vault проверен: комнате `setka` 36 рабочих ключей + `VMALMYZHE_INGEST_KEY`.
+  Приёмка A: с переименованным env сервис поднялся из vault (health 200); негатив —
+  `NODE_OPTIONS` не попал в окружение, посчитан в `ignored`, лог WARNING.
 - **Открытых PR:** нет.
 - **Письма в мозг (ждут его pull):**
-  `2026-08-04-footer-author-credit-deployed.md`, пять от 03.08 —
-  `2026-08-03-github-oidc-probe-reachable.md` (probe достижим — блокирующий шаг ADR-0012),
-  `2026-08-03-four-mandates-0726-status.md`, `2026-08-03-gateway-keys-listing-and-catalog-card.md`,
-  `2026-08-03-gateway-keys-hashed-deployed.md`, `2026-08-03-precommit-skips-untracked-files.md`
-  + непрочитанные с прошлых сессий (`2026-08-02-two-copies-of-one-decision.md`,
-  `2026-07-31-*` ×3, `2026-07-29-*` ×2, `2026-07-28-*` ×2, `2026-07-27-aging-tags-degrade-silently.md`).
+  `2026-08-04-gateway-env-fallback-removed.md`, `2026-08-04-start-mailbox-readonly-sources-done.md`,
+  `2026-08-04-footer-author-credit-deployed.md`, пять от 03.08
+  (`2026-08-03-github-oidc-probe-reachable.md`, `2026-08-03-four-mandates-0726-status.md`,
+  `2026-08-03-gateway-keys-listing-and-catalog-card.md`, `2026-08-03-gateway-keys-hashed-deployed.md`,
+  `2026-08-03-precommit-skips-untracked-files.md`) + готовится отчёт о vault-клиенте
+  (`mailbox/to-brain/2026-08-05-vault-client-scenario-a-deployed.md`)
+  + непрочитанные с прошлых сессий.
 
 ## Открытые вопросы для пользователя
 
