@@ -87,6 +87,42 @@ env-переменными, которые указывают на community_id 
 
 ## ⏳ В процессе
 
+### 🗄️ Клиент vault КАРМАНа, сценарий A — внедрён и принят на проде (MANDATE brain 2026-08-01)
+
+`⏱ 2026-08-05 · snooze 0 · fresh` — сделано и задеплоено (PR #434, #435). Приёмка A
+и A-негатив пройдены на проде. Спека: `brain_matrica/docs/specs/vault-client.md`.
+
+- **Клиент:** `modules/secrets_bootstrap.bootstrap_secrets()` — вызывается в `main.py`
+  и `tasks/celery_app.py` **до** импорта `config.runtime`. В норме ноль сетевых вызовов;
+  при потере `/etc/setka/setka.env` тянет REQUIRED (`DATABASE_URL`, `REDIS_URL`) из
+  комнаты `setka`. Allowlist (`ACCEPTED_NAMES` + префиксы `VK_TOKEN_*`/`TELEGRAM_TOKEN_*`),
+  bootstrap-конфиг (`SECRETS_TOKEN`/`SECRETS_VAULT_URL`) вне allowlist, локальный env
+  сильнее, best-effort, ignored логируются по именам. +10 тестов.
+- **Прод-раскладка (все три пункта подтверждены владельцем):**
+  1. `SECRETS_TOKEN` вынесен в `/etc/setka/secrets-token.env` (права 600) + второй
+     `EnvironmentFile` во все три юнита (бэкап `setka.env.bak-2026-08-05-karman-token`).
+  2. `EnvironmentFile=/etc/setka/setka.env` → `=-/etc/setka/setka.env` (префикс `-` =
+     `ignore_errors=yes`) во всех трёх юнитах — иначе systemd **не стартует юнит вовсе**
+     при отсутствии файла и bootstrap не достигается (найдено при приёмке).
+     `secrets-token.env` остаётся обязательным.
+  3. Комната vault наполнена 36 ключами SETKA (ручная загрузка, сценарий B).
+- **Приёмка на проде:** с временно переименованным `setka.env` сервис поднялся из
+  vault (health 200, база инициализирована). Негатив: подложенный `NODE_OPTIONS`
+  вне allowlist не попал в окружение, посчитан в `ignored`, лог
+  `SETKA: вне allowlist, проигнорированы: NODE_OPTIONS, VMALMYZHE_INGEST_KEY`.
+
+**Открытые хвосты:**
+
+- 🟡 **Удалить `NODE_OPTIONS` из комнаты vault** — тестовый мусор негативного прогона
+  (значение `requires-evil`). API vault не поддерживает удаление (только POST-upsert,
+  DELETE/PATCH/нулевые значения → 4xx), клиент его безопасно игнорирует. Удаление —
+  через UI vault руками владельца.
+- ⏳ **Автозеркалирование (сценарий B)** — сейчас комната наполнена разово вручную;
+  спека требует неблокирующий шаг в `deploy-prod.yml` (после выпуска/ротации секрета
+  класть копию в комнату). Пока не сделано.
+- 🟢 **`VMALMYZHE_INGEST_KEY` в комнате setka** — не наш ключ, при восстановлении
+  всегда в `ignored`. Лежит со времён онбординга; вопрос — чей он и убирать ли.
+
 ### 🔐 Ключи шлюза — хэш вместо открытого значения (MANDATE brain 2026-08-01, 🔴)
 
 `⏱ 2026-08-03 · snooze 0 · fresh` — **сделано и задеплоено целиком** (PR #426, #427).
