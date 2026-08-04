@@ -206,7 +206,11 @@ def bootstrap_secrets(
         recovered += 1
 
     if ignored:
-        # имена, НЕ значения: чужой ключ в комнате — сигнал инцидента
+        # имена, НЕ значения (свойство 7): чужой ключ в комнате — сигнал инцидента
         log.warning("SETKA: вне allowlist, проигнорированы: %s", ", ".join(sorted(ignored)))
-    log.info("SETKA: восстановлено секретов из vault: %d", recovered)
+    # WARNING, не INFO: bootstrap-хук выполняется ДО logging.basicConfig в main.py,
+    # у root-логгера ещё нет handlers, и INFO отбросится. Восстановление по спеке —
+    # всё равно сигнал инцидента (локальная копия была потеряна), он обязан дойти
+    # до лога даже через lastResort-хендлер.
+    log.warning("SETKA: восстановлено секретов из vault: %d", recovered)
     return {"recovered": recovered, "ignored": ignored, "reason": "recovered"}
