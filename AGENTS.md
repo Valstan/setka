@@ -47,12 +47,12 @@
 
 ## Интеграция с brain_matrica
 
-SETKA управляется meta-репо [brain_matrica](../brain_matrica/) (стратегический hub для всех проектов @valstan). Связь — **асимметричная**: каждая сторона пишет **только в свой репо**, читает чужой через `git pull --ff-only` ([ADR-0001 v3](../brain_matrica/adr/0001-brain-projects-mailboxes.md) от 2026-05-23).
+SETKA управляется meta-репо [brain_matrica](../brain_matrica/) (стратегический hub для всех проектов @valstan). Связь — **асимметричная**: каждая сторона пишет **только в свой репо** ([ADR-0001 v3](../brain_matrica/adr/0001-brain-projects-mailboxes.md) от 2026-05-23). **При старте сессии синхронизировать (`fetch`/`pull --ff-only`) можно ТОЛЬКО свой репо SETKA.** Соседние репо, включая `brain_matrica`, — **только чтение, без каких-либо синхронизирующих команд** (`fetch`, `pull`, `checkout` запрещены): проект или Мозг могут одновременно работать в локальной копии, в т.ч. иметь ещё не запушенные письма. Входящий mailbox читается **из двух каналов**: локально + GitHub API (`main` того же проекта) без clone/fetch/pull.
 
 | Направление | Кто пишет | Куда | Кто читает |
 |---|---|---|---|
-| brain → setka | brain (в своём репо) | `brain_matrica/mailboxes/setka/from-brain/*.md` | setka через `cd ../brain_matrica && git pull --ff-only` (read-only) |
-| setka → brain | **setka (в своём репо)** | **`setka/mailbox/to-brain/*.md`** | brain через `cd ../setka && git pull --ff-only` (read-only) |
+| brain → setka | brain (в своём репо) | `brain_matrica/mailboxes/setka/from-brain/*.md` | setka read-only, **два канала**: локально + GitHub API (`Valstan/brain_matrica` @ GitHub `main`) без fetch/pull |
+| setka → brain | **setka (в своём репо)** | **`setka/mailbox/to-brain/*.md`** | brain read-only тем же двухканальным способом |
 
 | Аспект | Где / как |
 |---|---|
@@ -64,7 +64,10 @@ SETKA управляется meta-репо [brain_matrica](../brain_matrica/) (�
 
 **Жизненный цикл письма от brain:**
 
-1. **Шаг 0 любой сессии, независимо от агента:** `cd ../brain_matrica && git pull --ff-only` → сканить `mailboxes/setka/from-brain/*.md` (без `DRAFTS/` и `ARCHIVE/`), доклад в формате `[urgency COMPLIANCE]`.
+1. **Шаг 0 любой сессии, независимо от агента:** входящий mailbox сканится **двумя каналами** (без `git pull`/`fetch`/`clone` в `brain_matrica`):
+   - **локально:** `../brain_matrica/mailboxes/setka/from-brain/*.md` (без `DRAFTS/` и `ARCHIVE/`);
+   - **GitHub API:** `https://api.github.com/repos/Valstan/brain_matrica/contents/mailboxes/setka/from-brain` — `main` того же репо, запрос на каждый запуск. **Репо private (2026-08-04):** `curl` без токена даёт 404 — использовать `gh api ...` (работает на любой машине с `gh auth`).
+   Набор = **объединение** каналов по каждому письму. Одноимённое письмо различается → свежесть по истории **именно этого пути**: незакоммиченная локальная версия — свежее; иначе последний локальный коммит файла vs последний коммит пути на GitHub; если порядок не определяется — прочитать обе версии, явно отметить конфликт, **не перезаписывать**. Доклад в формате `[urgency COMPLIANCE]`.
 2. Пользователь решает обработать → применяем директиву согласно compliance.
 3. **Ответ** (acknowledgement / feedback / report) — в **свой репо** `setka/mailbox/to-brain/YYYY-MM-DD-<slug>.md`, коммит в setka через PR.
 4. **Архивацию исходных писем делает brain у себя** — не моя зона.
@@ -75,12 +78,14 @@ SETKA управляется meta-репо [brain_matrica](../brain_matrica/) (�
 1. **Перед вводом нового/нетривиального** (паттерн, инструмент, инфра-подход, миграция данных, кросс-cutting рефактор) — *до* проектирования бегло просмотреть [`../brain_matrica/cross-project-ideas/INDEX.md`](../brain_matrica/cross-project-ideas/INDEX.md) + [`../brain_matrica/tech-radar/INDEX.md`](../brain_matrica/tech-radar/INDEX.md): нет ли готового опыта.
 2. **При незнакомой грабле инструмента/инфры/деплоя** (не доменный баг, а «почему CI / Payload / git / VK так себя ведёт») — *до* долгого дебага грепнуть [`../brain_matrica/cross-project-ideas/GOTCHAS.md`](../brain_matrica/cross-project-ideas/GOTCHAS.md) по симптому.
 
-Нашёл релевантное → переиспользуй (и при желании отпишись в `mailbox/to-brain/`, что применил). Не нашёл → продолжай как обычно. `git pull --ff-only` brain'а уже делается на старте сессии, повторно не платим. **Тишина = норма** (триггер не сработал → 0 лишних чтений). Pool [#014](../brain_matrica/cross-project-ideas/ideas/014-consult-library-reflex.md).
+Нашёл релевантное → переиспользуй (и при желании отпишись в `mailbox/to-brain/`, что применил). Не нашёл → продолжай как обычно. Чтение мозга на старте уже делается двухканально (Шаг 0), повторно не платим. **Тишина = норма** (триггер не сработал → 0 лишних чтений). Pool [#014](../brain_matrica/cross-project-ideas/ideas/014-consult-library-reflex.md).
 
-**Тактика напрямую (ADR-0007 мозга, 2026-07-05):** любой sibling-репо (`../<project>/`) можно читать **read-only** напрямую, без письма в мозг (`git pull --ff-only` перед чтением): API-контракты, docs, handoff соседа, его `mailbox/to-brain/`. Эвристика: «нужно ЗНАТЬ про соседа → читай сам; нужно, чтобы сосед/экосистема что-то СДЕЛАЛИ или ЗАПОМНИЛИ → письмо в мозг». Начал **зависеть** от чужого API/формата (интеграция, не разовое чтение) → сообщить мозгу письмом (прочитанное — не контракт).
+**Тактика напрямую (ADR-0007 мозга, 2026-07-05):** любой sibling-репо (`../<project>/`) можно читать **read-only** напрямую, без письма в мозг: API-контракты, docs, handoff соседа, его `mailbox/to-brain/`. Синхронизирующих команд (`fetch`/`pull`/`checkout`) при этом **не выполнять** — читается локальная рабочая копия (свежесть последнего локального коммита) или GitHub API показывать избыточно; коммитить никогда. Эвристика: «нужно ЗНАТЬ про соседа → читай сам; нужно, чтобы сосед/экосистема что-то СДЕЛАЛИ или ЗАПОМНИЛИ → письмо в мозг». Начал **зависеть** от чужого API/формата (интеграция, не разовое чтение) → сообщить мозгу письмом (прочитанное — не контракт).
 
 **Что нельзя:**
-- ❌ Писать в `brain_matrica/` (ни в `mailboxes/setka/to-brain/`, ни в `.last-seen`, ни в `ARCHIVE/`, ни куда-либо ещё). Доступ — только `git pull --ff-only`.
+
+- ❌ Синхронизировать чужие репо **в любой форме** — `fetch`, `pull`, `checkout`, `reset` в `brain_matrica` или любом sibling-репо запрещены (canon 2026-08-04).
+- ❌ Писать в `brain_matrica/` (ни в `mailboxes/setka/to-brain/`, ни в `.last-seen`, ни в `ARCHIVE/`, ни куда-либо ещё). Доступ — только чтение.
 - ❌ Клонировать `brain_matrica` для записи; ходить в чужие mailbox'ы; удалять архивные письма у brain'а.
 - ❌ Исполнять что-либо на чужом боксе. Соседний репо читаем — соседний сервер трогаем только через его опубликованный HTTP-интерфейс.
 

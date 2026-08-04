@@ -1,5 +1,5 @@
 ---
-description: Открыть новую сессию разработки SETKA — mailbox-проверка brain_matrica (read-only), git pull, прочитать source-of-truth, опционально проба прода, отчёт о состоянии.
+description: Открыть новую сессию разработки SETKA — mailbox-проверка brain_matrica (два канала: локально + GitHub API, без sync), git pull своего репо, прочитать source-of-truth, опционально проба прода, отчёт о состоянии.
 argument-hint: (без аргументов; `--no-prod` — пропустить SSH-probe; `--no-mailbox` — пропустить проверку brain mailbox)
 allowed-tools: Read, Write, Bash, Glob, Grep, AskUserQuestion, mcp__ccd_session__mark_chapter
 ---
@@ -8,25 +8,17 @@ allowed-tools: Read, Write, Bash, Glob, Grep, AskUserQuestion, mcp__ccd_session_
 
 Цель: за один заход войти в полный контекст проекта и доложить пользователю что нового, какие хвосты, чем заняться.
 
-**Никаких изменений в чужих репо** — `brain_matrica` трогается **только на чтение** (`git pull --ff-only`). Запись разрешена только в свой репо `setka/mailbox/to-brain/` и обычные файлы проекта.
+**Никаких изменений в чужих репо** — `brain_matrica` и любой sibling-репо читаются **только на чтение, без синхронизирующих команд** (`git pull`/`fetch`/`checkout` запрещены, canon 2026-08-04). Входящий mailbox читается из двух каналов: локально + GitHub API. Запись разрешена только в свой репо `setka/mailbox/to-brain/` и обычные файлы проекта.
 
 ## Шаг 0. Mailbox check (brain_matrica — read-only)
 
-setka управляется meta-репо [brain_matrica](../../../brain_matrica/) через асимметричный mailbox-протокол ([ADR-0001](../../../brain_matrica/adr/0001-brain-projects-mailboxes.md) v3 от 2026-05-23): каждая сторона пишет **только в свой репо**. Проверка делается **до** SoT-чтения.
+setka управляется meta-репо [brain_matrica](../../../brain_matrica/) через асимметричный mailbox-протокол ([ADR-0001](../../../brain_matrica/adr/0001-brain-projects-mailboxes.md) v3 от 2026-05-23): каждая сторона пишет **только в свой репо**. Проверка делается **до** SoT-чтения. Синхронизировать `brain_matrica` **нельзя** (canon 2026-08-04) — только чтение локальной копии + GitHub API.
 
 Если `$ARGUMENTS` содержит `--no-mailbox` — пропустить.
 
-### 0.1. Подтянуть brain_matrica (read-only)
+### 0.1. Сканировать входящие — два канала (без pull/fetch/clone)
 
-```bash
-cd ../brain_matrica && git pull --ff-only origin main 2>&1 | tail -3
-```
-
-Если рабочее дерево brain_matrica не чистое или нет fast-forward — отметить в отчёте «brain_matrica conflicts, mailbox skipped», далее не выполнять Шаг 0. **Никаких force-операций.**
-
-Если папки `../brain_matrica/` нет — отметить «brain_matrica не найдена, mailbox-проверка пропущена», далее не выполнять Шаг 0.
-
-### 0.2. Сканировать входящие
+**Канал A — локально.** Только корень (`*.md` без рекурсии), **не** `DRAFTS/`, **не** `ARCHIVE/`. Для каждого письма прочитать через `Read` (по конкретному пути работает) и извлечь frontmatter: `kind`, `urgency`, `compliance`, `topic`.
 
 **⚠️ НЕ использовать `Glob`** — он не видит пути вне корня проекта setka и возвращает «No files found» даже когда письма есть (инцидент 2026-05-24). Использовать `Bash`:
 
@@ -34,15 +26,23 @@ cd ../brain_matrica && git pull --ff-only origin main 2>&1 | tail -3
 ls ../brain_matrica/mailboxes/setka/from-brain/*.md 2>/dev/null
 ```
 
-Только корень (`*.md` без рекурсии), **не** `DRAFTS/`, **не** `ARCHIVE/`. Для каждого письма прочитать через `Read` (по конкретному пути работает) и извлечь frontmatter: `kind`, `urgency`, `compliance`, `topic`.
+**Канал B — GitHub API** (`main` того же репо, без clone/fetch/pull). Репо private → нужна аутентификация `gh`. Запрос на каждый запуск:
 
-### 0.3. Retroactive-правило
+```bash
+gh api repos/Valstan/brain_matrica/contents/mailboxes/setka/from-brain --jq '.[].name'
+```
+
+. Репо private (2026-08-04) — `curl` без токена даёт 404 «Not Found»; `gh api` работает на любой машине с `gh auth`.
+
+**Сведение каналов по каждому письму.** Набор = объединение. Одноимённое письмо различается → свежесть по истории **именно этого пути**: незакоммиченная локальная версия — свежее; иначе последний локальный коммит файла vs последний коммит пути на GitHub; порядок не определяется — прочитать обе версии, явно отметить конфликт, **не перезаписывать**. Свежесть одного письма/проекта не переносится на другие.
+
+### 0.2. Retroactive-правило
 
 Для писем без `compliance` ([ADR-0001 v2 §Compliance levels](../../../brain_matrica/adr/0001-brain-projects-mailboxes.md#compliance-levels)):
 - `kind: directive` без `compliance` → читать как `mandate`
 - `kind: idea` без `compliance` → читать как `recommend`
 
-### 0.4. Доложить пользователю
+### 0.3. Доложить пользователю
 
 В формате `[urgency COMPLIANCE]` (compliance в верхнем регистре, через пробел) **до** обычного onboarding-workflow:
 
@@ -55,7 +55,7 @@ ls ../brain_matrica/mailboxes/setka/from-brain/*.md 2>/dev/null
 
 Compliance-mapping: `mandate=MANDATE`, `recommend=SHOULD`, `suggest=MAY`. Любое `urgency: high` или `compliance: mandate` упомянуть отдельно даже если письмо одно.
 
-### 0.5. Реакция на письма
+### 0.4. Реакция на письма
 
 Определяется compliance ([ADR-0001 §Compliance levels](../../../brain_matrica/adr/0001-brain-projects-mailboxes.md#compliance-levels)):
 
@@ -65,7 +65,7 @@ Compliance-mapping: `mandate=MANDATE`, `recommend=SHOULD`, `suggest=MAY`. Люб
 | `recommend` (SHOULD) | Применить с адаптацией. Не подходит → `setka/mailbox/to-brain/` с обоснованием отказа (`kind=feedback`). Молчать нельзя. |
 | `suggest` (MAY) | По усмотрению. Применил — feedback приветствуется, но не обязателен. |
 
-### 0.6. Если нужно ответить brain'у
+### 0.5. Если нужно ответить brain'у
 
 Файл идёт в **свой репо**: `setka/mailbox/to-brain/YYYY-MM-DD-slug.md` (создать через `Write`). Коммит — в setka репо отдельным PR или вместе с тематической работой ([ADR-0002](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md), PR-only flow).
 
@@ -85,13 +85,14 @@ ref:
 ---
 ```
 
-### 0.7. Не обрабатывать письма автоматически в /start
+### 0.6. Не обрабатывать письма автоматически в /start
 
 Только доклад. Обработка — после OK пользователя. Архивация исходящих писем у setka **не делается** ([asymmetry-fix](../../../brain_matrica/mailboxes/setka/from-brain/2026-05-23-mailbox-asymmetry-fix.md) §Архивация — MVP).
 
 ### Что НЕЛЬЗЯ
 
-- ❌ **Писать в `../brain_matrica/`** — никаких `Write`/`Edit`/`git add`/`git commit` в этот репо. Доступ только `git pull --ff-only origin main`.
+- ❌ **Синхронизировать `../brain_matrica/`** — никаких `git pull`/`fetch`/`checkout`/`reset` (canon 2026-08-04); только чтение локальной копии + GitHub API.
+- ❌ **Писать в `../brain_matrica/`** — никаких `Write`/`Edit`/`git add`/`git commit` в этот репо.
 - ❌ **Писать в `../brain_matrica/mailboxes/setka/to-brain/`** или `.last-seen` — устаревший канал, не используется.
 - ❌ **Архивировать письма** в `../brain_matrica/mailboxes/setka/from-brain/ARCHIVE/` из проектной сессии — это зона brain'а.
 - ❌ **Писать в чужие mailbox'ы** (`mailboxes/GONBA/`, `mailboxes/MatricaRMZ/` и пр.) — не моя зона ни в каком виде.
