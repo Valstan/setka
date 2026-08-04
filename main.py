@@ -8,19 +8,27 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+# Восстановление REQUIRED-секретов (DATABASE_URL/REDIS_URL) из vault КАРМАНа
+# ДО импорта config.runtime (его тянет database.connection и web.api ниже):
+# потеря /etc/setka/setka.env иначе убьёт процесс на `_require` ещё на этапе
+# импорта. В норме — no-op (все ключи на месте, ноль сетевых вызовов).
+from modules.secrets_bootstrap import bootstrap_secrets  # noqa: E402
 
-from _version import __version__ as APP_VERSION
-from database.connection import close_db, init_db
-from middleware.auth_gate import AuthGateMiddleware
-from middleware.metrics_middleware import MetricsMiddleware
-from middleware.rate_limiter import RateLimitMiddleware
-from modules.module_activity_notifier import notify_system_startup
-from web.api import (
+bootstrap_secrets()  # noqa: E402
+
+from fastapi import FastAPI, Request  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+from fastapi.templating import Jinja2Templates  # noqa: E402
+
+from _version import __version__ as APP_VERSION  # noqa: E402
+from database.connection import close_db, init_db  # noqa: E402
+from middleware.auth_gate import AuthGateMiddleware  # noqa: E402
+from middleware.metrics_middleware import MetricsMiddleware  # noqa: E402
+from middleware.rate_limiter import RateLimitMiddleware  # noqa: E402
+from modules.module_activity_notifier import notify_system_startup  # noqa: E402
+from web.api import (  # noqa: E402
     ad_cabinet,
     ad_crm,
     auth,
@@ -49,8 +57,8 @@ from web.api import (
     system_monitoring,
     task_monitoring,
 )
-from web.api import templates as templates_api
-from web.api import test_workflow, token_management, vk_monitoring
+from web.api import templates as templates_api  # noqa: E402
+from web.api import test_workflow, token_management, vk_monitoring  # noqa: E402
 
 # Setup logging
 #

@@ -39,6 +39,14 @@ logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(
 configure_json_logging()
 logger = logging.getLogger(__name__)
 
+# Восстановление REQUIRED-секретов (DATABASE_URL/REDIS_URL) из vault КАРМАНа
+# ДО импорта config.runtime: worker/beat стартуют из этой точки, и потеря
+# /etc/setka/setka.env иначе убьёт процесс на `_require` при первом же
+# импорте таска. В норме — no-op (все ключи на месте, ноль сетевых вызовов).
+from modules.secrets_bootstrap import bootstrap_secrets  # noqa: E402
+
+bootstrap_secrets()  # noqa: E402
+
 # --- Telegram alerts for Notifications ---
 
 
