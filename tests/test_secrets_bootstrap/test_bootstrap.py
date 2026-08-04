@@ -189,7 +189,9 @@ def test_recovered_logs_count(monkeypatch, caplog):
         },
     )
 
-    with caplog.at_level(logging.INFO, logger="modules.secrets_bootstrap"):
+    # WARNING (не INFO) — хук выполняется до logging.basicConfig, должен пройти
+    # даже через lastResort-хендлер root-логгера.
+    with caplog.at_level(logging.WARNING, logger="modules.secrets_bootstrap"):
         sb.bootstrap_secrets(env=env)
 
     assert "восстановлено секретов из vault: 2" in caplog.text
