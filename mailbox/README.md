@@ -5,7 +5,7 @@
 ## Правила
 
 - `to-brain/` — **я пишу здесь** и коммичу в setka репо. brain читает через `cd ../setka && git pull --ff-only`.
-- `brain_matrica/mailboxes/setka/from-brain/` — **brain пишет туда** и коммитит в brain_matrica. Я читаю через `cd ../brain_matrica && git pull --ff-only` (read-only, никаких записей).
+- `brain_matrica/mailboxes/setka/from-brain/` — **brain пишет туда** и коммитит в brain_matrica. Я читаю **двумя каналами** (canon 2026-08-04): локально `../brain_matrica/mailboxes/setka/from-brain/*.md` + GitHub API `https://api.github.com/repos/Valstan/brain_matrica/contents/mailboxes/setka/from-brain` (main, без clone/fetch/pull). Никаких синхронизирующих команд в `brain_matrica`/чужие репо.
 
 Каждая сторона владеет своим репо. Кросс-репо коммиты запрещены ([asymmetry-fix](../../brain_matrica/mailboxes/setka/from-brain/2026-05-23-mailbox-asymmetry-fix.md)).
 
