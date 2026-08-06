@@ -1055,15 +1055,21 @@ async def resolve_profile(
     except (ValueError, TypeError):
         pass
 
-    # Похоже на vk.com/idXXX или vk.com/durov
+    # Похоже на vk.com/idXXX, vk.ru/idXXX или vk.com/durov
     user_screen_name = None
     if not numeric_id and raw:
-        # Извлекаем screen_name из URL вида vk.com/xxx или @xxx
+        # Извлекаем screen_name или id из URL вида vk.com/xxx
         import re
 
-        m = re.search(r"vk\.com/([a-zA-Z0-9_.]+)", raw)
+        m = re.search(r"vk\.(?:com|ru)/([a-zA-Z0-9_.]+)", raw)
         if m:
-            user_screen_name = m.group(1)
+            part = m.group(1)
+            # id12345 → числовой id пользователя
+            id_match = re.match(r"^id(\d+)$", part)
+            if id_match:
+                numeric_id = int(id_match.group(1))
+            else:
+                user_screen_name = part
         elif raw.startswith("@"):
             user_screen_name = raw[1:]
         elif re.match(r"^[a-zA-Z][a-zA-Z0-9_.]{3,}$", raw):
