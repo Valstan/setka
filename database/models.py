@@ -841,7 +841,9 @@ class AdClient(Base):
     __tablename__ = "ad_clients"
 
     id = Column(BigInteger, primary_key=True, index=True)
-    author_vk_id = Column(BigInteger, nullable=False)  # VK id заказчика (neg=группа); ключ сведения
+    author_vk_id = Column(
+        BigInteger, nullable=True
+    )  # VK id заказчика (neg=группа); ключ сведения; NULL — без VK
     author_is_group = Column(Boolean, nullable=False, default=False)
     name = Column(String(300), nullable=True)
     vk_url = Column(String(300), nullable=True)
@@ -850,6 +852,11 @@ class AdClient(Base):
     # Воронка: detected|contacted|scheduled|published|paid|lost
     stage = Column(String(20), nullable=False, default="detected", index=True)
     notes = Column(Text, nullable=True)
+    # Новые контактные поля (миграция 077)
+    phone = Column(String(50), nullable=True)
+    telegram = Column(String(100), nullable=True)
+    email = Column(String(200), nullable=True)
+    postal_address = Column(Text, nullable=True)
     # Дедуп Telegram-напоминания о перерасходе пакета (миграция 048). Ставится при
     # отправке алёрта, сбрасывается в NULL при новой оплате — «доплатил → можно
     # напомнить снова». NULL — ещё не напоминали / пакет в норме.
@@ -880,6 +887,10 @@ class AdClient(Base):
             "region_id": self.region_id,
             "stage": self.stage,
             "notes": self.notes,
+            "phone": self.phone,
+            "telegram": self.telegram,
+            "email": self.email,
+            "postal_address": self.postal_address,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

@@ -516,8 +516,22 @@ function renderClientDetails(d) {
         <div class="col-md-5">
             <label class="form-label small mb-1">Имя / название</label>
             <input type="text" class="form-control form-control-sm mb-2" id="cf-name-${c.id}" value="${escapeHtml(c.name || '')}">
-            <label class="form-label small mb-1">Контакты</label>
+
+            <label class="form-label small mb-1">Телефон</label>
+            <input type="text" class="form-control form-control-sm mb-2" id="cf-phone-${c.id}" value="${escapeHtml(c.phone || '')}">
+
+            <label class="form-label small mb-1">Telegram</label>
+            <input type="text" class="form-control form-control-sm mb-2" id="cf-telegram-${c.id}" value="${escapeHtml(c.telegram || '')}">
+
+            <label class="form-label small mb-1">Эл. почта</label>
+            <input type="email" class="form-control form-control-sm mb-2" id="cf-email-${c.id}" value="${escapeHtml(c.email || '')}">
+
+            <label class="form-label small mb-1">Адрес</label>
+            <input type="text" class="form-control form-control-sm mb-2" id="cf-address-${c.id}" value="${escapeHtml(c.postal_address || '')}">
+
+            <label class="form-label small mb-1">Контакты (общее)</label>
             <textarea class="form-control form-control-sm mb-2" id="cf-contact-${c.id}" rows="2">${escapeHtml(c.contact || '')}</textarea>
+
             <label class="form-label small mb-1">Заметки</label>
             <textarea class="form-control form-control-sm mb-2" id="cf-notes-${c.id}" rows="2">${escapeHtml(c.notes || '')}</textarea>
             <div class="d-flex gap-2">
@@ -1251,12 +1265,16 @@ function _cfRes(id, html, cls) {
 }
 
 async function saveClientFields(id) {
-    const name = document.getElementById(`cf-name-${id}`).value;
-    const contact = document.getElementById(`cf-contact-${id}`).value;
-    const notes = document.getElementById(`cf-notes-${id}`).value;
+    const payload = {};
+    ['name', 'contact', 'notes', 'phone', 'telegram', 'email'].forEach(field => {
+        const el = document.getElementById(`cf-${field}-${id}`);
+        if (el) payload[field] = el.value.trim() || null;
+    });
+    const addrEl = document.getElementById(`cf-address-${id}`);
+    if (addrEl) payload.postal_address = addrEl.value.trim() || null;
     _cfRes(id, 'Сохраняю…');
     try {
-        await apiClient.updateCrmClient(id, { name, contact, notes });
+        await apiClient.updateCrmClient(id, payload);
         _cfRes(id, 'Сохранено ✓', 'success');
         await loadClients();
     } catch (e) {
@@ -1382,14 +1400,18 @@ async function _detailReload(id, errMsg) {
 // --------------------------------------------------- модалка «Завести клиента»
 
 async function createClientFromModal() {
-    const vk = parseInt(document.getElementById('nc-vk-id').value, 10);
     const res = document.getElementById('nc-res');
-    if (!vk) { res.innerHTML = '<span class="text-danger">Укажите VK id заказчика.</span>'; return; }
+    const name = document.getElementById('nc-name').value.trim();
+    if (!name) { res.innerHTML = '<span class="text-danger">Укажите имя / название клиента.</span>'; return; }
+    const vkRaw = document.getElementById('nc-vk-id').value.trim();
     const payload = {
-        author_vk_id: vk,
+        name: name || null,
+        author_vk_id: vkRaw ? parseInt(vkRaw, 10) : null,
         author_is_group: document.getElementById('nc-is-group').checked,
-        name: document.getElementById('nc-name').value.trim() || null,
-        contact: document.getElementById('nc-contact').value.trim() || null,
+        phone: document.getElementById('nc-phone').value.trim() || null,
+        telegram: document.getElementById('nc-telegram').value.trim() || null,
+        email: document.getElementById('nc-email').value.trim() || null,
+        postal_address: document.getElementById('nc-address').value.trim() || null,
         stage: document.getElementById('nc-stage').value,
         notes: document.getElementById('nc-notes').value.trim() || null,
     };
@@ -1397,9 +1419,12 @@ async function createClientFromModal() {
     try {
         await apiClient.createCrmClient(payload);
         res.innerHTML = '<span class="text-success">Создан ✓</span>';
-        // Сброс полей + закрыть модалку.
-        ['nc-vk-id', 'nc-name', 'nc-contact', 'nc-notes'].forEach(i => { document.getElementById(i).value = ''; });
+        ['nc-vk-url', 'nc-vk-id', 'nc-name', 'nc-phone', 'nc-telegram',
+         'nc-email', 'nc-address', 'nc-notes'].forEach(i => {
+            const el = document.getElementById(i); if (el) el.value = '';
+        });
         document.getElementById('nc-is-group').checked = false;
+        document.getElementById('nc-vk-res').innerHTML = '';
         const modalEl = document.getElementById('client-modal');
         if (window.bootstrap && modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
         await loadCrm();
@@ -1407,5 +1432,28 @@ async function createClientFromModal() {
         const msg = e.message && e.message.includes('exists')
             ? 'Клиент с таким VK id уже есть.' : escapeHtml(e.message);
         res.innerHTML = `<span class="text-danger">Ошибка: ${msg}</span>`;
+    }
+}
+
+// Авто-заполнение данных клиента из VK-ссылки
+async function resolveClientProfile() {
+    const urlEl = document.getElementById('nc-vk-url');
+    const resEl = document.getElementById('nc-vk-res');
+    const url = (urlEl ? urlEl.value : '').trim();
+    if (!url) { if (resEl) resEl.innerHTML = '<span class="text-warning">Вставьте ссылку на VK.</span>'; return; }
+    if (resEl) resEl.innerHTML = '<span class="text-muted">Ищу профиль…</span>';
+    try {
+        const p = await apiClient.resolveProfile(url);
+        document.getElementById('nc-name').value = p.name || '';
+        document.getElementById('nc-vk-id').value = p.vk_id != null ? Math.abs(p.vk_id) : '';
+        document.getElementById('nc-is-group').checked = p.type === 'group';
+        if (resEl) {
+            const typeLabel = p.type === 'group' ? 'Сообщество' : 'Человек';
+            resEl.innerHTML = `<span class="text-success">✓ ${typeLabel}: <b>${escapeHtml(p.name)}</b>`
+                + (p.photo_url ? ` <img src="${escapeHtml(p.photo_url)}" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;">` : '')
+                + `</span>`;
+        }
+    } catch (e) {
+        if (resEl) resEl.innerHTML = `<span class="text-danger">Не найдено: ${escapeHtml(e.message)}</span>`;
     }
 }
