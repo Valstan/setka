@@ -325,14 +325,10 @@ const apiClient = {
         });
     },
 
-    async scanClientPosts(clientId, communityVkId, keywords, maxPosts = 100) {
+    async scanClientPosts(clientId, payload) {
         return this.request(`/ad-crm/clients/${clientId}/scan-posts`, {
             method: 'POST',
-            body: JSON.stringify({
-                community_vk_id: communityVkId,
-                keywords: keywords,
-                max_posts: maxPosts
-            })
+            body: JSON.stringify(payload)
         });
     },
 

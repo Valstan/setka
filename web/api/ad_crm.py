@@ -179,11 +179,14 @@ class CommunityInfoIn(BaseModel):
 
 
 class ScanPostsIn(BaseModel):
-    """Сканировать стену сообщества на посты заказчика по ключевым словам."""
+    """Сканировать стену сообщества на посты заказчика."""
 
     community_vk_id: int
-    keywords: str
-    max_posts: int = 100
+    keywords: Optional[str] = None
+    author_name: Optional[str] = None
+    date_from: Optional[str] = None  # ISO date, с какой даты сканировать
+    date_to: Optional[str] = None  # ISO date, по какую дату (по умолчанию — сегодня)
+    max_pages: int = 10  # максимум страниц (по 100 постов) для пагинации
 
 
 class PublicationUpdateIn(BaseModel):
@@ -649,7 +652,11 @@ async def upsert_from_request(
     )
     await db.commit()
     await db.refresh(client)
-    return {"client": client.to_dict(), "created": created, "linked_request_id": request_id}
+    return {
+        "client": client.to_dict(),
+        "created": created,
+        "linked_request_id": request_id,
+    }
 
 
 # ---------------------------------------------------------------- payments
@@ -977,7 +984,9 @@ async def community_info(
 
     try:
         infos = await asyncio.to_thread(
-            client.get_groups_by_ids, [abs(group_id)], "screen_name,members_count,photo_200"
+            client.get_groups_by_ids,
+            [abs(group_id)],
+            "screen_name,members_count,photo_200",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"VK groups.getById failed: {e}")
@@ -1002,11 +1011,14 @@ async def scan_client_posts(
     payload: ScanPostsIn,
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Сканировать стену VK-сообщества на посты заказчика по ключевым словам.
+    """Сканировать стену VK-сообщества на посты заказчика.
 
-    Ищет посты через wall.get, фильтрует по ключевым словам (AND/OR через запятые),
-    создаёт AdPublication для новых (дедупликация по community_vk_id+vk_post_id).
-    Возвращает найденные посты с метриками из VK.
+    Поиск:
+    - ``keywords`` — точная фраза (подстрока) в тексте поста, без учёта регистра.
+    - ``author_name`` — имя автора предложенного поста (signer_id).
+    - Логика ИЛИ: пост подходит, если совпало ЛИБО keywords ЛИБО author_name.
+    - ``date_from`` / ``date_to`` — ограничение по дате (wall.get пагинируется
+      до границы date_from или до max_pages страниц).
     """
     import asyncio
     from datetime import datetime as dt
@@ -1019,49 +1031,105 @@ async def scan_client_posts(
         raise HTTPException(status_code=404, detail="client not found")
 
     owner_id = int(payload.community_vk_id)
-    keywords = [
-        kw.strip().lower() for kw in payload.keywords.replace(",", " ").split() if kw.strip()
-    ]
-    if not keywords:
-        raise HTTPException(
-            status_code=400, detail="укажите ключевые слова через пробел или запятую"
-        )
+    keywords_lower = (payload.keywords or "").strip().lower()
+    author_lower = (payload.author_name or "").strip().lower()
+    if not keywords_lower and not author_lower:
+        raise HTTPException(status_code=400, detail="укажите ключевые слова и/или имя автора")
+
+    date_from = _parse_dt(payload.date_from) if payload.date_from else None
+    date_to = _parse_dt(payload.date_to) if payload.date_to else dt.utcnow()
+    if date_from and date_from > date_to:
+        date_from, date_to = date_to, date_from
 
     token = await get_healthy_read_token()
     if not token:
         raise HTTPException(status_code=503, detail="no healthy VK parse-token")
     vk = VKClient(token=token)
 
-    # Получаем посты со стены
-    try:
-        posts = await asyncio.to_thread(
-            vk.get_wall_posts, owner_id, count=min(payload.max_posts, 100), offset=0
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"VK wall.get failed: {e}")
+    # Пагинируем wall.get до границы date_from или max_pages
+    all_posts = []
+    page = 0
+    max_pages = max(1, min(payload.max_pages, 20))
+    while page < max_pages:
+        try:
+            chunk = await asyncio.to_thread(
+                vk.get_wall_posts, owner_id, count=100, offset=page * 100
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"VK wall.get failed: {e}")
+        if not chunk:
+            break
+        all_posts.extend(chunk)
+        # Проверяем, не вышли ли за date_from
+        if date_from:
+            oldest = chunk[-1].get("date", 0)
+            if oldest < date_from.timestamp():
+                break
+        if len(chunk) < 100:
+            break
+        page += 1
 
-    # Фильтруем по ключевым словам (любое слово из списка — OR-логика)
-    matched = []
-    for post in posts:
-        text = (post.get("text") or "").lower()
-        if any(kw in text for kw in keywords):
-            matched.append(post)
+    # Собираем signer_id со всех постов для резолва имён
+    signer_ids = set()
+    for post in all_posts:
+        sid = post.get("signer_id")
+        if sid and sid > 0:
+            signer_ids.add(sid)
 
-    # Узнаём, какие посты уже есть в БД
-    existing_post_ids = set()
-    for post_vk_id in [p["id"] for p in matched]:
-        exists = (
-            await db.execute(
-                select(AdPublication).where(
-                    AdPublication.community_vk_id == owner_id,
-                    AdPublication.vk_post_id == post_vk_id,
+    signer_names: dict[int, str] = {}
+    if signer_ids and author_lower:
+        try:
+            uid_list = list(signer_ids)[:500]
+            users = await asyncio.to_thread(
+                vk.vk.users.get, user_ids=uid_list, fields="screen_name"
+            )
+            for u in users:
+                full = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip().lower()
+                signer_names[u["id"]] = full
+        except Exception:
+            pass
+
+    # Проверяем, какие посты уже есть в БД (один запрос)
+    existing = set()
+    if all_posts:
+        post_ids = [p["id"] for p in all_posts]
+        rows = (
+            (
+                await db.execute(
+                    select(AdPublication.vk_post_id).where(
+                        AdPublication.community_vk_id == owner_id,
+                        AdPublication.vk_post_id.in_(post_ids),
+                    )
                 )
             )
-        ).scalar_one_or_none()
-        if exists:
-            existing_post_ids.add(post_vk_id)
+            .scalars()
+            .all()
+        )
+        existing = set(rows)
 
-    # Получаем имя сообщества один раз
+    # Фильтруем
+    matched = []
+    for post in all_posts:
+        if post["id"] in existing:
+            continue
+        # Фильтр по дате
+        post_ts = post.get("date", 0)
+        if date_from and post_ts < date_from.timestamp():
+            continue
+        if date_to and post_ts > date_to.timestamp():
+            continue
+
+        text = (post.get("text") or "").lower()
+        kw_match = keywords_lower and keywords_lower in text
+        auth_match = False
+        if author_lower:
+            sid = post.get("signer_id")
+            if sid and sid in signer_names:
+                auth_match = author_lower in signer_names[sid]
+        if kw_match or auth_match:
+            matched.append(post)
+
+    # Имя сообщества
     community_name = None
     community_screen_name = None
     try:
@@ -1072,11 +1140,9 @@ async def scan_client_posts(
     except Exception:
         pass
 
-    # Создаём новые публикации
+    # Создаём
     added = []
     for post in matched:
-        if post["id"] in existing_post_ids:
-            continue
         post_date = dt.utcfromtimestamp(post["date"]) if post.get("date") else dt.utcnow()
         pub = AdPublication(
             client_id=client_id,
@@ -1128,8 +1194,10 @@ async def scan_client_posts(
 
     return {
         "found": len(matched),
-        "already_known": len(existing_post_ids),
+        "already_known": len(existing),
         "added": len(added),
+        "scanned_posts": len(all_posts),
+        "pages": page + 1,
         "publications": [p.to_dict() for p in added],
         "community": {
             "group_id": owner_id,
@@ -1339,7 +1407,9 @@ async def _resolve_client_dialog(db: AsyncSession, client_id: int):
                     AdRequest.peer_id > 0,
                 )
                 .order_by(
-                    AdRequest.origin.desc(), AdRequest.detected_at.desc(), AdRequest.id.desc()
+                    AdRequest.origin.desc(),
+                    AdRequest.detected_at.desc(),
+                    AdRequest.id.desc(),
                 )
             )
         )
@@ -1450,7 +1520,11 @@ async def client_reply(
             "personal_deeplink": res.get("personal_deeplink") or f"https://vk.com/im?sel={peer_id}",
             "error_code": res.get("error_code"),
         }
-    return {"success": False, "error": res.get("error"), "error_code": res.get("error_code")}
+    return {
+        "success": False,
+        "error": res.get("error"),
+        "error_code": res.get("error_code"),
+    }
 
 
 # ---------------------------------------------------------------- stats (С3)
