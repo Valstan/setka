@@ -325,6 +325,13 @@ const apiClient = {
         });
     },
 
+    async resolveProfile(url) {
+        return this.request('/ad-crm/resolve-profile', {
+            method: 'POST',
+            body: JSON.stringify({ url })
+        });
+    },
+
     async scanClientPosts(clientId, payload) {
         return this.request(`/ad-crm/clients/${clientId}/scan-posts`, {
             method: 'POST',

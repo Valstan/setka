@@ -69,7 +69,7 @@ AD_PAYMENT_BANKS = (
 
 
 class ClientCreateIn(BaseModel):
-    author_vk_id: int
+    author_vk_id: Optional[int] = None
     author_is_group: bool = False
     name: Optional[str] = None
     vk_url: Optional[str] = None
@@ -77,6 +77,10 @@ class ClientCreateIn(BaseModel):
     region_id: Optional[int] = None
     stage: str = "detected"
     notes: Optional[str] = None
+    phone: Optional[str] = None
+    telegram: Optional[str] = None
+    email: Optional[str] = None
+    postal_address: Optional[str] = None
 
 
 class ClientUpdateIn(BaseModel):
@@ -89,6 +93,10 @@ class ClientUpdateIn(BaseModel):
     stage: Optional[str] = None
     notes: Optional[str] = None
     author_is_group: Optional[bool] = None
+    phone: Optional[str] = None
+    telegram: Optional[str] = None
+    email: Optional[str] = None
+    postal_address: Optional[str] = None
 
 
 class PaymentCreateIn(BaseModel):
@@ -174,6 +182,12 @@ class OrderItemUpdateIn(BaseModel):
 
 class CommunityInfoIn(BaseModel):
     """Разрешить VK-сообщество по URL/screen_name/ID."""
+
+    url: str
+
+
+class ResolveProfileIn(BaseModel):
+    """Разрешить VK-профиль человека или сообщества по URL/screen_name/ID."""
 
     url: str
 
@@ -407,18 +421,21 @@ async def create_client(
     payload: ClientCreateIn,
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Завести клиента вручную. Дубль по ``author_vk_id`` → 409."""
+    """Завести клиента вручную. Дубль по ``author_vk_id`` → 409 (только если vk_id задан)."""
     if payload.stage not in _VALID_STAGES:
         raise HTTPException(status_code=400, detail="invalid stage")
 
-    existing = (
-        await db.execute(select(AdClient).where(AdClient.author_vk_id == int(payload.author_vk_id)))
-    ).scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=409, detail="client already exists")
+    if payload.author_vk_id is not None:
+        existing = (
+            await db.execute(
+                select(AdClient).where(AdClient.author_vk_id == int(payload.author_vk_id))
+            )
+        ).scalar_one_or_none()
+        if existing:
+            raise HTTPException(status_code=409, detail="client already exists")
 
     client = AdClient(
-        author_vk_id=int(payload.author_vk_id),
+        author_vk_id=int(payload.author_vk_id) if payload.author_vk_id is not None else None,
         author_is_group=payload.author_is_group,
         name=payload.name,
         vk_url=payload.vk_url,
@@ -426,6 +443,10 @@ async def create_client(
         region_id=payload.region_id,
         stage=payload.stage,
         notes=payload.notes,
+        phone=payload.phone,
+        telegram=payload.telegram,
+        email=payload.email,
+        postal_address=payload.postal_address,
     )
     db.add(client)
     await db.commit()
@@ -1000,6 +1021,133 @@ async def community_info(
         "members_count": info.get("members_count"),
         "photo_url": info.get("photo_200"),
     }
+
+
+# ---------------------------------------------------------------- resolve profile
+
+
+@router.post("/resolve-profile")
+async def resolve_profile(
+    payload: ResolveProfileIn,
+):
+    """Разрешить VK-ссылку в данные профиля (человек или сообщество).
+
+    Принимает URL/screen_name/ID, возвращает тип (user/group) и поля:
+    name, photo_url, vk_id, screen_name. Используется для авто-заполнения
+    формы создания клиента.
+    """
+    import asyncio
+
+    from modules.vk_monitor.vk_client import VKClient
+    from modules.vk_token_router import get_healthy_read_token
+    from utils.vk_url import parse_vk_group_url
+
+    raw = payload.url.strip()
+    token = await get_healthy_read_token()
+    if not token:
+        raise HTTPException(status_code=503, detail="no healthy VK parse-token")
+    vk = VKClient(token=token)
+
+    # Пробуем как числовой ID
+    numeric_id = None
+    try:
+        numeric_id = int(raw)
+    except (ValueError, TypeError):
+        pass
+
+    # Похоже на vk.com/idXXX или vk.com/durov
+    user_screen_name = None
+    if not numeric_id and raw:
+        # Извлекаем screen_name из URL вида vk.com/xxx или @xxx
+        import re
+
+        m = re.search(r"vk\.com/([a-zA-Z0-9_.]+)", raw)
+        if m:
+            user_screen_name = m.group(1)
+        elif raw.startswith("@"):
+            user_screen_name = raw[1:]
+        elif re.match(r"^[a-zA-Z][a-zA-Z0-9_.]{3,}$", raw):
+            user_screen_name = raw
+
+    # 1. Пробуем как сообщество
+    group_id, group_sn = parse_vk_group_url(raw)
+    if group_id is not None:
+        try:
+            infos = await asyncio.to_thread(
+                vk.get_groups_by_ids, [abs(group_id)], "screen_name,members_count,photo_200"
+            )
+            if infos:
+                info = infos[0]
+                return {
+                    "type": "group",
+                    "vk_id": -abs(group_id),
+                    "name": info.get("name") or "",
+                    "screen_name": info.get("screen_name") or group_sn or "",
+                    "photo_url": info.get("photo_200"),
+                    "members_count": info.get("members_count"),
+                }
+        except Exception:
+            pass
+
+    # 2. Пробуем как пользователя — по числовому id
+    if numeric_id and numeric_id > 0:
+        try:
+            users = await asyncio.to_thread(
+                vk.vk.users.get, user_ids=[numeric_id], fields="photo_200"
+            )
+            if users:
+                u = users[0]
+                return {
+                    "type": "user",
+                    "vk_id": u["id"],
+                    "first_name": u.get("first_name", ""),
+                    "last_name": u.get("last_name", ""),
+                    "name": f"{u.get('first_name', '')} {u.get('last_name', '')}".strip(),
+                    "photo_url": u.get("photo_200"),
+                }
+        except Exception:
+            pass
+
+    # 3. Пробуем разрешить screen_name через utils.resolveScreenName
+    if user_screen_name:
+        try:
+            resolved = await asyncio.to_thread(
+                vk.vk.utils.resolveScreenName, screen_name=user_screen_name
+            )
+            if resolved and resolved.get("object_id"):
+                obj_type = resolved.get("type", "")
+                obj_id = int(resolved["object_id"])
+                if obj_type == "user":
+                    users = await asyncio.to_thread(
+                        vk.vk.users.get, user_ids=[obj_id], fields="photo_200"
+                    )
+                    if users:
+                        u = users[0]
+                        return {
+                            "type": "user",
+                            "vk_id": u["id"],
+                            "first_name": u.get("first_name", ""),
+                            "last_name": u.get("last_name", ""),
+                            "name": f"{u.get('first_name', '')} {u.get('last_name', '')}".strip(),
+                            "photo_url": u.get("photo_200"),
+                        }
+                elif obj_type == "group":
+                    infos = await asyncio.to_thread(
+                        vk.get_groups_by_ids, [obj_id], "screen_name,photo_200"
+                    )
+                    if infos:
+                        info = infos[0]
+                        return {
+                            "type": "group",
+                            "vk_id": -obj_id,
+                            "name": info.get("name") or "",
+                            "screen_name": info.get("screen_name") or user_screen_name,
+                            "photo_url": info.get("photo_200"),
+                        }
+        except Exception:
+            pass
+
+    raise HTTPException(status_code=404, detail="не удалось найти профиль по этой ссылке")
 
 
 # ---------------------------------------------------------------- scan posts
