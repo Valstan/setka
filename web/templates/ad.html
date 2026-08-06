@@ -494,6 +494,24 @@
     </div>
 </div>
 
+<!-- Модалка «Отчёт клиента» (печать / копирование) -->
+<div class="modal fade" id="client-report-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-printer"></i> Отчёт по публикациям</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body" id="crm-report-body">
+                <div class="text-muted small">Загрузка отчёта…</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Модалка «Входящие заявки клиента» (И5 — всё в карточке) -->
 <div class="modal fade" id="client-requests-modal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -516,7 +534,7 @@
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="/static/js/ad_cabinet.js?v=20260629_i5"></script>
-<script src="/static/js/ad_crm.js?v=20260629_i5"></script>
+<script src="/static/js/ad_crm.js?v=20260806_pubsv2"></script>
 <script>
 // Единый рекламный кабинет: логика вкладок (С1).
 document.addEventListener('DOMContentLoaded', () => {

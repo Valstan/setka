@@ -172,6 +172,38 @@ class OrderItemUpdateIn(BaseModel):
     note: Optional[str] = None
 
 
+class CommunityInfoIn(BaseModel):
+    """Разрешить VK-сообщество по URL/screen_name/ID."""
+
+    url: str
+
+
+class ScanPostsIn(BaseModel):
+    """Сканировать стену сообщества на посты заказчика по ключевым словам."""
+
+    community_vk_id: int
+    keywords: str
+    max_posts: int = 100
+
+
+class PublicationUpdateIn(BaseModel):
+    """Частичная правка публикации (цена, статус оплаты, заметка)."""
+
+    price: Optional[float] = None
+    paid_status: Optional[str] = None
+    note: Optional[str] = None
+    published_at: Optional[str] = None
+
+
+class ReportFiltersIn(BaseModel):
+    """Фильтры для отчёта клиента."""
+
+    community_vk_ids: Optional[list[int]] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    paid_status: Optional[str] = None
+
+
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -431,13 +463,59 @@ async def get_client(
         .all()
     )
 
-    # Баланс нити (И1): единый источник правды paid/spent/remaining. Чинит баг —
-    # карточка считала paid как «не awaiting», а список/воронка — как «== paid».
+    # Баланс нити (И1): единый источник правды paid/spent/remaining.
     balance = compute_balance(payments, publications)
+
+    # Группировка публикаций по сообществам для UI
+    by_community: dict = {}
+    for pub in publications:
+        cid = pub.community_vk_id
+        if cid not in by_community:
+            by_community[cid] = {
+                "community_vk_id": cid,
+                "community_name": pub.community_name or None,
+                "community_screen_name": pub.community_screen_name,
+                "publications": [],
+                "total_price": 0,
+                "paid_price": 0,
+                "unpaid_price": 0,
+                "paid_count": 0,
+                "unpaid_count": 0,
+            }
+        pd = pub.to_dict()
+        by_community[cid]["publications"].append(pd)
+        price = pd["price"] or 0
+        by_community[cid]["total_price"] += price
+        if pub.paid_status == "paid":
+            by_community[cid]["paid_price"] += price
+            by_community[cid]["paid_count"] += 1
+        else:
+            by_community[cid]["unpaid_price"] += price
+            by_community[cid]["unpaid_count"] += 1
+
+    # Клиентские тоталы (общее)
+    total_published = len(publications)
+    total_paid_pubs = sum(1 for p in publications if p.paid_status == "paid")
+    total_unpaid_pubs = total_published - total_paid_pubs
+    total_paid_amount = sum((p.price or 0) for p in publications if p.paid_status == "paid")
+    total_unpaid_amount = sum((p.price or 0) for p in publications if p.paid_status != "paid")
+
     return {
         "client": client.to_dict(),
         "payments": [p.to_dict() for p in payments],
         "publications": [p.to_dict() for p in publications],
+        "publications_by_community": sorted(
+            by_community.values(), key=lambda c: c["community_name"] or ""
+        ),
+        "publications_totals": {
+            "total_count": total_published,
+            "total_price": sum((p.price or 0) for p in publications),
+            "paid_count": total_paid_pubs,
+            "unpaid_count": total_unpaid_pubs,
+            "paid_amount": total_paid_amount,
+            "unpaid_amount": total_unpaid_amount,
+            "debt": total_unpaid_amount,
+        },
         "total_paid": balance["paid"],
         "total_awaiting": balance["awaiting"],
         "publications_count": len(publications),
@@ -813,6 +891,333 @@ async def delete_publication(
     await db.delete(pub)
     await db.commit()
     return {"success": True}
+
+
+@router.patch("/publications/{publication_id}")
+async def update_publication(
+    publication_id: int,
+    payload: PublicationUpdateIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Обновить публикацию: цена, статус оплаты (paid/unpaid), заметка, дата."""
+    pub = await db.get(AdPublication, publication_id)
+    if not pub:
+        raise HTTPException(status_code=404, detail="publication not found")
+
+    changed = []
+    if payload.price is not None:
+        pub.price = payload.price
+        changed.append(f"цена={payload.price:g} ₽")
+    if payload.paid_status is not None:
+        if payload.paid_status not in ("paid", "unpaid"):
+            raise HTTPException(status_code=400, detail="paid_status must be 'paid' or 'unpaid'")
+        pub.paid_status = payload.paid_status
+        changed.append(f"оплата={'да' if payload.paid_status == 'paid' else 'нет'}")
+    if payload.note is not None:
+        pub.note = payload.note
+        changed.append("заметка")
+    if payload.published_at is not None:
+        pub.published_at = _parse_dt(payload.published_at) or pub.published_at
+        changed.append("дата")
+
+    if changed:
+        log_interaction(
+            db,
+            kind="publication_updated",
+            client_id=pub.client_id,
+            publication_id=pub.id,
+            summary="Обновлена публикация: " + ", ".join(changed),
+            meta={"price": payload.price, "paid_status": payload.paid_status},
+        )
+    await db.commit()
+    await db.refresh(pub)
+    return pub.to_dict()
+
+
+# ---------------------------------------------------------------- community info
+
+
+@router.post("/community-info")
+async def community_info(
+    payload: CommunityInfoIn,
+):
+    """Разрешить VK-сообщество по URL/screen_name/ID → {group_id, name, photo, ...}."""
+    from modules.vk_monitor.vk_client import VKClient
+    from modules.vk_token_router import get_healthy_read_token
+    from utils.vk_url import parse_vk_group_url
+
+    group_id, screen_name = parse_vk_group_url(payload.url)
+    if group_id is None and screen_name is None:
+        raise HTTPException(status_code=400, detail="не удалось распознать VK-ссылку")
+
+    token = await get_healthy_read_token()
+    if not token:
+        raise HTTPException(status_code=503, detail="no healthy VK parse-token")
+    client = VKClient(token=token)
+
+    if group_id is None and screen_name is not None:
+        import asyncio
+
+        try:
+            resolved = await asyncio.to_thread(
+                client.vk.utils.resolveScreenName, screen_name=screen_name
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"VK resolveScreenName failed: {e}")
+        if not resolved or resolved.get("type") != "group":
+            raise HTTPException(
+                status_code=404, detail=f"VK не нашёл группу с адресом '{screen_name}'"
+            )
+        group_id = int(resolved.get("object_id") or 0)
+
+    if not group_id:
+        raise HTTPException(status_code=400, detail="не удалось определить group_id")
+
+    import asyncio
+
+    try:
+        infos = await asyncio.to_thread(
+            client.get_groups_by_ids, [abs(group_id)], "screen_name,members_count,photo_200"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"VK groups.getById failed: {e}")
+    if not infos:
+        raise HTTPException(status_code=404, detail=f"VK group {group_id} не найден")
+    info = infos[0]
+    return {
+        "group_id": -abs(group_id),
+        "screen_name": info.get("screen_name") or screen_name,
+        "name": info.get("name") or "",
+        "members_count": info.get("members_count"),
+        "photo_url": info.get("photo_200"),
+    }
+
+
+# ---------------------------------------------------------------- scan posts
+
+
+@router.post("/clients/{client_id}/scan-posts")
+async def scan_client_posts(
+    client_id: int,
+    payload: ScanPostsIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Сканировать стену VK-сообщества на посты заказчика по ключевым словам.
+
+    Ищет посты через wall.get, фильтрует по ключевым словам (AND/OR через запятые),
+    создаёт AdPublication для новых (дедупликация по community_vk_id+vk_post_id).
+    Возвращает найденные посты с метриками из VK.
+    """
+    import asyncio
+    from datetime import datetime as dt
+
+    from modules.vk_monitor.vk_client import VKClient
+    from modules.vk_token_router import get_healthy_read_token
+
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+
+    owner_id = int(payload.community_vk_id)
+    keywords = [
+        kw.strip().lower() for kw in payload.keywords.replace(",", " ").split() if kw.strip()
+    ]
+    if not keywords:
+        raise HTTPException(
+            status_code=400, detail="укажите ключевые слова через пробел или запятую"
+        )
+
+    token = await get_healthy_read_token()
+    if not token:
+        raise HTTPException(status_code=503, detail="no healthy VK parse-token")
+    vk = VKClient(token=token)
+
+    # Получаем посты со стены
+    try:
+        posts = await asyncio.to_thread(
+            vk.get_wall_posts, owner_id, count=min(payload.max_posts, 100), offset=0
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"VK wall.get failed: {e}")
+
+    # Фильтруем по ключевым словам (любое слово из списка — OR-логика)
+    matched = []
+    for post in posts:
+        text = (post.get("text") or "").lower()
+        if any(kw in text for kw in keywords):
+            matched.append(post)
+
+    # Узнаём, какие посты уже есть в БД
+    existing_post_ids = set()
+    for post_vk_id in [p["id"] for p in matched]:
+        exists = (
+            await db.execute(
+                select(AdPublication).where(
+                    AdPublication.community_vk_id == owner_id,
+                    AdPublication.vk_post_id == post_vk_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if exists:
+            existing_post_ids.add(post_vk_id)
+
+    # Получаем имя сообщества один раз
+    community_name = None
+    community_screen_name = None
+    try:
+        infos = await asyncio.to_thread(vk.get_groups_by_ids, [abs(owner_id)], "screen_name")
+        if infos:
+            community_name = infos[0].get("name")
+            community_screen_name = infos[0].get("screen_name")
+    except Exception:
+        pass
+
+    # Создаём новые публикации
+    added = []
+    for post in matched:
+        if post["id"] in existing_post_ids:
+            continue
+        post_date = dt.utcfromtimestamp(post["date"]) if post.get("date") else dt.utcnow()
+        pub = AdPublication(
+            client_id=client_id,
+            community_vk_id=owner_id,
+            vk_post_id=post["id"],
+            price=None,
+            status="published",
+            paid_status="unpaid",
+            published_at=post_date,
+            views=(
+                post.get("views", {}).get("count") if isinstance(post.get("views"), dict) else None
+            ),
+            likes=(
+                post.get("likes", {}).get("count") if isinstance(post.get("likes"), dict) else None
+            ),
+            reposts=(
+                post.get("reposts", {}).get("count")
+                if isinstance(post.get("reposts"), dict)
+                else None
+            ),
+            comments=(
+                post.get("comments", {}).get("count")
+                if isinstance(post.get("comments"), dict)
+                else None
+            ),
+            community_name=community_name,
+            community_screen_name=community_screen_name,
+        )
+        db.add(pub)
+        added.append(pub)
+
+    if added:
+        if client.stage in ("detected", "contacted", "scheduled"):
+            client.stage = "published"
+        await db.flush()
+        for pub in added:
+            log_interaction(
+                db,
+                kind="published",
+                client_id=client_id,
+                publication_id=pub.id,
+                summary=(
+                    f"Сканер: найден пост в {community_name or owner_id}"
+                    f" (post {pub.vk_post_id})"
+                ),
+                meta={"community_vk_id": owner_id, "vk_post_id": pub.vk_post_id},
+            )
+    await db.commit()
+
+    return {
+        "found": len(matched),
+        "already_known": len(existing_post_ids),
+        "added": len(added),
+        "publications": [p.to_dict() for p in added],
+        "community": {
+            "group_id": owner_id,
+            "name": community_name,
+            "screen_name": community_screen_name,
+        },
+    }
+
+
+# ---------------------------------------------------------------- report
+
+
+@router.post("/clients/{client_id}/report")
+async def client_report(
+    client_id: int,
+    payload: ReportFiltersIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Отчёт клиента: публикации с фильтрами по сообществам, датам и статусу оплаты."""
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+
+    stmt = select(AdPublication).where(
+        AdPublication.client_id == client_id,
+        AdPublication.status == "published",
+    )
+    if payload.community_vk_ids:
+        stmt = stmt.where(AdPublication.community_vk_id.in_(payload.community_vk_ids))
+    if payload.date_from:
+        stmt = stmt.where(AdPublication.published_at >= _parse_dt(payload.date_from))
+    if payload.date_to:
+        stmt = stmt.where(AdPublication.published_at <= _parse_dt(payload.date_to))
+    if payload.paid_status:
+        stmt = stmt.where(AdPublication.paid_status == payload.paid_status)
+
+    stmt = stmt.order_by(AdPublication.published_at.desc())
+    publications = (await db.execute(stmt)).scalars().all()
+
+    # Платежи и баланс
+    payments = (
+        (await db.execute(select(AdPayment).where(AdPayment.client_id == client_id)))
+        .scalars()
+        .all()
+    )
+    balance = compute_balance(payments, publications)
+
+    # Группировка по сообществам
+    by_community: dict[int, dict] = {}
+    for pub in publications:
+        cid = pub.community_vk_id
+        if cid not in by_community:
+            by_community[cid] = {
+                "community_vk_id": cid,
+                "community_name": pub.community_name or f"Группа {cid}",
+                "community_screen_name": pub.community_screen_name,
+                "publications": [],
+                "total_price": 0,
+                "paid_price": 0,
+                "unpaid_price": 0,
+                "paid_count": 0,
+                "unpaid_count": 0,
+            }
+        pd = pub.to_dict()
+        by_community[cid]["publications"].append(pd)
+        price = pd["price"] or 0
+        by_community[cid]["total_price"] += price
+        if pub.paid_status == "paid":
+            by_community[cid]["paid_price"] += price
+            by_community[cid]["paid_count"] += 1
+        else:
+            by_community[cid]["unpaid_price"] += price
+            by_community[cid]["unpaid_count"] += 1
+
+    return {
+        "client": client.to_dict(),
+        "balance": balance,
+        "publications": [p.to_dict() for p in publications],
+        "by_community": sorted(by_community.values(), key=lambda c: c["community_name"] or ""),
+        "totals": {
+            "published_count": len(publications),
+            "total_price": sum((p.price or 0) for p in publications),
+            "paid_count": sum(1 for p in publications if p.paid_status == "paid"),
+            "unpaid_count": sum(1 for p in publications if p.paid_status != "paid"),
+            "paid_amount": sum((p.price or 0) for p in publications if p.paid_status == "paid"),
+            "unpaid_amount": sum((p.price or 0) for p in publications if p.paid_status != "paid"),
+        },
+    }
 
 
 # ---------------------------------------------------------------- funnel
