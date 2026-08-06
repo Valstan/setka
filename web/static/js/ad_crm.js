@@ -652,15 +652,34 @@ function renderPublicationsSection(clientId, byCommunity, totals) {
                 </span>
             </div>`;
 
-        // Поиск по ключевым словам
+        // Поиск: ключевые слова + автор + диапазон дат
         html += `
-            <div class="input-group input-group-sm mb-2">
-                <input type="text" class="form-control" id="scan-kw-${cid}" placeholder="Ключевые слова для поиска постов (через пробел)"
-                       onkeydown="if(event.key==='Enter'){scanClientPosts(${clientId}, ${comm.community_vk_id}, '${cid}');}">
-                <button class="btn btn-outline-primary" onclick="scanClientPosts(${clientId}, ${comm.community_vk_id}, '${cid}')"
-                        title="Сканировать стену сообщества — найденные посты добавятся к списку">
-                    <i class="bi bi-search"></i> Обновить посты
-                </button>
+            <div class="row g-1 mb-2">
+                <div class="col-md-6">
+                    <input type="text" class="form-control form-control-sm" id="scan-kw-${cid}"
+                           placeholder="Точная фраза для поиска в тексте поста"
+                           onkeydown="if(event.key==='Enter'){scanClientPosts(${clientId}, ${comm.community_vk_id}, '${cid}');}">
+                </div>
+                <div class="col-md-3">
+                    <input type="text" class="form-control form-control-sm" id="scan-au-${cid}"
+                           placeholder="Имя автора (если предложка)">
+                </div>
+                <div class="col-md-3">
+                    <button class="btn btn-sm btn-outline-primary w-100" onclick="scanClientPosts(${clientId}, ${comm.community_vk_id}, '${cid}')"
+                            title="Сканировать стену сообщества — точная фраза, диапазон дат, автор">
+                        <i class="bi bi-search"></i> Обновить посты
+                    </button>
+                </div>
+            </div>
+            <div class="row g-1 mb-2">
+                <div class="col-md-3">
+                    <label class="small text-muted">с даты</label>
+                    <input type="date" class="form-control form-control-sm" id="scan-from-${cid}">
+                </div>
+                <div class="col-md-3">
+                    <label class="small text-muted">по дату</label>
+                    <input type="date" class="form-control form-control-sm" id="scan-to-${cid}">
+                </div>
             </div>
             <div class="small" id="scan-res-${cid}"></div>`;
 
@@ -740,26 +759,38 @@ function renderPublicationsSection(clientId, byCommunity, totals) {
     return html;
 }
 
-// Сканировать стену сообщества на посты клиента по ключевым словам
+// Сканировать стену сообщества на посты клиента
 async function scanClientPosts(clientId, communityVkId, cid) {
     const kwEl = document.getElementById(`scan-kw-${cid}`);
+    const auEl = document.getElementById(`scan-au-${cid}`);
+    const fromEl = document.getElementById(`scan-from-${cid}`);
+    const toEl = document.getElementById(`scan-to-${cid}`);
     const resEl = document.getElementById(`scan-res-${cid}`);
     const keywords = (kwEl ? kwEl.value : '').trim();
-    if (!keywords) {
-        if (resEl) resEl.innerHTML = '<span class="text-warning">Введите ключевые слова для поиска.</span>';
+    const author = (auEl ? auEl.value : '').trim();
+    const dateFrom = fromEl ? fromEl.value : '';
+    const dateTo = toEl ? toEl.value : '';
+    if (!keywords && !author) {
+        if (resEl) resEl.innerHTML = '<span class="text-warning">Введите ключевые слова и/или имя автора.</span>';
         return;
     }
     if (resEl) resEl.innerHTML = '<span class="text-muted">Сканирую стену сообщества…</span>';
     try {
-        const r = await apiClient.scanClientPosts(clientId, communityVkId, keywords);
+        const payload = { community_vk_id: communityVkId };
+        if (keywords) payload.keywords = keywords;
+        if (author) payload.author_name = author;
+        if (dateFrom) payload.date_from = dateFrom;
+        if (dateTo) payload.date_to = dateTo;
+        const r = await apiClient.scanClientPosts(clientId, payload);
         if (resEl) {
+            const scanned = r.scanned_posts ? ` (просмотрено ${r.scanned_posts} постов, ${r.pages} стр.)` : '';
             if (r.added > 0) {
-                resEl.innerHTML = `<span class="text-success">Найдено ${r.found}, добавлено ${r.added} новых постов ✓.`
+                resEl.innerHTML = `<span class="text-success">Найдено ${r.found}, добавлено ${r.added} новых ✓${scanned}.`
                     + (r.already_known ? ` Уже в списке: ${r.already_known}.` : '') + `</span>`;
             } else if (r.found > 0) {
-                resEl.innerHTML = `<span class="text-muted">Найдено ${r.found} постов, все уже в списке (${r.already_known}).</span>`;
+                resEl.innerHTML = `<span class="text-muted">Найдено ${r.found}, все уже в списке (${r.already_known})${scanned}.</span>`;
             } else {
-                resEl.innerHTML = '<span class="text-muted">Постов по этим ключевым словам не найдено.</span>';
+                resEl.innerHTML = `<span class="text-muted">Ничего не найдено${scanned}.</span>`;
             }
         }
         if (r.added > 0) await _detailReload(clientId);
