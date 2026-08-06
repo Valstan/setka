@@ -961,6 +961,12 @@ class AdPublication(Base):
     likes = Column(Integer, nullable=True)
     reposts = Column(Integer, nullable=True)
     stats_updated_at = Column(DateTime, nullable=True)
+    # Комментарии (миграция 076) + статус оплаты конкретного поста (paid/unpaid).
+    comments = Column(Integer, default=0)
+    paid_status = Column(String(20), nullable=False, default="unpaid")
+    # Кэш имени сообщества для группировки в UI без лишних VK-запросов (076).
+    community_name = Column(String(300), nullable=True)
+    community_screen_name = Column(String(200), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -985,6 +991,10 @@ class AdPublication(Base):
             "views": self.views,
             "likes": self.likes,
             "reposts": self.reposts,
+            "comments": self.comments or 0,
+            "paid_status": self.paid_status or "unpaid",
+            "community_name": self.community_name,
+            "community_screen_name": self.community_screen_name,
             "stats_updated_at": (
                 self.stats_updated_at.isoformat() if self.stats_updated_at else None
             ),

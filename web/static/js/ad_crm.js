@@ -470,6 +470,8 @@ function renderClientDetails(d) {
     const c = d.client;
     const payments = d.payments || [];
     const publications = d.publications || [];
+    const byCommunity = d.publications_by_community || [];
+    const totals = d.publications_totals || {};
 
     const payRows = payments.length ? payments.map(p => {
         const awaiting = p.status === 'awaiting';
@@ -497,23 +499,7 @@ function renderClientDetails(d) {
         </tr>`;
     }).join('') : '<tr><td colspan="6" class="text-muted small">Оплат пока нет.</td></tr>';
 
-    const pubRows = publications.length ? publications.map(p => {
-        const link = p.vk_post_url
-            ? `<a href="${escapeHtml(p.vk_post_url)}" target="_blank">${escapeHtml(String(p.community_vk_id))}</a>`
-            : escapeHtml(String(p.community_vk_id));
-        const metrics = p.stats_updated_at
-            ? `<span title="обновлено ${fmtDate(p.stats_updated_at)}">👁 ${p.views ?? 0} · ❤ ${p.likes ?? 0} · 🔁 ${p.reposts ?? 0}</span>`
-            : '<span class="text-muted">—</span>';
-        return `<tr>
-            <td class="text-nowrap">${link}</td>
-            <td class="text-nowrap">${p.price != null ? fmtMoney(p.price) : ''}</td>
-            <td class="text-nowrap small">${fmtDate(p.published_at)}</td>
-            <td class="text-nowrap small">${metrics}</td>
-            <td class="small">${escapeHtml(p.status || '')} ${escapeHtml(p.note || '')}</td>
-            <td><button class="btn btn-sm btn-outline-danger py-0 px-1"
-                        onclick="deletePublication(${p.id}, ${c.id})" title="Удалить"><i class="bi bi-x"></i></button></td>
-        </tr>`;
-    }).join('') : '<tr><td colspan="6" class="text-muted small">Публикаций пока нет.</td></tr>';
+    const publicationsHtml = renderPublicationsSection(c.id, byCommunity, totals);
 
     return `
     <div class="d-flex gap-2 mb-3 flex-wrap">
@@ -562,28 +548,7 @@ function renderClientDetails(d) {
                 <input class="form-check-input" type="checkbox" id="pay-awaiting-${c.id}">
                 <label class="form-check-label text-muted" for="pay-awaiting-${c.id}">ожидание оплаты (деньги ещё не пришли)</label>
             </div>
-
-            <div class="fw-bold small mb-1"><i class="bi bi-megaphone"></i> Публикации</div>
-            <table class="table table-sm align-middle mb-2">
-                <tbody>${pubRows}</tbody>
-            </table>
-            <div class="input-group input-group-sm">
-                <input type="number" class="form-control" id="pub-comm-${c.id}" placeholder="VK id группы (-100…)" style="max-width:150px;">
-                <input type="number" class="form-control" id="pub-post-${c.id}" placeholder="post id" style="max-width:90px;">
-                <input type="number" class="form-control" id="pub-price-${c.id}" placeholder="Цена ₽" style="max-width:100px;">
-                <button class="btn btn-outline-primary" onclick="addPublication(${c.id})"><i class="bi bi-plus-lg"></i> Публикация</button>
-            </div>
-            <div class="d-flex gap-2 mt-1 align-items-center">
-                <button class="btn btn-sm btn-outline-secondary" onclick="refreshClientStats(${c.id})"
-                        title="Обновить просмотры/лайки публикаций из VK">
-                    <i class="bi bi-eye"></i> Обновить просмотры
-                </button>
-                <button class="btn btn-sm btn-outline-info" onclick="clientStatsReport(${c.id})"
-                        title="Вставить отчёт по просмотрам в чат с клиентом">
-                    <i class="bi bi-clipboard-data"></i> Отчёт клиенту
-                </button>
-                <span class="small" id="stats-res-${c.id}"></span>
-            </div>
+            ${publicationsHtml}
         </div>
     </div>
 
@@ -630,7 +595,286 @@ function renderClientDetails(d) {
     <div id="crm-timeline-${c.id}"><div class="text-muted small">Загрузка истории…</div></div>`;
 }
 
-// --------------------------------------------------- И5: заявки клиента (модалка)
+// --------------------------------------------------- список рекламных публикаций (v2)
+
+let _pendingCommunities = {};  // clientId -> { [communityVkId]: {name, screen_name} }
+
+function renderPublicationsSection(clientId, byCommunity, totals) {
+    let html = '<div class="fw-bold small mb-2 mt-3"><i class="bi bi-megaphone"></i> Список рекламных публикаций</div>';
+
+    // Общие тоталы клиента
+    if (totals.total_count > 0) {
+        html += `<div class="d-flex gap-3 small text-nowrap mb-2 flex-wrap">
+            <span><b>Всего:</b> ${totals.total_count} публ. · ${fmtMoney(totals.total_price)}</span>
+            <span class="text-success"><b>Оплачено:</b> ${totals.paid_count} · ${fmtMoney(totals.paid_amount)}</span>
+            <span class="${totals.unpaid_amount > 0 ? 'text-danger' : 'text-muted'}"><b>Долг:</b> ${totals.unpaid_count} · ${fmtMoney(totals.unpaid_amount)}</span>
+        </div>`;
+    }
+
+    // Слить серверные данные с pending-сообществами (добавлены через URL, но без постов)
+    const pendingMap = _pendingCommunities[clientId] || {};
+    const seenVkIds = new Set();
+    const allCommunities = [];
+
+    byCommunity.forEach(comm => {
+        allCommunities.push(comm);
+        seenVkIds.add(comm.community_vk_id);
+    });
+    Object.entries(pendingMap).forEach(([vkId, info]) => {
+        const vid = parseInt(vkId, 10);
+        if (!seenVkIds.has(vid)) {
+            allCommunities.push({
+                community_vk_id: vid,
+                community_name: info.name,
+                community_screen_name: info.screen_name,
+                publications: [],
+                total_price: 0, paid_price: 0, unpaid_price: 0,
+                paid_count: 0, unpaid_count: 0,
+            });
+        }
+    });
+
+    // Каждое сообщество — отдельный блок
+    allCommunities.forEach(comm => {
+        const cid = `comm-${clientId}-${comm.community_vk_id}`;
+        html += `
+        <div class="border rounded p-2 mb-2" style="background:#fafafa;">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <span class="fw-bold small">
+                    <a href="https://vk.com/club${Math.abs(comm.community_vk_id)}" target="_blank" class="text-decoration-none">
+                        ${escapeHtml(comm.community_name || 'Группа ' + comm.community_vk_id)}
+                    </a>
+                    ${comm.community_screen_name ? `<span class="text-muted">@${escapeHtml(comm.community_screen_name)}</span>` : ''}
+                </span>
+                <span class="small text-nowrap">
+                    <span class="text-success">Оплачено: ${comm.paid_count} · ${fmtMoney(comm.paid_price)}</span>
+                    <span class="text-danger ms-2">Долг: ${comm.unpaid_count} · ${fmtMoney(comm.unpaid_price)}</span>
+                </span>
+            </div>`;
+
+        // Поиск по ключевым словам
+        html += `
+            <div class="input-group input-group-sm mb-2">
+                <input type="text" class="form-control" id="scan-kw-${cid}" placeholder="Ключевые слова для поиска постов (через пробел)"
+                       onkeydown="if(event.key==='Enter'){scanClientPosts(${clientId}, ${comm.community_vk_id}, '${cid}');}">
+                <button class="btn btn-outline-primary" onclick="scanClientPosts(${clientId}, ${comm.community_vk_id}, '${cid}')"
+                        title="Сканировать стену сообщества — найденные посты добавятся к списку">
+                    <i class="bi bi-search"></i> Обновить посты
+                </button>
+            </div>
+            <div class="small" id="scan-res-${cid}"></div>`;
+
+        // Таблица постов
+        html += '<table class="table table-sm table-borderless align-middle mb-1" style="font-size:0.8rem;">';
+        html += '<thead><tr class="text-muted border-bottom">'
+            + '<th>Пост</th><th>Дата</th><th class="text-end">👁</th><th class="text-end">❤</th><th class="text-end">🔁</th><th class="text-end">💬</th>'
+            + '<th class="text-end">Цена</th><th>Статус</th><th></th></tr></thead><tbody>';
+
+        if (!comm.publications.length) {
+            html += '<tr><td colspan="9" class="text-muted small">Публикаций пока нет. Введите ключевые слова и нажмите «Обновить посты».</td></tr>';
+        } else {
+            comm.publications.forEach(p => {
+                const dateStr = p.published_at ? String(p.published_at).replace('T', ' ').slice(0, 10) : '—';
+                const link = p.vk_post_url
+                    ? `<a href="${escapeHtml(p.vk_post_url)}" target="_blank" title="Открыть в VK">wall${escapeHtml(String(p.community_vk_id))}_${p.vk_post_id}</a>`
+                    : '—';
+                const isPaid = p.paid_status === 'paid';
+                const paidCls = isPaid ? 'text-success' : 'text-danger';
+                html += `<tr>
+                    <td class="text-nowrap">${link}</td>
+                    <td class="text-nowrap">${dateStr}</td>
+                    <td class="text-end">${p.views ?? '—'}</td>
+                    <td class="text-end">${p.likes ?? '—'}</td>
+                    <td class="text-end">${p.reposts ?? '—'}</td>
+                    <td class="text-end">${p.comments ?? '—'}</td>
+                    <td class="text-end">
+                        <input type="number" class="form-control form-control-sm" style="width:80px;display:inline-block;"
+                               value="${p.price != null ? Number(p.price) : ''}"
+                               onchange="updatePublicationField(${p.id}, ${clientId}, 'price', this.value)"
+                               placeholder="₽" title="Цена размещения">
+                    </td>
+                    <td class="text-nowrap">
+                        <select class="form-select form-select-sm ${paidCls}" style="width:auto; min-width:90px; font-size:0.75rem;"
+                                onchange="updatePublicationField(${p.id}, ${clientId}, 'paid_status', this.value)">
+                            <option value="unpaid" ${!isPaid ? 'selected' : ''}>Не оплачен</option>
+                            <option value="paid" ${isPaid ? 'selected' : ''}>Оплачен</option>
+                        </select>
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                                onclick="deletePublication(${p.id}, ${clientId})" title="Удалить"><i class="bi bi-x"></i></button>
+                    </td>
+                </tr>`;
+            });
+        }
+        html += '</tbody></table></div>';
+    });
+
+    // Добавить сообщество
+    html += `
+    <div class="input-group input-group-sm mt-2">
+        <input type="text" class="form-control" id="add-comm-url-${clientId}"
+               placeholder="Ссылка на VK-сообщество (vk.com/…)"
+               onkeydown="if(event.key==='Enter'){addCommunityForClient(${clientId});}">
+        <button class="btn btn-outline-secondary" onclick="addCommunityForClient(${clientId})"
+                title="Добавить сообщество в список — нужно для группировки публикаций">
+            <i class="bi bi-plus-lg"></i> Добавить сообщество
+        </button>
+    </div>
+    <div class="small text-muted mt-1 mb-1" id="add-comm-res-${clientId}">Вставьте ссылку на VK-сообщество и нажмите Enter — оно появится в списке, и можно будет сканировать посты.</div>`;
+
+    // Отчёт
+    html += `
+    <div class="d-flex gap-2 mt-2 align-items-center flex-wrap">
+        <button class="btn btn-sm btn-outline-secondary" onclick="refreshClientStats(${clientId})"
+                title="Обновить просмотры/лайки/репосты публикаций из VK">
+            <i class="bi bi-eye"></i> Обновить просмотры
+        </button>
+        <button class="btn btn-sm btn-outline-info" onclick="showClientReport(${clientId})"
+                title="Открыть отчёт для печати / копирования в буфер">
+            <i class="bi bi-printer"></i> Отчёт
+        </button>
+        <span class="small" id="stats-res-${clientId}"></span>
+    </div>`;
+
+    return html;
+}
+
+// Сканировать стену сообщества на посты клиента по ключевым словам
+async function scanClientPosts(clientId, communityVkId, cid) {
+    const kwEl = document.getElementById(`scan-kw-${cid}`);
+    const resEl = document.getElementById(`scan-res-${cid}`);
+    const keywords = (kwEl ? kwEl.value : '').trim();
+    if (!keywords) {
+        if (resEl) resEl.innerHTML = '<span class="text-warning">Введите ключевые слова для поиска.</span>';
+        return;
+    }
+    if (resEl) resEl.innerHTML = '<span class="text-muted">Сканирую стену сообщества…</span>';
+    try {
+        const r = await apiClient.scanClientPosts(clientId, communityVkId, keywords);
+        if (resEl) {
+            if (r.added > 0) {
+                resEl.innerHTML = `<span class="text-success">Найдено ${r.found}, добавлено ${r.added} новых постов ✓.`
+                    + (r.already_known ? ` Уже в списке: ${r.already_known}.` : '') + `</span>`;
+            } else if (r.found > 0) {
+                resEl.innerHTML = `<span class="text-muted">Найдено ${r.found} постов, все уже в списке (${r.already_known}).</span>`;
+            } else {
+                resEl.innerHTML = '<span class="text-muted">Постов по этим ключевым словам не найдено.</span>';
+            }
+        }
+        if (r.added > 0) await _detailReload(clientId);
+    } catch (e) {
+        if (resEl) resEl.innerHTML = `<span class="text-danger">Ошибка: ${escapeHtml(e.message)}</span>`;
+    }
+}
+
+// Обновить поле публикации (цена или статус оплаты) через PATCH
+async function updatePublicationField(pubId, clientId, field, value) {
+    const payload = {};
+    if (field === 'price') {
+        payload.price = value ? parseFloat(value) : null;
+    } else if (field === 'paid_status') {
+        payload.paid_status = value;
+    }
+    try {
+        await apiClient.updateCrmPublication(pubId, payload);
+        await _detailReload(clientId);
+    } catch (e) {
+        alert('Не удалось обновить: ' + e.message);
+    }
+}
+
+// Добавить сообщество в список клиента (просто ресолвим URL и показываем инфо)
+async function addCommunityForClient(clientId) {
+    const urlEl = document.getElementById(`add-comm-url-${clientId}`);
+    const resEl = document.getElementById(`add-comm-res-${clientId}`);
+    const url = (urlEl ? urlEl.value : '').trim();
+    if (!url) {
+        if (resEl) resEl.innerHTML = '<span class="text-warning">Вставьте ссылку на VK-сообщество (vk.com/…).</span>';
+        return;
+    }
+    if (resEl) resEl.innerHTML = '<span class="text-muted">Ищу сообщество…</span>';
+    try {
+        const info = await apiClient.resolveCommunity(url);
+        // Сохраняем в pending — появится в списке даже без постов
+        if (!_pendingCommunities[clientId]) _pendingCommunities[clientId] = {};
+        _pendingCommunities[clientId][info.group_id] = {
+            name: info.name,
+            screen_name: info.screen_name,
+        };
+        if (resEl) {
+            resEl.innerHTML = `<span class="text-success">✓ Добавлено: <b>${escapeHtml(info.name)}</b>`
+                + (info.screen_name ? ` (@${escapeHtml(info.screen_name)})` : '')
+                + ` — теперь можно сканировать посты.</span>`;
+        }
+        if (urlEl) urlEl.value = '';
+        await _detailReload(clientId);
+    } catch (e) {
+        if (resEl) resEl.innerHTML = `<span class="text-danger">Ошибка: ${escapeHtml(e.message)}</span>`;
+    }
+}
+
+// Показать модалку отчёта клиента
+async function showClientReport(clientId) {
+    const modalEl = document.getElementById('client-report-modal');
+    const bodyEl = document.getElementById('crm-report-body');
+    if (!modalEl || !bodyEl || !window.bootstrap) return;
+    bodyEl.innerHTML = '<div class="text-muted small">Загрузка отчёта…</div>';
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    try {
+        const d = await apiClient.getCrmReport(clientId, {});
+        bodyEl.innerHTML = renderClientReport(d);
+    } catch (e) {
+        bodyEl.innerHTML = `<div class="text-danger small">Ошибка: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+// HTML отчёта для печати / копирования
+function renderClientReport(d) {
+    const c = d.client;
+    const byComm = d.by_community || [];
+    const totals = d.totals || {};
+    let html = '';
+    html += `<div class="mb-3"><b>Заказчик:</b> ${escapeHtml(c.name || 'Без имени')} · ${escapeHtml(c.contact || '')}</div>`;
+    html += `<div class="mb-3 d-flex gap-4 small">
+        <span><b>Постов всего:</b> ${totals.published_count} · ${fmtMoney(totals.total_price)}</span>
+        <span class="text-success"><b>Оплачено:</b> ${totals.paid_count} · ${fmtMoney(totals.paid_amount)}</span>
+        <span class="text-danger"><b>Долг:</b> ${totals.unpaid_count} · ${fmtMoney(totals.unpaid_amount)}</span>
+    </div>`;
+
+    byComm.forEach(comm => {
+        html += `<div class="mb-3"><b>${escapeHtml(comm.community_name || 'Группа ' + comm.community_vk_id)}</b>`;
+        html += ` <span class="small">(${comm.publications.length} постов, оплачено ${comm.paid_count} · ${fmtMoney(comm.paid_price)}, долг ${fmtMoney(comm.unpaid_price)})</span>`;
+        html += '<table class="table table-sm table-bordered" style="font-size:0.8rem;">';
+        html += '<tr><th>Дата</th><th>Пост</th><th class="text-end">Просм.</th><th class="text-end">Цена</th><th>Оплата</th></tr>';
+        comm.publications.forEach(p => {
+            const dateStr = p.published_at ? String(p.published_at).replace('T', ' ').slice(0, 10) : '—';
+            html += `<tr>
+                <td>${dateStr}</td>
+                <td><a href="${escapeHtml(p.vk_post_url || '#')}" target="_blank">wall${p.community_vk_id}_${p.vk_post_id}</a></td>
+                <td class="text-end">${p.views ?? '—'}</td>
+                <td class="text-end">${p.price != null ? Number(p.price) + ' ₽' : '—'}</td>
+                <td>${p.paid_status === 'paid' ? '✓ Оплачен' : '✗ Не оплачен'}</td>
+            </tr>`;
+        });
+        html += '</table></div>';
+    });
+
+    html += `<button class="btn btn-sm btn-outline-primary" onclick="copyReportToClipboard()">📋 Копировать в буфер</button>`;
+    html += `<div class="small text-muted mt-1">(Для печати: Ctrl+P или ⌘P в браузере)</div>`;
+    return html;
+}
+
+function copyReportToClipboard() {
+    const el = document.getElementById('crm-report-body');
+    if (!el) return;
+    const text = el.innerText;
+    navigator.clipboard.writeText(text).then(() => {
+        alert('Отчёт скопирован в буфер обмена.');
+    }).catch(() => {
+        alert('Не удалось скопировать. Выделите текст вручную и нажмите Ctrl+C.');
+    });
+}
 
 const REQ_ORIGIN_BADGE = {
     suggested: '<span class="badge bg-info text-dark">предложка</span>',
