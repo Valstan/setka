@@ -200,7 +200,7 @@ class ScanPostsIn(BaseModel):
     author_name: Optional[str] = None
     date_from: Optional[str] = None  # ISO date, с какой даты сканировать
     date_to: Optional[str] = None  # ISO date, по какую дату (по умолчанию — сегодня)
-    max_pages: int = 20  # максимум страниц (по 100 постов) для пагинации
+    max_pages: int = 10  # максимум страниц (по 100 постов) для пагинации
 
 
 class PublicationUpdateIn(BaseModel):
@@ -1370,12 +1370,16 @@ async def scan_client_posts(
             )
     await db.commit()
 
+    oldest_ts = all_posts[-1].get("date", 0) if all_posts else None
     return {
         "found": len(matched),
         "already_known": len(existing),
         "added": len(added),
         "scanned_posts": len(all_posts),
         "pages": page + 1,
+        "oldest_scanned_date": (
+            dt.utcfromtimestamp(oldest_ts).strftime("%Y-%m-%d") if oldest_ts else None
+        ),
         "publications": [p.to_dict() for p in added],
         "community": {
             "group_id": owner_id,

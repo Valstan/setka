@@ -808,7 +808,10 @@ async function scanClientPosts(clientId, communityVkId, cid) {
         if (dateTo) payload.date_to = dateTo;
         const r = await apiClient.scanClientPosts(clientId, payload);
         if (resEl) {
-            const scanned = r.scanned_posts ? ` (просмотрено ${r.scanned_posts} постов, ${r.pages} стр.)` : '';
+            const oldestInfo = r.oldest_scanned_date
+                ? `, самый старый пост: ${r.oldest_scanned_date}` : '';
+            const scanned = r.scanned_posts
+                ? ` (просмотрено ${r.scanned_posts} постов, ${r.pages} стр.${oldestInfo})` : '';
             if (r.added > 0) {
                 resEl.innerHTML = `<span class="text-success">Найдено ${r.found}, добавлено ${r.added} новых ✓${scanned}.`
                     + (r.already_known ? ` Уже в списке: ${r.already_known}.` : '') + `</span>`;
