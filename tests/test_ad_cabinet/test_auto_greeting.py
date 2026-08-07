@@ -8,21 +8,29 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from database.models import AdRequest
 from modules.ad_cabinet import auto_greeting as ag
 
+_STATS = {"communities_count": 26, "subscribers_count": 29556}
+
 
 class _FakeSession:
-    def __init__(self, rows):
-        self._rows = rows
+    """Сессия, возвращающая candidate-строки из любого execute()."""
+
+    def __init__(self, candidate_rows, already_greeted_peer_ids=()):
+        self._rows = candidate_rows
+        self._already_greeted = list(already_greeted_peer_ids)
         self.add = MagicMock()
         self.commit = AsyncMock()
 
     async def execute(self, stmt):
         r = MagicMock()
         r.scalars.return_value.all.return_value = self._rows
+        r.scalar.return_value = 1  # для func.count / func.sum
+        # Анти-дубликат: запрос peer_id списком
+        r.all.return_value = [(pid,) for pid in self._already_greeted]
         return r
 
 
@@ -56,17 +64,27 @@ def _req(**kw):
     return AdRequest(**defaults)
 
 
-def _run(rows, send, allowlist={-100}, template_text="Здравствуйте, {author_name}!", now=_NOW):
-    session = _FakeSession(rows)
-    out = asyncio.run(
-        ag.run_auto_greeting(
-            session_factory=lambda: _FakeSessionCM(session),
-            send=send,
-            allowlist=allowlist,
-            template_text=template_text,
-            now=now,
+def _run(
+    rows,
+    send,
+    allowlist={-100},
+    template_text=(
+        "Здравствуйте, {author_name}! {communities_count} групп, {subscribers_count} чел."
+    ),
+    now=_NOW,
+    already_greeted_peer_ids=(),
+):
+    session = _FakeSession(rows, already_greeted_peer_ids=already_greeted_peer_ids)
+    with patch.object(ag, "_get_network_stats", new=AsyncMock(return_value=_STATS)):
+        out = asyncio.run(
+            ag.run_auto_greeting(
+                session_factory=lambda: _FakeSessionCM(session),
+                send=send,
+                allowlist=allowlist,
+                template_text=template_text,
+                now=now,
+            )
         )
-    )
     return out, session
 
 
@@ -78,8 +96,8 @@ def test_greets_eligible_request():
     )
     assert out == {"greeted": 1, "checked": 1}
     assert ar.greeting_sent_at == _NOW
-    assert sent == [(-100, 555, "Здравствуйте, Иван!")]  # плейсхолдер подставлен
-    assert session.add.call_count >= 1  # событие в таймлайн
+    assert sent == [(-100, 555, "Здравствуйте, Иван! 26 групп, 29 556 чел.")]
+    assert session.add.call_count >= 1
     session.commit.assert_awaited()
 
 
@@ -93,19 +111,19 @@ def test_disabled_when_allowlist_empty():
 
 
 def test_allow_all_greets_any_community():
-    """allow_all=True (env ``*``) — приветствуем независимо от vk_id сообщества."""
     sent = []
-    ar = _req(community_vk_id=-999)  # вне любого явного allowlist
+    ar = _req(community_vk_id=-999)
     session = _FakeSession([ar])
-    out = asyncio.run(
-        ag.run_auto_greeting(
-            session_factory=lambda: _FakeSessionCM(session),
-            send=lambda gid, pid, msg: sent.append((gid, pid, msg)) or {"success": True},
-            allow_all=True,
-            template_text="Здравствуйте, {author_name}!",
-            now=_NOW,
+    with patch.object(ag, "_get_network_stats", new=AsyncMock(return_value=_STATS)):
+        out = asyncio.run(
+            ag.run_auto_greeting(
+                session_factory=lambda: _FakeSessionCM(session),
+                send=lambda gid, pid, msg: sent.append((gid, pid, msg)) or {"success": True},
+                allow_all=True,
+                template_text="Здравствуйте, {author_name}!",
+                now=_NOW,
+            )
         )
-    )
     assert out == {"greeted": 1, "checked": 1}
     assert sent == [(-999, 555, "Здравствуйте, Иван!")]
 
@@ -148,3 +166,31 @@ def test_empty_rows_noop():
     out, session = _run([], send=lambda *a: {"success": True})
     assert out == {"greeted": 0, "checked": 0}
     session.commit.assert_not_awaited()
+
+
+def test_skips_already_greeted_peer():
+    """Повторно в тот же диалог (тот же peer_id) автоответ не шлём."""
+    sent = []
+    ar = _req(id=2, peer_id=555)  # новый запрос, но тот же peer_id
+    out, _ = _run(
+        [ar],
+        send=lambda gid, pid, msg: sent.append((gid, pid, msg)) or {"success": True},
+        already_greeted_peer_ids=(555,),
+    )
+    assert out["greeted"] == 0
+    assert not sent
+    assert ar.greeting_sent_at is None
+
+
+def test_does_not_skip_different_peer():
+    """Другому peer_id приветствие уходит."""
+    sent = []
+    ar = _req(id=3, peer_id=777)
+    out, _ = _run(
+        [ar],
+        send=lambda gid, pid, msg: sent.append((gid, pid, msg)) or {"success": True},
+        already_greeted_peer_ids=(555,),  # другой peer_id, не 777
+    )
+    assert out["greeted"] == 1
+    assert len(sent) == 1
+    assert ar.greeting_sent_at == _NOW

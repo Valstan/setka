@@ -374,6 +374,15 @@ async def ad_page(request: Request):
     return templates.TemplateResponse("ad.html", {"request": request})
 
 
+@app.get("/ad/client/{client_id}")
+async def ad_client_detail_page(client_id: int, request: Request):
+    """Страница работы с одним клиентом: профиль, оплаты, публикации, переписка."""
+    return templates.TemplateResponse(
+        "ad_client_detail.html",
+        {"request": request, "client_id": client_id},
+    )
+
+
 @app.get("/broadcast")
 async def broadcast_page(request: Request):
     """Сетевая рассылка: композер кампании + цели + расписание/повтор + очередь."""

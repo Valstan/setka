@@ -12,11 +12,13 @@
     включатель владельца), пусто → выключено; **``*`` или ``all`` = все
     сообщества** (включая будущие — без перечисления id, решение владельца
     2026-06-14 «на все группы»);
-  * ``AD_AUTO_GREETING_TEXT`` (плейсхолдеры {author_name}/{community_name}) ИЛИ
-    активный шаблон категории ``ad_greeting`` — текст приветствия.
+  * ``AD_AUTO_GREETING_TEXT`` (плейсхолдеры {author_name}/{community_name}/
+    {communities_count}/{subscribers_count}) ИЛИ активный шаблон категории
+    ``ad_greeting`` — текст приветствия.
 
-Идемпотентность: приветствуем один раз (``greeting_sent_at IS NULL``), только
-свежие заявки (anti-backlog окно ``FRESH_HOURS``), только где писать можно
+Идемпотентность: приветствуем один раз за весь диалог (``greeting_sent_at``
+на любом запросе этого ``peer_id`` — автоответ уже был), только свежие
+заявки (anti-backlog окно ``FRESH_HOURS``), только где писать можно
 (``can_message``, не группа-автор). VK-отправка инъектируема (``send``) для тестов;
 never-raises per-request.
 """
@@ -28,9 +30,9 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Optional, Set
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from database.models import AdRequest, MessageTemplate
+from database.models import AdRequest, MessageTemplate, Region, RegionMemberSnapshot
 from modules.ad_cabinet.interaction_log import log_interaction
 from modules.ad_cabinet.message_builder import render
 
@@ -58,6 +60,36 @@ def _env_allowlist() -> Set[int]:
         except ValueError:
             logger.warning("auto-greeting: нечисловой community id в allowlist: %r", part)
     return out
+
+
+async def _get_network_stats(session) -> Dict[str, int]:
+    """Актуальные цифры сети: число сообществ и сумма подписчиков."""
+    result = await session.execute(
+        select(func.count())
+        .select_from(Region)
+        .where(
+            Region.is_active.is_(True),
+            Region.vk_group_id.isnot(None),
+        )
+    )
+    communities_count: int = result.scalar() or 0
+
+    latest = (
+        select(
+            RegionMemberSnapshot.region_id,
+            RegionMemberSnapshot.members_count,
+            func.row_number()
+            .over(
+                partition_by=RegionMemberSnapshot.region_id,
+                order_by=RegionMemberSnapshot.snapshot_date.desc(),
+            )
+            .label("rn"),
+        )
+    ).subquery()
+    result = await session.execute(select(func.sum(latest.c.members_count)).where(latest.c.rn == 1))
+    subscribers_count: int = result.scalar() or 0
+
+    return {"communities_count": communities_count, "subscribers_count": subscribers_count}
 
 
 async def run_auto_greeting(
@@ -109,6 +141,8 @@ async def run_auto_greeting(
                 return {"greeted": 0, "checked": 0, "skipped": "no_template"}
             template_text = tpl.body
 
+        stats = await _get_network_stats(session)
+
         cutoff = now - timedelta(hours=FRESH_HOURS)
         conditions = [
             AdRequest.status == "new",
@@ -125,6 +159,19 @@ async def run_auto_greeting(
         )
         if not rows:
             return {"greeted": 0, "checked": 0}
+
+        # Анти-повтор: не приветствуем peer_id, у которого автоответ уже был (в любом запросе).
+        candidate_peer_ids = {int(r.peer_id) for r in rows if r.peer_id and int(r.peer_id) > 0}
+        if candidate_peer_ids:
+            already_greeted_result = await session.execute(
+                select(AdRequest.peer_id).where(
+                    AdRequest.peer_id.in_(candidate_peer_ids),
+                    AdRequest.greeting_sent_at.isnot(None),
+                )
+            )
+            already_greeted = {row[0] for row in already_greeted_result.all()}
+        else:
+            already_greeted = set()
 
         if send is None:
             from modules.notifications.vk_actions import send_message
@@ -148,11 +195,15 @@ async def run_auto_greeting(
         for ar in rows:
             if ar.author_is_group or not ar.peer_id or int(ar.peer_id) <= 0:
                 continue
+            if int(ar.peer_id) in already_greeted:
+                continue
             text = render(
                 template_text,
                 author_name=ar.author_name,
                 community_name=ar.community_name,
                 region_name=ar.community_name,
+                communities_count=stats["communities_count"],
+                subscribers_count=stats["subscribers_count"],
             )
             try:
                 res = send(int(ar.community_vk_id), int(ar.peer_id), text)
