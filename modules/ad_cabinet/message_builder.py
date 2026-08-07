@@ -1,7 +1,8 @@
 """Рендер ответа-оффера из тела ``MessageTemplate``.
 
-Подставляет ``{author_name}``, ``{community_name}``, ``{region_name}``; терпим к
-неизвестным/отсутствующим плейсхолдерам. Соблюдает лимит длины ЛС VK (2048).
+Подставляет ``{author_name}``, ``{community_name}``, ``{region_name}``,
+``{communities_count}``, ``{subscribers_count}``; терпим к неизвестным/
+отсутствующим плейсхолдерам. Соблюдает лимит длины ЛС VK (2048).
 Если имя автора не резолвится — убирает артефакты вида «Здравствуйте, !».
 """
 
@@ -11,6 +12,17 @@ from typing import Optional
 
 # VK direct message: не более 2048 символов (с эмодзи).
 VK_MESSAGE_MAX_LEN = 2048
+
+
+def _format_number(value: int) -> str:
+    """Разряды через пробел: 29556 → '29 556'."""
+    s = str(value)
+    result = []
+    for i, ch in enumerate(reversed(s)):
+        if i > 0 and i % 3 == 0:
+            result.append(" ")
+        result.append(ch)
+    return "".join(reversed(result))
 
 
 class _SafeDict(dict):
@@ -26,6 +38,8 @@ def render(
     author_name: Optional[str] = None,
     community_name: Optional[str] = None,
     region_name: Optional[str] = None,
+    communities_count: Optional[int] = None,
+    subscribers_count: Optional[int] = None,
 ) -> str:
     """Подставить значения в тело шаблона и обрезать до лимита VK."""
     body = template_body or ""
@@ -34,6 +48,8 @@ def render(
         author_name=name,
         community_name=(community_name or "").strip(),
         region_name=(region_name or "").strip(),
+        communities_count=_format_number(communities_count) if communities_count else "",
+        subscribers_count=_format_number(subscribers_count) if subscribers_count else "",
     )
 
     try:

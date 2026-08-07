@@ -43,18 +43,22 @@ let _chartOffers = null;   // Chart.js instances (PR-7)
 let _chartPaid = null;
 
 document.addEventListener('DOMContentLoaded', () => {
+    const isAdPage = !!document.getElementById('crm-list');
+    const isClientPage = !!document.getElementById('client-detail-content');
     loadBanks();
-    loadCrm();
-    loadStats();
-    const stageSel = document.getElementById('filter-stage');
-    if (stageSel) stageSel.addEventListener('change', loadClients);
-    const q = document.getElementById('filter-q');
-    if (q) q.addEventListener('input', () => {
-        clearTimeout(_filterTimer);
-        _filterTimer = setTimeout(loadClients, 350);
-    });
-    const submit = document.getElementById('nc-submit');
-    if (submit) submit.addEventListener('click', createClientFromModal);
+    if (isAdPage) {
+        loadCrm();
+        loadStats();
+        const stageSel = document.getElementById('filter-stage');
+        if (stageSel) stageSel.addEventListener('change', loadClients);
+        const q = document.getElementById('filter-q');
+        if (q) q.addEventListener('input', () => {
+            clearTimeout(_filterTimer);
+            _filterTimer = setTimeout(loadClients, 350);
+        });
+        const submit = document.getElementById('nc-submit');
+        if (submit) submit.addEventListener('click', createClientFromModal);
+    }
 });
 
 async function loadCrm() {
@@ -258,7 +262,7 @@ async function loadClients() {
             empty.style.display = '';
             return;
         }
-        list.innerHTML = clients.map(renderClientCard).join('');
+        list.innerHTML = `<div class="row row-cols-1 row-cols-md-2 g-2">${clients.map(renderClientCard).join('')}</div>`;
     } catch (e) {
         loading.style.display = 'none';
         list.innerHTML = `<div class="alert alert-danger">Ошибка загрузки: ${escapeHtml(e.message)}</div>`;
@@ -299,36 +303,43 @@ function renderClientCard(c) {
     const nameLabel = c.author_is_group
         ? `<i class="bi bi-people"></i> ${escapeHtml(c.name || 'сообщество')}`
         : `<i class="bi bi-person"></i> ${escapeHtml(c.name || 'без имени')}`;
-    const nameLink = c.vk_url
-        ? `<a href="${escapeHtml(c.vk_url)}" target="_blank">${nameLabel}</a>` : nameLabel;
-    const contact = c.contact
-        ? `<div class="text-muted small"><i class="bi bi-telephone"></i> ${escapeHtml(c.contact)}</div>` : '';
+    const nameLink = `<a href="/ad/client/${c.id}" class="text-decoration-none">${nameLabel}</a>`;
+    const vkLink = c.vk_url
+        ? `<a href="${escapeHtml(c.vk_url)}" target="_blank" class="small text-muted ms-1"
+              title="Открыть профиль ВКонтакте"><i class="bi bi-box-arrow-up-right"></i></a>` : '';
+
+    const paidNum = Number(c.total_paid || 0);
+    const awaitingNum = Number(c.total_awaiting || 0);
+    const pubCount = Number(c.publications_count || 0);
+    const orderCount = Number(c.order_items_count || 0);
 
     return `
-    <div class="card mb-2" id="crm-card-${c.id}">
+    <div class="card crm-client-card" id="crm-card-${c.id}">
         <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <div class="fw-bold">${nameLink}</div>
-                    ${contact}
-                    <div class="small mt-1">
-                        <span class="text-success fw-bold">${fmtMoney(c.total_paid)}</span>
-                        ${Number(c.total_awaiting || 0) > 0
-                            ? `<span class="badge bg-warning text-dark" title="Ожидает оплаты">⏳ ${fmtMoney(c.total_awaiting)}</span>` : ''}
-                        ${balanceCrumb(c.balance)}
-                        <span class="text-muted">· ${c.payments_count || 0} оплат · ${c.publications_count || 0} публикаций</span>
-                    </div>
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div class="fw-bold">${nameLink}${vkLink}</div>
+                <div>${stageSelectHtml(c.id, c.stage)}</div>
+            </div>
+            <div class="row g-2 small">
+                <div class="col-6">
+                    <span class="text-muted">Вышло:</span>
+                    <span class="fw-bold">${pubCount} публ.</span>
                 </div>
-                <div class="text-end">
-                    ${stageSelectHtml(c.id, c.stage)}
+                <div class="col-6">
+                    <span class="text-muted">Заказано:</span>
+                    <span class="fw-bold">${orderCount} поз.</span>
+                </div>
+                <div class="col-6">
+                    <span class="text-muted">Оплачено:</span>
+                    <span class="text-success fw-bold">${fmtMoney(paidNum)}</span>
+                </div>
+                <div class="col-6">
+                    <span class="text-muted">Долг:</span>
+                    <span class="${awaitingNum > 0 ? 'text-warning fw-bold' : 'text-muted'}">${fmtMoney(awaitingNum)}</span>
                 </div>
             </div>
-            <div class="mt-2">
-                <button class="btn btn-sm btn-outline-secondary" onclick="toggleClientDetails(${c.id})">
-                    <i class="bi bi-chevron-down"></i> Подробнее
-                </button>
-            </div>
-            <div id="crm-details-${c.id}" class="mt-3" style="display:none;"></div>
+            ${c.contact ? `<div class="mt-2 small text-muted"><i class="bi bi-telephone"></i> ${escapeHtml(c.contact)}</div>` : ''}
+            ${balanceCrumb(c.balance)}
         </div>
     </div>`;
 }
@@ -1455,5 +1466,172 @@ async function resolveClientProfile() {
         }
     } catch (e) {
         if (resEl) resEl.innerHTML = `<span class="text-danger">Не найдено: ${escapeHtml(e.message)}</span>`;
+    }
+}
+
+// --- Dedicated client page (/ad/client/{id}) ---
+
+async function loadClientPage(clientId) {
+    const title = document.getElementById('client-page-title');
+    const content = document.getElementById('client-detail-content');
+    if (!content) return;
+    try {
+        const d = await apiClient.getCrmClient(clientId);
+        const c = d.client;
+        if (title) {
+            const icon = c.author_is_group ? 'bi-people' : 'bi-person';
+            title.innerHTML = `<i class="bi ${icon}"></i> ${escapeHtml(c.name || 'без имени')}`;
+        }
+        content.innerHTML = renderClientPageDetails(d);
+        loadClientThread(clientId);
+        loadOrderItems(clientId);
+        loadTimeline(clientId);
+    } catch (e) {
+        content.innerHTML = `<div class="alert alert-danger">Ошибка: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderClientPageDetails(d) {
+    const c = d.client;
+    const payments = d.payments || [];
+    const publications = d.publications || [];
+    const byCommunity = d.publications_by_community || [];
+    const totals = d.publications_totals || {};
+
+    const payRows = payments.length ? payments.map(p => {
+        const awaiting = p.status === 'awaiting';
+        const amountCls = awaiting ? 'text-warning' : 'text-success';
+        const statusBadge = awaiting
+            ? '<span class="badge bg-warning text-dark">ждём</span>'
+            : '<span class="badge bg-success">оплачено</span>';
+        const markPaidBtn = awaiting
+            ? `<button class="btn btn-sm btn-outline-success py-0 px-1" title="Отметить оплаченной"
+                       onclick="markPaid(${p.id}, ${c.id})"><i class="bi bi-check2"></i></button>` : '';
+        return `
+        <tr>
+            <td class="text-nowrap fw-bold ${amountCls}">${fmtMoney(p.amount)}${p.units_paid ? ` <span class="badge bg-light text-dark border" title="Пакет на ${p.units_paid} публикаций">${p.units_paid} публ.</span>` : ''}</td>
+            <td>${statusBadge}</td>
+            <td class="small text-nowrap">${escapeHtml(p.bank || '')}</td>
+            <td class="text-nowrap small">${fmtDate(p.paid_at)}</td>
+            <td class="small">${escapeHtml(p.note || p.method || '')}</td>
+            <td class="text-nowrap">
+                ${markPaidBtn}
+                <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Правка"
+                        onclick="editPayment(${p.id}, ${c.id}, ${p.amount})"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                        onclick="deletePayment(${p.id}, ${c.id})" title="Удалить"><i class="bi bi-x"></i></button>
+            </td>
+        </tr>`;
+    }).join('') : '<tr><td colspan="6" class="text-muted small">Оплат пока нет.</td></tr>';
+
+    const publicationsHtml = renderPublicationsSection(c.id, byCommunity, totals);
+
+    return `
+    <div class="d-flex gap-2 mb-3 flex-wrap">
+        <a href="/ad#scheduler" class="btn btn-sm btn-primary"
+           title="Запланировать публикацию за этого клиента — откроет планировщик">
+            <i class="bi bi-calendar-plus"></i> Запланировать публикацию
+        </a>
+        <button class="btn btn-sm btn-outline-secondary" onclick="showClientRequests(${c.id})"
+                title="Входящие заявки этого клиента (предложка + ЛС)">
+            <i class="bi bi-inbox"></i> Входящие заявки
+        </button>
+    </div>
+    <div class="row g-3">
+        <div class="col-md-5">
+            <label class="form-label small mb-1">Имя / название</label>
+            <input type="text" class="form-control form-control-sm mb-2" id="cf-name-${c.id}" value="${escapeHtml(c.name || '')}">
+
+            <label class="form-label small mb-1">Телефон</label>
+            <input type="text" class="form-control form-control-sm mb-2" id="cf-phone-${c.id}" value="${escapeHtml(c.phone || '')}">
+
+            <label class="form-label small mb-1">Telegram</label>
+            <input type="text" class="form-control form-control-sm mb-2" id="cf-telegram-${c.id}" value="${escapeHtml(c.telegram || '')}">
+
+            <label class="form-label small mb-1">Эл. почта</label>
+            <input type="email" class="form-control form-control-sm mb-2" id="cf-email-${c.id}" value="${escapeHtml(c.email || '')}">
+
+            <label class="form-label small mb-1">Адрес</label>
+            <input type="text" class="form-control form-control-sm mb-2" id="cf-address-${c.id}" value="${escapeHtml(c.postal_address || '')}">
+
+            <label class="form-label small mb-1">Контакты (общее)</label>
+            <textarea class="form-control form-control-sm mb-2" id="cf-contact-${c.id}" rows="2">${escapeHtml(c.contact || '')}</textarea>
+
+            <label class="form-label small mb-1">Заметки</label>
+            <textarea class="form-control form-control-sm mb-2" id="cf-notes-${c.id}" rows="2">${escapeHtml(c.notes || '')}</textarea>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-primary" onclick="saveClientFields(${c.id})">
+                    <i class="bi bi-save"></i> Сохранить
+                </button>
+                <button class="btn btn-sm btn-outline-danger ms-auto" onclick="deleteClientAndGoBack(${c.id})">
+                    <i class="bi bi-trash"></i> Удалить клиента
+                </button>
+            </div>
+            <div class="small mt-1" id="cf-res-${c.id}"></div>
+        </div>
+
+        <div class="col-md-7">
+            ${balanceBlock(d.balance, c.id)}
+            <div class="fw-bold small mb-1"><i class="bi bi-cash-coin"></i> Оплаты</div>
+            <table class="table table-sm align-middle mb-2">
+                <tbody>${payRows}</tbody>
+            </table>
+            <div class="input-group input-group-sm mb-1">
+                <input type="number" class="form-control" id="pay-amount-${c.id}" placeholder="Сумма ₽" style="max-width:100px;">
+                <input type="number" min="1" class="form-control" id="pay-units-${c.id}" placeholder="за N публ." title="За сколько публикаций эта оплата (пакет). Пусто — учёт только в рублях." style="max-width:100px;">
+                ${typeof bankSelectHtml === 'function' ? bankSelectHtml(`pay-bank-${c.id}`, '') : ''}
+                <input type="text" class="form-control" id="pay-note-${c.id}" placeholder="Заметка">
+                <button class="btn btn-outline-success" onclick="addPayment(${c.id})"><i class="bi bi-plus-lg"></i> Оплата</button>
+            </div>
+            <div class="form-check form-check-inline small mb-3">
+                <input class="form-check-input" type="checkbox" id="pay-awaiting-${c.id}">
+                <label class="form-check-label text-muted" for="pay-awaiting-${c.id}">ожидание оплаты (деньги ещё не пришли)</label>
+            </div>
+            ${publicationsHtml}
+        </div>
+    </div>
+
+    <hr class="my-3">
+    <div class="fw-bold small mb-1"><i class="bi bi-chat-text"></i> Переписка с клиентом</div>
+    <div id="crm-chat-${c.id}" class="border rounded p-2 mb-2"
+         style="max-height:240px; overflow-y:auto; font-size:0.85rem;">
+        <div class="text-muted small">Загрузка переписки…</div>
+    </div>
+    <div class="input-group input-group-sm mb-1">
+        <input type="text" class="form-control" id="chat-msg-${c.id}" placeholder="Ответить клиенту от имени сообщества…"
+               onkeydown="if(event.key==='Enter'){sendClientReply(${c.id});}">
+        <button class="btn btn-outline-primary" onclick="sendClientReply(${c.id})"><i class="bi bi-send"></i> Отправить</button>
+    </div>
+    <div class="small" id="chat-status-${c.id}"></div>
+
+    <hr class="my-3">
+    <div class="d-flex justify-content-between align-items-center mb-1">
+        <div class="fw-bold small"><i class="bi bi-card-checklist"></i> Заказ / размещения</div>
+        <span class="small text-muted" id="order-total-${c.id}"></span>
+    </div>
+    <div id="crm-orders-${c.id}"><div class="text-muted small">Загрузка…</div></div>
+    <div class="input-group input-group-sm mt-2">
+        <input type="text" class="form-control" id="oi-desc-${c.id}" placeholder="Что за реклама (описание)">
+        <input type="number" min="1" class="form-control" id="oi-qty-${c.id}" placeholder="Кол-во" style="max-width:70px;" value="1">
+        <select class="form-select form-select-sm" id="oi-status-${c.id}" style="max-width:110px;">
+            <option value="planned">Запланировано</option>
+            <option value="scheduled">В отложке</option>
+            <option value="published">Вышло</option>
+        </select>
+        <button class="btn btn-sm btn-outline-success" onclick="addOrderItem(${c.id})"><i class="bi bi-plus-lg"></i></button>
+    </div>
+
+    <hr class="my-3">
+    <div class="fw-bold small mb-1"><i class="bi bi-clock-history"></i> История взаимодействий</div>
+    <div id="crm-timeline-${c.id}"><div class="text-muted small">Загрузка…</div></div>`;
+}
+
+async function deleteClientAndGoBack(id) {
+    if (!confirm('Удалить клиента и все его оплаты безвозвратно? Публикации останутся, но отвяжутся от клиента.')) return;
+    try {
+        await apiClient.deleteCrmClient(id);
+        window.location.href = '/ad#clients';
+    } catch (e) {
+        alert('Не удалось удалить: ' + e.message);
     }
 }

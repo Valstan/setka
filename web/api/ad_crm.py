@@ -361,6 +361,11 @@ async def list_clients(
         )
         .scalar_subquery()
     )
+    order_items_sq = (
+        select(func.count(AdOrderItem.id))
+        .where(AdOrderItem.client_id == AdClient.id)
+        .scalar_subquery()
+    )
 
     stmt = select(
         AdClient,
@@ -371,6 +376,7 @@ async def list_clients(
         spent_sq.label("total_spent"),
         paid_units_sq.label("paid_units"),
         consumed_units_sq.label("consumed_units"),
+        order_items_sq.label("order_items_count"),
     )
     if stage:
         stmt = stmt.where(AdClient.stage == stage)
@@ -396,12 +402,13 @@ async def list_clients(
     for row in rows:
         client = row[0]
         total_paid, total_awaiting, payments_count, publications_count = row[1:5]
-        total_spent, paid_units, consumed_units = row[5:8]
+        total_spent, paid_units, consumed_units, order_items_count = row[5:9]
         d = client.to_dict()
         d["total_paid"] = float(total_paid or 0)
         d["total_awaiting"] = float(total_awaiting or 0)
         d["payments_count"] = int(payments_count or 0)
         d["publications_count"] = int(publications_count or 0)
+        d["order_items_count"] = int(order_items_count or 0)
         # Баланс-сигнал для списка (И1+И2): уровень/остаток той же логикой, что в
         # карточке. Цена части публикаций может быть NULL — в списке это не видно
         # (published_unpriced=0), точный «расход неполный» показывает карточка.
