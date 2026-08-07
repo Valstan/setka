@@ -200,7 +200,7 @@ class ScanPostsIn(BaseModel):
     author_name: Optional[str] = None
     date_from: Optional[str] = None  # ISO date, с какой даты сканировать
     date_to: Optional[str] = None  # ISO date, по какую дату (по умолчанию — сегодня)
-    max_pages: int = 10  # максимум страниц (по 100 постов) для пагинации
+    max_pages: int = 20  # максимум страниц (по 100 постов) для пагинации
 
 
 class PublicationUpdateIn(BaseModel):
@@ -1182,6 +1182,7 @@ async def scan_client_posts(
       до границы date_from или до max_pages страниц).
     """
     import asyncio
+    import re
     from datetime import datetime as dt
 
     from modules.vk_monitor.vk_client import VKClient
@@ -1206,6 +1207,18 @@ async def scan_client_posts(
     if not token:
         raise HTTPException(status_code=503, detail="no healthy VK parse-token")
     vk = VKClient(token=token)
+
+    # Нормализуем кавычки в ключевых словах: «» → ""
+    _quotes_map = str.maketrans("«»", '""')
+    keywords_normalized = keywords_lower.translate(_quotes_map) if keywords_lower else ""
+
+    # Если author_name похож на VK-ссылку — резолвим в числовой vk_id для точного
+    # сравнения по signer_id (надёжнее, чем подстрока в имени).
+    author_vk_id: Optional[int] = None
+    if author_lower and re.search(r"vk\.(?:com|ru)/id(\d+)", author_lower):
+        m = re.search(r"vk\.(?:com|ru)/id(\d+)", author_lower)
+        if m:
+            author_vk_id = int(m.group(1))
 
     # Пагинируем wall.get до границы date_from или max_pages
     all_posts = []
@@ -1281,12 +1294,16 @@ async def scan_client_posts(
             continue
 
         text = (post.get("text") or "").lower()
-        kw_match = keywords_lower and keywords_lower in text
+        text_normalized = text.translate(_quotes_map)
+        kw_match = keywords_normalized and keywords_normalized in text_normalized
         auth_match = False
         if author_lower:
             sid = post.get("signer_id")
-            if sid and sid in signer_names:
-                auth_match = author_lower in signer_names[sid]
+            if sid and sid > 0:
+                if author_vk_id:
+                    auth_match = sid == author_vk_id
+                elif sid in signer_names:
+                    auth_match = author_lower in signer_names[sid]
         if kw_match or auth_match:
             matched.append(post)
 
