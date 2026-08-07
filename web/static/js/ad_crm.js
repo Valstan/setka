@@ -1387,14 +1387,20 @@ async function deletePublication(pubId, clientId) {
     try {
         await apiClient.deleteCrmPublication(pubId);
         await _detailReload(clientId);
-        await loadFunnel();
     } catch (e) {
         alert('Не удалось удалить публикацию: ' + e.message);
     }
 }
 
-// Перерисовать раскрытые детали клиента (после добавления/удаления записи).
+// Перерисовать детали клиента (после добавления/удаления записи).
+// На dedicated-странице /ad/client/{id} — перезагружает всю страницу клиента.
+// На странице списка /ad — обновляет развёрнутую карточку.
 async function _detailReload(id, errMsg) {
+    const isClientPage = !!document.getElementById('client-detail-content');
+    if (isClientPage) {
+        await loadClientPage(id);
+        return;
+    }
     const box = document.getElementById(`crm-details-${id}`);
     if (!box) return;
     try {
