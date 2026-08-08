@@ -79,7 +79,14 @@
                     <div class="col-md-4">
                         <label class="form-label">Категория</label>
                         <input type="text" class="form-control" id="tpl-category" maxlength="50"
-                               placeholder="thanks / redirect / greeting…">
+                               list="tpl-category-options" placeholder="ad_greeting / ad_offer…">
+                        <datalist id="tpl-category-options">
+                            <option value="ad_greeting"></option>
+                            <option value="ad_offer"></option>
+                        </datalist>
+                        <div class="form-text">
+                            <code>ad_greeting</code> — текст авто-приветствия рекламодателю.
+                        </div>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Регион</label>

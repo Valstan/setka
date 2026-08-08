@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from modules.ad_cabinet.message_builder import VK_MESSAGE_MAX_LEN, _format_number, render
+from modules.ad_cabinet.message_builder import (
+    VK_MESSAGE_MAX_LEN,
+    _format_number,
+    looks_mangled,
+    render,
+)
 
 TPL = (
     "Здравствуйте, {author_name}! Спасибо за пост в «{community_name}». "
@@ -49,6 +54,19 @@ def test_stats_placeholders_empty_when_none():
         "{communities_count} {subscribers_count}", communities_count=None, subscribers_count=None
     )
     assert out.strip() == ""
+
+
+def test_looks_mangled_detects_lost_cyrillic():
+    # Ровно то, что ушло рекламодателям 2026-08-07 из испорченного env.
+    assert looks_mangled("????????????, {author_name}! ??????? ?? ???? ???????????")
+
+
+def test_looks_mangled_ignores_normal_text():
+    assert not looks_mangled(TPL)
+    assert not looks_mangled("Готовы разместить? Пишите!")
+    assert not looks_mangled("Что?? Уже?")  # две подряд — ещё не поломка
+    assert not looks_mangled("")
+    assert not looks_mangled(None)
 
 
 def test_format_number():

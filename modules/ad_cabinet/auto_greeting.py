@@ -34,7 +34,7 @@ from sqlalchemy import func, select
 
 from database.models import AdRequest, MessageTemplate, Region, RegionMemberSnapshot
 from modules.ad_cabinet.interaction_log import log_interaction
-from modules.ad_cabinet.message_builder import render
+from modules.ad_cabinet.message_builder import looks_mangled, render
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +140,17 @@ async def run_auto_greeting(
             if not tpl:
                 return {"greeted": 0, "checked": 0, "skipped": "no_template"}
             template_text = tpl.body
+
+        # Кодировка шаблона: молчать лучше, чем слать «????????????, Иван!».
+        # 2026-08-07 текст записали в env через PowerShell → ssh, кириллица стала
+        # вопросительными знаками ещё до файла, и три рекламодателя получили
+        # нечитаемое приветствие. Человека в этой ветке нет — проверяет код.
+        if looks_mangled(template_text):
+            logger.error(
+                "auto-greeting: шаблон потерял кодировку (кириллица → '?'), "
+                "приветствия не отправляем; почини источник текста"
+            )
+            return {"greeted": 0, "checked": 0, "skipped": "mangled_template"}
 
         stats = await _get_network_stats(session)
 
