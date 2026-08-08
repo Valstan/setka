@@ -62,7 +62,36 @@ def _env_allowlist() -> Set[int]:
     return out
 
 
-async def _get_network_stats(session) -> Dict[str, int]:
+async def resolve_greeting_text(session, template_text: Optional[str] = None) -> Optional[str]:
+    """Текст приветствия: env-приоритет, иначе активный шаблон ``ad_greeting``.
+
+    Отдельная функция, потому что тот же текст показывает кабинет — кнопкой
+    «скопировать» для ручной вставки в другие каналы. Источник должен быть один
+    на оба сценария, иначе владелец копирует не то, что уходит людям.
+    """
+    if template_text is None:
+        template_text = os.getenv("AD_AUTO_GREETING_TEXT") or None
+    if template_text is not None:
+        return template_text
+
+    tpl = (
+        (
+            await session.execute(
+                select(MessageTemplate)
+                .where(
+                    MessageTemplate.category == GREETING_CATEGORY,
+                    MessageTemplate.is_active.is_(True),
+                )
+                .order_by(MessageTemplate.id.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    return tpl.body if tpl else None
+
+
+async def get_network_stats(session) -> Dict[str, int]:
     """Актуальные цифры сети: число сообществ и сумма подписчиков."""
     result = await session.execute(
         select(func.count())
@@ -117,29 +146,10 @@ async def run_auto_greeting(
     if not allow_all and not allowlist:
         return {"greeted": 0, "checked": 0, "skipped": "disabled"}
 
-    # Текст: env-приоритет, иначе активный шаблон ad_greeting.
-    if template_text is None:
-        template_text = os.getenv("AD_AUTO_GREETING_TEXT") or None
-
     async with session_factory() as session:
+        template_text = await resolve_greeting_text(session, template_text)
         if template_text is None:
-            tpl = (
-                (
-                    await session.execute(
-                        select(MessageTemplate)
-                        .where(
-                            MessageTemplate.category == GREETING_CATEGORY,
-                            MessageTemplate.is_active.is_(True),
-                        )
-                        .order_by(MessageTemplate.id.desc())
-                    )
-                )
-                .scalars()
-                .first()
-            )
-            if not tpl:
-                return {"greeted": 0, "checked": 0, "skipped": "no_template"}
-            template_text = tpl.body
+            return {"greeted": 0, "checked": 0, "skipped": "no_template"}
 
         # Кодировка шаблона: молчать лучше, чем слать «????????????, Иван!».
         # 2026-08-07 текст записали в env через PowerShell → ssh, кириллица стала
@@ -152,7 +162,7 @@ async def run_auto_greeting(
             )
             return {"greeted": 0, "checked": 0, "skipped": "mangled_template"}
 
-        stats = await _get_network_stats(session)
+        stats = await get_network_stats(session)
 
         cutoff = now - timedelta(hours=FRESH_HOURS)
         conditions = [
