@@ -24,6 +24,9 @@ VK_MESSAGE_MAX_LEN = 2048
 # превращается в 5-12 знаков подряд.
 _MANGLED_RUN = re.compile(r"\?{3,}")
 
+# «…написали в «»» — след неподставленного названия сообщества вместе с предлогом.
+_EMPTY_QUOTES_WITH_PREP = re.compile(r"\s+(?:в|во|из)\s+«»")
+
 
 def looks_mangled(text: Optional[str]) -> bool:
     """Похож ли текст на потерявший кодировку (кириллица → ``?``).
@@ -83,6 +86,14 @@ def render(
         # Подчищаем «висящую» запятую от пропущенного имени.
         for bad in (", !", ",!", " ,", " !"):
             text = text.replace(bad, "!" if "!" in bad else "")
+        while "  " in text:
+            text = text.replace("  ", " ")
+
+    if not values["community_name"]:
+        # Название паблика не подставилось — убираем пустые кавычки вместе с
+        # предлогом, иначе получается «Спасибо, что написали в «» — …».
+        text = _EMPTY_QUOTES_WITH_PREP.sub("", text)
+        text = text.replace("«»", "")
         while "  " in text:
             text = text.replace("  ", " ")
 

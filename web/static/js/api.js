@@ -181,6 +181,11 @@ const apiClient = {
         return this.request('/ad-crm/funnel');
     },
 
+    // Готовый рекламный текст (автоприветствие с живыми цифрами) — для буфера обмена
+    async getCrmGreetingText() {
+        return this.request('/ad-crm/greeting-text');
+    },
+
     async getCrmClients(params = {}) {
         const q = new URLSearchParams();
         if (params.stage) q.set('stage', params.stage);

@@ -1051,3 +1051,55 @@ async def test_list_client_requests_404():
     with pytest.raises(HTTPException) as exc:
         await api.list_client_requests(999, db=db)
     assert exc.value.status_code == 404
+
+
+# ------------------------------------------------ рекламный текст в буфер
+
+
+async def test_greeting_text_renders_without_personal_placeholders(monkeypatch):
+    """Кнопка «скопировать» отдаёт текст для ручной вставки: имени и паблика нет."""
+
+    async def fake_resolve(session, template_text=None):
+        return (
+            "Здравствуйте, {author_name}! Спасибо, что написали в «{community_name}» — "
+            "у нас {communities_count} сообществ и {subscribers_count} читателей."
+        )
+
+    async def fake_stats(session):
+        return {"communities_count": 26, "subscribers_count": 29597}
+
+    monkeypatch.setattr(api, "resolve_greeting_text", fake_resolve)
+    monkeypatch.setattr(api, "get_network_stats", fake_stats)
+
+    out = await api.greeting_text(db=_db())
+    assert "{author_name}" not in out["text"]
+    assert "{community_name}" not in out["text"]
+    assert "«»" not in out["text"]  # пустые кавычки подчищены вместе с предлогом
+    assert "26 сообществ" in out["text"]
+    assert "29 597 читателей" in out["text"]
+    assert out["mangled"] is False
+    assert out["communities_count"] == 26
+
+
+async def test_greeting_text_flags_mangled_template(monkeypatch):
+    async def fake_resolve(session, template_text=None):
+        return "????????????, {author_name}!"
+
+    async def fake_stats(session):
+        return {"communities_count": 1, "subscribers_count": 2}
+
+    monkeypatch.setattr(api, "resolve_greeting_text", fake_resolve)
+    monkeypatch.setattr(api, "get_network_stats", fake_stats)
+
+    out = await api.greeting_text(db=_db())
+    assert out["mangled"] is True
+
+
+async def test_greeting_text_404_without_template(monkeypatch):
+    async def fake_resolve(session, template_text=None):
+        return None
+
+    monkeypatch.setattr(api, "resolve_greeting_text", fake_resolve)
+    with pytest.raises(HTTPException) as exc:
+        await api.greeting_text(db=_db())
+    assert exc.value.status_code == 404

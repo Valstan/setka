@@ -1644,3 +1644,64 @@ async function deleteClientAndGoBack(id) {
         alert('Не удалось удалить: ' + e.message);
     }
 }
+
+// ── Рекламный текст в буфер ────────────────────────────────────────────────
+// Тот же текст, что уходит рекламодателям автоответом, но с пустыми
+// персональными плейсхолдерами и живыми цифрами сети — чтобы владелец мог
+// вставить его в Telegram, MAX или любую другую переписку.
+// navigator.clipboard живёт только в secure context (https / localhost);
+// иначе — fallback через скрытую textarea + execCommand.
+
+async function copyGreetingText() {
+    const btn = document.getElementById('copy-greeting-btn');
+    const original = btn ? btn.innerHTML : null;
+    if (btn) btn.disabled = true;
+
+    let text = null;
+    try {
+        const data = await apiClient.getCrmGreetingText();
+        text = data && data.text;
+        if (data && data.mangled) {
+            alert('Текст в шаблоне повреждён (кириллица потеряна). Поправьте его на странице «Шаблоны».');
+            text = null;
+        }
+    } catch (e) {
+        alert('Не удалось получить текст: ' + e.message);
+    }
+
+    if (!text) {
+        if (btn) { btn.disabled = false; btn.innerHTML = original; }
+        return;
+    }
+
+    let ok = false;
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+            ok = true;
+        }
+    } catch (e) {
+        ok = false;
+    }
+    if (!ok) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            ok = document.execCommand('copy');
+        } catch (e) {
+            ok = false;
+        }
+        document.body.removeChild(ta);
+    }
+
+    if (btn) {
+        btn.innerHTML = ok
+            ? '<i class="bi bi-check2"></i> Скопировано'
+            : '<i class="bi bi-x"></i> Не вышло';
+        setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 1800);
+    }
+}

@@ -56,6 +56,21 @@ def test_stats_placeholders_empty_when_none():
     assert out.strip() == ""
 
 
+def test_empty_community_drops_empty_quotes():
+    """Без названия паблика не должно оставаться «Спасибо, что написали в «»»."""
+    out = render(
+        "Здравствуйте! Спасибо, что написали в «{community_name}» — мы уже читаем.",
+        community_name=None,
+    )
+    assert "«»" not in out
+    assert out == "Здравствуйте! Спасибо, что написали — мы уже читаем."
+
+
+def test_community_still_substituted_when_present():
+    out = render("Спасибо за пост в «{community_name}».", community_name="Пижанка ИНФО")
+    assert out == "Спасибо за пост в «Пижанка ИНФО»."
+
+
 def test_looks_mangled_detects_lost_cyrillic():
     # Ровно то, что ушло рекламодателям 2026-08-07 из испорченного env.
     assert looks_mangled("????????????, {author_name}! ??????? ?? ???? ???????????")

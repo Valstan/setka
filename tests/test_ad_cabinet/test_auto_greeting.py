@@ -75,7 +75,7 @@ def _run(
     already_greeted_peer_ids=(),
 ):
     session = _FakeSession(rows, already_greeted_peer_ids=already_greeted_peer_ids)
-    with patch.object(ag, "_get_network_stats", new=AsyncMock(return_value=_STATS)):
+    with patch.object(ag, "get_network_stats", new=AsyncMock(return_value=_STATS)):
         out = asyncio.run(
             ag.run_auto_greeting(
                 session_factory=lambda: _FakeSessionCM(session),
@@ -114,7 +114,7 @@ def test_allow_all_greets_any_community():
     sent = []
     ar = _req(community_vk_id=-999)
     session = _FakeSession([ar])
-    with patch.object(ag, "_get_network_stats", new=AsyncMock(return_value=_STATS)):
+    with patch.object(ag, "get_network_stats", new=AsyncMock(return_value=_STATS)):
         out = asyncio.run(
             ag.run_auto_greeting(
                 session_factory=lambda: _FakeSessionCM(session),

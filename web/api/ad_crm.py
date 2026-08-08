@@ -36,8 +36,10 @@ from database.models import (
     AdPublication,
     AdRequest,
 )
+from modules.ad_cabinet.auto_greeting import get_network_stats, resolve_greeting_text
 from modules.ad_cabinet.balance import compute_balance, summarize
 from modules.ad_cabinet.interaction_log import log_interaction
+from modules.ad_cabinet.message_builder import looks_mangled, render
 from utils.search_query import compact_number, normalize_query, query_variants
 
 logger = logging.getLogger(__name__)
@@ -2111,4 +2113,30 @@ async def funnel(db: AsyncSession = Depends(get_db_session)):
         "debtor_days": DEBTOR_DAYS,
         "inbox_reachable": int(inbox_reachable or 0),
         "inbox_unreachable": int(inbox_unreachable or 0),
+    }
+
+
+@router.get("/greeting-text")
+async def greeting_text(db: AsyncSession = Depends(get_db_session)):
+    """Готовый текст авто-приветствия — для кнопки «скопировать» в кабинете.
+
+    Тот же источник, что и у рассылки (``resolve_greeting_text``), с живыми
+    цифрами сети. Персональные плейсхолдеры не подставляются: текст уходит в
+    буфер обмена для ручной вставки в другие каналы, где ни имени собеседника,
+    ни названия паблика нет — ``render`` подчистит артефакты за них.
+    """
+    body = await resolve_greeting_text(db)
+    if not body:
+        raise HTTPException(status_code=404, detail="greeting template not found")
+
+    stats = await get_network_stats(db)
+    text = render(
+        body,
+        communities_count=stats["communities_count"],
+        subscribers_count=stats["subscribers_count"],
+    )
+    return {
+        "text": text,
+        "mangled": looks_mangled(body),
+        **stats,
     }
