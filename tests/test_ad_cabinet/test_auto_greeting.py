@@ -162,6 +162,21 @@ def test_send_failure_not_marked():
     assert ar.greeting_sent_at is None
 
 
+def test_mangled_template_blocks_sending():
+    """Шаблон с потерянной кодировкой не уходит рекламодателю (инцидент 2026-08-07)."""
+    sent = []
+    ar = _req()
+    out, session = _run(
+        [ar],
+        send=lambda gid, pid, msg: sent.append((gid, pid, msg)) or {"success": True},
+        template_text="????????????, {author_name}! ??????? ?? ???? ???????????.",
+    )
+    assert out == {"greeted": 0, "checked": 0, "skipped": "mangled_template"}
+    assert not sent
+    assert ar.greeting_sent_at is None
+    session.commit.assert_not_awaited()
+
+
 def test_empty_rows_noop():
     out, session = _run([], send=lambda *a: {"success": True})
     assert out == {"greeted": 0, "checked": 0}
