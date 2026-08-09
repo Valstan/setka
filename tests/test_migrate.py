@@ -296,3 +296,100 @@ def test_cmd_status_lists_all_with_marks(tmp_migrations, capsys):
     assert "applied" in out
     assert "pending" in out
     assert "Pending to apply: 1" in out
+
+
+# ---------- mark-applied (bookkeeping repair) ----------
+
+
+def test_build_mark_script_has_no_migration_body(tmp_migrations):
+    """Помечающий скрипт содержит ТОЛЬКО бухгалтерию — тела миграции в нём нет.
+
+    Это главное свойство режима: если тело просочится, «пометить» тихо
+    превратится в «выполнить», а именно от этого режим и защищает.
+    """
+    _write(tmp_migrations, "048_x.sql", "DROP TABLE users;\n")
+    script = migrate.build_mark_script(migrate.discover_migrations())
+
+    assert "DROP TABLE" not in script
+    assert "INSERT INTO applied_migrations" in script
+    assert script.startswith("BEGIN;") and script.rstrip().endswith("COMMIT;")
+
+
+def test_build_mark_script_records_full_sha_not_truncated(tmp_migrations):
+    """В таблицу идёт полный sha256, а не обрезка из вывода ``status``."""
+    p = _write(tmp_migrations, "048_x.sql")
+    full = migrate.compute_sha256(p)
+    script = migrate.build_mark_script(migrate.discover_migrations())
+
+    assert len(full) == 64
+    assert full in script
+
+
+def test_mark_applied_is_dry_without_yes(tmp_migrations, capsys):
+    """Без ``--yes`` не пишется ничего — только план."""
+    _write(tmp_migrations, "048_x.sql")
+    runner = FakeRunner()
+
+    rc = migrate.cmd_mark_applied(["048_x.sql"], runner=runner)
+
+    assert rc == 0
+    assert not [c for c in runner.calls if c.stdin]
+    assert "dry-run" in capsys.readouterr().out
+
+
+def test_mark_applied_writes_with_yes(tmp_migrations):
+    """С ``--yes`` уходит ровно один пишущий вызов с бухгалтерским скриптом."""
+    _write(tmp_migrations, "048_x.sql")
+    runner = FakeRunner()
+
+    rc = migrate.cmd_mark_applied(["048_x.sql"], yes=True, runner=runner)
+
+    writes = [c for c in runner.calls if c.stdin]
+    assert rc == 0 and len(writes) == 1
+    assert "INSERT INTO applied_migrations" in writes[0].stdin
+
+
+def test_mark_applied_all_pending_skips_recorded(tmp_migrations):
+    """``--all-pending`` берёт только незаписанные."""
+    _write(tmp_migrations, "048_x.sql")
+    _write(tmp_migrations, "049_y.sql")
+    runner = FakeRunner(applied_filenames=["048_x.sql"])
+
+    rc = migrate.cmd_mark_applied([], all_pending=True, yes=True, runner=runner)
+
+    writes = [c for c in runner.calls if c.stdin]
+    assert rc == 0
+    assert "049_y.sql" in writes[0].stdin and "048_x.sql" not in writes[0].stdin
+
+
+def test_mark_applied_rejects_unknown_name(tmp_migrations, capsys):
+    """Опечатка в имени — ошибка, а не молчаливая запись несуществующего файла."""
+    _write(tmp_migrations, "048_x.sql")
+    runner = FakeRunner()
+
+    rc = migrate.cmd_mark_applied(["049_typo.sql"], yes=True, runner=runner)
+
+    assert rc == 2 and not [c for c in runner.calls if c.stdin]
+    assert "not found" in capsys.readouterr().err
+
+
+def test_mark_applied_rejects_empty_selection(tmp_migrations, capsys):
+    """Без имён и без ``--all-pending`` команда отказывается работать."""
+    _write(tmp_migrations, "048_x.sql")
+    runner = FakeRunner()
+
+    rc = migrate.cmd_mark_applied([], yes=True, runner=runner)
+
+    assert rc == 2 and not [c for c in runner.calls if c.stdin]
+    assert "nothing selected" in capsys.readouterr().err
+
+
+def test_mark_applied_rejects_names_with_all_pending(tmp_migrations, capsys):
+    """Имена и ``--all-pending`` вместе — двусмысленность, а не удобство."""
+    _write(tmp_migrations, "048_x.sql")
+    runner = FakeRunner()
+
+    rc = migrate.cmd_mark_applied(["048_x.sql"], all_pending=True, yes=True, runner=runner)
+
+    assert rc == 2 and not [c for c in runner.calls if c.stdin]
+    assert "not both" in capsys.readouterr().err
