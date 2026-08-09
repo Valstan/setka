@@ -26,6 +26,7 @@ from database.models_extended import (
     BulletinCurationRun,
     ClassificationCorrection,
     ClassifierTheme,
+    ClassifierThemeAlias,
     CollectedPostAudit,
     ContentClassification,
 )
@@ -35,6 +36,41 @@ logger = logging.getLogger(__name__)
 
 # Окно, за которое смотрим свод­ки как источник кандидатов.
 DEFAULT_SOURCE_DAYS = 7
+
+
+async def _theme_canon_map(session) -> Dict[str, str]:
+    """map «написание → канон» из словаря тем (069) и синонимов (079).
+
+    Канон отображается сам на себя, чтобы одна проверка покрывала оба случая.
+    Ключи — в нижнем регистре: регистр это самый частый вид расхождения
+    («Православие» против «православие»), и лечить его отдельной строкой
+    словаря было бы расточительно.
+    """
+    canon_rows = (await session.execute(select(ClassifierTheme.name))).scalars().all()
+    out = {str(n).strip().lower(): str(n) for n in canon_rows if str(n or "").strip()}
+    alias_rows = (
+        await session.execute(select(ClassifierThemeAlias.alias, ClassifierThemeAlias.canon))
+    ).all()
+    for alias, canon in alias_rows:
+        key = str(alias or "").strip().lower()
+        if key and str(canon or "").strip():
+            # Канон побеждает синоним: если оператор завёл тему, одноимённую
+            # чужому синониму, тема остаётся собой.
+            out.setdefault(key, str(canon))
+    return out
+
+
+def canonicalize_theme(theme: Any, canon_map: Dict[str, str]) -> Optional[str]:
+    """Привести тему к канону. Неизвестное значение возвращается как есть.
+
+    Возвращает ``None`` для пустой темы. **Неизвестное не подгоняется** — по
+    тому же доводу, что и в конвейере: молча подогнанный поток не сообщает
+    ничего, а расхождение нужно видеть, чтобы завести синоним осознанно.
+    """
+    raw = str(theme or "").strip()
+    if not raw:
+        return None
+    return canon_map.get(raw.lower(), raw)
 
 
 def _candidate_map(runs: Sequence[BulletinCurationRun]) -> Dict[str, Dict[str, Any]]:
@@ -220,6 +256,14 @@ async def record_verdicts(
             session, region_codes=region_codes_fallback, days=DEFAULT_SOURCE_DAYS
         )
 
+    # Канон тем применяется НА ЗАПИСЬ, а не только разовой уборкой.
+    # Миграция 070 нормализовала историю и на этом остановилась; за три недели
+    # Корпус набрал 29 неканонических написаний, потому что дверь осталась без
+    # замка. Тема — ось agree-rate, группировки правил и дистилляции, и её
+    # расщепление обесценивает статистику молча.
+    canon_map = await _theme_canon_map(session)
+    unknown_themes: Dict[str, int] = {}
+
     recorded = skipped_existing = skipped_missing = 0
     for v in verdicts:
         if v.lip in already:
@@ -230,6 +274,12 @@ async def record_verdicts(
         if not region:
             skipped_missing += 1
             continue
+        verdict_json = v.to_verdict_json()
+        theme = canonicalize_theme(verdict_json.get("theme"), canon_map)
+        if theme is not None:
+            verdict_json["theme"] = theme
+            if theme.lower() not in canon_map:
+                unknown_themes[theme] = unknown_themes.get(theme, 0) + 1
         session.add(
             ContentClassification(
                 lip=v.lip,
@@ -238,7 +288,7 @@ async def record_verdicts(
                 post_url=(v.url or snap.get("url") or "") or None,
                 source=source,
                 model=v.model,
-                verdict=v.to_verdict_json(),
+                verdict=verdict_json,
                 confidence=int(v.confidence),
                 shadow=True,
                 escalated=False,
@@ -246,6 +296,14 @@ async def record_verdicts(
         )
         already.add(v.lip)
         recorded += 1
+
+    if unknown_themes:
+        # Не глушим: неизвестное написание — кандидат в синонимы, и увидеть
+        # его должен человек, а не тихо переварить классификатор.
+        logger.info(
+            "классификатор: темы вне канона и словаря синонимов — %s",
+            ", ".join(f"{t}×{n}" for t, n in sorted(unknown_themes.items(), key=lambda kv: -kv[1])),
+        )
 
     await session.commit()
     logger.info(
@@ -576,6 +634,107 @@ async def add_theme(session, name: str) -> Dict[str, Any]:
     session.add(ClassifierTheme(name=name, position=max_pos + 1))
     await session.commit()
     return {"ok": True, "theme": name}
+
+
+async def aliases_list(session) -> List[Dict[str, Any]]:
+    """Синонимы тем для редактора: ``alias → canon`` + висячие каноны.
+
+    ``canon_known: false`` означает, что тема-получатель удалена из словаря —
+    FK у таблицы нет намеренно (запись вердикта не должна падать из-за правки
+    в редакторе), поэтому висячий синоним чинится глазами оператора здесь.
+    """
+    canon_names = {
+        str(n) for n in (await session.execute(select(ClassifierTheme.name))).scalars().all()
+    }
+    rows = (
+        (await session.execute(select(ClassifierThemeAlias).order_by(ClassifierThemeAlias.alias)))
+        .scalars()
+        .all()
+    )
+    return [
+        {"alias": r.alias, "canon": r.canon, "canon_known": r.canon in canon_names} for r in rows
+    ]
+
+
+async def add_alias(session, alias: str, canon: str) -> Dict[str, Any]:
+    """Завести синоним темы (редактор оператора).
+
+    Канон обязан существовать в словаре: синоним, ведущий в никуда, молча
+    переписал бы тему на несуществующую — хуже, чем оставить исходное
+    написание. Сам синоним каноном быть не может по той же причине, по которой
+    канон побеждает синоним в ``_theme_canon_map``: иначе тема начала бы
+    переписывать сама себя.
+    """
+    alias_key = (alias or "").strip().lower()
+    canon = (canon or "").strip()
+    if not alias_key or not canon:
+        return {"ok": False, "error": "empty"}
+
+    canon_names = {
+        str(n) for n in (await session.execute(select(ClassifierTheme.name))).scalars().all()
+    }
+    if canon not in canon_names:
+        return {"ok": False, "error": "unknown_canon"}
+    if alias_key in {n.lower() for n in canon_names}:
+        return {"ok": False, "error": "alias_is_canon"}
+
+    existing = (
+        await session.execute(
+            select(ClassifierThemeAlias).where(ClassifierThemeAlias.alias == alias_key)
+        )
+    ).scalar_one_or_none()
+    if existing:
+        existing.canon = canon
+        await session.commit()
+        return {"ok": True, "alias": alias_key, "canon": canon, "updated": True}
+
+    session.add(ClassifierThemeAlias(alias=alias_key, canon=canon))
+    await session.commit()
+    return {"ok": True, "alias": alias_key, "canon": canon, "updated": False}
+
+
+async def delete_alias(session, alias: str) -> Dict[str, Any]:
+    """Убрать синоним. Вердикты не трогает — они уже записаны каноном."""
+    alias_key = (alias or "").strip().lower()
+    if not alias_key:
+        return {"ok": False, "error": "empty"}
+    res = await session.execute(
+        delete(ClassifierThemeAlias).where(ClassifierThemeAlias.alias == alias_key)
+    )
+    await session.commit()
+    return {"ok": True, "alias": alias_key, "removed": int(res.rowcount or 0)}
+
+
+async def canonicalize_existing(session) -> Dict[str, Any]:
+    """Разово привести уже записанные вердикты к канону по текущему словарю.
+
+    Нужна потому, что нормализация на запись чинит будущее, а 1992 вердикта с
+    неканоническими темами уже лежат в Корпусе и продолжают дробить agree-rate
+    и дистилляцию. Идемпотентна: повторный прогон ничего не меняет.
+
+    Неизвестные написания **не трогает** — они возвращаются в ``unknown``,
+    чтобы оператор завёл синоним осознанно, а не обнаружил подгонку постфактум.
+    """
+    canon_map = await _theme_canon_map(session)
+    moved: Dict[str, int] = {}
+    unknown: Dict[str, int] = {}
+
+    rows = (await session.execute(select(ContentClassification))).scalars().all()
+    for cls in rows:
+        verdict = dict(cls.verdict or {})
+        raw = str(verdict.get("theme") or "").strip()
+        if not raw:
+            continue
+        canon = canon_map.get(raw.lower())
+        if canon is None:
+            unknown[raw] = unknown.get(raw, 0) + 1
+            continue
+        if canon != raw:
+            verdict["theme"] = canon
+            cls.verdict = verdict
+            moved[f"{raw} → {canon}"] = moved.get(f"{raw} → {canon}", 0) + 1
+    await session.commit()
+    return {"moved": sum(moved.values()), "detail": moved, "unknown": unknown}
 
 
 async def reassign_theme(session, old: str, new: str) -> int:

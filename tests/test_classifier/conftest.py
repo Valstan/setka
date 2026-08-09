@@ -17,6 +17,7 @@ from database.models_extended import (
     ClassificationCorrection,
     ClassificationRule,
     ClassifierTheme,
+    ClassifierThemeAlias,
     CollectedPostAudit,
     ContentClassification,
 )
@@ -32,6 +33,7 @@ async def db_session():
         CollectedPostAudit.__table__,
         ClassificationRule.__table__,
         ClassifierTheme.__table__,
+        ClassifierThemeAlias.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=tables))

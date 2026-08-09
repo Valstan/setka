@@ -738,6 +738,32 @@ class ClassifierTheme(Base):
         return f"<ClassifierTheme {self.name!r}>"
 
 
+class ClassifierThemeAlias(Base):
+    """Синонимы тем классификатора (миграция 079).
+
+    Миграция 070 разово нормализовала историю по временной таблице синонимов,
+    но на запись канон не применялся — и за три недели Корпус набрал 1992
+    вердикта с 29 неканоническими темами («реклама» в шести написаниях,
+    включая смешанные кириллицу с латиницей). Эта таблица — durable-версия
+    того же словаря, теперь читаемая при каждой записи вердикта.
+
+    Синонимы — редакционное знание, поэтому живут в БД под редактором
+    оператора, а не константой в коде: «ещё одно написание рекламы» не должно
+    требовать релиза.
+    """
+
+    __tablename__ = "classifier_theme_aliases"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    # хранится уже приведённым к нижнему регистру и без крайних пробелов
+    alias = Column(String(200), nullable=False, unique=True)
+    canon = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<ClassifierThemeAlias {self.alias!r}→{self.canon!r}>"
+
+
 class RadarSource(Base):
     """Источник контент-радара (миграция 038, Ф0.2).
 
