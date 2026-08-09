@@ -976,3 +976,50 @@ class RadarOutput(Base):
             "last_error": self.last_error,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class ConveyorDelivery(Base):
+    """Строка контент-конвейера: «этот пост для этого сайта» (миграция 078, D-015).
+
+    Один пост может уйти на несколько сайтов — идентичность составная
+    ``(site, lip)``. Журнал ведётся не ради идемпотентности сайта (она у него
+    своя, по ``vkPostId``), а ради трёх наших нужд: не платить за повторную
+    классификацию уже обработанного, считать agree-rate по сайту для выпускного
+    экзамена автопубликации, и уметь ответить «почему этой новости нет на сайте»
+    строкой, а не молчанием.
+    """
+
+    __tablename__ = "conveyor_deliveries"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    site = Column(String(50), nullable=False, index=True)
+    lip = Column(String(50), nullable=False, index=True)
+    # selected | classified | delivered | rejected | held | failed
+    status = Column(String(16), nullable=False, default="selected")
+    reason = Column(String(64), nullable=True)
+    # {rubric, title, text, merge_with?, confidence}
+    verdict = Column(JSON, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    http_status = Column(Integer, nullable=True)
+    remote_id = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (Index("uq_conveyor_deliveries_site_lip", "site", "lip", unique=True),)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "site": self.site,
+            "lip": self.lip,
+            "status": self.status,
+            "reason": self.reason,
+            "verdict": self.verdict or {},
+            "attempts": self.attempts,
+            "http_status": self.http_status,
+            "remote_id": self.remote_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def __repr__(self):
+        return f"<ConveyorDelivery {self.site}/{self.lip} {self.status}>"
