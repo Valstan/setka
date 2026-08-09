@@ -186,6 +186,46 @@ async def record_selection(
     return added
 
 
+async def update_delivery(
+    session,
+    *,
+    site: str,
+    lip: str,
+    status: str,
+    reason: Optional[str] = None,
+    verdict: Optional[Dict[str, Any]] = None,
+    attempts: Optional[int] = None,
+    http_status: Optional[int] = None,
+    remote_id: Optional[str] = None,
+) -> bool:
+    """Обновить строку журнала. ``False`` — строки нет (отбор её не заводил).
+
+    Пишем только переданные поля: прогон доставки не должен затирать вердикт,
+    добытый предыдущим шагом, лишь потому, что не знает о нём.
+    """
+    row = (
+        await session.execute(
+            select(ConveyorDelivery)
+            .where(ConveyorDelivery.site == (site or "").strip().lower())
+            .where(ConveyorDelivery.lip == (lip or "").strip())
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    row.status = status
+    if reason is not None:
+        row.reason = reason[:64]
+    if verdict is not None:
+        row.verdict = verdict
+    if attempts is not None:
+        row.attempts = attempts
+    if http_status is not None:
+        row.http_status = http_status
+    if remote_id is not None:
+        row.remote_id = remote_id[:100]
+    return True
+
+
 async def site_status_counts(session, *, site: str) -> Dict[str, int]:
     """Сводка журнала по статусам для сайта — основа метрики и разбора «почему нет на сайте»."""
     from sqlalchemy import func
