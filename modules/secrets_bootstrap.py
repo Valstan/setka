@@ -67,6 +67,16 @@ ACCEPTED_NAMES: frozenset = frozenset(
         "VK_PRODUCTION_GROUPS",
         # AI
         "GROQ_API_KEY",
+        # DeepSeek — движок классификации контент-конвейера (решение владельца
+        # 2026-08-09). Ключ живёт в комнате КАРМАНа и приезжает сюда bootstrap'ом;
+        # на прод-бокс руками он не кладётся — ровно для этого комната и заводилась.
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_MODEL",
+        # контент-конвейер ВК → сайты (D-015)
+        "CONVEYOR_DISABLED",
+        "CONVEYOR_SITES",
+        "CONVEYOR_SOURCE_DAYS",
+        "CONVEYOR_BATCH_MAX",
         # Telegram (уведомления)
         "TELEGRAM_ALERT_CHAT_ID",
         # экосистема / шлюз / self-serve

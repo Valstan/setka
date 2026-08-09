@@ -22,6 +22,7 @@ Tasks:
 import hashlib
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 
 from celery import Celery, signals
@@ -1226,6 +1227,54 @@ def snapshot_learned_rules():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.run_content_conveyor")
+def run_content_conveyor():
+    """Прогон контент-конвейера ВК → сайты кластера (D-015, MANDATE brain 2026-08-08).
+
+    Отбор из опубликованных сводок → один вызов DeepSeek на пост (рубрика,
+    заголовок, лёгкая редактура) → POST на ingest сайта. Три звена одним
+    прогоном: ссылки на медиа живут ровно столько, сколько живут у ВК-CDN
+    (G56/G63), и отложенная доставка везла бы битые картинки.
+
+    **Выключено по умолчанию.** Активность решает ``CONVEYOR_SITES``, и пустое
+    значение означает «ни один сайт». Пустой список активных сайтов — не ошибка,
+    а штатное состояние: таска молча возвращает ноль обработанных.
+
+    Приёмник создаёт только черновики, публикует человек (shadow-фаза §D).
+    """
+    try:
+        from config.content_conveyor import get_active_sites
+        from database.connection import AsyncSessionLocal
+        from modules.conveyor.runner import run_site
+
+        sites = get_active_sites()
+        if not sites:
+            return {"success": True, "sites": 0, "note": "конвейер выключен (CONVEYOR_SITES пуст)"}
+
+        async def go():
+            out = []
+            async with AsyncSessionLocal() as session:
+                for site in sites:
+                    out.append(await run_site(session, site, sleep=time.sleep))
+            return out
+
+        stats = run_coro(go())
+        for s in stats:
+            logger.info(
+                "конвейер %s: отобрано %s, доставлено %s, отклонено %s, задержано %s, сбоев %s",
+                s.get("site"),
+                s.get("selected"),
+                s.get("delivered"),
+                s.get("rejected"),
+                s.get("held"),
+                s.get("failed"),
+            )
+        return {"success": True, "timestamp": datetime.now().isoformat(), "stats": stats}
+    except Exception as e:
+        logger.error(f"run_content_conveyor failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.probe_token_capabilities")
 def probe_token_capabilities():
     """Замер прав VK-токенов опытом — раз в месяц (владелец 2026-07-26).
@@ -1358,6 +1407,18 @@ app.conf.beat_schedule = {
     "alert-ad-overspent-daily": {
         "task": "tasks.celery_app.alert_ad_overspent",
         "schedule": crontab(minute=0, hour=11),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
+    # Контент-конвейер ВК → сайты кластера (D-015): 3 раза в сутки.
+    # Часы выбраны в промежутках между публикацией сводок, чтобы конвейер брал
+    # уже сформированную ленту района, а не догонял её в момент сборки.
+    # Пока CONVEYOR_SITES пуст — таска отрабатывает как no-op.
+    "run-content-conveyor": {
+        "task": "tasks.celery_app.run_content_conveyor",
+        "schedule": crontab(minute=20, hour="9,14,19"),
         "options": {
             "expires": 3600,
             "catchup": False,
