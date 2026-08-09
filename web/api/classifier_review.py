@@ -114,6 +114,50 @@ async def themes_delete(body: ThemeDelete = Body(...)):
         return await service.delete_theme(session, body.name, body.reassign_to)
 
 
+@router.get("/themes/aliases")
+async def theme_aliases():
+    """Синонимы тем (миграция 079): какое написание в какой канон сводится."""
+    async with AsyncSessionLocal() as session:
+        items = await service.aliases_list(session)
+    return {"count": len(items), "aliases": items}
+
+
+class AliasAdd(BaseModel):
+    alias: str
+    canon: str
+
+
+@router.post("/themes/aliases/add")
+async def theme_aliases_add(body: AliasAdd = Body(...)):
+    """Завести синоним темы. Канон обязан существовать в словаре."""
+    async with AsyncSessionLocal() as session:
+        return await service.add_alias(session, body.alias, body.canon)
+
+
+class AliasDelete(BaseModel):
+    alias: str
+
+
+@router.post("/themes/aliases/delete")
+async def theme_aliases_delete(body: AliasDelete = Body(...)):
+    """Убрать синоним. Уже записанные вердикты не меняются."""
+    async with AsyncSessionLocal() as session:
+        return await service.delete_alias(session, body.alias)
+
+
+@router.post("/themes/canonicalize")
+async def themes_canonicalize():
+    """Разово привести записанные вердикты к канону по текущему словарю.
+
+    Чинит прошлое: нормализация на запись действует только на новые вердикты,
+    а накопленные неканонические написания продолжают дробить agree-rate и
+    дистилляцию. Идемпотентно; неизвестные написания не трогаются и
+    возвращаются списком как кандидаты в синонимы.
+    """
+    async with AsyncSessionLocal() as session:
+        return await service.canonicalize_existing(session)
+
+
 @router.get("/health")
 async def health():
     """Диагностика рутины: backlog по регионам, вердикты/сутки, покрытие потока."""
