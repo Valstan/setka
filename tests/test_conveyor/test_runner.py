@@ -32,6 +32,7 @@ def wired(monkeypatch):
 
     def fake_classify(post, *, sections, rules="", api_key=None):
         calls["classify"].append(post["lip"])
+        calls["rules"] = rules
         return calls.get("classify_result", _accept())
 
     def fake_deliver(site, key, body, **kw):
@@ -64,6 +65,15 @@ async def test_happy_path_marks_delivered(db_session, wired, monkeypatch):
     row = await _journal(db_session, "1_10")
     assert row.status == "delivered" and row.remote_id == "r1" and row.http_status == 201
     assert row.verdict["title"] == "Заголовок"
+
+
+@pytest.mark.asyncio
+async def test_rules_reach_the_model(db_session, wired, monkeypatch):
+    """Правила сайта доезжают до классификации — иначе файл правил декоративен."""
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    await seed_pair(db_session, lip="1_10", text=LONG_TEXT)
+    await runner.run_site(db_session, SITE, rules="правило сайта", sleep=None)
+    assert wired["rules"] == "правило сайта"
 
 
 @pytest.mark.asyncio
