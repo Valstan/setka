@@ -6,6 +6,13 @@ Usage::
     python scripts/migrate.py status                # list applied / pending
     python scripts/migrate.py up                    # apply all pending
     python scripts/migrate.py up --dry-run          # show plan without DDL
+    python scripts/migrate.py mark-applied --all-pending        # dry run
+    python scripts/migrate.py mark-applied --all-pending --yes  # write
+
+``mark-applied`` records migrations as applied **without executing them** — the
+repair for bookkeeping that drifted because someone applied a file by hand.
+It is dry unless ``--yes`` is passed, and it records a conclusion rather than
+reaching one: verify against the real schema first.
 
 The runner shells out to ``sudo -u postgres psql -d setka -v ON_ERROR_STOP=1``
 for every read and write, so it must run on the prod VPS (or on any host
@@ -144,6 +151,35 @@ def apply_migration(migration: Migration, runner: PsqlRunner | None = None) -> N
     runner(["-q"], build_apply_script(migration))
 
 
+def build_mark_script(migrations: Sequence[Migration]) -> str:
+    """Bookkeeping-only script: record migrations as applied WITHOUT running them.
+
+    This exists because the alternative is worse. Bookkeeping drifts whenever a
+    migration is applied by hand (2026-08-09: 30 files were live in the schema
+    while the table said ``pending``), and the only repair available then was
+    hand-written ``INSERT`` statements pasted over ssh — an operation with no
+    review, no tests and a truncated hash waiting to be copied from ``status``
+    output. Giving the runner an explicit mode makes the repair reviewable.
+
+    The obvious hazard is that this command *tells the table something that did
+    not happen*. That is exactly why ``cmd_mark_applied`` refuses to write
+    without ``--yes``, and why the caller is expected to have verified the
+    schema first: the command records a conclusion, it does not reach one.
+    """
+    values = ",\n".join(
+        f"    ({_quote_sql_literal(m.name)}, {_quote_sql_literal(m.sha256)})" for m in migrations
+    )
+    return (
+        "BEGIN;\n"
+        "INSERT INTO applied_migrations (filename, sha256) VALUES\n"
+        f"{values}\n"
+        "    ON CONFLICT (filename) DO UPDATE\n"
+        "        SET sha256 = EXCLUDED.sha256,\n"
+        "            applied_at = CURRENT_TIMESTAMP;\n"
+        "COMMIT;\n"
+    )
+
+
 def _pending(migrations: Iterable[Migration], applied: set[str]) -> list[Migration]:
     """Return pending migrations in application order.
 
@@ -218,6 +254,61 @@ def cmd_up(dry_run: bool = False, runner: PsqlRunner | None = None) -> int:
     return 0
 
 
+def cmd_mark_applied(
+    names: Sequence[str],
+    *,
+    all_pending: bool = False,
+    yes: bool = False,
+    runner: PsqlRunner | None = None,
+) -> int:
+    """Record migrations as applied without executing them.
+
+    Dry by default: without ``--yes`` it prints the plan and writes nothing.
+    The confirmation lives in the command rather than in the operator's memory
+    because the failure mode is silent — a wrongly marked migration is a file
+    that will never run, and nothing downstream will ever complain about it.
+    """
+    runner = runner if runner is not None else _default_psql_runner
+    migrations = discover_migrations()
+    by_name = {m.name: m for m in migrations}
+
+    if all_pending:
+        if names:
+            print("ERROR: pass either --all-pending or explicit names, not both.", file=sys.stderr)
+            return 2
+        selected = _pending(migrations, fetch_applied(runner))
+    else:
+        if not names:
+            print("ERROR: nothing selected — pass filenames or --all-pending.", file=sys.stderr)
+            return 2
+        unknown = [n for n in names if n not in by_name]
+        if unknown:
+            print(f"ERROR: not found in {MIGRATIONS_DIR}: {', '.join(unknown)}", file=sys.stderr)
+            return 2
+        selected = [by_name[n] for n in names]
+
+    if not selected:
+        print("Nothing to mark — bookkeeping already matches.")
+        return 0
+
+    print(f"Will record {len(selected)} migration(s) as applied WITHOUT running them:")
+    for m in selected:
+        print(f"  - {m.name}  sha256={m.sha256[:12]}")
+    if not yes:
+        print()
+        print("[dry-run] nothing written. Re-run with --yes once the schema is verified.")
+        return 0
+
+    try:
+        runner(["-q"], build_mark_script(selected))
+    except subprocess.CalledProcessError as exc:
+        print(f"FAILED to record\nstderr:\n{exc.stderr}", file=sys.stderr)
+        return 3
+    print()
+    print(f"Recorded {len(selected)} migration(s) as applied.")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Apply SETKA database migrations.",
@@ -231,11 +322,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Show what would be applied, don't run SQL.",
     )
+    mark = sub.add_parser(
+        "mark-applied",
+        help="Record migrations as applied WITHOUT running them (bookkeeping repair).",
+    )
+    mark.add_argument("names", nargs="*", help="Migration filenames to record.")
+    mark.add_argument(
+        "--all-pending",
+        action="store_true",
+        help="Record every currently pending migration.",
+    )
+    mark.add_argument(
+        "--yes",
+        action="store_true",
+        help="Actually write. Without it the command is a dry run.",
+    )
     args = parser.parse_args(argv)
     if args.cmd == "status":
         return cmd_status()
     if args.cmd == "up":
         return cmd_up(dry_run=args.dry_run)
+    if args.cmd == "mark-applied":
+        return cmd_mark_applied(args.names, all_pending=args.all_pending, yes=args.yes)
     return 1
 
 
