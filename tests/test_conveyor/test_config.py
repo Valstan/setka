@@ -63,7 +63,7 @@ class TestSiteDescriptions:
         Тест держит границу направлений именами, а не памятью автора.
         """
         for s in cc.SITES:
-            assert str(s["key_env"]).startswith("INGEST_KEY_"), s["key"]
+            assert str(s["key_env"]).endswith("_INGEST_KEY"), s["key"]
             assert not str(s["key_env"]).startswith("GATEWAY_KEY_"), s["key"]
 
     def test_get_site_by_key_is_case_insensitive(self):
@@ -78,11 +78,11 @@ class TestSiteDescriptions:
 
 class TestKeysAndLimits:
     def test_ingest_key_read_from_named_env(self, monkeypatch):
-        monkeypatch.setenv("INGEST_KEY_VMALMYZHE", "s3cret")
+        monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "s3cret")
         assert cc.get_ingest_key(cc.get_site("vmalmyzhe")) == "s3cret"
 
     def test_missing_key_is_empty_not_exception(self, monkeypatch):
-        monkeypatch.delenv("INGEST_KEY_VMALMYZHE", raising=False)
+        monkeypatch.delenv("VMALMYZHE_INGEST_KEY", raising=False)
         assert cc.get_ingest_key(cc.get_site("vmalmyzhe")) == ""
 
     @pytest.mark.parametrize(

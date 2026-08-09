@@ -117,6 +117,16 @@ ACCEPTED_NAMES: frozenset = frozenset(
 # имя переменной неизвестно заранее (пишется владельцем). Разрешаем префикс,
 # а не «всё»: NODE_OPTIONS под этот префикс не подходит.
 ACCEPTED_PREFIXES: tuple = ("VK_TOKEN_", "TELEGRAM_TOKEN_")
+# Ключи доставки контент-конвейера на сайты кластера приходят суффиксом:
+# <SITE>_INGEST_KEY (имя задал КАРМАН при переносе, см. директиву 2026-07-26).
+# Суффикс, а не префикс, потому что имя уже согласовано тремя сторонами и менять
+# его дороже, чем добавить правило. Правило узкое: под него не подходит ни один
+# bootstrap-секрет и ни один посторонний ключ вроде NODE_OPTIONS.
+#
+# Направление ключа читается из имени, и это не косметика: GATEWAY_KEY_<PROJECT>
+# в SETKA означает ВХОДЯЩИЙ ключ VK-шлюза, и исходящий ключ доставки под тем же
+# именем при недоступной БД открывал бы наш шлюз (modules/gateway/keys.py).
+ACCEPTED_SUFFIXES: tuple = ("_INGEST_KEY",)
 # Bootstrap-токен и URL хранилища — вне любых правил приёма (свойство 6).
 _BOOTSTRAP_NAMES_FORBIDDEN = frozenset(
     {"SECRETS_TOKEN", "SECRETS_VAULT_URL", "SECRETS_MANAGER_URL"}
@@ -133,16 +143,18 @@ def _missing_required(env: Dict[str, str]) -> List[str]:
 def _accepted(name: str) -> bool:
     """Имя принимается allowlist'ом? (свойства 2 и 6 спеки).
 
-    Явные имена + разрешённые префиксы. Bootstrap-имена (SECRETS_TOKEN и
-    „братья“) не пройдут даже через префиксное правило, потому что они не
-    начинаются с VK_TOKEN_ / TELEGRAM_TOKEN_ — двойная страховка плюс явная
-    проверка ниже жёстко запрещает их в любом виде.
+    Явные имена + разрешённые префиксы + суффикс ключей доставки. Bootstrap-имена
+    (SECRETS_TOKEN и „братья“) не пройдут ни одним из путей: они не начинаются с
+    VK_TOKEN_ / TELEGRAM_TOKEN_ и не кончаются на _INGEST_KEY — двойная страховка
+    плюс явная проверка ниже жёстко запрещает их в любом виде.
     """
     if name in _BOOTSTRAP_NAMES_FORBIDDEN:
         return False
     if name in ACCEPTED_NAMES:
         return True
-    return any(name.startswith(p) for p in ACCEPTED_PREFIXES)
+    if any(name.startswith(p) for p in ACCEPTED_PREFIXES):
+        return True
+    return any(name.endswith(s) for s in ACCEPTED_SUFFIXES)
 
 
 def _fetch_secrets(token: str, vault_url: str) -> Dict[str, str]:
