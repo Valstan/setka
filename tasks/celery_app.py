@@ -1245,6 +1245,7 @@ def run_content_conveyor():
     try:
         from config.content_conveyor import get_active_sites
         from database.connection import AsyncSessionLocal
+        from modules.conveyor.rules import load_rules
         from modules.conveyor.runner import run_site
 
         sites = get_active_sites()
@@ -1255,7 +1256,11 @@ def run_content_conveyor():
             out = []
             async with AsyncSessionLocal() as session:
                 for site in sites:
-                    out.append(await run_site(session, site, sleep=time.sleep))
+                    # Правила читаются на каждом прогоне, а не кэшируются на
+                    # процесс: файл правится человеком между прогонами, и
+                    # правка не должна ждать рестарта worker'а.
+                    rules = load_rules(str(site.get("key") or ""))
+                    out.append(await run_site(session, site, rules=rules, sleep=time.sleep))
             return out
 
         stats = run_coro(go())
