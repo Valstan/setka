@@ -186,6 +186,36 @@ async def record_selection(
     return added
 
 
+async def fetch_audit_snapshots(session, *, lips: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+    """Снапшоты постов из аудита по списку ``lip`` — map lip → пост.
+
+    Нужны при досылке: вердикт лежит в журнале, а текст и медиа — в аудите, и
+    собирать тело запроса заново дешевле, чем хранить его копию в журнале.
+    """
+    wanted = [str(x).strip() for x in (lips or []) if x is not None and str(x).strip()]
+    if not wanted:
+        return {}
+    rows = (
+        (
+            await session.execute(
+                select(CollectedPostAudit).where(CollectedPostAudit.lip.in_(wanted))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        r.lip: {
+            "lip": r.lip,
+            "text": (r.post_text or "").strip(),
+            "url": r.post_url or "",
+            "media": r.media or [],
+            "region_code": r.region_code,
+        }
+        for r in rows
+    }
+
+
 async def update_delivery(
     session,
     *,
@@ -197,11 +227,16 @@ async def update_delivery(
     attempts: Optional[int] = None,
     http_status: Optional[int] = None,
     remote_id: Optional[str] = None,
+    clear_reason: bool = False,
 ) -> bool:
     """Обновить строку журнала. ``False`` — строки нет (отбор её не заводил).
 
     Пишем только переданные поля: прогон доставки не должен затирать вердикт,
     добытый предыдущим шагом, лишь потому, что не знает о нём.
+
+    ``clear_reason`` — стереть причину явно. Нужен при удачной досылке: иначе в
+    строке останется ``network`` от прошлого сбоя, и запись «доставлено, причина:
+    сеть недоступна» будет врать тому, кто придёт разбираться.
     """
     row = (
         await session.execute(
@@ -213,7 +248,9 @@ async def update_delivery(
     if row is None:
         return False
     row.status = status
-    if reason is not None:
+    if clear_reason:
+        row.reason = None
+    elif reason is not None:
         row.reason = reason[:64]
     if verdict is not None:
         row.verdict = verdict

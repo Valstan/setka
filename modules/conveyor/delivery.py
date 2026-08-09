@@ -26,6 +26,7 @@ import json
 import logging
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -145,6 +146,45 @@ def build_payload(
     return body
 
 
+def idna_url(url: str) -> str:
+    """Привести хост к punycode. Не-ASCII домен иначе роняет запрос ещё до сети.
+
+    ``urllib`` кодирует заголовки запроса в latin-1, и кириллический хост даёт
+    ``UnicodeEncodeError`` — не таймаут, не отказ сервера, а исключение внутри
+    клиента. В журнале это выглядело как ``network`` ×18: связи нет, хотя сервер
+    жив и на punycode-адрес отвечает.
+
+    Кодируем здесь, а не в конфиге: в ``SITES`` домен остаётся кириллицей, каким
+    его читает человек, и любой следующий сайт кластера заработает без правки.
+    Путь и параметры не трогаем — punycode относится только к имени хоста.
+    """
+    raw = (url or "").strip()
+    if not raw or raw.isascii():
+        return raw
+    try:
+        parts = urllib.parse.urlsplit(raw)
+        host = parts.hostname or ""
+        if not host or host.isascii():
+            return raw
+        encoded = host.encode("idna").decode("ascii")
+        netloc = encoded
+        if parts.port:
+            netloc = f"{netloc}:{parts.port}"
+        if parts.username:
+            cred = parts.username
+            if parts.password:
+                cred = f"{cred}:{parts.password}"
+            netloc = f"{cred}@{netloc}"
+        return urllib.parse.urlunsplit(
+            (parts.scheme, netloc, parts.path, parts.query, parts.fragment)
+        )
+    except Exception:
+        # Кодек idna спотыкается на экзотике (слишком длинная метка и т.п.).
+        # Возвращаем как было: пусть падает на вызове с внятной ошибкой, а не
+        # тихо подменяется на что-то другое.
+        return raw
+
+
 def _post_once(
     url: str,
     key: str,
@@ -155,7 +195,7 @@ def _post_once(
     """Один HTTP-вызов. Возвращает ``(http_status, ответ)``; сетевой сбой → ``(0, {...})``."""
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
-        url,
+        idna_url(url),
         data=data,
         method="POST",
         headers={

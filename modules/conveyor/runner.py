@@ -114,6 +114,82 @@ async def run_site(
     return stats
 
 
+async def retry_failed(
+    session,
+    site: Dict[str, Any],
+    *,
+    limit: int = 50,
+    sleep: Optional[Callable[[float], None]] = None,
+    pace: float = DEFAULT_PACE_SECONDS,
+) -> Dict[str, Any]:
+    """Дослать посты, упавшие на доставке, по уже сохранённым вердиктам.
+
+    Классификация не повторяется: вердикт лежит в журнале с прошлого прогона, и
+    платить за него второй раз незачем. Именно ради этого ``_process_one``
+    сохраняет вердикт даже когда доставка провалилась.
+
+    Берём только ``failed`` — ``rejected`` и ``held`` это решения, а не сбои,
+    и досылать их нельзя.
+    """
+    from sqlalchemy import select
+
+    from database.models_extended import ConveyorDelivery
+
+    site_key = str(site.get("key") or "").strip().lower()
+    key = get_ingest_key(site)
+    stats = {"site": site_key, "retried": 0, "delivered": 0, "held": 0, "failed": 0}
+
+    rows = (
+        (
+            await session.execute(
+                select(ConveyorDelivery)
+                .where(ConveyorDelivery.site == site_key)
+                .where(ConveyorDelivery.status == "failed")
+                .where(ConveyorDelivery.verdict.isnot(None))
+                .order_by(ConveyorDelivery.created_at)
+                .limit(max(1, limit))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return stats
+
+    posts = await source_mod.fetch_audit_snapshots(session, lips=[r.lip for r in rows])
+    for i, row in enumerate(rows):
+        post = posts.get(row.lip)
+        if not post:
+            continue
+        if i and pace and sleep is not None:
+            sleep(pace)
+        stats["retried"] += 1
+        body = delivery_mod.build_payload(post, row.verdict or {})
+        bad = delivery_mod.check_invariant(body)
+        if bad:
+            await source_mod.update_delivery(
+                session, site=site_key, lip=row.lip, status="held", reason=bad
+            )
+            stats["held"] += 1
+            await session.commit()
+            continue
+        res = delivery_mod.deliver(site, key, body, sleep=time.sleep)
+        await source_mod.update_delivery(
+            session,
+            site=site_key,
+            lip=row.lip,
+            status="delivered" if res.get("ok") else "failed",
+            reason=None if res.get("ok") else str(res.get("reason") or "delivery_failed"),
+            clear_reason=bool(res.get("ok")),
+            attempts=res.get("attempts"),
+            http_status=res.get("status"),
+            remote_id=res.get("remote_id"),
+        )
+        stats["delivered" if res.get("ok") else "failed"] += 1
+        await session.commit()
+    return stats
+
+
 async def _process_one(
     session,
     site: Dict[str, Any],
