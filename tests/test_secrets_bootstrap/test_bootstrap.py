@@ -16,8 +16,14 @@ import pytest
 from modules import secrets_bootstrap as sb
 
 
-def test_intact_local_env_is_noop_without_network(monkeypatch):
-    """Свойство 1: всё на месте → ноль сетевых вызовов, recovered 0."""
+def test_no_token_means_no_network(monkeypatch):
+    """Без ``SECRETS_TOKEN`` в vault не ходим ни в каком режиме.
+
+    Раньше этот случай отсекался раньше — проверкой целостности локального env
+    (``local-env-intact``). С режимом «комната как источник» (владелец 2026-08-09)
+    целый env больше не повод молчать, и единственный барьер здесь — отсутствие
+    токена. Сетевых вызовов по-прежнему ноль, что тест и держит.
+    """
     calls = []
 
     def _fake_fetch(*a, **k):  # pragma: no cover — не должен вызываться
@@ -28,7 +34,7 @@ def test_intact_local_env_is_noop_without_network(monkeypatch):
     monkeypatch.setattr(sb, "_fetch_secrets", _fake_fetch)
 
     res = sb.bootstrap_secrets(env=env)
-    assert res["reason"] == "local-env-intact"
+    assert res["reason"] == "no-token"
     assert res["recovered"] == 0
     assert calls == []
 
@@ -242,3 +248,113 @@ def test_gateway_key_name_is_not_smuggled_in_by_suffix_rule(monkeypatch):
     res = sb.bootstrap_secrets(env=env)
     assert res["ignored"] == ["GATEWAY_KEY_VMALMYZHE"]
     assert "GATEWAY_KEY_VMALMYZHE" not in env
+
+
+def test_room_is_a_source_not_only_a_backup(monkeypatch):
+    """Секрет, положенный ТОЛЬКО в комнату, доезжает до процесса (владелец 2026-08-09).
+
+    До этой правки модуль выходил на `local-env-intact`, если DATABASE_URL и
+    REDIS_URL целы, и в vault не ходил вовсе — DEEPSEEK_API_KEY лежал в комнате,
+    а os.environ его не видел.
+    """
+    env = {
+        "SECRETS_TOKEN": "tok",
+        "DATABASE_URL": "postgresql+asyncpg://local:p@h/db",
+        "REDIS_URL": "redis://h:1/0",
+    }
+    monkeypatch.setattr(
+        sb, "_fetch_secrets", lambda token, url: {"DEEPSEEK_API_KEY": "sk-from-room"}
+    )
+
+    res = sb.bootstrap_secrets(env=env)
+    assert env["DEEPSEEK_API_KEY"] == "sk-from-room"
+    assert res["recovered"] == 1 and res["reason"] == "pulled"
+
+
+def test_pull_always_can_be_switched_off(monkeypatch):
+    """VAULT_PULL_ALWAYS=0 возвращает старое поведение — ноль сетевых вызовов."""
+    env = {
+        "SECRETS_TOKEN": "tok",
+        "DATABASE_URL": "postgresql+asyncpg://local:p@h/db",
+        "REDIS_URL": "redis://h:1/0",
+        "VAULT_PULL_ALWAYS": "0",
+    }
+
+    def _boom(token, url):  # pragma: no cover — вызов означал бы провал теста
+        raise AssertionError("в vault ходить не должны")
+
+    monkeypatch.setattr(sb, "_fetch_secrets", _boom)
+    res = sb.bootstrap_secrets(env=env)
+    assert res["reason"] == "local-env-intact" and res["recovered"] == 0
+
+
+def test_local_env_still_wins_in_pull_mode(monkeypatch):
+    """Свойство 3 не ослабло: комната-источник не перетирает то, что дал systemd."""
+    env = {
+        "SECRETS_TOKEN": "tok",
+        "DATABASE_URL": "postgresql+asyncpg://local:p@h/db",
+        "REDIS_URL": "redis://h:1/0",
+        "GROQ_API_KEY": "local-wins",
+    }
+    monkeypatch.setattr(
+        sb,
+        "_fetch_secrets",
+        lambda token, url: {"GROQ_API_KEY": "from-room", "DEEPSEEK_API_KEY": "new"},
+    )
+
+    res = sb.bootstrap_secrets(env=env)
+    assert env["GROQ_API_KEY"] == "local-wins"
+    assert env["DEEPSEEK_API_KEY"] == "new"
+    assert res["recovered"] == 1
+
+
+def test_allowlist_still_applies_in_pull_mode(monkeypatch):
+    """«Источник» не значит «доверяем всему»: NODE_OPTIONS из комнаты не проедет."""
+    env = {
+        "SECRETS_TOKEN": "tok",
+        "DATABASE_URL": "postgresql+asyncpg://local:p@h/db",
+        "REDIS_URL": "redis://h:1/0",
+    }
+    monkeypatch.setattr(
+        sb,
+        "_fetch_secrets",
+        lambda token, url: {
+            "NODE_OPTIONS": "--require /proc/self/environ",
+            "DEEPSEEK_API_KEY": "k",
+        },
+    )
+
+    res = sb.bootstrap_secrets(env=env)
+    assert res["ignored"] == ["NODE_OPTIONS"]
+    assert "NODE_OPTIONS" not in env
+
+
+def test_unreachable_vault_does_not_break_start(monkeypatch):
+    """Best-effort сохраняется: недоступный vault при целом env — не отказ старта."""
+    env = {
+        "SECRETS_TOKEN": "tok",
+        "DATABASE_URL": "postgresql+asyncpg://local:p@h/db",
+        "REDIS_URL": "redis://h:1/0",
+    }
+
+    def _fail(token, url):
+        raise OSError("vault недоступен")
+
+    monkeypatch.setattr(sb, "_fetch_secrets", _fail)
+    res = sb.bootstrap_secrets(env=env)
+    assert res["reason"] == "fetch-failed" and res["recovered"] == 0
+
+
+def test_quiet_when_pull_adds_nothing(monkeypatch, caplog):
+    """Нечего добавить — молчим: иначе «восстановлено: 0» на каждом старте станет шумом."""
+    env = {
+        "SECRETS_TOKEN": "tok",
+        "DATABASE_URL": "postgresql+asyncpg://local:p@h/db",
+        "REDIS_URL": "redis://h:1/0",
+    }
+    monkeypatch.setattr(sb, "_fetch_secrets", lambda token, url: {})
+
+    with caplog.at_level(logging.WARNING, logger="modules.secrets_bootstrap"):
+        sb.bootstrap_secrets(env=env)
+
+    assert "восстановлено секретов" not in caplog.text
