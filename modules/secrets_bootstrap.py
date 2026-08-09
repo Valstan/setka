@@ -1,19 +1,38 @@
-"""Восстановление рантайм-секретов из vault КАРМАНа (сценарий A спеки).
+"""Секреты из vault КАРМАНа: аварийное восстановление + комната как источник.
 
 Копируемая спека: ``brain_matrica/docs/specs/vault-client.md``. Эталон-образец —
-trener; здесь — адаптация под SETKA. В норме модуль НИЧЕГО не делает: ключи на
-месте → ноль сетевых вызовов и ноль запросов к vault.
+trener; здесь — адаптация под SETKA.
 
-Зачем (свойство 1 спеки). Если ``/etc/setka/setka.env`` потерян (снесло файл,
-диск, рука), systemd стартует процесс с окружением, где нет обязательных
-переменных — и ``config/runtime._require("DATABASE_URL")`` убьёт приложение ещё
-на импорте. Этот модуль вызывается ДО импорта ``config.runtime`` и, заметив
-отсутствие REQUIRED-ключей, тянет недостающее из комнаты ``setka`` в vault.
-После этого импорт ``config.runtime`` отрабатывает штатно.
+**Два режима, и это решение владельца 2026-08-09.**
+
+1. **Восстановление (сценарий A спеки).** Если ``/etc/setka/setka.env`` потерян
+   (снесло файл, диск, рука), systemd стартует процесс без обязательных
+   переменных — и ``config/runtime._require("DATABASE_URL")`` убьёт приложение
+   ещё на импорте. Модуль вызывается ДО импорта ``config.runtime`` и тянет
+   недостающее из комнаты ``setka``.
+
+2. **Комната как источник (``VAULT_PULL_ALWAYS``, включено по умолчанию).**
+   Владелец: «для этого мы комнату ключей и создавали, чтобы не лазить на
+   продсерверы с ключами, а в КАРМАНе их хранить». Значит новый секрет должен
+   доезжать до процесса, будучи положенным ТОЛЬКО в комнату — без правки
+   ``setka.env`` руками по ssh.
+
+   Изначально модуль ходил в vault лишь при аварии (``local-env-intact`` —
+   ранний выход), и секрет, лежащий в комнате, до приложения не доезжал никогда.
+   Обнаружено 2026-08-09 на ``DEEPSEEK_API_KEY``: ключ лежал в комнате, а
+   ``os.environ`` его не видел.
+
+   Цена режима — один сетевой вызов на старт процесса. Он best-effort и с
+   таймаутом: недоступный vault даёт WARNING и продолжение, а не отказ старта.
+
+Свойства 2, 3, 6, 7 ниже действуют в ОБОИХ режимах — «источник» не значит
+«доверяем всему, что пришло»: allowlist, приоритет локального значения и запрет
+на bootstrap-конфиг остаются ровно теми же.
 
 Обязательные свойства спеки (см. ``docs/specs/vault-client.md``):
 
-1. В норме — ноль сетевых вызовов (первая строка — проверка REQUIRED).
+1. Сетевой вызов — один на старт (или ноль, если ``VAULT_PULL_ALWAYS=0`` и
+   локальный env цел).
 2. **Allowlist, а не «всё, что пришло».** Принимаем только имена из
    ``ACCEPTED_NAMES`` и префиксов ``ACCEPTED_PREFIXES``. ``NODE_OPTIONS`` /
    ``LD_PRELOAD`` / любой чужой ключ в комнату не проедет (мутационная приёмка
@@ -150,6 +169,18 @@ def _missing_required(env: Dict[str, str]) -> List[str]:
     return [k for k in REQUIRED_NAMES if not env.get(k)]
 
 
+def _pull_always(env: Dict[str, str]) -> bool:
+    """Тянуть комнату на каждом старте, а не только при потере env?
+
+    Включено по умолчанию (решение владельца 2026-08-09): комната — источник
+    ключей, иначе секрет, положенный только туда, до процесса не доезжает.
+    Выключатель ``VAULT_PULL_ALWAYS=0`` оставлен на случай, когда сетевой вызов
+    на старте мешает — например при отладке без доступа к vault.
+    """
+    raw = (env.get("VAULT_PULL_ALWAYS") or "").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
 def _accepted(name: str) -> bool:
     """Имя принимается allowlist'ом? (свойства 2 и 6 спеки).
 
@@ -198,11 +229,16 @@ def bootstrap_secrets(
     env = env if env is not None else os.environ
 
     missing = _missing_required(env)
-    if not missing:
+    pull_always = _pull_always(env)
+    if not missing and not pull_always:
         return {"recovered": 0, "ignored": [], "reason": "local-env-intact"}
 
     token = token if token is not None else env.get("SECRETS_TOKEN")
     if not token:
+        if not missing:
+            # Локальный env цел — это не авария, а всего лишь несделанный pull.
+            # Отличаем от настоящей потери файла: там WARNING обязателен.
+            return {"recovered": 0, "ignored": [], "reason": "no-token"}
         log.warning(
             "SETKA: локальная копия env потеряна (%s), SECRETS_TOKEN не задан — "
             "восстановление из vault невозможно",
@@ -230,9 +266,19 @@ def bootstrap_secrets(
     if ignored:
         # имена, НЕ значения (свойство 7): чужой ключ в комнате — сигнал инцидента
         log.warning("SETKA: вне allowlist, проигнорированы: %s", ", ".join(sorted(ignored)))
-    # WARNING, не INFO: bootstrap-хук выполняется ДО logging.basicConfig в main.py,
-    # у root-логгера ещё нет handlers, и INFO отбросится. Восстановление по спеке —
-    # всё равно сигнал инцидента (локальная копия была потеряна), он обязан дойти
-    # до лога даже через lastResort-хендлер.
-    log.warning("SETKA: восстановлено секретов из vault: %d", recovered)
-    return {"recovered": recovered, "ignored": ignored, "reason": "recovered"}
+    if recovered or missing:
+        # WARNING, не INFO: bootstrap-хук выполняется ДО logging.basicConfig в main.py,
+        # у root-логгера ещё нет handlers, и INFO отбросится. Восстановление по спеке —
+        # всё равно сигнал инцидента (локальная копия была потеряна), он обязан дойти
+        # до лога даже через lastResort-хендлер.
+        #
+        # Молчим, когда pull ничего не добавил и авария не случалась: в режиме
+        # «комната как источник» этот путь проходится на КАЖДОМ старте, и строка
+        # «восстановлено: 0» превратилась бы в фоновый шум, на котором перестанут
+        # замечать настоящее восстановление.
+        log.warning("SETKA: восстановлено секретов из vault: %d", recovered)
+    return {
+        "recovered": recovered,
+        "ignored": ignored,
+        "reason": "recovered" if missing else "pulled",
+    }
