@@ -195,3 +195,50 @@ def test_recovered_logs_count(monkeypatch, caplog):
         sb.bootstrap_secrets(env=env)
 
     assert "восстановлено секретов из vault: 2" in caplog.text
+
+
+def test_site_ingest_keys_accepted_by_suffix(monkeypatch):
+    """Ключи доставки конвейера приходят как <SITE>_INGEST_KEY (имя от КАРМАНа).
+
+    Суффиксное правило узкое: пускает ключи сайтов и не пускает ни bootstrap-имена,
+    ни посторонние вроде NODE_OPTIONS, лежащего в той же комнате.
+    """
+    env = {"SECRETS_TOKEN": "tok"}
+    monkeypatch.setattr(
+        sb,
+        "_fetch_secrets",
+        lambda token, url: {
+            "DATABASE_URL": "postgresql+asyncpg://u:p@h/db",
+            "REDIS_URL": "redis://h:1/0",
+            "VMALMYZHE_INGEST_KEY": "site-key-1",
+            "CDK_KALININO_INGEST_KEY": "site-key-2",
+            "NODE_OPTIONS": "--require /proc/self/environ",
+        },
+    )
+
+    res = sb.bootstrap_secrets(env=env)
+    assert env["VMALMYZHE_INGEST_KEY"] == "site-key-1"
+    assert env["CDK_KALININO_INGEST_KEY"] == "site-key-2"
+    assert res["ignored"] == ["NODE_OPTIONS"]
+
+
+def test_gateway_key_name_is_not_smuggled_in_by_suffix_rule(monkeypatch):
+    """GATEWAY_KEY_* — ключи ВХОДЯЩИХ в наш VK-шлюз, из vault они не принимаются.
+
+    Проверяем, что суффиксное правило не открыло им дверь: имя, начинающееся с
+    GATEWAY_KEY_, не оканчивается на _INGEST_KEY и остаётся за бортом.
+    """
+    env = {"SECRETS_TOKEN": "tok"}
+    monkeypatch.setattr(
+        sb,
+        "_fetch_secrets",
+        lambda token, url: {
+            "DATABASE_URL": "postgresql+asyncpg://u:p@h/db",
+            "REDIS_URL": "redis://h:1/0",
+            "GATEWAY_KEY_VMALMYZHE": "wrong-direction",
+        },
+    )
+
+    res = sb.bootstrap_secrets(env=env)
+    assert res["ignored"] == ["GATEWAY_KEY_VMALMYZHE"]
+    assert "GATEWAY_KEY_VMALMYZHE" not in env

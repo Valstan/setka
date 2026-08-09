@@ -20,9 +20,10 @@ SITE = {
     "key": "vmalmyzhe",
     "title": "вМалмыже.РФ",
     "ingest_url": "https://вмалмыже.рф/api/ingest/posts",
-    "key_env": "INGEST_KEY_VMALMYZHE",
+    "key_env": "VMALMYZHE_INGEST_KEY",
     "source_region": "mi",
     "skip_themes": ("reklama", "neighbors"),
+    "sections": ("novosti", "afisha", "zhkh"),
 }
 
 
