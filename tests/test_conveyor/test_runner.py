@@ -187,3 +187,58 @@ async def test_processed_posts_do_not_come_back(db_session, wired, monkeypatch):
     wired["classify"].clear()
     stats = await runner.run_site(db_session, SITE)
     assert stats["selected"] == 0 and wired["classify"] == []
+
+
+# ───────── досылка после сбоя ─────────
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_reuses_saved_verdict(db_session, wired, monkeypatch):
+    """Досылка не платит за классификацию второй раз — вердикт уже в журнале."""
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    wired["deliver_result"] = {"ok": False, "status": 0, "attempts": 3, "reason": "network"}
+    await seed_pair(db_session, lip="1_10", text=LONG_TEXT)
+    await runner.run_site(db_session, SITE)
+    assert (await _journal(db_session, "1_10")).status == "failed"
+
+    wired["classify"].clear()
+    wired["deliver_result"] = {"ok": True, "status": 201, "attempts": 1, "remote_id": "r9"}
+    stats = await runner.retry_failed(db_session, SITE)
+
+    assert stats["retried"] == 1 and stats["delivered"] == 1
+    assert wired["classify"] == []  # LLM не звали
+    row = await _journal(db_session, "1_10")
+    assert row.status == "delivered" and row.remote_id == "r9" and row.reason is None
+
+
+@pytest.mark.asyncio
+async def test_retry_ignores_rejected_and_held(db_session, wired, monkeypatch):
+    """rejected и held — решения, а не сбои: досылать их нельзя."""
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    from database.models_extended import ConveyorDelivery
+
+    db_session.add_all(
+        [
+            ConveyorDelivery(
+                site="vmalmyzhe", lip="1_10", status="rejected", verdict={"title": "x"}
+            ),
+            ConveyorDelivery(site="vmalmyzhe", lip="1_20", status="held", verdict={"title": "y"}),
+        ]
+    )
+    await db_session.commit()
+    stats = await runner.retry_failed(db_session, SITE)
+    assert stats["retried"] == 0 and wired["deliver"] == []
+
+
+@pytest.mark.asyncio
+async def test_retry_without_audit_snapshot_is_skipped(db_session, wired, monkeypatch):
+    """Нет снапшота — нечем собрать тело; молча пропускаем, а не шлём пустое."""
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    from database.models_extended import ConveyorDelivery
+
+    db_session.add(
+        ConveyorDelivery(site="vmalmyzhe", lip="9_99", status="failed", verdict={"title": "x"})
+    )
+    await db_session.commit()
+    stats = await runner.retry_failed(db_session, SITE)
+    assert stats["retried"] == 0 and wired["deliver"] == []

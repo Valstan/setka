@@ -243,3 +243,35 @@ class TestUnknownSections:
 
     def test_site_without_section_list_reports_nothing(self):
         assert delivery.unknown_sections(dict(SITE, sections=()), ["что-угодно"]) == []
+
+
+# ───────── IDN-домены ─────────
+
+
+class TestIdnaUrl:
+    def test_cyrillic_host_becomes_punycode(self):
+        """Кириллический хост роняет urllib на latin-1 ещё до сети — кодируем заранее."""
+        assert (
+            delivery.idna_url("https://вмалмыже.рф/api/ingest/posts")
+            == "https://xn--80adkdyec4j.xn--p1ai/api/ingest/posts"
+        )
+
+    def test_ascii_url_untouched(self):
+        url = "https://example.com/api/ingest/posts?x=1"
+        assert delivery.idna_url(url) == url
+
+    def test_path_and_query_are_not_encoded(self):
+        """Punycode относится только к имени хоста; путь трогать нельзя."""
+        out = delivery.idna_url("https://вмалмыже.рф/api/ingest/posts?tag=новости")
+        assert out.startswith("https://xn--80adkdyec4j.xn--p1ai/api/ingest/posts")
+        assert "tag=новости" in out
+
+    def test_port_is_preserved(self):
+        assert (
+            delivery.idna_url("https://вмалмыже.рф:8443/x")
+            == "https://xn--80adkdyec4j.xn--p1ai:8443/x"
+        )
+
+    @pytest.mark.parametrize("bad", ["", "   ", "не-урл-вовсе"])
+    def test_garbage_input_does_not_raise(self, bad):
+        delivery.idna_url(bad)  # не бросает — худший исход виден на самом вызове
