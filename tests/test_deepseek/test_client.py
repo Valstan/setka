@@ -23,6 +23,7 @@ def _api(status, payload):
         fake.body = body
         fake.api_key = api_key
         return status, payload
+
     return fake
 
 
@@ -33,7 +34,12 @@ def _completion(content, usage=None):
 def test_happy_path_returns_content_model_and_usage(monkeypatch):
     monkeypatch.setattr(dc, "call_api", _api(200, _completion("привет")))
     out = dc.chat(user="вопрос")
-    assert out == {"ok": True, "content": "привет", "model": "deepseek-chat", "usage": {"total_tokens": 42}}
+    assert out == {
+        "ok": True,
+        "content": "привет",
+        "model": "deepseek-chat",
+        "usage": {"total_tokens": 42},
+    }
 
 
 def test_missing_key_is_refusal_not_crash(monkeypatch):
