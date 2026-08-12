@@ -1,98 +1,110 @@
-"""Tests for AI-drafted reply suggestions (etap 4b)."""
+"""Tests for AI-drafted reply suggestions (etap 4b).
 
-from unittest.mock import MagicMock, patch
+Движок — DeepSeek через общий ``modules.deepseek_client`` (D-024, 2026-08-12).
+Подменяется ``ai_drafter.chat``; раньше подменялся класс ``groq.Groq`` и вместе
+с ним MagicMock-цепочка ``chat.completions.create``.
+
+Главное свойство, которое эти тесты стерегут, от смены движка не изменилось:
+**при любом отказе словарь несёт ``prompt``.** На нём держится clipboard
+fallback — оператор вставляет промпт в свой ChatGPT/Claude и работает дальше,
+когда API недоступен. Отказ здесь — деградация, а не ошибка.
+"""
 
 from modules.notifications import ai_drafter
 
 
-async def test_empty_text_short_circuits_without_calling_groq():
+def _install_chat(monkeypatch, result):
+    """Подменить вызов модели; вернуть счётчик вызовов и захваченные kwargs."""
+    state = {"calls": 0, "kwargs": {}}
+
+    def fake_chat(**kwargs):
+        state["calls"] += 1
+        state["kwargs"] = kwargs
+        return result
+
+    monkeypatch.setattr(ai_drafter, "chat", fake_chat)
+    return state
+
+
+def _ok(content: str, model: str = "deepseek-chat"):
+    return {"ok": True, "content": content, "model": model, "usage": None}
+
+
+async def test_empty_text_short_circuits_without_calling_model(monkeypatch):
     """Whitespace-only input → graceful failure, no API call."""
-    with patch.object(ai_drafter, "GROQ_API_KEY", "sk-test"):
-        with patch("groq.Groq") as g:
-            result = await ai_drafter.draft_comment_reply(original_text="   ")
+    state = _install_chat(monkeypatch, _ok("не должно вызваться"))
+    result = await ai_drafter.draft_comment_reply(original_text="   ")
     assert result["success"] is False
     assert "empty" in result["error"].lower()
-    g.assert_not_called()
+    assert state["calls"] == 0
 
 
-async def test_missing_api_key_returns_clear_error():
+async def test_missing_api_key_returns_clear_error(monkeypatch):
     """Operator-friendly error so the UI can show a useful hint."""
-    with patch.object(ai_drafter, "GROQ_API_KEY", None):
-        result = await ai_drafter.draft_comment_reply(original_text="hi")
+    _install_chat(monkeypatch, {"ok": False, "reason": "no_api_key"})
+    result = await ai_drafter.draft_comment_reply(original_text="hi")
     assert result["success"] is False
-    assert "GROQ_API_KEY" in result["error"]
+    assert "DEEPSEEK_API_KEY" in result["error"]
 
 
-async def test_missing_api_key_carries_prompt_for_clipboard_fallback():
+async def test_missing_api_key_carries_prompt_for_clipboard_fallback(monkeypatch):
     """No budget → still hand back the prompt so the UI offers clipboard copy."""
-    with patch.object(ai_drafter, "GROQ_API_KEY", None):
-        result = await ai_drafter.draft_comment_reply(
-            original_text="когда уберут снег?",
-            region_name="МАЛМЫЖ - ИНФО",
-        )
+    _install_chat(monkeypatch, {"ok": False, "reason": "no_api_key"})
+    result = await ai_drafter.draft_comment_reply(
+        original_text="когда уберут снег?",
+        region_name="МАЛМЫЖ - ИНФО",
+    )
     assert result["success"] is False
     assert "когда уберут снег?" in result["prompt"]
     assert "МАЛМЫЖ - ИНФО" in result["prompt"]
 
 
-async def test_empty_text_has_no_prompt_in_fallback():
+async def test_empty_text_has_no_prompt_in_fallback(monkeypatch):
     """Empty input → no draftable prompt to fall back to."""
-    with patch.object(ai_drafter, "GROQ_API_KEY", None):
-        result = await ai_drafter.draft_comment_reply(original_text="   ")
+    _install_chat(monkeypatch, {"ok": False, "reason": "no_api_key"})
+    result = await ai_drafter.draft_comment_reply(original_text="   ")
     assert result["success"] is False
     assert "prompt" not in result
 
 
-async def test_groq_exception_carries_prompt_for_fallback():
+async def test_network_failure_carries_prompt_for_fallback(monkeypatch):
     """Quota/network failure → prompt is attached so the operator can copy it."""
-    with patch.object(ai_drafter, "GROQ_API_KEY", "sk-test"):
-        with patch("groq.Groq") as g:
-            g.return_value.chat.completions.create.side_effect = RuntimeError("403 forbidden")
-            result = await ai_drafter.draft_comment_reply(original_text="вопрос?")
+    _install_chat(monkeypatch, {"ok": False, "reason": "http_403", "detail": "forbidden"})
+    result = await ai_drafter.draft_comment_reply(original_text="вопрос?")
     assert result["success"] is False
     assert "403" in result["error"]
     assert "вопрос?" in result["prompt"]
 
 
-async def test_happy_path_returns_trimmed_draft():
-    """Groq responds → we trim and forward the text + model id."""
-    fake_completion = MagicMock()
-    fake_completion.choices = [MagicMock(message=MagicMock(content="  Спасибо за обращение!  "))]
-
-    with patch.object(ai_drafter, "GROQ_API_KEY", "sk-test"):
-        with patch("groq.Groq") as g:
-            g.return_value.chat.completions.create.return_value = fake_completion
-            result = await ai_drafter.draft_comment_reply(
-                original_text="когда уберут снег с улиц?",
-                region_name="МАЛМЫЖ - ИНФО",
-                style="friendly",
-            )
-
+async def test_happy_path_returns_draft_and_model(monkeypatch):
+    """Модель ответила → отдаём текст и фактическое имя модели."""
+    state = _install_chat(monkeypatch, _ok("Спасибо за обращение!"))
+    result = await ai_drafter.draft_comment_reply(
+        original_text="когда уберут снег с улиц?",
+        region_name="МАЛМЫЖ - ИНФО",
+        style="friendly",
+    )
     assert result["success"] is True
     assert result["draft"] == "Спасибо за обращение!"
-    assert result["model"]
+    assert result["model"] == "deepseek-chat"
+    # Черновик — свободный текст, JSON-режим тут не нужен и только мешал бы.
+    assert state["kwargs"].get("json_object") in (None, False)
+    assert state["kwargs"]["temperature"] == ai_drafter._TEMPERATURE
 
 
-async def test_empty_ai_response_is_treated_as_failure():
-    """Whitespace from the model → failure, not a useless empty draft."""
-    fake_completion = MagicMock()
-    fake_completion.choices = [MagicMock(message=MagicMock(content="   "))]
-
-    with patch.object(ai_drafter, "GROQ_API_KEY", "sk-test"):
-        with patch("groq.Groq") as g:
-            g.return_value.chat.completions.create.return_value = fake_completion
-            result = await ai_drafter.draft_comment_reply(original_text="?")
-
+async def test_empty_ai_response_is_treated_as_failure(monkeypatch):
+    """Пустой ответ модели → отказ, а не бесполезный пустой черновик."""
+    _install_chat(monkeypatch, {"ok": False, "reason": "empty_response"})
+    result = await ai_drafter.draft_comment_reply(original_text="?")
     assert result["success"] is False
     assert "empty" in result["error"].lower()
+    assert "prompt" in result
 
 
-async def test_groq_exception_is_caught_and_formatted():
+async def test_rate_limit_is_reported_not_raised(monkeypatch):
     """Network / 429 / etc → return {success: False, error}, never raise."""
-    with patch.object(ai_drafter, "GROQ_API_KEY", "sk-test"):
-        with patch("groq.Groq") as g:
-            g.return_value.chat.completions.create.side_effect = RuntimeError("429 rate limit")
-            result = await ai_drafter.draft_comment_reply(original_text="?")
+    _install_chat(monkeypatch, {"ok": False, "reason": "http_429"})
+    result = await ai_drafter.draft_comment_reply(original_text="?")
     assert result["success"] is False
     assert "429" in result["error"]
 

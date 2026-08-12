@@ -282,7 +282,7 @@ class DraftReplyRequest(BaseModel):
 
 @router.post("/comments/draft")
 async def draft_reply_endpoint(req: DraftReplyRequest):
-    """Generate a draft reply via Groq (etap 4b).
+    """Generate a draft reply via DeepSeek (etap 4b).
 
     Returns {'draft': str, 'model': str} on success or
     {'success': False, 'error': str} on AI failure. The frontend pastes the

@@ -4,7 +4,7 @@ Three pieces:
 
 - ``vk_search`` — composite discovery (geo + keyword + reposts-of-main),
   dedup, выдаёт raw VK-group dicts.
-- ``ai_categorizer`` — Groq prompt: на каждую группу — category
+- ``ai_categorizer`` — DeepSeek prompt: на каждую группу — category
   (admin/novost/reklama/sosed/kultura/sport/detsad/other) + confidence +
   reasoning + флаг "это похоже на ИНФО-страницу района".
 - ``persistence`` — upsert raw candidates → ``community_candidates`` через

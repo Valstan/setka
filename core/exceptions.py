@@ -187,8 +187,8 @@ class ExternalServiceException(SetkaException):
     """Исключения внешних сервисов"""
 
 
-class GroqAPIException(ExternalServiceException):
-    """Ошибка Groq API"""
+class LLMAPIException(ExternalServiceException):
+    """Ошибка LLM API (движок экосистемы — DeepSeek, D-024)"""
 
     def __init__(self, message: str, status_code: int = None):
         details = {"status_code": status_code}

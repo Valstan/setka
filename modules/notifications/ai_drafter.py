@@ -1,19 +1,23 @@
 """AI-assisted drafting of replies to VK comments (etap 4b).
 
-Thin wrapper around Groq Cloud API. The model receives the original
-comment plus optional context (region name, tone hint) and produces a
-short, neutral, community-appropriate draft. The operator is expected
-to edit before sending — this is a starting point, not a final answer.
+Thin wrapper around the shared DeepSeek client. The model receives the original
+comment plus optional context (region name, tone hint) and produces a short,
+neutral, community-appropriate draft. The operator is expected to edit before
+sending — this is a starting point, not a final answer.
 
 Returns a uniform `{success, draft, model}` / `{success: False, error}`
 shape so the API endpoint can pass it through to the frontend without
 extra mapping.
 
-Clipboard fallback: when Groq is unavailable (no `GROQ_API_KEY`, SDK
-missing, network/quota error) the failure dict also carries `prompt` —
-the exact text the operator can paste into their own ChatGPT/Claude.
-The frontend copies it to the clipboard so the feature stays usable
-with zero API budget (same human-in-the-loop pattern as discovery).
+**Движок — DeepSeek** (мандат brain 2026-08-10, решение владельца D-024). Был
+Groq; его ключ вдобавок скомпрометирован и держался рабочим только ради двух
+потребителей, из которых этот — второй и последний.
+
+Clipboard fallback сохранён без изменений: при любом отказе (нет ключа,
+сеть, квота) словарь несёт `prompt` — тот самый текст, который оператор
+вставит в свой ChatGPT/Claude. Фронт кладёт его в буфер обмена, и функция
+остаётся рабочей при нулевом бюджете API. Именно поэтому отказ здесь —
+деградация, а не ошибка: путь через человека предусмотрен с самого начала.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from config.runtime import GROQ_API_KEY
+from modules.deepseek_client import chat
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +35,6 @@ logger = logging.getLogger(__name__)
 # rarely matches the operator's intent. 400 tokens ≈ 5–7 русских предложений.
 _MAX_TOKENS = 400
 _TEMPERATURE = 0.6
-_MODEL = "llama-3.1-8b-instant"
 
 
 _STYLE_HINTS = {
@@ -74,11 +77,11 @@ async def draft_comment_reply(
     region_name: Optional[str] = None,
     style: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Ask Groq for a draft reply. Returns dict described in the module docstring.
+    """Ask DeepSeek for a draft reply. Returns dict described in the module docstring.
 
-    Failure modes are translated to `{success: False, error}` instead of
-    raising — the UI displays the error inline and lets the operator type
-    their own reply.
+    Failure modes are translated to `{success: False, error, prompt}` instead
+    of raising — the UI displays the error inline, offers the prompt for the
+    clipboard, and lets the operator type their own reply.
     """
     if not (original_text or "").strip():
         # No text → nothing to draft and no useful prompt to hand back.
@@ -92,28 +95,22 @@ async def draft_comment_reply(
         style=style,
     )
 
-    if not GROQ_API_KEY:
-        return {"success": False, "error": "GROQ_API_KEY is not configured", "prompt": prompt}
+    # Клиент синхронный (urllib) — уводим в поток, чтобы не блокировать event loop.
+    result = await asyncio.to_thread(
+        chat,
+        user=prompt,
+        temperature=_TEMPERATURE,
+        max_tokens=_MAX_TOKENS,
+    )
+    if not result.get("ok"):
+        reason = str(result.get("reason") or "unknown")
+        if reason != "no_api_key":
+            logger.warning("DeepSeek draft failed: %s", reason)
+        error = "DEEPSEEK_API_KEY is not configured" if reason == "no_api_key" else reason
+        return {"success": False, "error": error, "prompt": prompt}
 
-    try:
-        from groq import Groq
-    except ImportError:
-        return {"success": False, "error": "groq SDK not installed", "prompt": prompt}
-
-    try:
-        client = Groq(api_key=GROQ_API_KEY)
-        # groq SDK is sync — run in thread so we don't block the event loop.
-        completion = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=_TEMPERATURE,
-            max_tokens=_MAX_TOKENS,
-        )
-        content = (completion.choices[0].message.content or "").strip()
-        if not content:
-            return {"success": False, "error": "empty AI response", "prompt": prompt}
-        return {"success": True, "draft": content, "model": _MODEL}
-    except Exception as e:
-        logger.warning("Groq draft failed: %s", e)
-        return {"success": False, "error": str(e), "prompt": prompt}
+    return {
+        "success": True,
+        "draft": str(result.get("content") or ""),
+        "model": result.get("model"),
+    }

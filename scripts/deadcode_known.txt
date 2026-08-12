@@ -15,7 +15,6 @@ database/models_extended.py::ScheduledPublication  # sleeping — задел Sma
 # ── modules/aggregation, ai_analyzer, celery_task_monitor ──────────────────
 modules/aggregation/clustering.py::cluster_by_similarity  # dead — не вызывается
 modules/aggregation/content_mixer.py::OPTIMAL_SENTIMENT_MIX  # dead — константа без чтения
-modules/ai_analyzer/groq_client.py::batch_analyze  # dead — не вызывается (Groq и так без бюджета)
 modules/celery_task_monitor.py::RETRY  # dead — enum-значение не используется
 modules/celery_task_monitor.py::REVOKED  # dead — enum-значение не используется
 modules/celery_task_monitor.py::task_history  # dead — init без чтения/записи
