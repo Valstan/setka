@@ -97,6 +97,36 @@ def get_rules_snapshot_path() -> Path:
     return Path(raw) if raw else Path("logs") / "classifier_learned_rules_snapshot.md"
 
 
+def headless_enabled() -> bool:
+    """Включена ли headless-классификация на DeepSeek (env ``CLASSIFIER_HEADLESS_ENABLED``).
+
+    **Выключено по умолчанию, и это не осторожность ради осторожности.** Пока
+    работает облачная рутина, оба источника пишут в одну таблицу, а
+    ``record_verdicts`` идемпотентен по ``lip`` — кто успел, того и вердикт.
+    Включать headless можно только ВМЕСТО рутины, иначе прогоны воруют друг у
+    друга посты, счёт идёт за оба, а сверка «кто как решил» становится
+    невозможной: на одном посте вердикт ровно один.
+
+    Порядок перехода: сверка на общих постах (``scripts/classifier_headless_compare.py``,
+    ничего не пишет) → выключить рутину → поднять этот флаг → через неделю
+    удалить рутину.
+    """
+    return os.getenv("CLASSIFIER_HEADLESS_ENABLED", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def get_headless_chunk_size() -> int:
+    """Постов в одном вызове модели (env ``CLASSIFIER_HEADLESS_CHUNK``). Границы 1..40."""
+    try:
+        return max(1, min(40, int(os.getenv("CLASSIFIER_HEADLESS_CHUNK", "10"))))
+    except ValueError:
+        return 10
+
+
 def read_postulates() -> str:
     """Текст файла-корректировщика (для промпта рутины/API). Нет файла → ''."""
     try:
