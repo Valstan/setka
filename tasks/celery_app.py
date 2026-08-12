@@ -45,8 +45,15 @@ logger = logging.getLogger(__name__)
 # /etc/setka/setka.env иначе убьёт процесс на `_require` при первом же
 # импорте таска. В норме — no-op (все ключи на месте, ноль сетевых вызовов).
 from modules.secrets_bootstrap import bootstrap_secrets  # noqa: E402
+from utils.log_redaction import install_log_redaction  # noqa: E402
 
 bootstrap_secrets()  # noqa: E402
+
+# Маскирование секретов в логах — строго ПОСЛЕ bootstrap: значения секретов
+# снимаются с окружения в момент установки, а из комнаты КАРМАНа они приезжают
+# выше. Инцидент 2026-08-12 (угон Telegram-ботов) начался с токена, попавшего
+# в celery-worker.log из текста исключения requests.
+install_log_redaction()  # noqa: E402
 
 # --- Telegram alerts for Notifications ---
 
@@ -218,6 +225,12 @@ def _setka_apply_json_logging(**_kwargs) -> None:
             logger.info("JSON logging enabled for Celery worker (LOG_FORMAT=json)")
     except Exception:
         logger.debug("configure_json_logging failed", exc_info=True)
+    # Идемпотентно: если фабрика уже стоит с import-а — no-op. Повтор здесь на
+    # случай, если чей-то setup_logging успел подменить фабрику записей.
+    try:
+        install_log_redaction()
+    except Exception:
+        logger.debug("install_log_redaction failed", exc_info=True)
 
 
 @app.task(name="tasks.celery_app.run_vk_monitoring")
@@ -553,6 +566,39 @@ def _send_debtor_alert(text: str) -> None:
         )
     except Exception as e:
         logger.warning(f"ad debtor telegram alert failed: {e}")
+
+
+@app.task(name="tasks.celery_app.check_telegram_bot_identity")
+def check_telegram_bot_identity():
+    """Сторож целостности Telegram-ботов: имя, описание, вебхук (2026-08-12).
+
+    Раз в час сверяет, как боты выглядят снаружи, с эталоном в
+    ``modules/telegram_bot_guard.py``. Расхождение = либо владелец сменил имя и
+    не обновил эталон, либо токен утёк и ботом распоряжается кто-то ещё —
+    оба случая требуют человека, поэтому шлём алёрт с 6-часовым cooldown.
+    """
+    try:
+        from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from modules.telegram_bot_guard import maybe_alert
+
+        redis_client = None
+        try:
+            from modules.notifications.storage import NotificationsStorage
+
+            redis_client = NotificationsStorage().redis_client
+        except Exception:
+            logger.debug("telegram bot guard: redis unavailable, cooldown off", exc_info=True)
+
+        status = maybe_alert(
+            tokens=dict(TELEGRAM_TOKENS),
+            telegram_token=_pick_telegram_bot_token(TELEGRAM_TOKENS),
+            chat_id=TELEGRAM_ALERT_CHAT_ID,
+            redis_client=redis_client,
+        )
+        return {"status": status}
+    except Exception as e:
+        logger.warning("telegram bot guard task failed: %s", e)
+        return {"status": f"error:{type(e).__name__}"}
 
 
 @app.task(name="tasks.celery_app.scan_inbound_dm_ads")
@@ -1952,6 +1998,15 @@ app.conf.beat_schedule = {
         "task": "tasks.radar_tasks.cleanup_old_radar_items",
         "schedule": crontab(minute=20, hour=3),
         "options": {"expires": 3600, "catchup": False},
+    },
+    # Сторож целостности Telegram-ботов (инцидент 2026-08-12): раз в час на :47.
+    # Смотрит на бота ГЛАЗАМИ ПОДПИСЧИКА — имя, описание, вебхук, — а не на то,
+    # прошла ли отправка: угон не ломает публикацию, он ей пользуется, и
+    # переименование бота в рекламу казино прожило больше суток незамеченным.
+    "telegram-bot-identity-guard": {
+        "task": "tasks.celery_app.check_telegram_bot_identity",
+        "schedule": crontab(minute=47),
+        "options": {"expires": 3000, "catchup": False},
     },
     # Watchdog поллера радара (#018): раз в час на :12. Алёртит только если есть
     # активные подписанные источники, а heartbeat протух (>40 мин) — retired≠dead.

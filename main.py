@@ -13,6 +13,7 @@ from pathlib import Path
 # потеря /etc/setka/setka.env иначе убьёт процесс на `_require` ещё на этапе
 # импорта. В норме — no-op (все ключи на месте, ноль сетевых вызовов).
 from modules.secrets_bootstrap import bootstrap_secrets  # noqa: E402
+from utils.log_redaction import install_log_redaction  # noqa: E402
 
 bootstrap_secrets()  # noqa: E402
 
@@ -76,6 +77,14 @@ logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+
+# Маскирование секретов в логах — сразу после basicConfig и ПОСЛЕ
+# bootstrap_secrets() выше (значения из комнаты КАРМАНа попадают в окружение
+# именно там). Ставится на фабрику LogRecord, т.е. покрывает и логгеры uvicorn,
+# которые про наш basicConfig ничего не знают. Инцидент 2026-08-12: токен
+# Telegram-бота утёк в лог из текста исключения requests (URL Bot API содержит
+# секрет в пути) и бот был угнан.
+install_log_redaction()
 
 logger = logging.getLogger(__name__)
 
