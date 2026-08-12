@@ -568,6 +568,85 @@ def _send_debtor_alert(text: str) -> None:
         logger.warning(f"ad debtor telegram alert failed: {e}")
 
 
+@app.task(name="tasks.celery_app.classify_pending_posts")
+def classify_pending_posts(limit: int = 0):
+    """Headless-классификация собранных постов на DeepSeek (D-024).
+
+    Замена облачной рутине-агенту: те же ``fetch_pending`` → вердикты →
+    ``record_verdicts``, но вызов модели идёт прямо отсюда, без облака.
+
+    **Гейт ``CLASSIFIER_HEADLESS_ENABLED`` выключен по умолчанию.** Пока жива
+    рутина, оба источника пишут в одну таблицу, а запись идемпотентна по ``lip``
+    — включённые одновременно, они воруют друг у друга посты и делают сверку
+    невозможной. Включать только ВМЕСТО рутины.
+    """
+    try:
+        from config.classifier import (
+            classifier_disabled,
+            get_headless_chunk_size,
+            get_pending_max,
+            get_region_allowlist,
+            get_source_days,
+            headless_enabled,
+        )
+
+        if classifier_disabled():
+            return {"status": "skipped:classifier-disabled"}
+        if not headless_enabled():
+            return {"status": "skipped:headless-off"}
+
+        from modules.classifier import headless, rules, service
+
+        async def _run():
+            from database.connection import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as session:
+                codes = get_region_allowlist()
+                cap = get_pending_max()
+                posts = await service.fetch_pending(
+                    session,
+                    region_codes=codes or None,
+                    limit=min(limit or cap, cap),
+                    days=get_source_days(),
+                )
+                if not posts:
+                    return {"status": "ok", "posts": 0}
+                postulates = await rules.render_effective_postulates(session)
+                run = headless.classify_posts(
+                    posts, postulates=postulates, chunk_size=get_headless_chunk_size()
+                )
+                logger.info("classifier headless: %s", headless.summarize(run))
+                if run["failures"]:
+                    logger.warning("classifier headless: отказы чанков: %s", run["failures"])
+                if run["problems"]:
+                    logger.warning("classifier headless: замечания: %s", run["problems"][:10])
+                if not run["verdicts"]:
+                    return {"status": "ok", "posts": len(posts), "recorded": 0}
+                stats = await service.record_verdicts(
+                    session,
+                    run["verdicts"],
+                    source="headless",
+                    region_codes_fallback=codes or None,
+                )
+                await session.commit()
+                return {
+                    "status": "ok",
+                    "posts": len(posts),
+                    "tokens": run["tokens"],
+                    "actions": headless.actions_histogram(run["verdicts"]),
+                    **stats,
+                }
+
+        # run_coro, а не asyncio.run: в prefork-воркере петля переиспользуется
+        # процессом (utils/celery_asyncio) — общая идиома всех async-тасок здесь.
+        return run_coro(_run())
+    except Exception as e:
+        # Классификатор — усилитель, не единая точка отказа: его сбой не должен
+        # ронять beat-цепочку (та же политика, что у enforce.fail-open).
+        logger.warning("classifier headless task failed: %s", e)
+        return {"status": f"error:{type(e).__name__}"}
+
+
 @app.task(name="tasks.celery_app.check_telegram_bot_identity")
 def check_telegram_bot_identity():
     """Сторож целостности Telegram-ботов: имя, описание, вебхук (2026-08-12).
@@ -2005,6 +2084,17 @@ app.conf.beat_schedule = {
         "task": "tasks.radar_tasks.cleanup_old_radar_items",
         "schedule": crontab(minute=20, hour=3),
         "options": {"expires": 3600, "catchup": False},
+    },
+    # Headless-классификация постов на DeepSeek (D-024): каждые 3 часа на :35.
+    # Частота подобрана под фактический поток облачной рутины, которую эта таска
+    # заменяет: ~1600 вердиктов в сутки при потолке CLASSIFIER_PENDING_MAX=200 —
+    # это 8 прогонов. No-op, пока CLASSIFIER_HEADLESS_ENABLED=0 (по умолчанию):
+    # включать только ВМЕСТО рутины, иначе оба источника воруют друг у друга
+    # посты — запись идемпотентна по lip.
+    "classifier-headless": {
+        "task": "tasks.celery_app.classify_pending_posts",
+        "schedule": crontab(minute=35, hour="*/3"),
+        "options": {"expires": 3 * 3600, "catchup": False},
     },
     # Сторож целостности Telegram-ботов (инцидент 2026-08-12): раз в час на :47.
     # Смотрит на бота ГЛАЗАМИ ПОДПИСЧИКА — имя, описание, вебхук, — а не на то,
