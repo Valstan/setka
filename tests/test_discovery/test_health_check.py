@@ -6,7 +6,7 @@
   ``{"items": [...], "count": N}``, либо ``{"error": {"error_code": …}}``.
 - ``categorize_candidate`` патчим в namespace модуля
   ``modules.discovery.health_check`` через monkeypatch — оригинал ходит в
-  Groq, нам нужен детерминизм.
+  модель, нам нужен детерминизм.
 - ``Community`` создаём как ORM-объект без сессии (SQLAlchemy позволяет
   такое: row living detached).
 """

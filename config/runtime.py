@@ -131,8 +131,10 @@ REDIS_URL = _require("REDIS_URL")
 REDIS = _parse_redis_url(REDIS_URL)
 POSTGRES = _parse_database_url(DATABASE_URL)
 
-# AI
-GROQ_API_KEY = _getenv("GROQ_API_KEY")
+# AI: движок экосистемы — DeepSeek (D-024). Его настройки живут в
+# config/deepseek.py и читаются из окружения при каждом вызове, а не при
+# импорте, поэтому здесь ничего нет. Ключ Groq убран вместе с последними
+# двумя потребителями (ai_categorizer, ai_drafter) 2026-08-12.
 
 # Telegram
 TELEGRAM_ALERT_CHAT_ID = _getenv("TELEGRAM_ALERT_CHAT_ID", "")

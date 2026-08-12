@@ -2,7 +2,7 @@
 Pytest configuration and shared fixtures for SETKA tests.
 
 This module provides fixtures that mock all external dependencies
-(PostgreSQL, Redis, VK API, Telegram, Groq) so unit tests run
+(PostgreSQL, Redis, VK API, Telegram, LLM) so unit tests run
 fast and without real infrastructure.
 """
 
@@ -183,23 +183,6 @@ def sample_filter_context(sample_region):
         },
         "filters": [],
     }
-
-
-# ---------------------------------------------------------------------------
-# Groq AI fixture
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def mock_groq_client():
-    """
-    Provide a mocked Groq client.
-    """
-    client = MagicMock()
-    client.chat.completions.create.return_value = MagicMock(
-        choices=[MagicMock(message=MagicMock(content="нейтральный"))]
-    )
-    return client
 
 
 # ---------------------------------------------------------------------------

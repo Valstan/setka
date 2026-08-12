@@ -106,9 +106,11 @@ async def _ai_categorize_all(
     блокирует event-loop). VKClient внутри сериализует все vk-вызовы через
     rate-limit Lock (``GLOBAL_PARSE_INTERVAL_SECONDS``), поэтому реального
     параллелизма по VK нет, но event-loop остаётся свободным для других
-    AI-вызовов. AI-категоризация (Groq) параллелится честно через semaphore.
+    AI-вызовов. AI-категоризация (DeepSeek) параллелится честно через semaphore.
 
-    ``max_concurrent=8`` — Groq free tier обычно держит небольшой parallel.
+    ``max_concurrent=8`` — подобрано под прежний движок (Groq free tier);
+    у DeepSeek лимиты другие, и потолок стоит пересмотреть, когда появятся
+    числа реального прогона, а не наугад.
     Возвращает map ``{vk_id: ai_result_dict}``. Failures остаются в map с
     ``success: False`` — caller сам решит сохранять с ai_*=NULL или пропустить.
     """

@@ -1,13 +1,23 @@
-"""Groq-based categoriser for VK community discovery candidates.
+"""DeepSeek-based categoriser for VK community discovery candidates.
 
 Input: snapshot of a VK group (name, description, members_count, recent posts).
 Output: `{success, category, confidence, reasoning, is_info_page}` —
 serialisable straight into ``community_candidates`` columns.
 
-Designed defensively: any failure (no API key, no SDK, network/429,
-malformed JSON, empty answer) returns ``{success: False, error}`` and never
-raises. The caller stores ``ai_category=None`` and lets the moderator pick
-the category by hand in the UI.
+Designed defensively: any failure (no API key, network/429, malformed JSON,
+empty answer) returns ``{success: False, error}`` and never raises. The caller
+stores ``ai_category=None`` and lets the moderator pick the category by hand in
+the UI.
+
+**Движок — DeepSeek** (мандат brain 2026-08-10, решение владельца D-024). Был
+Groq через его SDK; ключ Groq вдобавок оказался скомпрометирован и держался
+рабочим только ради двух потребителей, из которых этот — один. Перевод снимает
+и мандат, и техдолг разом: после него ключ отзывается, а не ротируется.
+
+Разбор ответа остался терпимым к обёрткам (```json, текст вокруг), хотя
+DeepSeek зовётся в режиме строгого JSON: режим гарантирует синтаксис, а не то,
+что модель не добавит пояснение. Терпимость к СОДЕРЖИМОМУ по-прежнему нулевая —
+категория вне списка схлопывается в ``other``.
 """
 
 from __future__ import annotations
@@ -18,11 +28,10 @@ import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
-from config.runtime import GROQ_API_KEY
+from modules.deepseek_client import chat
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "llama-3.1-8b-instant"
 _TEMPERATURE = 0.2  # категоризация — задача с одним «правильным» ответом
 _MAX_TOKENS = 300
 
@@ -155,7 +164,7 @@ async def categorize_candidate(
     recent_posts: Optional[List[str]] = None,
     region_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run Groq categorisation. Always returns a dict — never raises.
+    """Run DeepSeek categorisation. Always returns a dict — never raises.
 
     Success: ``{success: True, category, confidence, is_info_page, reasoning,
               model}``.
@@ -163,12 +172,6 @@ async def categorize_candidate(
     """
     if not (name or "").strip():
         return {"success": False, "error": "name is empty"}
-    if not GROQ_API_KEY:
-        return {"success": False, "error": "GROQ_API_KEY is not configured"}
-    try:
-        from groq import Groq
-    except ImportError:
-        return {"success": False, "error": "groq SDK not installed"}
 
     prompt = _build_prompt(
         name=name,
@@ -178,23 +181,22 @@ async def categorize_candidate(
         region_name=region_name,
     )
 
-    try:
-        client = Groq(api_key=GROQ_API_KEY)
-        completion = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=_TEMPERATURE,
-            max_tokens=_MAX_TOKENS,
-        )
-        content = (completion.choices[0].message.content or "").strip()
-    except Exception as e:
-        logger.warning("Groq categorize failed: %s", e)
-        return {"success": False, "error": str(e)}
+    # Клиент синхронный (urllib) — уводим в поток, чтобы не блокировать event loop.
+    result = await asyncio.to_thread(
+        chat,
+        user=prompt,
+        temperature=_TEMPERATURE,
+        max_tokens=_MAX_TOKENS,
+        json_object=True,
+    )
+    if not result.get("ok"):
+        reason = str(result.get("reason") or "unknown")
+        detail = result.get("detail")
+        logger.warning("DeepSeek categorize failed: %s%s", reason, f" ({detail})" if detail else "")
+        error = "DEEPSEEK_API_KEY is not configured" if reason == "no_api_key" else reason
+        return {"success": False, "error": error}
 
-    if not content:
-        return {"success": False, "error": "empty AI response"}
-
+    content = str(result.get("content") or "")
     parsed = _parse_response(content)
     if parsed is None:
         return {
@@ -205,5 +207,8 @@ async def categorize_candidate(
 
     out = _normalise(parsed)
     out["success"] = True
-    out["model"] = _MODEL
+    # Имя модели — фактическое из ответа клиента, а не константа модуля: оно
+    # ложится в БД рядом с вердиктом, и «какой моделью размечено» должно быть
+    # правдой, даже если DEEPSEEK_MODEL переопределён через env.
+    out["model"] = str(result.get("model") or "")
     return out

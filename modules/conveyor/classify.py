@@ -23,11 +23,10 @@ from __future__ import annotations
 
 import json
 import logging
-import urllib.error
-import urllib.request
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from config.deepseek import get_api_key, get_base_url, get_max_tokens, get_model, get_timeout
+from modules.deepseek_client import call_api
 
 logger = logging.getLogger(__name__)
 
@@ -156,42 +155,11 @@ def parse_verdict(
     return verdict, None
 
 
-def _call_api(
-    body: Dict[str, Any],
-    *,
-    api_key: str,
-    base_url: str,
-    timeout: float,
-) -> Tuple[int, Dict[str, Any]]:
-    """Один вызов ``/chat/completions``. Сетевой сбой → ``(0, {...})``.
-
-    Чистый HTTP вместо SDK: тело запроса OpenAI-совместимо и умещается в
-    несколько строк, а лишняя зависимость в рантайме — это то, что придётся
-    обновлять и чинить. Тот же выбор, что в ``delivery``.
-    """
-    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        f"{base_url}/chat/completions",
-        data=data,
-        method="POST",
-        headers={
-            "Content-Type": "application/json; charset=utf-8",
-            "Authorization": f"Bearer {api_key}",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", "replace")
-            return int(resp.status), json.loads(raw) if raw.strip() else {}
-    except urllib.error.HTTPError as e:
-        detail = ""
-        try:
-            detail = e.read().decode("utf-8", "replace")[:300]
-        except Exception:  # pragma: no cover — тело ошибки не обязано читаться
-            pass
-        return int(e.code), {"error": detail}
-    except Exception as e:
-        return 0, {"error": f"{type(e).__name__}: {e}"[:300]}
+# HTTP-вызов переехал в общий ``modules.deepseek_client`` (D-024): у DeepSeek
+# появился второй и третий потребитель, и копия вызова в каждом разошлась бы
+# молча. Имя ``_call_api`` сохранено — на него смотрят тесты этого модуля, и
+# ломать их ради переименования нечестно: поведение не изменилось.
+_call_api = call_api
 
 
 def classify(

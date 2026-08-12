@@ -14,7 +14,7 @@ from web.api import discovery as discovery_api
 
 
 def test_trigger_in_validates_categories():
-    """Unknown category should be rejected before we even hit Groq."""
+    """Unknown category should be rejected before we even hit the model."""
     with pytest.raises(Exception):
         discovery_api.TriggerIn(region_id=1, categories=["bogus_cat"])
 

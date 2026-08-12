@@ -20,7 +20,7 @@ Runs against ``Community.is_active=True`` rows on weekly cadence (Celery beat,
   пустой стены. ``get_wall_posts`` глотает ApiError и возвращает [].
 - AI-категоризация только при condition «свежих постов достаточно». Если
   стена пуста или последний пост старше ``dormant_days`` — сразу dormant,
-  Groq не дёргаем.
+  модель не дёргаем.
 - AI failure (нет API-key, 429, malformed JSON) → `active`, не меняем
   ничего. Лучше промолчать, чем срывать модератора фолз-позитивом.
 - ``changed_category`` ставится только при ``confidence >= 70`` и

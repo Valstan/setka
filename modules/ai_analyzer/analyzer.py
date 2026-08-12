@@ -1,6 +1,16 @@
 """
-AI Post Analyzer - analyzes VK posts for relevance and categorization
-Uses Groq API (free tier) for AI analysis
+AI Post Analyzer - analyzes VK posts for relevance and categorization.
+
+**Ветка LLM убрана вместе с ключом Groq (D-024, 2026-08-12).** Она была
+недостижима в проде: единственный живой вызывающий, ``modules/real_workflow.py``,
+создаёт ``PostAnalyzer()`` БЕЗ ключа, то есть всегда шёл keyword-путь; второй,
+``tasks/analysis_tasks.py``, не был зарегистрирован в Celery (отсутствовал в
+``include``) и вдобавок не импортировался — он удалён тем же PR. Поэтому
+удаление LLM-ветки не меняет ни одного прод-поведения.
+
+Классификация здесь — ключевые слова + фильтры + ``SentimentAnalyzer``. Если
+понадобится нейро-разметка постов, её надо строить на общем
+``modules/deepseek_client.py``, а не воскрешать Groq-клиент.
 """
 
 import asyncio
@@ -14,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import AsyncSessionLocal
 from database.models import Filter, Post
-from modules.ai_analyzer.groq_client import GroqClient
 from modules.ai_analyzer.sentiment_analyzer import SentimentAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -27,16 +36,9 @@ _blacklist_cache_patterns: list[str] = []
 class PostAnalyzer:
     """Analyzes posts using AI and filters"""
 
-    def __init__(self, groq_api_key: Optional[str] = None):
-        """
-        Initialize Post Analyzer
-
-        Args:
-            groq_api_key: Groq API key (optional, can use fallback)
-        """
-        self.groq_client = GroqClient(api_key=groq_api_key) if groq_api_key else None
-        self.use_fallback = not groq_api_key
-        self.sentiment_analyzer = SentimentAnalyzer()  # NEW: Sentiment analyzer
+    def __init__(self):
+        """Initialize Post Analyzer (keyword-based, см. docstring модуля)."""
+        self.sentiment_analyzer = SentimentAnalyzer()
 
     async def analyze_post(self, post: Post, session: AsyncSession) -> Dict[str, Any]:
         """
@@ -66,16 +68,7 @@ class PostAnalyzer:
                 "score": 0,
             }
         else:
-            # Use AI or fallback
-            if self.groq_client and not self.use_fallback:
-                try:
-                    result = await self.groq_client.analyze_post(post.text)
-                except Exception as e:
-                    logger.warning(f"Groq API failed, using fallback: {e}")
-                    result = self.groq_client._fallback_analysis(post.text)
-            else:
-                # Use fallback keyword-based analysis
-                result = self._keyword_analysis(post.text)
+            result = self._keyword_analysis(post.text)
 
         # Calculate final score
         score = self._calculate_score(result, post)

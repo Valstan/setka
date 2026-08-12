@@ -245,7 +245,7 @@ class CommunityCandidate(Base):
     """Кандидат на добавление в communities — буфер discovery до approve.
 
     Заполняется taskами `modules.discovery` (groups.search по гео + ключевикам,
-    AI-категоризация через Groq). Модератор через UI `/regions/<code>/discovery`
+    AI-категоризация через DeepSeek). Модератор через UI `/regions/<code>/discovery`
     одним кликом переводит ``approved`` → запись копируется в `communities`,
     либо ``rejected`` / ``deferred``. См. DEV_HISTORY 2026-05-22 (big idea).
     """
