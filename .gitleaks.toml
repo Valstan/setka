@@ -1,0 +1,29 @@
+# Конфиг секрет-сканера. Заведён 2026-08-12 после угона Telegram-ботов:
+# сканера в контуре не было вовсе (крупнейший незакрытый техдолг по
+# docs/PENDING_FOLLOWUPS.md), и утечку токена нашли постфактум глазами.
+#
+# Правила берём дефолтные (их несколько сотен, включая telegram-bot-api-token,
+# vk-access-token, generic-api-key) и только сужаем allowlist'ом.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Синтетические значения в тестах и примерах конфигов"
+
+paths = [
+  # Тесты маскирования обязаны содержать строки ФОРМАТА секретов — иначе они
+  # не проверяют ничего. Значения синтетические (см. комментарий в файле).
+  '''tests/test_logging/test_log_redaction\.py''',
+  '''tests/test_monitoring/test_telegram_bot_guard\.py''',
+  # Шаблоны окружения: значения — плейсхолдеры вида CHANGE_ME.
+  '''\.env\.example''',
+  '''config/setka\.env\.example''',
+]
+
+regexes = [
+  # Явные плейсхолдеры в любом файле.
+  '''placeholder''',
+  '''CHANGE_ME''',
+  '''(?i)your[_-]?(token|key|secret)[_-]?here''',
+]

@@ -16,6 +16,33 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Полная история — gitleaks ниже сканирует не только рабочее дерево,
+          # но и коммиты: секрет, удалённый следующим коммитом, остаётся в
+          # истории и утёкшим быть не перестаёт.
+          fetch-depth: 0
+
+      # Секрет-сканер (заведён 2026-08-12 после угона Telegram-ботов). До этого
+      # дня сканера в контуре не было вообще.
+      #
+      # Почему отдельным шагом, а не хуком в .pre-commit-config.yaml, хотя выше
+      # заявлен «один источник правил линтинга»: хук gitleaks в pre-commit —
+      # `language: golang`, то есть требует Go-тулчейн на машине разработчика.
+      # Прибивание линтеров к недоступному локально окружению уже дважды ломало
+      # pre-commit владельцу (инциденты 2026-05-22 и 2026-05-23, см. шапку
+      # .pre-commit-config.yaml), а на Windows Go не стоит. Гейт на мерж от
+      # этого не слабеет — CI обязателен для PR; локальную проверку можно
+      # добавить на конкретной машине, где есть бинарник.
+      #
+      # --redact обязателен: без него найденный секрет печатается в лог CI и
+      # утечка расширяется ровно тем шагом, который её ищет.
+      - name: Secret scan (gitleaks)
+        env:
+          GITLEAKS_VERSION: "8.21.2"
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --exit-code 1
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
