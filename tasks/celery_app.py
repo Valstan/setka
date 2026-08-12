@@ -647,6 +647,55 @@ def classify_pending_posts(limit: int = 0):
         return {"status": f"error:{type(e).__name__}"}
 
 
+@app.task(name="tasks.celery_app.distill_classifier_rules")
+def distill_classifier_rules(limit: int = 200, days: int = 30):
+    """Дистилляция правок оператора в предложения правил — звено 7 (D-024).
+
+    Замыкает петлю обучения: правки → обобщённые правила → постулаты → поведение
+    ИИ-фильтра. Предложения ложатся как ``proposed`` и ждут оператора в ленте —
+    автоприменения здесь нет и не будет (ADR-0005).
+
+    Гейт тот же, что у ИИ-фильтра (``CLASSIFIER_HEADLESS_ENABLED``): пока
+    дистилляция делается вручную из чата по памятке ``/distill``, две ветки
+    предлагали бы правила по одному и тому же сырью.
+    """
+    try:
+        from config.classifier import classifier_disabled, headless_enabled
+
+        if classifier_disabled():
+            return {"status": "skipped:classifier-disabled"}
+        if not headless_enabled():
+            return {"status": "skipped:headless-off"}
+
+        from modules.classifier import distill as distill_mod
+        from modules.classifier import rules
+
+        async def _run():
+            from database.connection import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as session:
+                corrections = await rules.fetch_corrections_for_distill(
+                    session, limit=limit, days=days
+                )
+                postulates = await rules.render_effective_postulates(session)
+                run = distill_mod.distill(corrections, postulates=postulates)
+                logger.info("classifier distill: %s", distill_mod.summarize(run))
+                if run.get("rejected"):
+                    logger.info("classifier distill: отбраковано: %s", run["rejected"][:5])
+                if not run.get("proposals"):
+                    return {"status": "ok", "reason": run.get("reason"), "proposals": 0}
+                counts = await rules.record_rule_proposals(
+                    session, run["proposals"], source="headless"
+                )
+                await session.commit()
+                return {"status": "ok", "tokens": run["tokens"], **counts}
+
+        return run_coro(_run())
+    except Exception as e:
+        logger.warning("classifier distill task failed: %s", e)
+        return {"status": f"error:{type(e).__name__}"}
+
+
 @app.task(name="tasks.celery_app.check_telegram_bot_identity")
 def check_telegram_bot_identity():
     """Сторож целостности Telegram-ботов: имя, описание, вебхук (2026-08-12).
@@ -2095,6 +2144,17 @@ app.conf.beat_schedule = {
         "task": "tasks.celery_app.classify_pending_posts",
         "schedule": crontab(minute=35, hour="*/3"),
         "options": {"expires": 3 * 3600, "catchup": False},
+    },
+    # Дистилляция правок оператора в правила — звено 7 петли (D-024): раз в
+    # неделю, ночь понедельника. Частота продиктована сырьём, а не удобством:
+    # правила рождаются из НАКОПЛЕННЫХ правок, и ежедневный прогон предлагал бы
+    # обобщения по двум-трём случаям — ровно то, что порог MIN_CORRECTIONS и
+    # запрещает. Меньше 10 правок за окно → прогон возвращает
+    # not-enough-material и не тратит ни токена.
+    "classifier-distill-weekly": {
+        "task": "tasks.celery_app.distill_classifier_rules",
+        "schedule": crontab(minute=40, hour=4, day_of_week=1),
+        "options": {"expires": 6 * 3600, "catchup": False},
     },
     # Сторож целостности Telegram-ботов (инцидент 2026-08-12): раз в час на :47.
     # Смотрит на бота ГЛАЗАМИ ПОДПИСЧИКА — имя, описание, вебхук, — а не на то,
