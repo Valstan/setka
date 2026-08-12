@@ -41,6 +41,15 @@ bootstrap_secrets()
 
 from sqlalchemy import select  # noqa: E402
 
+# Импорт ради побочного эффекта, а не ради имени (оттого F401).
+# models_extended ссылается на 'Region' СТРОКОЙ в relationship(); реестр
+# SQLAlchemy разрешает такие имена лениво — при первом запросе, — и без
+# загруженного database.models падает там же:
+#   InvalidRequestError: expression 'Region' failed to locate a name.
+# Позиция строки роли не играет (запрос уходит позже любого импорта), поэтому
+# isort волен ставить её куда хочет; важен сам факт импорта. Грабля общая для
+# всех ad-hoc скриптов проекта — записана в SESSION_HANDOFF.
+import database.models  # noqa: E402,F401
 from config.classifier import get_headless_chunk_size  # noqa: E402
 from database.connection import AsyncSessionLocal  # noqa: E402
 from database.models_extended import ContentClassification  # noqa: E402
