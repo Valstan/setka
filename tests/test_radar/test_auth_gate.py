@@ -658,3 +658,123 @@ def test_radar_data_reachable_from_old_sarafan_address(monkeypatch):
     page = client.get("/radar", headers={"Accept": "text/html"}, follow_redirects=False)
     assert page.status_code == 302
     assert page.headers["location"] == f"https://{_RADAR_HOST}/"
+
+
+# ─── Канонический хост операторских страниц (2026-08-18) ─────────
+#
+# Приложение одно, хостов четыре, и операторские страницы отдавались на каждом:
+# адрес в строке браузера врал о том, что показано (владелец открыл
+# вход.вмалмыже.рф и оказался в операторском САРАФАНЕ), а на техдомене
+# провайдера вход зацикливался — кука зоны туда не отправляется.
+
+_TECH_HOST = "3931b3fe50ab.vps.myjino.ru"  # технический домен провайдера
+
+
+def _canonical_app_client(host: str) -> "TestClient":
+    app = FastAPI()
+    app.add_middleware(AuthGateMiddleware, user_loader=_loader)
+
+    @app.get("/tokens")
+    async def tokens_page():
+        return {"page": "tokens"}
+
+    @app.get("/oidc/authorize")
+    async def oidc_authorize():
+        return {"page": "authorize"}
+
+    @app.get("/radar")
+    async def radar_page():
+        return {"page": "radar"}
+
+    @app.get("/api/gateway/wall")
+    async def gateway_wall():
+        return {"ok": True}
+
+    return TestClient(app, base_url=f"https://{host}")
+
+
+@pytest.fixture
+def _zone(monkeypatch):
+    """Многохостовая топология включена (как на проде)."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+
+
+def test_operator_page_on_issuer_goes_to_canonical(_zone):
+    """вход.вмалмыже.рф/tokens → сарафан: issuer не место операторским страницам."""
+    resp = _canonical_app_client(_ISSUER_HOST).get(
+        "/tokens", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == f"https://{_SARAFAN_HOST}/tokens"
+
+
+def test_canonical_redirect_keeps_path_and_query(_zone):
+    resp = _canonical_app_client(_ISSUER_HOST).get(
+        "/tokens?tab=community&id=7", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == f"https://{_SARAFAN_HOST}/tokens?tab=community&id=7"
+
+
+def test_operator_page_on_tech_domain_goes_to_canonical(_zone):
+    """Техдомен уводим тоже: кука зоны туда не доедет и вход зациклится."""
+    resp = _canonical_app_client(_TECH_HOST).get(
+        "/tokens", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == f"https://{_SARAFAN_HOST}/tokens"
+
+
+def test_canonical_host_itself_is_not_redirected(_zone):
+    """На своём домене редиректа нет — дальше обычная ролевая логика (вход)."""
+    resp = _canonical_app_client(_SARAFAN_HOST).get(
+        "/tokens", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    # Это редирект на вход, а не на канон: сам канон тут законно фигурирует
+    # внутри next= (гейт возвращает на абсолютный адрес родного хоста).
+    assert "/login" in resp.headers["location"]
+    assert resp.headers["location"] != f"https://{_SARAFAN_HOST}/tokens"
+
+
+def test_oidc_authorize_stays_on_issuer(_zone):
+    """Уведи authorize на сарафан — сломается вход на сайты-клиенты экосистемы."""
+    resp = _canonical_app_client(_ISSUER_HOST).get(
+        "/oidc/authorize?client_id=x", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["location"]
+    assert f"https://{_SARAFAN_HOST}/oidc" not in resp.headers["location"]
+
+
+def test_radar_zone_is_left_to_its_own_canonical(_zone):
+    """У Радара свой канонический хост — этот механизм в его зону не лезет."""
+    resp = _canonical_app_client(_ISSUER_HOST).get(
+        "/radar", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert f"https://{_SARAFAN_HOST}/radar" != resp.headers["location"]
+
+
+def test_radar_host_is_not_dragged_to_sarafan(_zone):
+    resp = _canonical_app_client(_RADAR_HOST).get(
+        "/tokens", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.headers.get("location", "") != f"https://{_SARAFAN_HOST}/tokens"
+
+
+def test_machine_client_is_never_redirected(_zone):
+    """Без Accept: text/html редиректа нет: на этих хостах сидит VK-шлюз соседей,
+    а часть клиентов ходит на ASCII-хост именно потому, что IDN им не по зубам."""
+    resp = _canonical_app_client(_TECH_HOST).get("/api/gateway/wall", follow_redirects=False)
+    assert resp.status_code == 200
+
+
+def test_single_host_mode_has_no_canonical_redirect(monkeypatch):
+    """Без SESSION_COOKIE_DOMAIN (локальная разработка) уводить некуда."""
+    monkeypatch.delenv("SESSION_COOKIE_DOMAIN", raising=False)
+    resp = _canonical_app_client(_ISSUER_HOST).get(
+        "/tokens", headers={"Accept": "text/html"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["location"]

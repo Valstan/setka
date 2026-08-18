@@ -105,6 +105,22 @@ PUBLIC_EXACT = (
 SARAFAN_CANONICAL_HOST_DEFAULT = "xn--80aaa6cmey.xn--80adkdyec4j.xn--p1ai"
 LANDING_PATH = "/regions/links"
 
+# Пути, которые НЕ уезжают на канонический операторский хост — у них свой дом.
+# Публичные пути (PUBLIC_PREFIXES/PUBLIC_EXACT) в этот список не нужны: гейт
+# отпускает их раньше, до проверки канона.
+OPERATOR_CANONICAL_EXEMPT = (
+    # Front-channel issuer'а. /oidc/token и /oidc/userinfo и так публичны, а вот
+    # /oidc/authorize требует сессии и ОБЯЗАН отработать на вход.вмалмыже.рф:
+    # уведи его на сарафан — и сломается вход на сайты-клиенты экосистемы.
+    "/oidc/",
+    # Своя зона со своим каноническим хостом (radar_canonical_redirect).
+    "/radar",
+    # Машинные вызовы. Страховка: их и так отсекает _wants_html, но цена ошибки
+    # здесь — молчаливо сломанный VK-шлюз соседних проектов.
+    "/api/",
+    "/.well-known/",
+)
+
 # Публично везде, КРОМЕ домена сети: на сарафане открыта ровно одна ссылка
 # (LANDING_PATH), остальные страницы — под входом. Каталог сервисов при этом
 # не пропадает из экосистемы: его публичная поверхность — вход.вмалмыже.рф
@@ -233,6 +249,60 @@ def _on_sarafan_host(request: Request) -> bool:
     return bool(canonical and host and host == canonical)
 
 
+def _operator_canonical_redirect(request: Request) -> Optional[str]:
+    """Адрес операторской страницы на её домене — или ``None``, если он и так свой.
+
+    Приложение одно, а хостов у него четыре: сарафан, issuer (вход.вмалмыже.рф),
+    радар и технический домен провайдера. Операторские страницы (``/tokens``,
+    ``/ad``, ``/posts``, ``/monitoring``, дашборд на ``/``) отдавались на КАЖДОМ
+    из них, поэтому адрес в строке браузера врал о том, что показано: открыв
+    ``вход.вмалмыже.рф``, владелец оказывался в операторском САРАФАНЕ, а адрес
+    продолжал утверждать, что он на странице входа.
+
+    Тот же класс, что чинили 26.07 для Радара (``radar_canonical_redirect``), —
+    тогда закрыли одну зону из двух.
+
+    На техническом домене провайдера у этого же бага есть вторая, злая половина:
+    сессионная кука выдаётся на зону ``.вмалмыже.рф`` (``SESSION_COOKIE_DOMAIN``)
+    и на чужой хост браузером просто не отправляется. Вход там зацикливался
+    намертво — ``POST /api/auth/login`` отвечал 200, а следующий же запрос
+    приезжал неаутентифицированным и снова падал на форму входа. Поэтому
+    техдомен уводим тоже, хотя сессия туда и не распространяется: цель как раз
+    в том, чтобы браузер там не жил.
+
+    ``None`` (= остаёмся на месте) для: канонического хоста; хоста Радара (у него
+    свой канон); не-браузерных запросов; путей из ``OPERATOR_CANONICAL_EXEMPT``.
+
+    Не-браузерные запросы не трогаем принципиально, а не для экономии: на этих
+    хостах сидят машинные интеграции — VK-шлюз соседних проектов, ingest,
+    диагностические скрипты (``docs/GATEWAY.md``). Редирект со сменой хоста
+    пережил бы не всякий клиент, а часть из них ходит именно на ASCII-хост
+    потому, что кириллический IDN им не по зубам.
+    """
+    if request.method != "GET" or not _wants_html(request):
+        return None
+    # Многохостовая топология включена тем же переключателем, что и общая сессия
+    # зоны. Без SESSION_COOKIE_DOMAIN приложение живёт на одном хосте (локальная
+    # разработка, тесты) — уводить некуда и не с чего.
+    if not (os.getenv("SESSION_COOKIE_DOMAIN") or "").strip():
+        return None
+    canonical = _idna(os.getenv("SARAFAN_CANONICAL_HOST", SARAFAN_CANONICAL_HOST_DEFAULT))
+    if not canonical:
+        return None
+    host = _idna(request.url.hostname or "")
+    if not host or host == canonical:
+        return None
+    if _on_radar_host(request):
+        return None
+    path = request.url.path
+    if _is_prefixed(path, OPERATOR_CANONICAL_EXEMPT):
+        return None
+    target = f"https://{canonical}{path}"
+    if request.url.query:
+        target += f"?{request.url.query}"
+    return target
+
+
 def _csv_env(name: str, default: str) -> frozenset:
     """Множество значений из env-списка через запятую, в нижнем регистре.
 
@@ -334,6 +404,13 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         # Prometheus скрейпит /metrics с localhost — пускаем без cookie.
         if path == "/metrics" and _is_local_client(request):
             return await call_next(request)
+
+        # Операторская страница открыта не на своём домене — уводим на канон
+        # ДО аутентификации: иначе на техдомене провайдера пользователь сперва
+        # прошёл бы вход, чья кука туда не доедет, и вернулся бы на форму входа.
+        canonical_target = _operator_canonical_redirect(request)
+        if canonical_target:
+            return RedirectResponse(canonical_target, status_code=302)
 
         user = await self._authenticate(request)
         if user is None:
