@@ -303,7 +303,7 @@ function renderFunnel(f) {
         ["допустил", f.publish, "к публикации", "bg-success-subtle"],
         ["выкинул", f.delete, "в мусорку", "bg-danger-subtle"],
         ["отложил", f.hold, "hold", "bg-warning-subtle"],
-        ["в публикации", f.published, "дошло до читателя", "bg-primary-subtle"],
+        ["в публикации", f.published, publishedScope(f), "bg-primary-subtle"],
     ];
     box.innerHTML = steps.map(([label, val, sub, cls]) => `
         <div class="border rounded px-2 py-1 text-center ${cls}" style="min-width:104px;">
@@ -315,8 +315,19 @@ function renderFunnel(f) {
     // собранным и размеченным, а не абсолютная величина backlog.
     const note = [];
     if (f.unclassified) note.push(`без вердикта за сутки: ${f.unclassified}`);
-    if (f.tokens) note.push(`токенов: ${f.tokens.toLocaleString("ru-RU")}`);
+    if (f.published_regions < f.collected_regions) {
+        note.push(`журнал публикаций ведётся только по ${f.published_regions} р-ну `
+            + `из ${f.collected_regions} — «в публикации» считает лишь его`);
+    }
     document.getElementById("cf-funnel-note").textContent = note.join(" · ");
+}
+
+// Подпись «в публикации» обязана нести охват: журнал курации ведётся не по всей
+// сети, и число без этой оговорки читается как цифра по всем районам.
+function publishedScope(f) {
+    if (f.published_regions == null || f.collected_regions == null) return "дошло до читателя";
+    if (f.published_regions >= f.collected_regions) return "дошло до читателя";
+    return `только ${f.published_regions} из ${f.collected_regions} р-нов`;
 }
 
 // Насколько оператор отстал от движка. Темп считается по НАЖАТИЯМ, а не по
@@ -355,7 +366,7 @@ async function loadFeed() {
     // 60 карточек от неё видны один-два — то есть постранично группировать
     // нечего. Плоский режим оставлен для тонкой, поштучной правки.
     if (grouped && unreacted) {
-        const r = await fetch(`/api/classifier-review/feed/grouped?limit=500`
+        const r = await fetch(`/api/classifier-review/feed/grouped?limit=5000&cards_per_block=40`
             + (region ? `&region=${encodeURIComponent(region)}` : ""));
         const data = await r.json();
         empty.classList.toggle("d-none", data.count > 0);
@@ -397,7 +408,9 @@ function blockHTML(b) {
           <div>
             <span class="badge bg-secondary">${ACTIONS[b.action] || b.action}</span>
             <span class="badge bg-primary">${esc(b.theme)}</span>
-            <span class="text-muted small">— ${b.total} шт.</span>
+            <span class="text-muted small">— ${b.total} шт.${
+                b.hidden_cards ? ` (показано ${b.cards.length}, скрыто ${b.hidden_cards})` : ""
+            }</span>
           </div>
           <button class="btn btn-success btn-sm" onclick='agreeGroup(${ids}, this)'>
             ✅ Согласен со всем блоком (${b.total})

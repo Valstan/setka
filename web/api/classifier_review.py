@@ -184,16 +184,22 @@ async def progress():
 @router.get("/feed/grouped")
 async def feed_grouped(
     region: str = Query("", description="код района (опционально)"),
-    limit: int = Query(500, ge=1, le=2000),
+    limit: int = Query(5000, ge=1, le=20000),
+    cards_per_block: int = Query(40, ge=1, le=500),
 ):
     """Лента блоками «вердикт × тема» с схлопнутыми дословными дублями.
 
-    Лимит выше обычной ленты намеренно: группировка постранично не группирует —
-    группа из четырёх десятков постов раскидана по всей очереди.
+    ``limit`` — сколько постов очереди берём в расчёт (счётчики блоков),
+    ``cards_per_block`` — сколько карточек рисуем внутри блока. Числа разные:
+    заголовок и групповая кнопка обязаны говорить про весь блок, иначе кнопка
+    «Согласен со всем блоком (267)» закрывала бы показанные сорок.
     """
     async with AsyncSessionLocal() as session:
         blocks = await service.review_feed_grouped(
-            session, region_code=region.strip() or None, limit=limit
+            session,
+            region_code=region.strip() or None,
+            limit=limit,
+            cards_per_block=cards_per_block,
         )
     return {"blocks": blocks, "count": sum(b["total"] for b in blocks)}
 
