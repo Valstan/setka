@@ -182,11 +182,77 @@ def test_third_party_logger_is_covered(restore_factory, caplog, monkeypatch):
     ради этого она выбрана вместо фильтра на наших хендлерах."""
     monkeypatch.setenv("TELEGRAM_TOKEN_AFONYA", FAKE_TG_TOKEN)
     install_log_redaction()
-    with caplog.at_level(logging.INFO):
+    # Уровень задаём ИМЕННО на этом логгере: прогон всей пачки тестов оставляет
+    # httpx на WARNING, records не доезжают, и проверка «секрета нет» проходит
+    # на пустом выводе. Тест, зелёный от отсутствия данных, ничего не охраняет.
+    with caplog.at_level(logging.INFO, logger="httpx"):
         logging.getLogger("httpx").info("HTTP Request: POST /bot%s/sendMessage", FAKE_TG_TOKEN)
-    assert "AAHplaceholder" not in "\n".join(_capture(caplog, logging.INFO))
+    joined = "\n".join(_capture(caplog, logging.INFO))
+    assert joined, "лог пуст — тест не проверил ничего"
+    assert "AAHplaceholder" not in joined
 
 
 def test_install_is_idempotent(restore_factory):
     assert install_log_redaction() is True
     assert install_log_redaction() is False
+
+
+# ─── Инцидент 2026-08-19: секрет приехал в лог ОБЪЕКТОМ, не строкой ──────────
+
+
+class _UrlLike:
+    """Заменитель ``httpx.URL``: не строка, но её ``__str__`` несёт токен.
+
+    Именно так утёк VK-токен: ``httpx`` пишет
+    ``logger.info("HTTP Request: %s %s", request.method, request.url)``, где
+    ``request.url`` — объект. Прежний ``_redact_arg`` возвращал не-строки как
+    есть, а склейка в ``record.getMessage()`` происходит ПОСЛЕ фабрики — то
+    есть после единственного места, где маскирование вообще случается.
+    """
+
+    def __init__(self, raw: str) -> None:
+        self._raw = raw
+
+    def __str__(self) -> str:  # noqa: D105
+        return self._raw
+
+
+def test_object_arg_carrying_secret_is_redacted(restore_factory, caplog):
+    """Регресс на реальную форму утечки: объект-URL с ``access_token`` в query."""
+    install_log_redaction()
+    url = _UrlLike(
+        f"https://api.vk.com/method/messages.send?peer_id=1&access_token={FAKE_VK_TOKEN}"
+    )
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        logging.getLogger("httpx").info('HTTP Request: %s %s "%s"', "GET", url, "200 OK")
+
+    joined = "\n".join(_capture(caplog, logging.INFO))
+    assert joined, "лог пуст — тест не проверил ничего"
+    assert "placeholderplaceholder" not in joined
+    assert REDACTED in joined
+    # Полезное содержимое строки не съедено — иначе лог перестанет быть логом.
+    assert "api.vk.com" in joined and "200 OK" in joined
+
+
+def test_object_arg_secret_masked_without_env_value(restore_factory, caplog, monkeypatch):
+    """Слой «по форме» обязан сработать сам: community-токены живут в БД, а не
+    в окружении, поэтому слой «по значению» их значений не знает. В инциденте
+    промахнулись оба слоя сразу — этот тест держит второй."""
+    monkeypatch.delenv("VK_TOKEN_VALSTAN", raising=False)
+    install_log_redaction()
+    url = _UrlLike(f"https://api.vk.com/method/wall.post?access_token={FAKE_VK_TOKEN}&v=5.199")
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        logging.getLogger("httpx").info("HTTP Request: %s", url)
+    joined = "\n".join(_capture(caplog, logging.INFO))
+    assert joined, "лог пуст — тест не проверил ничего"
+    assert "placeholderplaceholder" not in joined
+    assert REDACTED in joined
+
+
+def test_numeric_arg_survives_percent_d(restore_factory, caplog):
+    """Не-строки, чья форма секрета не содержит, остаются собой — иначе ``%d``
+    получил бы ``str`` и запись упала бы на форматировании."""
+    install_log_redaction()
+    with caplog.at_level(logging.INFO, logger="test.numeric"):
+        logging.getLogger("test.numeric").info("posts=%d rate=%.2f", 200, 0.5)
+    assert "posts=200 rate=0.50" in "\n".join(_capture(caplog, logging.INFO))

@@ -548,6 +548,12 @@ def _values_agree(verdict_type: str, ai_value: Any, operator_value: Any) -> bool
     return False
 
 
+# Движок, который классифицирует СЕЙЧАС. Облачная рутина (``routine``) выключена
+# с 2026-08-12; её вердикты остаются в БД навсегда как Корпус, но метрику
+# качества по ним нельзя выдавать за метрику живой системы.
+LIVE_ENGINE = "headless"
+
+
 async def agree_rate_stats(session) -> Dict[str, Any]:
     """agree-rate по каждому типу вердикта (метрика shadow-гейта, ADR-0003 §F)."""
     rows = (
@@ -582,7 +588,82 @@ async def agree_rate_stats(session) -> Dict[str, Any]:
     total_classified = (
         await session.execute(select(func.count(ContentClassification.id)))
     ).scalar() or 0
-    return {"total_classified": int(total_classified), "by_type": out}
+
+    return {
+        "total_classified": int(total_classified),
+        "by_type": out,
+        "live_engine": LIVE_ENGINE,
+        "by_engine": await _agree_rate_by_engine(session),
+        "classified_by_engine": await _classified_by_engine(session),
+    }
+
+
+async def _classified_by_engine(session) -> Dict[str, int]:
+    """Сколько вердиктов вынес каждый движок. ``source`` — единственный различитель."""
+    rows = (
+        await session.execute(
+            select(ContentClassification.source, func.count()).group_by(
+                ContentClassification.source
+            )
+        )
+    ).all()
+    return {str(src or "unknown"): int(n or 0) for src, n in rows}
+
+
+async def _agree_rate_by_engine(session) -> Dict[str, Dict[str, Any]]:
+    """agree-rate отдельно по каждому движку.
+
+    **Зачем разделение.** Сводная цифра складывает вердикты облачной рутины
+    (06.07–12.08, 40 677 штук) и живого DeepSeek — а это разные системы. Разбор
+    завала 2026-08-18 показал разрыв в порядок: ``hold`` 28.9% против 0.4%,
+    расхождение на одинаковом тексте 34.9% против 4.5%. Сводный agree-rate по
+    действию (55%) описывает движок, которого нет, и на панели читается как
+    оценка работающего. Урок был записан в журнал дистилляций тем же днём —
+    здесь он применён к метрике, а не только к чеканке правил.
+    """
+    rows = (
+        await session.execute(
+            select(
+                ContentClassification.source,
+                ClassificationCorrection.verdict_type,
+                ClassificationCorrection.outcome,
+                func.count(),
+            )
+            .join(
+                ContentClassification,
+                ContentClassification.id == ClassificationCorrection.classification_id,
+            )
+            .group_by(
+                ContentClassification.source,
+                ClassificationCorrection.verdict_type,
+                ClassificationCorrection.outcome,
+            )
+        )
+    ).all()
+
+    per_engine: Dict[str, Dict[str, Dict[str, int]]] = {}
+    for source, vtype, outcome, n in rows:
+        if vtype not in VERDICT_TYPES or outcome not in ("agree", "correct"):
+            continue
+        engine = str(source or "unknown")
+        bucket = per_engine.setdefault(
+            engine, {t: {"agree": 0, "correct": 0} for t in VERDICT_TYPES}
+        )
+        bucket[vtype][outcome] = int(n or 0)
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for engine, types in per_engine.items():
+        out[engine] = {}
+        for t in VERDICT_TYPES:
+            a, c = types[t]["agree"], types[t]["correct"]
+            total = a + c
+            out[engine][t] = {
+                "agree": a,
+                "correct": c,
+                "total": total,
+                "agree_rate": round(a / total, 3) if total else None,
+            }
+    return out
 
 
 async def _theme_usage_counts(session, *, verdict_rows: int = 5000) -> Dict[str, int]:
@@ -791,6 +872,13 @@ async def delete_theme(session, name: str, reassign_to: str) -> Dict[str, Any]:
     return {"ok": True, "deleted": name, "reassign_to": reassign_to, "moved": moved}
 
 
+# Через сколько часов без вердиктов считаем ИИ-фильтр молчащим. Cron прогонов —
+# каждые 3 часа, так что 8 часов = два пропущенных прогона плюс запас. Тот же
+# порог, что у сторожа ``modules.classifier.heartbeat``: страница и алёрт обязаны
+# называть молчанием одно и то же, иначе человек видит зелёное, а телеграм красное.
+STALE_AFTER_HOURS = 8.0
+
+
 async def health_stats(session, *, days: int = DEFAULT_SOURCE_DAYS) -> Dict[str, Any]:
     """Диагностика работы рутины: успевает ли она за потоком (заказ 2026-07-16).
 
@@ -854,6 +942,20 @@ async def health_stats(session, *, days: int = DEFAULT_SOURCE_DAYS) -> Dict[str,
         "verdicts_24h": int(sum(n for _, n in verdict_rows)),
         "verdicts_24h_by_region": {r or "": int(n) for r, n in sorted(verdict_rows)},
         "last_verdict_at": last_verdict_at.isoformat() if last_verdict_at else None,
+        # Возраст следа работы в часах — считаем здесь, а не в браузере: страница
+        # получала «последний вердикт: 16.08» и молча его рисовала, а человеку
+        # приходилось самому вычитать даты, чтобы понять, что движок стоит трое
+        # суток (инцидент 2026-08-19).
+        "last_verdict_age_hours": (
+            round(max(0.0, (datetime.utcnow() - last_verdict_at).total_seconds() / 3600.0), 1)
+            if last_verdict_at
+            else None
+        ),
+        "stale_after_hours": STALE_AFTER_HOURS,
+        "stale": bool(
+            last_verdict_at
+            and (datetime.utcnow() - last_verdict_at).total_seconds() > STALE_AFTER_HOURS * 3600
+        ),
         "coverage_pct": (
             round(100.0 * (collected_total - backlog_total) / collected_total, 1)
             if collected_total

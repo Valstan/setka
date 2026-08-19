@@ -25,7 +25,10 @@
         публикует. <b>Согласен со всем</b> — один тык, если вердикт верен. Если надо поправить —
         жми кнопки правок (тема / действие / склейка): карточка <b>остаётся</b>, можно внести
         несколько правок, затем <b>✔ Готово</b>. Несогласия копятся в лог и питают <b>agree-rate</b>
-        и файл-корректировщик. Классификацию сейчас делает облачная рутина через <code>/api/classifier</code>.
+        и файл-корректировщик. Классификацию делает <b>headless-движок на DeepSeek</b> — Celery-таска
+        <code>classify_pending_posts</code>, прогон каждые 3 часа. Облачная рутина через
+        <code>/api/classifier</code> выключена с 12.08.2026; её вердикты остаются в Корпусе, но
+        качество живого движка меряется отдельно (см. переключатель ниже).
     </p>
 
     <!-- agree-rate -->
@@ -34,16 +37,24 @@
             <h6 class="mb-2"><i class="bi bi-graph-up"></i> agree-rate по типам
                 <span class="text-muted small" id="cf-total"></span>
             </h6>
+            <!-- Разделение по движкам (урок разбора завала 2026-08-18): сводная
+                 цифра складывает вердикты выключенной облачной рутины с живым
+                 DeepSeek, а между ними разрыв в порядок. -->
+            <div class="btn-group btn-group-sm mb-2" role="group" id="cf-engine-switch"></div>
             <div class="row g-2" id="cf-stats"></div>
+            <div class="small text-muted mt-1" id="cf-engine-note"></div>
         </div>
     </div>
 
-    <!-- Диагностика рутины (2026-07-16): успевает ли за мультирегиональным потоком -->
+    <!-- Диагностика ИИ-фильтра (2026-07-16): успевает ли за мультирегиональным потоком -->
     <div class="card mb-3">
         <div class="card-body py-2">
-            <h6 class="mb-2"><i class="bi bi-heart-pulse"></i> Здоровье рутины
+            <h6 class="mb-2"><i class="bi bi-heart-pulse"></i> Здоровье ИИ-фильтра
                 <span class="text-muted small" id="cf-health-meta"></span>
             </h6>
+            <!-- Молчание движка обязано кричать, а не лежать датой в подписи:
+                 инцидент 2026-08-19 прожил трое суток при исправной на вид панели. -->
+            <div class="alert alert-danger py-2 mb-2 d-none" id="cf-health-alarm"></div>
             <div class="row g-2 mb-1" id="cf-health"></div>
             <div class="small text-muted" id="cf-health-backlog"></div>
         </div>
@@ -54,7 +65,7 @@
         <div class="card-body py-2">
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <h6 class="mb-0"><i class="bi bi-mortarboard"></i> Правила обучения
-                    <span class="text-muted small">— рутина предлагает из твоих правок, ты утверждаешь</span>
+                    <span class="text-muted small">— дистиллятор предлагает из твоих правок, ты утверждаешь</span>
                 </h6>
                 <button class="btn btn-outline-secondary btn-sm" id="cf-rules-refresh">
                     <i class="bi bi-arrow-clockwise"></i>
@@ -83,7 +94,7 @@
     <div class="card mb-3">
         <div class="card-body py-2">
             <h6 class="mb-2"><i class="bi bi-tags"></i> Темы (словарь)
-                <span class="text-muted small">— рутина выбирает тему строго из этого списка</span>
+                <span class="text-muted small">— движок выбирает тему строго из этого списка</span>
             </h6>
             <div id="cf-themes-editor"></div>
             <div class="input-group input-group-sm mt-2" style="max-width: 360px;">
@@ -94,8 +105,10 @@
     </div>
 
     <div id="cf-feed"></div>
+    <!-- Текст пустой ленты подставляется из здоровья движка: «всё разобрано» и
+         «движок молчит трое суток» выглядят одинаково пусто, а значат разное. -->
     <div id="cf-empty" class="text-muted text-center py-4 d-none">
-        Нет вердиктов для разбора. Рутина ещё не прислала, либо всё разобрано.
+        Нет вердиктов для разбора.
     </div>
 </div>
 
@@ -118,15 +131,17 @@ function filterBadge(it) {
     return "";
 }
 
-async function loadStats() {
-    const r = await fetch("/api/classifier-review/stats");
-    const s = await r.json();
-    document.getElementById("cf-total").textContent =
-        "· классифицировано: " + (s.total_classified ?? 0);
+const ENGINE_LABEL = {headless: "живой движок (DeepSeek)", routine: "облачная рутина (выключена)"};
+let STATS = null;
+// По умолчанию показываем ЖИВОЙ движок, а не «всё вместе»: сводная цифра на 90%
+// состоит из вердиктов выключенной рутины и врёт про работающую систему.
+let ENGINE_VIEW = null;
+
+function engineTiles(byType) {
     const box = document.getElementById("cf-stats");
     box.innerHTML = "";
     for (const t of ["theme", "action", "merge"]) {
-        const d = s.by_type[t] || {};
+        const d = (byType || {})[t] || {};
         const rate = d.agree_rate == null ? "—" : Math.round(d.agree_rate * 100) + "%";
         const label = {theme: "Тема", action: "Действие", merge: "Склейка"}[t];
         box.insertAdjacentHTML("beforeend", `
@@ -140,13 +155,78 @@ async function loadStats() {
     }
 }
 
+function renderEngineView() {
+    if (!STATS) return;
+    const counts = STATS.classified_by_engine || {};
+    const view = ENGINE_VIEW || STATS.live_engine || "all";
+    engineTiles(view === "all" ? STATS.by_type : (STATS.by_engine || {})[view]);
+
+    const sw = document.getElementById("cf-engine-switch");
+    const options = Object.keys(STATS.by_engine || {}).sort();
+    if (!options.includes(STATS.live_engine)) options.unshift(STATS.live_engine);
+    sw.innerHTML = "";
+    for (const key of options.concat(["all"])) {
+        const label = key === "all"
+            ? "всё вместе"
+            : (ENGINE_LABEL[key] || key) + (counts[key] ? ` · ${counts[key]}` : "");
+        const active = key === view ? "btn-primary" : "btn-outline-secondary";
+        sw.insertAdjacentHTML("beforeend",
+            `<button type="button" class="btn ${active}" data-engine="${esc(key)}">${esc(label)}</button>`);
+    }
+    for (const b of sw.querySelectorAll("button")) {
+        b.onclick = () => { ENGINE_VIEW = b.dataset.engine; renderEngineView(); };
+    }
+
+    const note = document.getElementById("cf-engine-note");
+    if (view === "all") {
+        note.textContent = "Смешаны два движка. Цифра описывает не работающую систему, " +
+            "а среднее по ней и по выключенной 12.08 облачной рутине — сравнивать с ней нельзя.";
+    } else if (view === STATS.live_engine) {
+        note.textContent = "Только вердикты работающего движка. Правки оператора по старой " +
+            "рутине в этот счёт не входят.";
+    } else {
+        note.textContent = "Движок выключен — исторические цифры, для сравнения, не для приёмки.";
+    }
+}
+
+async function loadStats() {
+    const r = await fetch("/api/classifier-review/stats");
+    STATS = await r.json();
+    const counts = STATS.classified_by_engine || {};
+    const parts = Object.keys(counts).sort().map(k => `${ENGINE_LABEL[k] || k}: ${counts[k]}`);
+    document.getElementById("cf-total").textContent =
+        "· классифицировано: " + (STATS.total_classified ?? 0) +
+        (parts.length > 1 ? " (" + parts.join(" · ") + ")" : "");
+    renderEngineView();
+}
+
+let HEALTH = null;
+
 async function loadHealth() {
     const r = await fetch("/api/classifier-review/health");
     if (!r.ok) return;
     const h = await r.json();
+    HEALTH = h;
     document.getElementById("cf-health-meta").textContent =
         `· окно ${h.window_days} дн · батч ≤${h.pending_max} · последний вердикт: ` +
-        (h.last_verdict_at ? new Date(h.last_verdict_at + "Z").toLocaleString("ru-RU") : "—");
+        (h.last_verdict_at ? new Date(h.last_verdict_at + "Z").toLocaleString("ru-RU") : "—") +
+        (h.last_verdict_age_hours == null ? "" : ` (${h.last_verdict_age_hours} ч назад)`);
+
+    // Молчание движка — красным и словами. Раньше эта же информация лежала
+    // датой в серой подписи, и трое суток простоя выглядели как норма.
+    const alarm = document.getElementById("cf-health-alarm");
+    if (h.stale) {
+        alarm.classList.remove("d-none");
+        alarm.innerHTML =
+            `<b>⚠️ ИИ-фильтр молчит ${h.last_verdict_age_hours} ч</b> (порог ${h.stale_after_hours} ч). ` +
+            `Прогон идёт каждые 3 часа — значит он падает или работает вхолостую. ` +
+            `Без разметки уже <b>${h.backlog}</b> постов, они уходят в сводки без фильтра нейросети. ` +
+            `Частая причина — ключ DeepSeek не доехал из комнаты КАРМАНа при старте воркера ` +
+            `(<code>journalctl -u setka-celery-worker | grep vault</code>).`;
+    } else {
+        alarm.classList.add("d-none");
+        alarm.innerHTML = "";
+    }
     const cells = [
         ["Покрытие потока", h.coverage_pct == null ? "—" : h.coverage_pct + "%",
          `${h.classified_in_window} из ${h.collected_in_window} собранных`],
@@ -185,7 +265,21 @@ async function loadFeed() {
     const data = await r.json();
     const feed = document.getElementById("cf-feed");
     feed.innerHTML = "";
-    document.getElementById("cf-empty").classList.toggle("d-none", data.count > 0);
+    const empty = document.getElementById("cf-empty");
+    empty.classList.toggle("d-none", data.count > 0);
+    if (data.count === 0) {
+        if (HEALTH && HEALTH.stale) {
+            empty.innerHTML = `Лента пуста, потому что <b>движок не прислал ни одного вердикта ` +
+                `${HEALTH.last_verdict_age_hours} ч</b> — это отказ, а не «всё разобрано». ` +
+                `Смотри красную плашку выше.`;
+        } else if (HEALTH && HEALTH.backlog > 0) {
+            empty.innerHTML = `Всё разобрано. Движок работает, в очереди на разметку ` +
+                `<b>${HEALTH.backlog}</b> постов — новые карточки появятся после ближайшего прогона ` +
+                `(каждые 3 часа).`;
+        } else {
+            empty.textContent = "Всё разобрано, очередь на разметку пуста.";
+        }
+    }
     for (const it of data.items) {
         const v = it.verdict || {};
         const conf = it.confidence == null ? "" : `<span class="badge bg-light text-dark">увер. ${it.confidence}</span>`;
@@ -504,7 +598,12 @@ async function loadRules() {
     }
 }
 
-document.getElementById("cf-refresh").addEventListener("click", () => { loadThemes().then(loadFeed); loadStats(); loadHealth(); });
+// Здоровье — ДО ленты: пустая лента объясняет себя через него ("движок молчит"
+// против "всё разобрано"), и без загруженного HEALTH объяснение будет общим.
+document.getElementById("cf-refresh").addEventListener("click", () => {
+    loadStats();
+    loadHealth().then(() => loadThemes()).then(loadFeed);
+});
 document.getElementById("cf-unreacted").addEventListener("change", loadFeed);
 document.getElementById("cf-rules-refresh").addEventListener("click", loadRules);
 document.getElementById("cf-rule-add").addEventListener("click", addRule);
@@ -512,8 +611,9 @@ document.getElementById("cf-theme-add-btn").addEventListener("click", addThemeFr
 document.getElementById("cf-theme-add-name").addEventListener("keydown",
     e => { if (e.key === "Enter") { e.preventDefault(); addThemeFromEditor(); } });
 loadStats();
-loadHealth();
-loadThemes().then(loadFeed);  // темы нужны меню карточек — грузим до ленты
+// Порядок: здоровье → темы → лента. Темы нужны меню карточек, здоровье —
+// объяснению пустой ленты.
+loadHealth().then(() => loadThemes()).then(loadFeed);
 loadRules();
 </script>
 {% endblock %}

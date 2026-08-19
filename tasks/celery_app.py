@@ -568,6 +568,23 @@ def _send_debtor_alert(text: str) -> None:
         logger.warning(f"ad debtor telegram alert failed: {e}")
 
 
+def _dominant_failure(failures) -> str:
+    """Самая частая причина отказа чанков — одной строкой для статуса таски.
+
+    Причины приходят кодами ``modules.deepseek_client`` (``no_api_key`` |
+    ``network`` | ``http_<code>`` | ...). Нам нужна не гистограмма, а имя
+    поломки: 26 одинаковых ``no_api_key`` — это «ключа нет», и статус таски
+    обязан произнести это вслух.
+    """
+    if not failures:
+        return ""
+    counts: dict = {}
+    for reason in failures:
+        key = str(reason or "unknown")
+        counts[key] = counts.get(key, 0) + 1
+    return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
 @app.task(name="tasks.celery_app.classify_pending_posts")
 def classify_pending_posts(limit: int = 0):
     """Headless-классификация собранных постов на DeepSeek (D-024).
@@ -596,6 +613,14 @@ def classify_pending_posts(limit: int = 0):
             return {"status": "skipped:headless-off"}
 
         from modules.classifier import headless, rules, service
+        from modules.secrets_bootstrap import ensure_secret
+
+        # Ключ живёт в комнате КАРМАНа и приезжает bootstrap'ом НА СТАРТЕ
+        # процесса. Если в тот момент vault был недоступен, ключа не будет до
+        # следующего рестарта — а рестартовать никто не станет, потому что
+        # снаружи всё «ок» (инцидент 2026-08-19, трое суток нулевых прогонов).
+        # До-тяг с кулдауном закрывает дыру там, где ключ реально нужен.
+        ensure_secret("DEEPSEEK_API_KEY")
 
         async def _run():
             from database.connection import AsyncSessionLocal
@@ -621,7 +646,25 @@ def classify_pending_posts(limit: int = 0):
                 if run["problems"]:
                     logger.warning("classifier headless: замечания: %s", run["problems"][:10])
                 if not run["verdicts"]:
-                    return {"status": "ok", "posts": len(posts), "recorded": 0}
+                    # Ноль вердиктов при непустом батче — это ОТКАЗ, а не «ок».
+                    # Прежний код возвращал status=ok, и таска трое суток
+                    # рапортовала успех, забрав 200 постов и не разметив ни
+                    # одного: единственным следом был WARNING в логе, на который
+                    # никто не смотрит. Мониторинг успеха не видит отказа, если
+                    # отказ рапортует успехом (пул #145, зеркало инцидента с
+                    # ботами).
+                    reason = _dominant_failure(run["failures"]) or "no-verdicts"
+                    logger.error(
+                        "classifier headless: батч %d постов, ноль вердиктов — причина %s",
+                        len(posts),
+                        reason,
+                    )
+                    return {
+                        "status": f"error:{reason}",
+                        "posts": len(posts),
+                        "recorded": 0,
+                        "failures": len(run["failures"]),
+                    }
                 stats = await service.record_verdicts(
                     session,
                     run["verdicts"],
@@ -669,6 +712,9 @@ def distill_classifier_rules(limit: int = 200, days: int = 30):
 
         from modules.classifier import distill as distill_mod
         from modules.classifier import rules
+        from modules.secrets_bootstrap import ensure_secret
+
+        ensure_secret("DEEPSEEK_API_KEY")  # см. классификатор выше
 
         async def _run():
             from database.connection import AsyncSessionLocal
@@ -683,7 +729,14 @@ def distill_classifier_rules(limit: int = 200, days: int = 30):
                 if run.get("rejected"):
                     logger.info("classifier distill: отбраковано: %s", run["rejected"][:5])
                 if not run.get("proposals"):
-                    return {"status": "ok", "reason": run.get("reason"), "proposals": 0}
+                    reason = run.get("reason") or "no-proposals"
+                    # «Материала мало» — законный ноль, всё остальное — отказ.
+                    # Без этого различия дистиллятор с 2026-08-17 рапортовал
+                    # успех на отсутствующем ключе (reason=no_api_key, ok).
+                    if reason in ("not-enough-material", "distilled"):
+                        return {"status": "ok", "reason": reason, "proposals": 0}
+                    logger.error("classifier distill: прогон впустую — причина %s", reason)
+                    return {"status": f"error:{reason}", "reason": reason, "proposals": 0}
                 counts = await rules.record_rule_proposals(
                     session, run["proposals"], source="headless"
                 )
@@ -694,6 +747,46 @@ def distill_classifier_rules(limit: int = 200, days: int = 30):
     except Exception as e:
         logger.warning("classifier distill task failed: %s", e)
         return {"status": f"error:{type(e).__name__}"}
+
+
+@app.task(name="tasks.celery_app.check_classifier_heartbeat")
+def check_classifier_heartbeat():
+    """Сторож «ИИ-фильтр молчит»: алёрт, если вердиктов давно нет.
+
+    Инцидент 2026-08-19: ключ DeepSeek не доехал до воркера, и трое суток
+    ``classify_pending_posts`` возвращала ``ok`` с нулём вердиктов. Ни один
+    существующий сигнал этого не показывал — сервисы ``active``, health 200,
+    beat шлёт, worker принимает. Сторож смотрит на СЛЕД РАБОТЫ (свежесть
+    последнего вердикта в БД), а не на то, отработала ли таска.
+    """
+    try:
+        from config.classifier import get_source_days
+        from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from modules.classifier import service
+        from modules.classifier.heartbeat import maybe_alert_stale_classifier
+
+        async def _run():
+            from database.connection import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as session:
+                return await service.health_stats(session, days=get_source_days())
+
+        health = run_coro(_run())
+        domain = (
+            SERVER.get("domain") or f"{SERVER.get('host', '127.0.0.1')}:{SERVER.get('port', 8000)}"
+        )
+        status = maybe_alert_stale_classifier(
+            last_verdict_at=health.get("last_verdict_at"),
+            backlog=int(health.get("backlog") or 0),
+            telegram_token=(TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")),
+            chat_id=TELEGRAM_ALERT_CHAT_ID,
+            dashboard_url=f"https://{domain}/classifier",
+        )
+        logger.info("classifier heartbeat watchdog: %s", status)
+        return {"success": True, "status": status, "backlog": health.get("backlog")}
+    except Exception as e:
+        logger.error("check_classifier_heartbeat failed: %s", e, exc_info=True)
+        return {"success": False, "error": str(e)}
 
 
 @app.task(name="tasks.celery_app.check_telegram_bot_identity")
@@ -2151,6 +2244,14 @@ app.conf.beat_schedule = {
     # обобщения по двум-трём случаям — ровно то, что порог MIN_CORRECTIONS и
     # запрещает. Меньше 10 правок за окно → прогон возвращает
     # not-enough-material и не тратит ни токена.
+    # Сторож «ИИ-фильтр молчит» — раз в 2 часа на :05. Смотрит на свежесть
+    # последнего вердикта в БД, а не на исход таски: в инциденте 2026-08-19
+    # таска рапортовала успех, ничего не сделав, и отказ прожил трое суток.
+    "classifier-stale-watchdog": {
+        "task": "tasks.celery_app.check_classifier_heartbeat",
+        "schedule": crontab(minute=5, hour="*/2"),
+        "options": {"expires": 3600, "catchup": False},
+    },
     "classifier-distill-weekly": {
         "task": "tasks.celery_app.distill_classifier_rules",
         "schedule": crontab(minute=40, hour=4, day_of_week=1),

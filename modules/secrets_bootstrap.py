@@ -197,18 +197,49 @@ def _accepted(name: str) -> bool:
     return any(name.endswith(s) for s in ACCEPTED_SUFFIXES)
 
 
+# Сколько раз пробуем достучаться до vault на старте и сколько ждём между
+# попытками. Одна попытка — это не «best-effort», это «повезло/не повезло»:
+# инцидент 2026-08-19 стоил трёх суток молчания ИИ-фильтра ровно из-за одного
+# таймаута в момент, когда весь бокс перезагружался вместе с хостом vault
+# (гонка порядка загрузки — vault ещё не поднялся, а мы уже стартанули).
+# Три попытки с нарастающей паузой закрывают именно этот случай, не превращая
+# недоступный vault в задержку старта дольше ~10 секунд.
+_FETCH_ATTEMPTS = 3
+_FETCH_BACKOFF_SEC = (1.0, 3.0)
+_FETCH_TIMEOUT_SEC = 5
+
+
 def _fetch_secrets(token: str, vault_url: str) -> Dict[str, str]:
-    """GET /api/secrets из комнаты setka. ``{name: value}`` либо raise."""
+    """GET /api/secrets из комнаты setka. ``{name: value}`` либо raise.
+
+    Ретраи здесь, а не у вызывающего: «сеть моргнула на старте» — свойство
+    транспорта, а не политики восстановления. Последнее исключение
+    пробрасывается наружу, чтобы вызывающий залогировал настоящую причину.
+    """
     req = urllib.request.Request(
         vault_url,
         headers={"Authorization": f"Bearer {token}"},
     )
-    with urllib.request.urlopen(req, timeout=5) as resp:  # vault не вешает старт
-        payload: Any = __import__("json").load(resp)
-    secrets = payload.get("secrets") or {}
-    if not isinstance(secrets, dict):
-        raise RuntimeError("vault response: secrets is not a dict")
-    return {str(k): str(v) for k, v in secrets.items() if str(v)}
+    last: Optional[BaseException] = None
+    for attempt in range(_FETCH_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT_SEC) as resp:
+                payload: Any = __import__("json").load(resp)
+            secrets = payload.get("secrets") or {}
+            if not isinstance(secrets, dict):
+                raise RuntimeError("vault response: secrets is not a dict")
+            return {str(k): str(v) for k, v in secrets.items() if str(v)}
+        except Exception as e:  # noqa: BLE001 — ретраим любую сетевую беду
+            last = e
+            if attempt + 1 < _FETCH_ATTEMPTS:
+                log.warning(
+                    "SETKA: vault недоступен (попытка %d/%d): %s",
+                    attempt + 1,
+                    _FETCH_ATTEMPTS,
+                    e,
+                )
+                __import__("time").sleep(_FETCH_BACKOFF_SEC[attempt])
+    raise last if last else RuntimeError("vault: unknown failure")
 
 
 def bootstrap_secrets(
@@ -281,3 +312,62 @@ def bootstrap_secrets(
         "ignored": ignored,
         "reason": "recovered" if missing else "pulled",
     }
+
+
+# ─── Ленивый до-тяг секрета (инцидент 2026-08-19) ────────────────────────────
+
+# Как часто разрешён повторный поход в комнату, когда секрета нет на месте.
+# Кулдаун обязателен: без него таска, которой ключа не досталось, будет
+# долбить vault на каждый чанк.
+_ENSURE_COOLDOWN_SEC = 300.0
+_last_ensure_at: Dict[str, float] = {}
+
+
+def ensure_secret(name: str, env: Optional[Dict[str, str]] = None) -> bool:
+    """Досмотреть комнату, если ``name`` нет в окружении. ``True`` = значение есть.
+
+    **Зачем отдельно от bootstrap'а.** ``bootstrap_secrets()`` выполняется ровно
+    один раз — на импорте процесса. Если в ту секунду vault был недоступен,
+    секрет не появится НИКОГДА: перезапуск процесса — единственный путь, а
+    поводов его перезапускать нет, потому что снаружи всё выглядит здоровым.
+    Именно так ``DEEPSEEK_API_KEY`` не доехал до celery-воркера 2026-08-17 и
+    ИИ-фильтр трое суток возвращал ``status: ok`` c нулём вердиктов.
+
+    Заодно это делает правдой обещание из ``config/deepseek.py``: «ротация ключа
+    в комнате не должна требовать рестарта процесса». Пока до-тяга не было,
+    обещание держалось только на том, что процесс когда-нибудь перезапустят.
+
+    Ограничения те же, что у bootstrap'а: allowlist (свойство 2), локальное
+    значение сильнее (свойство 3), best-effort — недоступный vault даёт
+    ``False``, а не исключение (свойство 4).
+    """
+    env = env if env is not None else os.environ
+    if env.get(name):
+        return True
+    if not _accepted(name):
+        log.warning("SETKA: ensure_secret(%s) — имя вне allowlist, до-тяг не делается", name)
+        return False
+
+    now = __import__("time").monotonic()
+    prev = _last_ensure_at.get(name)
+    if prev is not None and now - prev < _ENSURE_COOLDOWN_SEC:
+        return False
+    _last_ensure_at[name] = now
+
+    token = env.get("SECRETS_TOKEN")
+    if not token:
+        return False
+    url = env.get("SECRETS_VAULT_URL") or VAULT_URL
+    try:
+        fetched = _fetch_secrets(token, url)
+    except Exception as e:  # noqa: BLE001 — best-effort, свойство 4
+        log.error("SETKA: до-тяг %s из vault не удался: %s", name, e)
+        return False
+
+    value = fetched.get(name)
+    if not value:
+        log.error("SETKA: %s нет и в комнате КАРМАНа — движок останется без ключа", name)
+        return False
+    env[name] = value
+    log.warning("SETKA: %s до-тянут из vault (на старте процесса его не было)", name)
+    return True
