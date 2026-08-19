@@ -156,7 +156,13 @@ async def apply_metrics(
 
 
 async def refresh_metrics(session, *, hours: int = REFRESH_WINDOW_HOURS) -> Dict[str, Any]:
-    """Один круг обновления метрик. Никогда не бросает наружу."""
+    """Один круг обновления метрик.
+
+    Сама функция исключения не ловит — их ловит обвязка вокруг ``run_coro``
+    в Celery-таске ``tasks.celery_app.refresh_post_metrics``. Здесь только
+    явные неуспехи (нет токена, ВК не отдал ни одной метрики) — они
+    возвращаются как результат, а не бросаются.
+    """
     import vk_api
 
     from modules.vk_monitor.post_metrics import fetch_metrics_for_token
@@ -186,4 +192,23 @@ async def refresh_metrics(session, *, hours: int = REFRESH_WINDOW_HOURS) -> Dict
     lip_by_ref = {ref: lip for ref, lip in live}
     metrics = fetch_metrics_for_token(api, [ref for ref, _ in live])
     updated = await apply_metrics(session, metrics, lip_by_ref)
+    if updated == 0:
+        # Токен был, но ни один батч wall.getById не отдал результата (бан
+        # токена посреди прохода, сетевой сбой на всех батчах разом) —
+        # fetch_metrics_for_token глотает отказы по-батчево и молча вернёт
+        # пустой словарь. «Проверено много, обновлено ноль» — это отказ, а не
+        # успех: без этой ветки он повторил бы инцидент 2026-08-19, где таска
+        # трое суток рапортовала успех, ничего не сделав.
+        logger.warning(
+            "refresh_metrics: %d постов проверено, ни один не обновился — "
+            "метрики от ВК не пришли ни на один батч",
+            len(live),
+        )
+        return {
+            "ok": False,
+            "error": "no_metrics_fetched",
+            "checked": len(live),
+            "updated": 0,
+            "skipped_published": skipped,
+        }
     return {"ok": True, "checked": len(live), "updated": updated, "skipped_published": skipped}
