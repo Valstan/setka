@@ -68,6 +68,31 @@
         </div>
     </div>
 
+    <!-- Витрина рейтинга (звено 5, шаг 1, Task 7): ИЗМЕРЕНИЕ, публикацию не трогает. -->
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
+        <div>
+          <b>Витрина рейтинга</b>
+          <span class="text-muted small">— измерение, публикацию не меняет</span>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+          <input id="cf-rating-region" class="form-control form-control-sm" style="width: 120px"
+                 placeholder="район (mi)" />
+          <input id="cf-rating-n" class="form-control form-control-sm" style="width: 80px"
+                 type="number" min="1" max="100" value="10" />
+          <button class="btn btn-outline-primary btn-sm" onclick="loadRatingTop()">Показать</button>
+        </div>
+      </div>
+      <div class="card-body py-2">
+        <div class="small text-muted mb-2">
+          Одна и та же выборка при разных &alpha;. <b>&alpha;=0.5</b> — как сортируется лента
+          сейчас (побеждает отклик в маленькой группе), <b>&alpha;=0</b> — чистый охват,
+          <b>&alpha;=0.25</b> — предложенный дефолт. Выбирается глазами на боевых постах.
+        </div>
+        <div id="cf-rating-box" class="text-muted small">Введите район и нажмите «Показать».</div>
+      </div>
+    </div>
+
     <!-- Петля обучения (ADR-0005): выученные правила -->
     <div class="card mb-3">
         <div class="card-body py-2">
@@ -233,6 +258,45 @@ async function loadStats() {
         "· классифицировано: " + (STATS.total_classified ?? 0) +
         (parts.length > 1 ? " (" + parts.join(" · ") + ")" : "");
     renderEngineView();
+}
+
+// Витрина рейтинга (звено 5, шаг 1) — ИЗМЕРЕНИЕ, публикацию не трогает.
+// Три колонки показывают одну и ту же выборку при разных alpha, чтобы
+// значение выбиралось глазами на боевых постах, а не наугад в конфиге.
+async function loadRatingTop() {
+    const region = document.getElementById("cf-rating-region").value.trim();
+    const n = document.getElementById("cf-rating-n").value || 10;
+    const box = document.getElementById("cf-rating-box");
+    if (!region) { box.textContent = "Выберите район."; return; }
+    box.innerHTML = `<span class="spinner-border spinner-border-sm"></span> считаю…`;
+    const r = await fetch(`/api/classifier-review/rating/top?region=${encodeURIComponent(region)}&n=${n}`);
+    if (!r.ok) { box.innerHTML = `<span class="text-danger">Не получилось: ${r.status}</span>`; return; }
+    const d = await r.json();
+    box.innerHTML = ratingHTML(d);
+}
+
+function ratingHTML(d) {
+    // Охват источника рядом с числом — правило после #493: цифра без охвата
+    // обещает больше, чем меряет. dropped_by_filters добавлен отдельно (Task 7,
+    // поле появилось после брифа): без него можно принять эту витрину за
+    // сегодняшний публикуемый набор, а она сознательно показывает и то, что
+    // алгоритмические фильтры уже отсеяли — ради картины после их снятия.
+    const head = `<div class="small text-muted mb-2">Кандидатов в окне 72 ч: <b>${d.candidates}</b>`
+        + ` · с измеренными просмотрами: <b>${d.measured}</b>`
+        + ` · отсеяно фильтрами (но показано здесь): <b>${d.dropped_by_filters}</b></div>`;
+    const col = (alpha, rows) => `
+      <div class="col-md-4">
+        <div class="fw-bold mb-1">α = ${alpha}</div>
+        <ol class="small ps-3">${rows.map(r => `
+          <li>
+            <a href="${esc(r.post_url)}" target="_blank" rel="noopener">${esc(r.lip)}</a>
+            <span class="badge bg-light text-dark">${r.score === null ? "не мерено" : r.score.toFixed(2)}</span>
+            <div class="text-muted">👁 ${r.views ?? "—"} · ❤ ${r.likes ?? "—"} · 💬 ${r.comments ?? "—"} · ↗ ${r.reposts ?? "—"}</div>
+          </li>`).join("")}</ol>
+      </div>`;
+    return head + `<div class="row">`
+        + Object.entries(d.alphas).map(([a, rows]) => col(a, rows)).join("")
+        + `</div>`;
 }
 
 let HEALTH = null;
