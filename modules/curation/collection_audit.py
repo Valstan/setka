@@ -24,7 +24,7 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence
 
 from config.runtime import collection_audit_shadow_enabled, get_collection_audit_region_codes
-from utils.post_utils import clear_copy_history, lip_of_post
+from utils.post_utils import clear_copy_history, lip_of_post, vk_post_datetime
 from utils.text_utils import check_blacklist, is_advertisement, is_hard_spam
 from utils.vk_attachments import summarize_media
 
@@ -107,6 +107,7 @@ def _snapshot(
         "theme": theme,
         "post_text": (text[:_MAX_AUDIT_TEXT] or None),
         "post_url": f"https://vk.com/wall{owner_id}_{post_id}",
+        "published_at": vk_post_datetime(post.get("date")),
         "has_media": _has_media(post),
         "media": media or None,
         "decision": decision,
