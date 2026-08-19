@@ -487,23 +487,64 @@ function cardHTML(it) {
 // одно, и требовать отдельное «Готово» на каждую из четырёх десятков штук —
 // ровно та работа, ради устранения которой группировка и делалась.
 async function agreeGroup(ids, btn) {
-    if (btn) btn.disabled = true;
-    const r = await fetch("/api/classifier-review/bulk/agree", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ids}),
-    });
-    if (!r.ok) { if (btn) btn.disabled = false; return; }
-    await afterBulk();
+    await runBulk(btn, ids.length, "/api/classifier-review/bulk/agree", {ids});
 }
 
 async function correctGroup(ids, verdict_type, operator_value, btn) {
-    if (btn) btn.disabled = true;
-    const r = await fetch("/api/classifier-review/bulk/correct", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ids, verdict_type, operator_value}),
-    });
-    if (!r.ok) { if (btn) btn.disabled = false; return; }
-    await afterBulk();
+    await runBulk(btn, ids.length, "/api/classifier-review/bulk/correct",
+                  {ids, verdict_type, operator_value});
+}
+
+// Единственный путь групповых действий: молчащая кнопка — это отдельная авария.
+//
+// Весь день 2026-08-19 «Согласен со всем блоком» отвечал 422 (статический путь
+// `/bulk/agree` был затенён маршрутом `/{classification_id}/agree`), а обработчик
+// на !r.ok просто снимал disabled и выходил. Снаружи отказ выглядел неотличимо
+// от медленной работы, и владелец сообщил его как «похоже, где-то затык».
+// Отсюда два обязательных свойства: пока идёт пачка — видно, что она идёт;
+// если пачка не прошла — видно, почему, а не пустота.
+async function runBulk(btn, n, url, payload) {
+    const restore = btn ? btn.innerHTML : null;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="spinner-border spinner-border-sm"></span> закрываю ${n}…`;
+    }
+    try {
+        const r = await fetch(url, {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+            bulkFailed(btn, restore, `сервер ответил ${r.status}`, await r.text());
+            return;
+        }
+        const out = await r.json();
+        // ok:false — штатный ответ ручки (пустой список, неизвестный тип вердикта):
+        // HTTP при этом 200, и без явной проверки отказ снова стал бы тишиной.
+        if (out && out.ok === false) {
+            bulkFailed(btn, restore, out.error || "отказ без причины", "");
+            return;
+        }
+        await afterBulk();
+    } catch (e) {
+        bulkFailed(btn, restore, "запрос не дошёл", String(e));
+    }
+}
+
+function bulkFailed(btn, restore, reason, detail) {
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = restore;
+        const box = btn.closest(".card-header") || btn.parentElement;
+        let msg = box.querySelector(".cf-bulk-error");
+        if (!msg) {
+            msg = document.createElement("div");
+            msg.className = "cf-bulk-error text-danger small w-100 mt-1";
+            box.appendChild(msg);
+        }
+        msg.textContent = `Блок не закрыт: ${reason}. Ничего не изменилось — можно нажать ещё раз.`;
+    }
+    console.error("bulk failed:", reason, detail);
 }
 
 // После пачки перечитываем ленту целиком: соседние блоки могли схлопнуться
