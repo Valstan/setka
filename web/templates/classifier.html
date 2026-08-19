@@ -112,6 +112,17 @@
     </div>
 </div>
 
+<style>
+/* Меню «Изменить тему» уезжало ПОД соседние карточки, и пункт нельзя было
+   выбрать (жалоба владельца 2026-08-19).
+   Причина: карточки ленты — позиционированные элементы-братья, и те, что идут
+   ПОЗЖЕ в DOM, рисуются поверх содержимого предыдущих. z-index у самого
+   .dropdown-menu не спасает: он действует внутри своей карточки, а спор идёт
+   между карточками. Поэтому поднимаем на время открытия саму карточку —
+   класс вешает JS на событиях Bootstrap ниже. */
+.card.cf-dd-open { position: relative; z-index: 1056; }
+</style>
+
 <script>
 const ACTIONS = {publish: "публиковать", delete: "удалить", hold: "отложить"};
 const DROP_REASON = {
@@ -610,6 +621,18 @@ document.getElementById("cf-rule-add").addEventListener("click", addRule);
 document.getElementById("cf-theme-add-btn").addEventListener("click", addThemeFromEditor);
 document.getElementById("cf-theme-add-name").addEventListener("keydown",
     e => { if (e.key === "Enter") { e.preventDefault(); addThemeFromEditor(); } });
+// Меню тем: поднимаем карточку над соседями, пока список открыт. Слушаем на
+// document, потому что карточки ленты перерисовываются целиком — обработчик,
+// повешенный на конкретную кнопку, пережил бы ровно одну перерисовку.
+document.addEventListener("show.bs.dropdown", (e) => {
+    const card = e.target.closest?.(".card");
+    if (card) card.classList.add("cf-dd-open");
+});
+document.addEventListener("hidden.bs.dropdown", (e) => {
+    const card = e.target.closest?.(".card");
+    if (card) card.classList.remove("cf-dd-open");
+});
+
 loadStats();
 // Порядок: здоровье → темы → лента. Темы нужны меню карточек, здоровье —
 // объяснению пустой ленты.
