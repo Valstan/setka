@@ -250,3 +250,91 @@ async def test_reports_how_many_shown_candidates_were_dropped_by_filters(db_sess
 
     assert out["candidates"] == 2
     assert out["dropped_by_filters"] == 1
+
+
+# --- окно и охват источника ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reports_rows_in_window_before_the_verdict_intersection(db_session):
+    """Отдельное число «постов в окне» — до пересечения с вердиктом.
+
+    ``fetch_publish_lips`` по контракту отдаёт ПУСТОЙ набор и при ошибке
+    чтения (сознательный fail-closed, selection.py), и когда классификатор по
+    району вовсе не отрабатывал. Без этого числа «кандидатов: 0» неотличимо от
+    «в районе тихо» — а по этой витрине владелец выбирает показатель степени
+    формулы.
+    """
+    now = datetime.utcnow()
+    await _seed(
+        db_session,
+        [
+            _audit("c_1", published_at=now - timedelta(hours=1)),
+            _audit("c_2", published_at=now - timedelta(hours=2)),
+            _audit("c_3", published_at=now - timedelta(hours=100)),  # вне окна
+        ],
+    )  # вердиктов нет ни на один
+
+    out = await top_by_rating(db_session, region_code="mi", n=10, alphas=[0.25])
+
+    assert out["candidates"] == 0
+    assert out["in_window"] == 2  # посты есть, разрешённых вердиктом — ни одного
+
+
+@pytest.mark.asyncio
+async def test_in_window_counts_only_this_region_and_theme(db_session):
+    """Число охвата считается по той же выборке, что и топ, а не по всей таблице.
+
+    Иначе оно обещало бы больше, чем меряет: подпись говорит «в этом районе»,
+    а число приходило бы со всей сети.
+    """
+    now = datetime.utcnow()
+    await _seed(
+        db_session,
+        [
+            _audit("c_4", theme="novost", published_at=now - timedelta(hours=1)),
+            _audit("c_5", theme="afisha", published_at=now - timedelta(hours=1)),
+            _audit("c_6", region="vp", theme="novost", published_at=now - timedelta(hours=1)),
+        ],
+    )
+
+    out = await top_by_rating(db_session, region_code="mi", theme="novost", n=10, alphas=[0.25])
+
+    assert out["in_window"] == 1
+
+
+@pytest.mark.asyncio
+async def test_window_is_the_same_one_the_refresh_task_uses(db_session):
+    """Витрина показывает ровно те строки, которые таска берётся обновлять.
+
+    Шов «что меряем» ↔ «что показываем». Две копии константы и предиката
+    разъехались бы молча: на панели появились бы посты, метрики которых никто
+    не обновляет, и никакого сигнала об этом не будет — цифры останутся
+    правдоподобными, просто мёртвыми. Тест держит обе стороны на одних данных,
+    включая границу окна (71 ч внутри, 73 ч снаружи).
+    """
+    from modules.classifier.metrics_refresh import select_refresh_candidates
+
+    # lip'ы числовые: post_url собирается как vk.com/wall{lip}, и таска
+    # разбирает из него (owner_id, post_id) — на «d_1» ref не собрался бы, и
+    # тест сравнивал бы пустоту с пустотой.
+    now = datetime.utcnow()
+    await _seed(
+        db_session,
+        [
+            _audit("100_1", published_at=now - timedelta(hours=1)),
+            _audit("100_2", published_at=now - timedelta(hours=71)),
+            _audit("100_3", published_at=now - timedelta(hours=73)),
+            _verdict("100_1"),
+            _verdict("100_2"),
+            _verdict("100_3"),
+        ],
+    )
+
+    out = await top_by_rating(db_session, region_code="mi", n=10, alphas=[0.25])
+    candidates, unparsable = await select_refresh_candidates(db_session)
+
+    shown = {r["lip"] for r in out["alphas"]["0.25"]}
+    refreshed = {lip for _, lip in candidates}
+    assert unparsable == 0
+    assert shown == refreshed == {"100_1", "100_2"}

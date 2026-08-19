@@ -11,12 +11,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence
 
+from modules.classifier.audit_window import AUDIT_WINDOW_HOURS, in_window, window_cutoff
 from utils.post_utils import post_rating
-
-WINDOW_HOURS = 72
 
 
 def rank_rows(rows: Sequence[Dict[str, Any]], *, alpha: float, n: int) -> List[Dict[str, Any]]:
@@ -56,10 +54,10 @@ async def top_by_rating(
     показывать то, что реально стоит в конфиге. Рядом — две опорные точки:
     0.5 (как сортируется лента сейчас) и 0 (чистый охват).
 
-    Окно — те же 72 часа, что у отбора: показывать надо то, из чего реально
-    можно выбрать.
+    Окно — то же, что у обновления метрик (``audit_window``): показывать надо
+    то, из чего реально можно выбрать, и ровно то, что таска меряет.
     """
-    from sqlalchemy import or_, select
+    from sqlalchemy import select
 
     from config.classifier import get_rating_views_alpha
     from database.models_extended import CollectedPostAudit
@@ -71,7 +69,7 @@ async def top_by_rating(
         # настроенная alpha может совпасть с опорной — дубля быть не должно.
         alphas = list(dict.fromkeys([configured, 0.5, 0.0]))
 
-    cutoff = datetime.utcnow() - timedelta(hours=WINDOW_HOURS)
+    cutoff = window_cutoff(AUDIT_WINDOW_HOURS)
     stmt = select(
         CollectedPostAudit.lip,
         CollectedPostAudit.post_url,
@@ -86,18 +84,16 @@ async def top_by_rating(
         CollectedPostAudit.metrics_updated_at,
     ).where(
         CollectedPostAudit.region_code == region_code,
-        or_(
-            CollectedPostAudit.published_at > cutoff,
-            (CollectedPostAudit.published_at.is_(None))
-            & (CollectedPostAudit.collected_at > cutoff),
-        ),
+        in_window(cutoff),
     )
     if theme:
         stmt = stmt.where(CollectedPostAudit.theme == theme)
 
     allowed = await selection.fetch_publish_lips(session, region_code)
     rows: List[Dict[str, Any]] = []
+    in_window_rows = 0
     for r in (await session.execute(stmt)).all():
+        in_window_rows += 1
         if r.lip not in allowed:
             continue
         rows.append(
@@ -134,6 +130,15 @@ async def top_by_rating(
     return {
         "region": region_code,
         "theme": theme or "",
+        # Сколько строк аудита вообще попало в окно — ДО пересечения с
+        # вердиктом. Без этого числа «кандидатов: 0» неотличимо от двух разных
+        # миров: «в районе тихо» и «вердиктов нет». Второе — не редкость и не
+        # авария кода: fetch_publish_lips по контракту возвращает ПУСТОЙ набор
+        # и при ошибке чтения (сознательный fail-closed, см. selection.py), и
+        # когда классификатор по району просто не отрабатывал. По этой витрине
+        # владелец выбирает показатель степени формулы — молча показывать ему
+        # три пустые колонки нельзя.
+        "in_window": in_window_rows,
         "candidates": len(rows),
         # Охват источника рядом с числом — правило после #493: у каждой цифры
         # на панели спрашивать, какую долю реальности покрывает её источник.
