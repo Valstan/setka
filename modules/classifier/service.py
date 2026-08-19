@@ -975,3 +975,283 @@ async def health_stats(session, *, days: int = DEFAULT_SOURCE_DAYS) -> Dict[str,
             else None
         ),
     }
+
+
+# ═══════════════════ Воронка, прогресс оператора, аранжировка ═══════════════
+# Заказ владельца 2026-08-19. Три вопроса, на которые панель не отвечала:
+# доходит ли собранное до движка, насколько оператор отстал и как разбирать
+# ленту пачками. Агрегация делается в Python, а не в SQL: тот же приём, что в
+# ``_theme_usage_counts`` — ``verdict`` лежит в JSON, и операторы jsonb развели
+# бы прод (PostgreSQL) с тестами (SQLite).
+
+
+async def funnel_stats(session, *, hours: int = 24) -> Dict[str, Any]:
+    """Сквозная воронка за окно: собрано → размечено → исход → в публикации.
+
+    Отсев дублями сознательно не считаем: ``record_collection_audit``
+    идемпотентен по ``lip`` (first-seen wins), повторно пришедший пост новой
+    строки не создаёт — честной цифры в базе нет. Нарисовать неизмеримое хуже,
+    чем не рисовать: панель уже один раз научила смотреть мимо, когда возраст
+    последнего вердикта лежал серой подписью (инцидент 2026-08-19).
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+
+    collected_lips = {
+        lip
+        for (lip,) in (
+            await session.execute(
+                select(CollectedPostAudit.lip).where(CollectedPostAudit.collected_at >= cutoff)
+            )
+        ).all()
+    }
+
+    verdict_rows = (
+        await session.execute(
+            select(
+                ContentClassification.lip,
+                ContentClassification.verdict,
+                ContentClassification.tokens_estimate,
+            ).where(ContentClassification.created_at >= cutoff)
+        )
+    ).all()
+
+    actions: Dict[str, int] = {"publish": 0, "delete": 0, "hold": 0}
+    tokens = 0
+    classified_lips: set = set()
+    for lip, verdict, tok in verdict_rows:
+        classified_lips.add(lip)
+        action = str((verdict or {}).get("action") or "").strip().lower()
+        if action in actions:
+            actions[action] += 1
+        tokens += int(tok or 0)
+
+    published_lips = await _published_lips(session, cutoff=cutoff)
+
+    collected_total = len(collected_lips)
+    # Размеченным считаем пересечение: вердикт мог приехать по посту, собранному
+    # ДО окна (движок доедает хвост), и тогда «размечено больше, чем собрано»
+    # выглядело бы поломкой счётчика.
+    classified_in_window = len(collected_lips & classified_lips)
+    return {
+        "window_hours": hours,
+        "collected": collected_total,
+        "classified": classified_in_window,
+        "unclassified": collected_total - classified_in_window,
+        "verdicts": len(verdict_rows),
+        "publish": actions["publish"],
+        "delete": actions["delete"],
+        "hold": actions["hold"],
+        "published": len(classified_lips & published_lips),
+        "tokens": tokens,
+        "coverage_pct": (
+            round(100.0 * classified_in_window / collected_total, 1) if collected_total else None
+        ),
+    }
+
+
+async def _published_lips(session, *, cutoff: datetime) -> set:
+    """lip, реально дошедшие до читателя: кандидаты ВЫШЕДШИХ свод­ок.
+
+    ``published_post_id is not None`` — единственный признак, что свод­ка
+    опубликована. Без него в «дошло до читателя» попали бы кандидаты свод­ок,
+    которые так и остались в очереди.
+    """
+    runs = (
+        (
+            await session.execute(
+                select(BulletinCurationRun).where(
+                    BulletinCurationRun.created_at >= cutoff,
+                    BulletinCurationRun.published_post_id.isnot(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out: set = set()
+    for run in runs:
+        cands = run.candidates or []
+        if not isinstance(cands, (list, tuple)):
+            continue
+        for c in cands:
+            if isinstance(c, dict):
+                lip = str(c.get("lip") or "").strip()
+                if lip:
+                    out.add(lip)
+    return out
+
+
+async def operator_progress_stats(session, *, hours: int = 24) -> Dict[str, Any]:
+    """Насколько оператор отстаёт от движка.
+
+    **Темп считается по нажатиям (``classification_corrections``), а не по
+    ``reviewed_at``.** Архивация завала 2026-08-18 проставила ``reviewed_at``
+    44 177 постам одним ``UPDATE``; по нему темп вышел бы фантастическим, а
+    отставание — нулевым, хотя оператор не нажал ни разу.
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+
+    engine_verdicts = int(
+        (
+            await session.execute(
+                select(func.count(ContentClassification.id)).where(
+                    ContentClassification.created_at >= cutoff
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    # Один пост = одна разобранная карточка, сколько бы типов вердикта оператор
+    # ни тронул: считаем различные classification_id, иначе смена темы плюс
+    # согласие с действием выглядели бы двумя разобранными постами.
+    reviewed = int(
+        (
+            await session.execute(
+                select(func.count(func.distinct(ClassificationCorrection.classification_id))).where(
+                    ClassificationCorrection.created_at >= cutoff
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    remaining = int(
+        (
+            await session.execute(
+                select(func.count(ContentClassification.id)).where(
+                    ContentClassification.reviewed_at.is_(None)
+                )
+            )
+        ).scalar()
+        or 0
+    )
+
+    rate = round(reviewed / hours, 1) if reviewed else None
+    return {
+        "window_hours": hours,
+        "engine_verdicts": engine_verdicts,
+        "operator_reviewed": reviewed,
+        "remaining": remaining,
+        "operator_rate_per_hour": rate,
+        # Часов работы оператора, чтобы разгрести очередь текущим темпом. Без
+        # нажатий темп не выдумываем: ноль в знаменателе дал бы бесконечность,
+        # а «0 ч» соврал бы, что отставания нет.
+        "lag_hours": round(remaining / rate, 1) if rate else None,
+    }
+
+
+def _normalized_text(text: Any) -> str:
+    """Ключ дословного дубля: регистр и пробельные последовательности не считаются."""
+    return " ".join(str(text or "").lower().split())
+
+
+async def review_feed_grouped(
+    session,
+    *,
+    region_code: Optional[str] = None,
+    limit: int = 500,
+) -> List[Dict[str, Any]]:
+    """Лента блоками «вердикт × тема», внутри блока дословные дубли схлопнуты.
+
+    Очередь читается целиком (до ``limit``), а не постранично: группа из
+    четырёх десятков постов раскидана по всей очереди, и в окне из 60 карточек
+    от неё видны один-два — то есть постраничная группировка не группирует.
+    """
+    items = await review_feed(session, region_code=region_code, only_unreviewed=True, limit=limit)
+
+    blocks: Dict[tuple, Dict[str, Any]] = {}
+    for item in items:
+        verdict = item.get("verdict") or {}
+        action = str(verdict.get("action") or "?").strip().lower()
+        theme = str(verdict.get("theme") or "?").strip()
+        block = blocks.setdefault(
+            (action, theme),
+            {"action": action, "theme": theme, "total": 0, "cards": [], "_by_text": {}},
+        )
+        block["total"] += 1
+
+        norm = _normalized_text(item.get("post_text"))
+        # Посты без текста не группируем: пустая строка склеила бы их все в одну
+        # фиктивную группу «одинаковых», хотя общего у них ровно ничего.
+        existing = block["_by_text"].get(norm) if norm else None
+        if existing is None:
+            card = dict(item)
+            card["duplicate_count"] = 1
+            card["duplicate_ids"] = [item["id"]]
+            card["duplicate_lips"] = [item["lip"]]
+            block["cards"].append(card)
+            if norm:
+                block["_by_text"][norm] = card
+        else:
+            existing["duplicate_count"] += 1
+            existing["duplicate_ids"].append(item["id"])
+            existing["duplicate_lips"].append(item["lip"])
+
+    out = []
+    for block in blocks.values():
+        block.pop("_by_text", None)
+        block["ids"] = [i for c in block["cards"] for i in c["duplicate_ids"]]
+        out.append(block)
+    # Крупные блоки первыми: пачка на 267 карточек экономит больше нажатий, чем
+    # блок на три, и должна попадаться оператору раньше.
+    out.sort(key=lambda b: b["total"], reverse=True)
+    return out
+
+
+async def bulk_agree(session, classification_ids: Sequence[int]) -> Dict[str, Any]:
+    """✅ «Согласен со всей группой»: ``agree_all`` по каждому id пачки.
+
+    Идёт через ``agree_all``, а не через прямой ``UPDATE reviewed_at``: реакции
+    обязаны попасть в ``classification_corrections``, иначе пачка разбирается
+    вхолостую — agree-rate её не увидит, и дистилляция не получит сырья. Ровно
+    так завал 2026-08-18 дал ноль коррекций на 44 177 архивированных строк.
+    """
+    finalized = 0
+    missing = 0
+    for cid in classification_ids:
+        res = await agree_all(session, int(cid))
+        if res.get("ok"):
+            finalized += 1
+        else:
+            missing += 1
+    return {"ok": True, "finalized": finalized, "missing": missing}
+
+
+async def bulk_correct(
+    session,
+    classification_ids: Sequence[int],
+    *,
+    verdict_type: str,
+    operator_value: Any,
+) -> Dict[str, Any]:
+    """Правка одного аспекта вердикта сразу по группе + закрытие карточек.
+
+    **Финализирует, в отличие от одиночного ``correct``.** Карточка-дубль
+    показывает один пост, но представляет всю группу дословно одинаковых:
+    решение оператора относится к ним всем сразу, и требовать отдельное
+    «Готово» на каждую из четырёх десятков штук — ровно та работа, ради
+    устранения которой группировка и делалась.
+
+    Сам вердикт не переписывается (как и в ``correct``): расхождение «сеть
+    сказала так, оператор поправил эдак» — это и есть обучающий материал,
+    ``enforce`` накладывает правку поверх при публикации.
+    """
+    if verdict_type not in VERDICT_TYPES:
+        return {"ok": False, "corrected": 0, "error": f"unknown verdict_type: {verdict_type}"}
+
+    corrected = 0
+    missing = 0
+    for cid in classification_ids:
+        res = await correct(
+            session,
+            int(cid),
+            verdict_type=verdict_type,
+            operator_value=operator_value,
+        )
+        if not res.get("ok"):
+            missing += 1
+            continue
+        # Остальные аспекты вердикта закрываем как согласие — тот же смысл, что
+        # у кнопки «Готово»: поправлено то, что назвали, прочее принято.
+        await finalize(session, int(cid))
+        corrected += 1
+    return {"ok": True, "corrected": corrected, "missing": missing}

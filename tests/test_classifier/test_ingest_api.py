@@ -52,11 +52,12 @@ def test_pending_uses_region_query_over_allowlist(client, monkeypatch):
 
 
 def test_pending_passes_source_days_default(client):
-    # По умолчанию окно свежести — 3 суток (модель владельца «не старше 3 дней»).
+    # По умолчанию окно свежести — сутки: «жить только свежим» (решение владельца
+    # 2026-08-19). Старое всё равно не пойдёт в сводку по правилу 72 часов.
     fake = AsyncMock(return_value=[])
     with patch.object(ing.service, "fetch_pending", fake):
         client.get("/api/classifier/pending", headers={"X-API-Key": KEY})
-    assert fake.await_args.kwargs["days"] == 3
+    assert fake.await_args.kwargs["days"] == 1
 
 
 def test_pending_source_days_env_override(client, monkeypatch):

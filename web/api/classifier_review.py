@@ -160,13 +160,77 @@ async def themes_canonicalize():
 
 @router.get("/health")
 async def health():
-    """Диагностика рутины: backlog по регионам, вердикты/сутки, покрытие потока."""
+    """Диагностика рутины: backlog по регионам, вердикты/сутки, покрытие потока.
+
+    Плюс сквозная воронка за сутки (заказ владельца 2026-08-19): собрано →
+    размечено → допустил/выкинул/отложил → дошло до читателя.
+    """
     from config.classifier import get_pending_max, get_source_days
 
     async with AsyncSessionLocal() as session:
         out = await service.health_stats(session, days=get_source_days())
+        out["funnel"] = await service.funnel_stats(session, hours=24)
     out["pending_max"] = get_pending_max()
     return out
+
+
+@router.get("/progress")
+async def progress():
+    """Насколько оператор отстал от движка: вынесено / разобрано / осталось / темп."""
+    async with AsyncSessionLocal() as session:
+        return await service.operator_progress_stats(session, hours=24)
+
+
+@router.get("/feed/grouped")
+async def feed_grouped(
+    region: str = Query("", description="код района (опционально)"),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    """Лента блоками «вердикт × тема» с схлопнутыми дословными дублями.
+
+    Лимит выше обычной ленты намеренно: группировка постранично не группирует —
+    группа из четырёх десятков постов раскидана по всей очереди.
+    """
+    async with AsyncSessionLocal() as session:
+        blocks = await service.review_feed_grouped(
+            session, region_code=region.strip() or None, limit=limit
+        )
+    return {"blocks": blocks, "count": sum(b["total"] for b in blocks)}
+
+
+class BulkAgree(BaseModel):
+    ids: list[int]
+
+
+class BulkCorrect(BaseModel):
+    ids: list[int]
+    verdict_type: str
+    operator_value: Any
+
+
+@router.post("/bulk/agree")
+async def bulk_agree(body: BulkAgree = Body(...)):
+    """✅ «Согласен со всей группой» — одно нажатие закрывает пачку карточек."""
+    ids = [int(i) for i in (body.ids or [])][:2000]
+    if not ids:
+        return {"ok": False, "error": "empty ids"}
+    async with AsyncSessionLocal() as session:
+        return await service.bulk_agree(session, ids)
+
+
+@router.post("/bulk/correct")
+async def bulk_correct(body: BulkCorrect = Body(...)):
+    """Правка вердикта сразу по группе (и закрытие её карточек)."""
+    ids = [int(i) for i in (body.ids or [])][:2000]
+    if not ids:
+        return {"ok": False, "error": "empty ids"}
+    async with AsyncSessionLocal() as session:
+        return await service.bulk_correct(
+            session,
+            ids,
+            verdict_type=body.verdict_type,
+            operator_value=body.operator_value,
+        )
 
 
 # --- Петля обучения (ADR-0005): оператор утверждает выученные правила ------------
