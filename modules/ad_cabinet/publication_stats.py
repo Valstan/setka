@@ -109,9 +109,12 @@ async def run_collect_stats(
             s = stats.get(key)
             if s is None:
                 continue
-            pub.views = s.get("views", 0)
-            pub.likes = s.get("likes", 0)
-            pub.reposts = s.get("reposts", 0)
+            # Без дефолта: ВК не прислал метрику — значит она не измерена, а не
+            # ноль. NULL честнее нуля; колонка nullable=True (database/models.py)
+            # это допускает.
+            pub.views = s.get("views")
+            pub.likes = s.get("likes")
+            pub.reposts = s.get("reposts")
             pub.stats_updated_at = now
             updated += 1
 
