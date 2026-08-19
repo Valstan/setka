@@ -43,32 +43,15 @@ def _build_default_fetcher(user_token: str, community_tokens: Dict[int, str]):
             if token:
                 by_token.setdefault(token, []).append((owner, pid))
 
-        out: Dict[Ref, Dict[str, int]] = {}
+        from modules.vk_monitor.post_metrics import fetch_metrics_for_token
+
+        out: Dict[Ref, Dict[str, Any]] = {}
         for token, grp in by_token.items():
             api = vk_api.VkApi(token=token).get_api()
-            for i in range(0, len(grp), 100):
-                chunk = grp[i : i + 100]
-                posts_str = ",".join(f"{o}_{p}" for o, p in chunk)
-                try:
-                    resp = api.wall.getById(posts=posts_str)
-                except Exception as e:
-                    logger.warning("wall.getById stats batch failed: %s", e)
-                    continue
-                items = (
-                    resp
-                    if isinstance(resp, list)
-                    else (resp.get("items") if isinstance(resp, dict) else [])
-                )
-                for it in items or []:
-                    try:
-                        key = (int(it.get("owner_id")), int(it.get("id")))
-                    except (TypeError, ValueError):
-                        continue
-                    out[key] = {
-                        "views": int((it.get("views") or {}).get("count", 0)),
-                        "likes": int((it.get("likes") or {}).get("count", 0)),
-                        "reposts": int((it.get("reposts") or {}).get("count", 0)),
-                    }
+            # Разбор и нарезка — в общем модуле (см. его docstring: вторая копия
+            # разошлась бы с первой молча). Своей здесь остаётся только политика
+            # токенов выше: user-token админа видит просмотры, community — нет.
+            out.update(fetch_metrics_for_token(api, grp))
         return out
 
     return fetch_stats
