@@ -15,6 +15,12 @@
 **``None`` ≠ ``0``.** Поля, которых ВК не прислал, остаются ``None``: рейтинг
 делит на ``(views + 1)``, и «ноль просмотров» вместо «не измеряли» подняло бы
 такой пост в верхушку отбора.
+
+**Тротлинг общий с парсером.** ``token`` — обязательный аргумент: вызовы идут
+через тот же per-token лимитер и тот же учёт, что у ``VKClient`` (см.
+``vk_client.enforce_token_rate_limit``). Обязательный, а не необязательный,
+именно потому, что забытый аргумент означал бы залп мимо тормоза — молча и на
+живом READ-токене боевого парсера.
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
+from modules.vk_monitor.vk_client import enforce_token_rate_limit
 from utils.post_utils import vk_post_datetime
 
 logger = logging.getLogger(__name__)
@@ -69,11 +76,16 @@ def fetch_metrics_for_token(
     api: Any,
     refs: Sequence[Ref],
     *,
+    token: str,
     batch_size: int = BATCH_SIZE,
 ) -> Dict[Ref, Dict[str, Any]]:
     """Метрики для списка постов одним токеном, батчами по ``batch_size``.
 
     ``api`` — уже собранный объект ``vk_api.VkApi(token=...).get_api()``.
+    ``token`` — та же строка токена: по ней работает общий с парсером тормоз
+    (~2.5 запроса в секунду на токен) и учёт расхода по токенам. Без него
+    круг обновления метрик (78 батчей) уходил бы в ВК залпом и мог посадить
+    на cooldown токен, которым живёт боевой сбор постов.
 
     Падение отдельного батча логируется и пропускается: обновление метрик —
     фоновая работа, и один отказ ВК не должен стоить остальных семи тысяч
@@ -83,6 +95,8 @@ def fetch_metrics_for_token(
     for i in range(0, len(refs), batch_size):
         chunk = refs[i : i + batch_size]
         posts_str = ",".join(f"{o}_{p}" for o, p in chunk)
+        # Тормоз ДО вызова и на каждый батч — как в VKClient.get_posts_by_ids.
+        enforce_token_rate_limit(token, "wall.getById")
         try:
             resp = api.wall.getById(posts=posts_str)
         except Exception as e:  # pragma: no cover - сеть

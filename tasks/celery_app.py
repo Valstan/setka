@@ -699,13 +699,14 @@ def refresh_post_metrics(hours: int = 0):
     цифры надо догонять фоном.
     """
     try:
-        from modules.classifier.metrics_refresh import REFRESH_WINDOW_HOURS, refresh_metrics
+        from modules.classifier.audit_window import AUDIT_WINDOW_HOURS
+        from modules.classifier.metrics_refresh import refresh_metrics
 
         async def _run():
             from database.connection import AsyncSessionLocal
 
             async with AsyncSessionLocal() as session:
-                return await refresh_metrics(session, hours=hours or REFRESH_WINDOW_HOURS)
+                return await refresh_metrics(session, hours=hours or AUDIT_WINDOW_HOURS)
 
         # run_coro, а не asyncio.run: в prefork-воркере петля переиспользуется
         # процессом (utils/celery_asyncio) — общая идиома всех async-тасок здесь.
