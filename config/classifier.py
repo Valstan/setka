@@ -12,6 +12,9 @@ Env vars:
   CLASSIFIER_PENDING_MAX=40   # потолок постов в одном /pending-батче
   CLASSIFIER_SOURCE_DAYS=3    # окно свежести источника (сутки): /pending видит
                               # только посты, собранные за последние N дней
+  CLASSIFIER_PREPUBLISH_ENABLED=0     # классифицировать кандидатов ВНУТРИ волны,
+                                      # до первой публикации (см.
+                                      # modules/classifier/prepublish.py); дефолт выкл
   CLASSIFIER_RULE_STALE_DAYS=90       # aging: approved-правило старше порога без
                                       # подачи в постулаты → подсветка в панели
   CLASSIFIER_RULES_SNAPSHOT_PATH      # файл снапшота выученных правил (beat);

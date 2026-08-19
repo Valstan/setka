@@ -467,6 +467,18 @@ async def run_cascaded_bulletin(
         blocked_lips=blocked_lips,
     )
     debug_counters["filtered_posts_after_pipeline"] = len(posts)
+
+    # Нейро-фильтр ДО публикации — то же, что в районной волне (заказ владельца
+    # 2026-08-19): свежесобранный пост вердикта ещё не имеет, и `blocked_lips`
+    # выше про него ничего не знает. Гейт CLASSIFIER_PREPUBLISH_ENABLED, fail-open.
+    from modules.classifier.prepublish import blocked_lips_before_publish, post_lip
+
+    prepublish_blocked = await blocked_lips_before_publish(session, posts, region_code=region_code)
+    if prepublish_blocked:
+        before_prepublish = len(posts)
+        posts = [p for p in posts if post_lip(p) not in prepublish_blocked]
+        debug_counters["filtered_posts_classifier_prepublish"] = before_prepublish - len(posts)
+
     parser_stats = parser.get_stats()
 
     # Hard-exclude'им рекламу + addons + религию (требование пользователя

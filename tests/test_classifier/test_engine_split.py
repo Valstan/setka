@@ -138,3 +138,101 @@ async def test_health_without_any_verdict_is_not_stale(db_session):
     out = await service.health_stats(db_session)
     assert out["stale"] is False
     assert out["last_verdict_age_hours"] is None
+
+
+# ─── Приоритет кандидатов на публикацию в очереди (решение владельца 19.08) ──
+
+
+@pytest.mark.asyncio
+async def test_pending_puts_publishable_before_already_dropped(db_session):
+    """Kept идут раньше dropped: токены не тратятся на посты, которые в сводку
+    не попадут ни при каком вердикте. Dropped не исключаются, только смещаются."""
+    from database.models_extended import CollectedPostAudit
+
+    for i in range(3):
+        db_session.add(
+            CollectedPostAudit(
+                lip=f"drop_{i}",
+                region_code="mi",
+                post_text="мусор",
+                post_url="u",
+                has_media=False,
+                decision="dropped",
+                drop_reason="advertisement",
+            )
+        )
+    for i in range(3):
+        db_session.add(
+            CollectedPostAudit(
+                lip=f"keep_{i}",
+                region_code="mi",
+                post_text="новость",
+                post_url="u",
+                has_media=False,
+                decision="kept",
+            )
+        )
+    await db_session.commit()
+
+    batch = await service.fetch_pending(db_session, limit=6)
+    order = [p["lip"] for p in batch]
+    assert all(lip.startswith("keep_") for lip in order[:3]), order
+    assert sorted(order[3:]) == ["drop_0", "drop_1", "drop_2"], order
+
+
+@pytest.mark.asyncio
+async def test_dropped_still_reach_the_queue_when_budget_allows(db_session):
+    """Отсеянные не выбрасываются из обучения — ADR-0004 держится на том, что
+    оператор видит и ошибочный отсев."""
+    from database.models_extended import CollectedPostAudit
+
+    db_session.add(
+        CollectedPostAudit(
+            lip="only_dropped",
+            region_code="mi",
+            post_text="мусор",
+            post_url="u",
+            has_media=False,
+            decision="dropped",
+            drop_reason="advertisement",
+        )
+    )
+    await db_session.commit()
+    batch = await service.fetch_pending(db_session, limit=10)
+    assert [p["lip"] for p in batch] == ["only_dropped"]
+
+
+@pytest.mark.asyncio
+async def test_region_fairness_survives_the_new_ordering(db_session):
+    """Приоритет kept не должен отменять round-robin: регион с одними kept не
+    имеет права вытеснить соседа целиком."""
+    from database.models_extended import CollectedPostAudit
+
+    for i in range(5):
+        db_session.add(
+            CollectedPostAudit(
+                lip=f"mi_{i}",
+                region_code="mi",
+                post_text="t",
+                post_url="u",
+                has_media=False,
+                decision="kept",
+            )
+        )
+    for i in range(5):
+        db_session.add(
+            CollectedPostAudit(
+                lip=f"vp_{i}",
+                region_code="vp",
+                post_text="t",
+                post_url="u",
+                has_media=False,
+                decision="kept",
+            )
+        )
+    await db_session.commit()
+
+    batch = await service.fetch_pending(db_session, limit=4)
+    regions = {p["region_code"] for p in batch}
+    assert regions == {"mi", "vp"}
+    assert len(batch) == 4
