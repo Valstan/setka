@@ -206,3 +206,26 @@ async def _boom(session):
 
 def _boom_sync(*a, **k):  # pragma: no cover — не должен вызываться
     raise AssertionError("модель не должна вызываться при выключенном гейте")
+
+
+@pytest.mark.asyncio
+async def test_gate_reports_the_all_known_outcome(db_session, monkeypatch, caplog):
+    """«Всё уже размечено» — законный исход, но он обязан быть слышен.
+
+    Без строки в логе этот путь неотличим от «гейт не отработал вовсе», а
+    именно такую немоту мы чинили в самом классификаторе в тот же день.
+    """
+    import logging
+
+    async def _all_known(session, lips, region_code):
+        return set(lips)
+
+    monkeypatch.setattr(prepublish, "_lips_with_verdict", _all_known)
+    monkeypatch.setattr("modules.classifier.headless.classify_posts", _boom_sync)
+
+    with caplog.at_level(logging.INFO, logger="modules.classifier.prepublish"):
+        blocked = await prepublish.blocked_lips_before_publish(
+            db_session, [_vk_post(-1, 7, "текст")], region_code="mi"
+        )
+    assert blocked == set()
+    assert "новых=0" in caplog.text
