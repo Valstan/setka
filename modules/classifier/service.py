@@ -996,36 +996,34 @@ async def funnel_stats(session, *, hours: int = 24) -> Dict[str, Any]:
     """
     cutoff = datetime.utcnow() - timedelta(hours=hours)
 
-    collected_lips = {
-        lip
-        for (lip,) in (
-            await session.execute(
-                select(CollectedPostAudit.lip).where(CollectedPostAudit.collected_at >= cutoff)
+    collected_rows = (
+        await session.execute(
+            select(CollectedPostAudit.lip, CollectedPostAudit.region_code).where(
+                CollectedPostAudit.collected_at >= cutoff
             )
-        ).all()
-    }
+        )
+    ).all()
+    collected_lips = {lip for lip, _ in collected_rows}
+    collected_regions = {r for _, r in collected_rows if r}
 
     verdict_rows = (
         await session.execute(
             select(
                 ContentClassification.lip,
                 ContentClassification.verdict,
-                ContentClassification.tokens_estimate,
             ).where(ContentClassification.created_at >= cutoff)
         )
     ).all()
 
     actions: Dict[str, int] = {"publish": 0, "delete": 0, "hold": 0}
-    tokens = 0
     classified_lips: set = set()
-    for lip, verdict, tok in verdict_rows:
+    for lip, verdict in verdict_rows:
         classified_lips.add(lip)
         action = str((verdict or {}).get("action") or "").strip().lower()
         if action in actions:
             actions[action] += 1
-        tokens += int(tok or 0)
 
-    published_lips = await _published_lips(session, cutoff=cutoff)
+    published_lips, published_regions = await _published_lips(session, cutoff=cutoff)
 
     collected_total = len(collected_lips)
     # Размеченным считаем пересечение: вердикт мог приехать по посту, собранному
@@ -1042,19 +1040,30 @@ async def funnel_stats(session, *, hours: int = 24) -> Dict[str, Any]:
         "delete": actions["delete"],
         "hold": actions["hold"],
         "published": len(classified_lips & published_lips),
-        "tokens": tokens,
+        # Охват журнала публикаций. На проде он ведётся по ОДНОМУ району из 29
+        # собираемых, и «дошло до читателя» без этой пары читается как цифра по
+        # всей сети — заниженная величина с уверенной подписью. Расход токенов
+        # по той же причине убран вовсе: ``tokens_estimate`` не заполняет никто
+        # (0 из 2238 вердиктов за сутки), и панель рисовала бы «токенов: 0» там,
+        # где движок потратил миллионы.
+        "published_regions": len(published_regions),
+        "collected_regions": len(collected_regions),
         "coverage_pct": (
             round(100.0 * classified_in_window / collected_total, 1) if collected_total else None
         ),
     }
 
 
-async def _published_lips(session, *, cutoff: datetime) -> set:
-    """lip, реально дошедшие до читателя: кандидаты ВЫШЕДШИХ свод­ок.
+async def _published_lips(session, *, cutoff: datetime) -> tuple:
+    """lip, дошедшие до читателя, и районы, по которым журнал вообще ведётся.
 
     ``published_post_id is not None`` — единственный признак, что свод­ка
     опубликована. Без него в «дошло до читателя» попали бы кандидаты свод­ок,
     которые так и остались в очереди.
+
+    Второе значение — охват. Журнал курации ведётся не по всей сети (на
+    2026-08-19 — один район из 29 собираемых), и число без охвата обещает
+    больше, чем измеряет.
     """
     runs = (
         (
@@ -1069,7 +1078,10 @@ async def _published_lips(session, *, cutoff: datetime) -> set:
         .all()
     )
     out: set = set()
+    regions: set = set()
     for run in runs:
+        if run.region_code:
+            regions.add(run.region_code)
         cands = run.candidates or []
         if not isinstance(cands, (list, tuple)):
             continue
@@ -1078,7 +1090,7 @@ async def _published_lips(session, *, cutoff: datetime) -> set:
                 lip = str(c.get("lip") or "").strip()
                 if lip:
                     out.add(lip)
-    return out
+    return out, regions
 
 
 async def operator_progress_stats(session, *, hours: int = 24) -> Dict[str, Any]:
@@ -1148,13 +1160,18 @@ async def review_feed_grouped(
     session,
     *,
     region_code: Optional[str] = None,
-    limit: int = 500,
+    limit: int = 5000,
+    cards_per_block: int = 40,
 ) -> List[Dict[str, Any]]:
     """Лента блоками «вердикт × тема», внутри блока дословные дубли схлопнуты.
 
-    Очередь читается целиком (до ``limit``), а не постранично: группа из
-    четырёх десятков постов раскидана по всей очереди, и в окне из 60 карточек
-    от неё видны один-два — то есть постраничная группировка не группирует.
+    **Счётчики считаются по всей очереди, а рисуется верхушка блока.** Это
+    разные числа, и путать их нельзя: при очереди в две тысячи постов лимит в
+    пятьсот давал заголовок «мусор — 34» там, где мусора полторы сотни, а
+    кнопка «Согласен со всем блоком» закрывала показанное вместо обещанного.
+    Поэтому ``limit`` ограничивает выборку целиком (защита от неограниченного
+    запроса), ``cards_per_block`` — только число нарисованных карточек, а
+    ``total``/``ids`` остаются полными.
     """
     items = await review_feed(session, region_code=region_code, only_unreviewed=True, limit=limit)
 
@@ -1189,7 +1206,12 @@ async def review_feed_grouped(
     out = []
     for block in blocks.values():
         block.pop("_by_text", None)
+        # ids собираются ДО обрезки карточек: групповое действие обещает закрыть
+        # весь блок, и обязано закрыть весь блок, а не его видимую верхушку.
         block["ids"] = [i for c in block["cards"] for i in c["duplicate_ids"]]
+        all_cards = block["cards"]
+        block["cards"] = all_cards[:cards_per_block]
+        block["hidden_cards"] = len(all_cards) - len(block["cards"])
         out.append(block)
     # Крупные блоки первыми: пачка на 267 карточек экономит больше нажатий, чем
     # блок на три, и должна попадаться оператору раньше.

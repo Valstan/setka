@@ -359,3 +359,75 @@ async def test_bulk_correct_rejects_unknown_verdict_type(db_session):
 
     assert out["ok"] is False
     assert out["corrected"] == 0
+
+
+# ─────────── Правки после проверки на боевых данных 2026-08-19 ───────────
+
+
+@pytest.mark.asyncio
+async def test_funnel_reports_how_wide_the_publication_journal_is(db_session):
+    """Воронка сообщает охват журнала публикаций, а не только число.
+
+    На проде журнал курации ведётся по ОДНОМУ району из 29 собираемых, а цифра
+    «дошло до читателя» читается как общая по сети. Число без охвата — это
+    заниженная цифра с уверенной подписью, то есть ровно тот вид вранья, ради
+    которого из воронки выкинут неизмеримый отсев дублями.
+    """
+    await _audit(db_session, lip="20_1", region="mi")
+    await _audit(db_session, lip="20_2", region="vp")
+    await _verdict(db_session, lip="20_1", region="mi")
+    await _verdict(db_session, lip="20_2", region="vp")
+    db_session.add(
+        BulletinCurationRun(
+            region_code="mi",
+            theme="novost",
+            candidates=[{"lip": "20_1"}],
+            total_count=1,
+            published_post_id=1,
+        )
+    )
+    await db_session.commit()
+
+    out = await service.funnel_stats(db_session, hours=24)
+
+    assert out["published"] == 1
+    assert out["published_regions"] == 1
+    assert out["collected_regions"] == 2
+
+
+@pytest.mark.asyncio
+async def test_funnel_does_not_report_tokens_it_cannot_measure(db_session):
+    """Расход токенов из воронки убран: ``tokens_estimate`` никем не заполняется.
+
+    На проде 0 из 2238 вердиктов за сутки несли эту величину, и панель честно
+    рисовала «токенов: 0» — цифру, которую человек прочтёт как «движок ничего
+    не потратил», хотя он потратил 1.4 млн.
+    """
+    await _audit(db_session, lip="21_1")
+    await _verdict(db_session, lip="21_1")
+
+    out = await service.funnel_stats(db_session, hours=24)
+
+    assert "tokens" not in out
+
+
+@pytest.mark.asyncio
+async def test_block_counts_cover_the_whole_queue_not_the_shown_cards(db_session):
+    """Счётчик блока считает ВСЮ очередь, даже когда карточек показано меньше.
+
+    Иначе заголовок «удалить · мусор — 30» врал бы ровно на невлезших постах, а
+    кнопка «Согласен со всем блоком» закрывала бы не то, что обещает.
+    """
+    for i in range(30):
+        lip = f"22_{i}"
+        await _audit(db_session, lip=lip)
+        await _verdict(db_session, lip=lip, action="delete", theme="мусор", text=f"текст {i}")
+
+    blocks = await service.review_feed_grouped(db_session, cards_per_block=5)
+
+    assert len(blocks) == 1
+    assert blocks[0]["total"] == 30
+    assert len(blocks[0]["cards"]) == 5
+    # Групповое действие обязано покрывать всю группу, а не показанную часть.
+    assert len(blocks[0]["ids"]) == 30
+    assert blocks[0]["hidden_cards"] == 25
