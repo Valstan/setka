@@ -168,12 +168,23 @@ async def blocked_lips_before_publish(
                 region_code,
             )
         if not run["verdicts"]:
-            logger.warning(
-                "classifier prepublish: регион=%s кандидатов=%d новых=%d — движок не вернул"
-                " ни одного вердикта, волна идёт по обычным фильтрам",
+            # Пост без текста движок пропускает намеренно: текстовая модель судила
+            # бы по одному заголовку, а вердикт затем ЗАБЛОКИРОВАЛ бы публикацию.
+            # Это штатный исход, и кричать о нём нельзя: предупреждение, которое
+            # срабатывает на норме, обучает не смотреть на предупреждения — тот
+            # же способ ослепнуть, которым сегодня уже потеряли трое суток.
+            all_without_text = run.get("skipped_no_text", 0) >= len(fresh)
+            log = logger.info if all_without_text else logger.warning
+            log(
+                "classifier prepublish: регион=%s кандидатов=%d новых=%d вердиктов=0 (%s)",
                 region_code,
                 len(items),
                 len(fresh),
+                (
+                    "все без текста — так и задумано"
+                    if all_without_text
+                    else "движок молчит, волна идёт по обычным фильтрам"
+                ),
             )
             return known
 

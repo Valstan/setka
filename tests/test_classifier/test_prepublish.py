@@ -229,3 +229,57 @@ async def test_gate_reports_the_all_known_outcome(db_session, monkeypatch, caplo
         )
     assert blocked == set()
     assert "новых=0" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_all_candidates_without_text_is_not_a_warning(db_session, monkeypatch, caplog):
+    """Пост без текста движок пропускает намеренно — это норма, не тревога.
+
+    Предупреждение, срабатывающее на штатном исходе, обучает не смотреть на
+    предупреждения. Ровно так сегодня уже потеряли трое суток.
+    """
+    import logging
+
+    monkeypatch.setattr("modules.classifier.rules.render_effective_postulates", _fake_postulates)
+    monkeypatch.setattr(
+        "modules.classifier.headless.classify_posts",
+        lambda items, **kw: {
+            "verdicts": [],
+            "failures": [],
+            "problems": [],
+            "chunks": 0,
+            "tokens": 0,
+            "skipped_no_text": len(items),
+        },
+    )
+    with caplog.at_level(logging.INFO, logger="modules.classifier.prepublish"):
+        await prepublish.blocked_lips_before_publish(
+            db_session, [_vk_post(-1, 8, "")], region_code="mi"
+        )
+    assert "все без текста" in caplog.text
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_silent_engine_with_text_still_warns(db_session, monkeypatch, caplog):
+    """А вот молчание движка на постах С текстом — по-прежнему тревога."""
+    import logging
+
+    monkeypatch.setattr("modules.classifier.rules.render_effective_postulates", _fake_postulates)
+    monkeypatch.setattr(
+        "modules.classifier.headless.classify_posts",
+        lambda items, **kw: {
+            "verdicts": [],
+            "failures": [],
+            "problems": [],
+            "chunks": 1,
+            "tokens": 0,
+            "skipped_no_text": 0,
+        },
+    )
+    with caplog.at_level(logging.INFO, logger="modules.classifier.prepublish"):
+        await prepublish.blocked_lips_before_publish(
+            db_session, [_vk_post(-1, 9, "настоящий текст")], region_code="mi"
+        )
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert "движок молчит" in caplog.text
