@@ -263,16 +263,39 @@ async function loadStats() {
 // Витрина рейтинга (звено 5, шаг 1) — ИЗМЕРЕНИЕ, публикацию не трогает.
 // Три колонки показывают одну и ту же выборку при разных alpha, чтобы
 // значение выбиралось глазами на боевых постах, а не наугад в конфиге.
+//
+// try/catch — не перестраховка: ровно эта авария уже стоила рабочего дня в
+// этом же файле (см. runBulk выше, инцидент 2026-08-19 с «Согласен со всем
+// блоком»): необработанный сетевой отказ оставлял кнопку в состоянии
+// «работает», и владелец решил, что всё тормозит, а не что запрос не дошёл.
+// Здесь тот же риск — спиннер «считаю…» без catch способен зависнуть навечно.
 async function loadRatingTop() {
     const region = document.getElementById("cf-rating-region").value.trim();
-    const n = document.getElementById("cf-rating-n").value || 10;
+    const nInput = document.getElementById("cf-rating-n");
+    // Тихая подмена введённого числа (0 → 10 незаметно) — родня той же болезни:
+    // приводим к допустимому диапазону явно и пишем результат обратно в поле,
+    // чтобы оператор видел, что именно ушло в запрос, а не гадал.
+    let n = parseInt(nInput.value, 10);
+    if (!Number.isFinite(n) || n < 1) n = 10;
+    if (n > 100) n = 100;
+    nInput.value = n;
     const box = document.getElementById("cf-rating-box");
     if (!region) { box.textContent = "Выберите район."; return; }
     box.innerHTML = `<span class="spinner-border spinner-border-sm"></span> считаю…`;
-    const r = await fetch(`/api/classifier-review/rating/top?region=${encodeURIComponent(region)}&n=${n}`);
-    if (!r.ok) { box.innerHTML = `<span class="text-danger">Не получилось: ${r.status}</span>`; return; }
-    const d = await r.json();
-    box.innerHTML = ratingHTML(d);
+    try {
+        const r = await fetch(`/api/classifier-review/rating/top?region=${encodeURIComponent(region)}&n=${n}`);
+        if (!r.ok) {
+            box.innerHTML = `<span class="text-danger">Не получилось: сервер ответил ${r.status}</span>`;
+            return;
+        }
+        const d = await r.json();
+        box.innerHTML = ratingHTML(d);
+    } catch (e) {
+        // fetch/json упали (сеть, DNS, оборванное соединение, битый JSON) —
+        // без этого catch промис падает необработанным, а спиннер остаётся
+        // навсегда неотличимым от «просто долго считает».
+        box.innerHTML = `<span class="text-danger">Запрос не дошёл: ${esc(String(e))}</span>`;
+    }
 }
 
 function ratingHTML(d) {
