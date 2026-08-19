@@ -358,3 +358,100 @@ def test_quiet_when_pull_adds_nothing(monkeypatch, caplog):
         sb.bootstrap_secrets(env=env)
 
     assert "восстановлено секретов" not in caplog.text
+
+
+# ─── Инцидент 2026-08-19: один таймаут на старте = трое суток без ключа ──────
+
+
+def test_real_fetch_retries_transient_failure(monkeypatch):
+    """Ретраи живут в ``_fetch_secrets`` — проверяем саму функцию."""
+    calls = {"n": 0}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"secrets": {"DEEPSEEK_API_KEY": "sk-ok"}}'
+
+    def _urlopen(req, timeout=None):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise TimeoutError("timed out")
+        return _Resp()
+
+    monkeypatch.setattr(sb, "_FETCH_BACKOFF_SEC", (0.0, 0.0))
+    monkeypatch.setattr(sb.urllib.request, "urlopen", _urlopen)
+
+    assert sb._fetch_secrets("tok", "https://vault.example/api/secrets") == {
+        "DEEPSEEK_API_KEY": "sk-ok"
+    }
+    assert calls["n"] == 3
+
+
+def test_real_fetch_raises_after_all_attempts(monkeypatch):
+    """Исчерпав попытки, пробрасываем последнюю причину — вызывающий её залогирует."""
+    monkeypatch.setattr(sb, "_FETCH_BACKOFF_SEC", (0.0, 0.0))
+
+    def _always_fail(req, timeout=None):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(sb.urllib.request, "urlopen", _always_fail)
+    with pytest.raises(TimeoutError):
+        sb._fetch_secrets("tok", "https://vault.example/api/secrets")
+
+
+def test_ensure_secret_pulls_missing_value(monkeypatch):
+    """До-тяг в момент использования: ключа нет → сходили в комнату и взяли."""
+    monkeypatch.setattr(sb, "_fetch_secrets", lambda t, u: {"DEEPSEEK_API_KEY": "sk-late"})
+    sb._last_ensure_at.clear()
+    env = {"SECRETS_TOKEN": "tok"}
+    assert sb.ensure_secret("DEEPSEEK_API_KEY", env=env) is True
+    assert env["DEEPSEEK_API_KEY"] == "sk-late"
+
+
+def test_ensure_secret_is_noop_when_value_present(monkeypatch):
+    """Значение на месте — в vault не ходим вовсе (ноль сетевых вызовов)."""
+    calls = []
+    monkeypatch.setattr(sb, "_fetch_secrets", lambda t, u: calls.append(1) or {})
+    sb._last_ensure_at.clear()
+    env = {"SECRETS_TOKEN": "tok", "DEEPSEEK_API_KEY": "sk-already-here"}
+    assert sb.ensure_secret("DEEPSEEK_API_KEY", env=env) is True
+    assert calls == []
+
+
+def test_ensure_secret_respects_cooldown(monkeypatch):
+    """Второй промах подряд не идёт в сеть: иначе таска долбит vault на каждый чанк."""
+    calls = []
+
+    def _fetch(t, u):
+        calls.append(1)
+        return {}  # в комнате ключа нет
+
+    monkeypatch.setattr(sb, "_fetch_secrets", _fetch)
+    sb._last_ensure_at.clear()
+    env = {"SECRETS_TOKEN": "tok"}
+    assert sb.ensure_secret("DEEPSEEK_API_KEY", env=env) is False
+    assert sb.ensure_secret("DEEPSEEK_API_KEY", env=env) is False
+    assert len(calls) == 1
+
+
+def test_ensure_secret_refuses_names_outside_allowlist(monkeypatch):
+    """Свойство 2 действует и на до-тяг: комната не может подсунуть чужое имя."""
+    monkeypatch.setattr(sb, "_fetch_secrets", lambda t, u: {"NODE_OPTIONS": "--require evil"})
+    sb._last_ensure_at.clear()
+    env = {"SECRETS_TOKEN": "tok"}
+    assert sb.ensure_secret("NODE_OPTIONS", env=env) is False
+    assert "NODE_OPTIONS" not in env
+
+
+def test_ensure_secret_never_pulls_bootstrap_config(monkeypatch):
+    """Свойство 6: ``SECRETS_TOKEN``/``SECRETS_VAULT_URL`` не до-тягиваются никогда."""
+    monkeypatch.setattr(sb, "_fetch_secrets", lambda t, u: {"SECRETS_VAULT_URL": "https://evil"})
+    sb._last_ensure_at.clear()
+    env = {"SECRETS_TOKEN": "tok"}
+    assert sb.ensure_secret("SECRETS_VAULT_URL", env=env) is False
+    assert "SECRETS_VAULT_URL" not in env
