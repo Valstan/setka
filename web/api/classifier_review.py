@@ -19,7 +19,7 @@ from fastapi import APIRouter, Body, Query
 from pydantic import BaseModel
 
 from database.connection import AsyncSessionLocal
-from modules.classifier import rules, service
+from modules.classifier import rating, rules, service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -49,6 +49,24 @@ async def feed(
 # `/bulk/agree`: «bulk» уходил в int() → 422, кнопка «Согласен со всем блоком»
 # молча не работала весь день 2026-08-19. Новые статические пути под этим
 # префиксом добавлять сюда же — гейт в tests/test_classifier/test_review_api_routes.py.
+
+
+@router.get("/rating/top")
+async def rating_top(
+    region: str = Query(..., min_length=1, description="код района (обязателен)"),
+    theme: str = Query("", description="тема (опционально)"),
+    n: int = Query(10, ge=1, le=100, description="сколько строк в топе"),
+):
+    """Витрина топ-N по рейтингу — измерение, публикацию не трогает.
+
+    ``region`` обязателен намеренно: рейтинги районов между собой
+    несопоставимы (у больших пабликов свои порядки просмотров), и общий топ
+    по сети был бы числом без смысла.
+    """
+    async with AsyncSessionLocal() as session:
+        return await rating.top_by_rating(
+            session, region_code=region.strip(), theme=theme.strip() or None, n=n
+        )
 
 
 class BulkAgree(BaseModel):
