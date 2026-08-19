@@ -141,6 +141,16 @@ async def blocked_lips_before_publish(
         already = await _lips_with_verdict(session, [i["lip"] for i in items], region_code)
         fresh = [i for i in items if i["lip"] not in already]
         if not fresh:
+            # Логируем и этот исход. Иначе гейт, отработавший «всё уже размечено»,
+            # неотличим в логе от гейта, который не отработал вовсе — а мы только
+            # что чинили ровно такую немоту в самом классификаторе.
+            logger.info(
+                "classifier prepublish: регион=%s кандидатов=%d новых=0"
+                " (все уже размечены), блокирует=%d",
+                region_code,
+                len(items),
+                len(known & {i["lip"] for i in items}),
+            )
             return known
 
         ensure_secret("DEEPSEEK_API_KEY")
@@ -158,6 +168,13 @@ async def blocked_lips_before_publish(
                 region_code,
             )
         if not run["verdicts"]:
+            logger.warning(
+                "classifier prepublish: регион=%s кандидатов=%d новых=%d — движок не вернул"
+                " ни одного вердикта, волна идёт по обычным фильтрам",
+                region_code,
+                len(items),
+                len(fresh),
+            )
             return known
 
         await service.record_verdicts(
