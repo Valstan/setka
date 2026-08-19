@@ -305,6 +305,31 @@ def parse_and_publish_theme(
             )
             parser_stats = parser.get_stats()
 
+            # 5b. Нейро-фильтр ВНУТРИ волны (заказ владельца 2026-08-19).
+            #     `blocked_lips` выше применяет вердикты, вынесенные РАНЬШЕ, а по
+            #     свежесобранным постам их не бывает по построению: волна сама их
+            #     парсит и сама же публикует. Измерено: за 14 дней ноль вердиктов
+            #     раньше сбора и 10 743 позже. Здесь кандидаты доклассифицируются
+            #     до публикации. Гейт CLASSIFIER_PREPUBLISH_ENABLED, fail-open.
+            from modules.classifier.prepublish import blocked_lips_before_publish, post_lip
+
+            prepublish_blocked = await blocked_lips_before_publish(
+                session, posts, region_code=region_code
+            )
+            if prepublish_blocked:
+                before_prepublish = len(posts)
+                posts = [p for p in posts if post_lip(p) not in prepublish_blocked]
+                dropped_now = before_prepublish - len(posts)
+                if dropped_now:
+                    parser_stats["posts_filtered_classifier_prepublish"] = dropped_now
+                    logger.info(
+                        "Нейро-фильтр до публикации (%s/%s): убрано %d из %d кандидатов",
+                        region_code,
+                        theme,
+                        dropped_now,
+                        before_prepublish,
+                    )
+
             # 6. Split by sentiment
             splitter = BulletinSplitter()
             mourning_posts, regular_posts = splitter.split_posts(posts)

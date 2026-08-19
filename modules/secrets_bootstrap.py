@@ -108,6 +108,8 @@ ACCEPTED_NAMES: frozenset = frozenset(
         "CLASSIFIER_PENDING_MAX",
         "CLASSIFIER_REGION_CODES",
         "CLASSIFIER_ENFORCE_ENABLED",
+        # Нейро-фильтр внутри волны, до первой публикации (2026-08-19).
+        "CLASSIFIER_PREPUBLISH_ENABLED",
         # Радар / ЕСА
         "RADAR_INVITE_CODE",
         "RADAR_VAPID_PRIVATE_KEY",
