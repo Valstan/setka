@@ -57,6 +57,14 @@
             <div class="alert alert-danger py-2 mb-2 d-none" id="cf-health-alarm"></div>
             <div class="row g-2 mb-1" id="cf-health"></div>
             <div class="small text-muted" id="cf-health-backlog"></div>
+            <!-- Сквозная воронка за сутки (заказ владельца 2026-08-19): собрано →
+                 размечено → исход → дошло до читателя. Раньше панель показывала
+                 только «собрано / без вердикта», и по ней нельзя было отличить
+                 отставание движка от его остановки. -->
+            <hr class="my-2">
+            <div class="small text-muted mb-1">Путь поста за сутки</div>
+            <div id="cf-funnel" class="d-flex flex-wrap gap-2 align-items-stretch"></div>
+            <div class="small text-muted mt-1" id="cf-funnel-note"></div>
         </div>
     </div>
 
@@ -100,6 +108,22 @@
             <div class="input-group input-group-sm mt-2" style="max-width: 360px;">
                 <input type="text" class="form-control" id="cf-theme-add-name" placeholder="добавить тему…">
                 <button class="btn btn-outline-primary" id="cf-theme-add-btn">Добавить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Прогресс оператора против движка (заказ владельца 2026-08-19): видеть,
+         насколько отстаёшь, и разбирать однородное пачками. -->
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h6 class="mb-0"><i class="bi bi-person-check"></i> Вы и движок
+                    <span class="text-muted small" id="cf-progress"></span>
+                </h6>
+                <div class="form-check form-switch mb-0">
+                    <input class="form-check-input" type="checkbox" id="cf-grouped" checked>
+                    <label class="form-check-label small" for="cf-grouped">группировать похожее</label>
+                </div>
             </div>
         </div>
     </div>
@@ -261,6 +285,57 @@ async function loadHealth() {
     document.getElementById("cf-health-backlog").textContent = bl.length
         ? "backlog по регионам: " + bl.map(([r, n]) => `${r} ${n}`).join(" · ")
         : "";
+    renderFunnel(h.funnel);
+}
+
+// Путь поста за сутки: собрано → размечено → исход → дошло до читателя.
+// Отсева дублями тут намеренно НЕТ: аудит сбора идемпотентен по lip, повторно
+// пришедший пост новой строки не создаёт — честной цифры в базе не существует,
+// а нарисованная «примерно» цифра на панели живёт как точная.
+function renderFunnel(f) {
+    const box = document.getElementById("cf-funnel");
+    if (!box) return;
+    if (!f) { box.innerHTML = ""; return; }
+    const steps = [
+        ["собрано", f.collected, "постов в аудите сбора", "bg-light"],
+        ["размечено", f.classified,
+         f.coverage_pct == null ? "" : f.coverage_pct + "% собранного", "bg-light"],
+        ["допустил", f.publish, "к публикации", "bg-success-subtle"],
+        ["выкинул", f.delete, "в мусорку", "bg-danger-subtle"],
+        ["отложил", f.hold, "hold", "bg-warning-subtle"],
+        ["в публикации", f.published, "дошло до читателя", "bg-primary-subtle"],
+    ];
+    box.innerHTML = steps.map(([label, val, sub, cls]) => `
+        <div class="border rounded px-2 py-1 text-center ${cls}" style="min-width:104px;">
+          <div class="small text-muted">${label}</div>
+          <div class="fs-6 fw-bold">${val == null ? "—" : val}</div>
+          <div class="small text-muted">${esc(String(sub || ""))}</div>
+        </div>`).join('<div class="align-self-center text-muted">→</div>');
+    // Неразмеченное — это и есть ответ на «фильтрует ли он свежее»: разрыв между
+    // собранным и размеченным, а не абсолютная величина backlog.
+    const note = [];
+    if (f.unclassified) note.push(`без вердикта за сутки: ${f.unclassified}`);
+    if (f.tokens) note.push(`токенов: ${f.tokens.toLocaleString("ru-RU")}`);
+    document.getElementById("cf-funnel-note").textContent = note.join(" · ");
+}
+
+// Насколько оператор отстал от движка. Темп считается по НАЖАТИЯМ, а не по
+// reviewed_at: архивация завала 2026-08-18 проставила reviewed_at 44 177 постам
+// одним UPDATE, и по нему отставание вышло бы нулевым при нуле разобранного.
+async function loadProgress() {
+    const el = document.getElementById("cf-progress");
+    if (!el) return;
+    const r = await fetch("/api/classifier-review/progress");
+    if (!r.ok) return;
+    const p = await r.json();
+    const parts = [
+        `движок за сутки: ${p.engine_verdicts}`,
+        `вы разобрали: ${p.operator_reviewed}`,
+        `осталось: ${p.remaining}`,
+    ];
+    if (p.operator_rate_per_hour) parts.push(`ваш темп: ${p.operator_rate_per_hour}/ч`);
+    if (p.lag_hours) parts.push(`разгрести очередь: ~${p.lag_hours} ч`);
+    el.textContent = "— " + parts.join(" · ");
 }
 
 function esc(s) {
@@ -270,65 +345,158 @@ function esc(s) {
 async function loadFeed() {
     const region = document.getElementById("cf-region").value.trim();
     const unreacted = document.getElementById("cf-unreacted").checked;
+    const grouped = document.getElementById("cf-grouped").checked;
+    const feed = document.getElementById("cf-feed");
+    const empty = document.getElementById("cf-empty");
+    feed.innerHTML = "";
+
+    // Группировка идёт по ВСЕЙ очереди, а не по видимой странице: группа из
+    // четырёх десятков одинаковых постов раскидана по всей ленте, и в окне из
+    // 60 карточек от неё видны один-два — то есть постранично группировать
+    // нечего. Плоский режим оставлен для тонкой, поштучной правки.
+    if (grouped && unreacted) {
+        const r = await fetch(`/api/classifier-review/feed/grouped?limit=500`
+            + (region ? `&region=${encodeURIComponent(region)}` : ""));
+        const data = await r.json();
+        empty.classList.toggle("d-none", data.count > 0);
+        if (!data.count) { emptyText(empty); return; }
+        for (const b of data.blocks) feed.insertAdjacentHTML("beforeend", blockHTML(b));
+        return;
+    }
+
     const url = `/api/classifier-review/feed?only_unreviewed=${unreacted}&limit=60`
         + (region ? `&region=${encodeURIComponent(region)}` : "");
     const r = await fetch(url);
     const data = await r.json();
-    const feed = document.getElementById("cf-feed");
-    feed.innerHTML = "";
-    const empty = document.getElementById("cf-empty");
     empty.classList.toggle("d-none", data.count > 0);
-    if (data.count === 0) {
-        if (HEALTH && HEALTH.stale) {
-            empty.innerHTML = `Лента пуста, потому что <b>движок не прислал ни одного вердикта ` +
-                `${HEALTH.last_verdict_age_hours} ч</b> — это отказ, а не «всё разобрано». ` +
-                `Смотри красную плашку выше.`;
-        } else if (HEALTH && HEALTH.backlog > 0) {
-            empty.innerHTML = `Всё разобрано. Движок работает, в очереди на разметку ` +
-                `<b>${HEALTH.backlog}</b> постов — новые карточки появятся после ближайшего прогона ` +
-                `(каждые 3 часа).`;
-        } else {
-            empty.textContent = "Всё разобрано, очередь на разметку пуста.";
-        }
+    if (data.count === 0) { emptyText(empty); }
+    for (const it of data.items) feed.insertAdjacentHTML("beforeend", cardHTML(it));
+}
+
+// Текст пустой ленты: «всё разобрано» и «движок молчит трое суток» выглядят
+// одинаково пусто, а значат прямо противоположное.
+function emptyText(empty) {
+    if (HEALTH && HEALTH.stale) {
+        empty.innerHTML = `Лента пуста, потому что <b>движок не прислал ни одного вердикта `
+            + `${HEALTH.last_verdict_age_hours} ч</b> — это отказ, а не «всё разобрано». `
+            + `Смотри красную плашку выше.`;
+    } else if (HEALTH && HEALTH.backlog > 0) {
+        empty.innerHTML = `Всё разобрано. Движок работает, в очереди на разметку `
+            + `<b>${HEALTH.backlog}</b> постов — новые карточки появятся после ближайшего прогона.`;
+    } else {
+        empty.textContent = "Всё разобрано, очередь на разметку пуста.";
     }
-    for (const it of data.items) {
-        const v = it.verdict || {};
-        const conf = it.confidence == null ? "" : `<span class="badge bg-light text-dark">увер. ${it.confidence}</span>`;
-        feed.insertAdjacentHTML("beforeend", `
-          <div class="card mb-2" data-id="${it.id}">
-            <div class="card-body">
-              <div class="d-flex justify-content-between align-items-start mb-1">
-                <div>
-                  <span class="badge bg-primary">${esc(v.theme || "?")}</span>
-                  <span class="badge bg-secondary">${ACTIONS[v.action] || v.action || "?"}</span>
-                  ${conf}
-                  ${filterBadge(it)}
-                </div>
-                <small class="text-muted">${it.post_url ? `<a href="${esc(it.post_url)}" target="_blank" rel="noopener">${esc(it.lip)}</a>` : esc(it.lip)} · ${esc(it.region_code)} · ${it.source}</small>
-              </div>
-              <div class="text-muted small mb-2" style="white-space:pre-wrap;max-height:6em;overflow:auto;">${esc(it.post_text) || "<i>без текста</i>"}</div>
-              ${v.media_summary ? `<div class="small mb-2"><span class="badge bg-info text-dark">📷 ИИ увидел</span> <span class="text-secondary">${esc(v.media_summary)}</span></div>` : ""}
-              ${v.reasoning ? `<div class="fst-italic small text-secondary mb-2">↳ ${esc(v.reasoning)}</div>` : ""}
-              ${mergeBlock(it, v)}
-              <div class="cf-edits small text-success mb-2 d-none" data-edits="${it.id}"></div>
-              <div class="d-flex gap-2 flex-wrap">
-                <button class="btn btn-success btn-sm" onclick="agree(${it.id})">✅ Согласен со всем</button>
-                <div class="btn-group btn-group-sm" data-theme-dd="${it.id}">
-                  <button class="btn btn-outline-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown"
-                          data-bs-auto-close="outside" aria-expanded="false">Изменить тему</button>
-                  <div class="dropdown-menu p-2" style="min-width: 260px; max-height: 320px; overflow-y: auto;">
-                    ${themeMenuHTML(it.id, v.theme)}
-                  </div>
-                </div>
-                <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'publish')">→ публиковать</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'delete')">→ удалить</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="correctAction(${it.id},'hold')">→ отложить</button>
-                ${mergeButtonsHTML(it.id, v)}
-                <button class="btn btn-primary btn-sm d-none" data-finalize="${it.id}" onclick="finalize(${it.id})">✔ Готово</button>
+}
+
+// Блок «вердикт × тема»: однородное идёт подряд, и его можно закрыть разом.
+function blockHTML(b) {
+    const ids = JSON.stringify(b.ids);
+    return `
+      <div class="card mb-3 border-secondary">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
+          <div>
+            <span class="badge bg-secondary">${ACTIONS[b.action] || b.action}</span>
+            <span class="badge bg-primary">${esc(b.theme)}</span>
+            <span class="text-muted small">— ${b.total} шт.</span>
+          </div>
+          <button class="btn btn-success btn-sm" onclick='agreeGroup(${ids}, this)'>
+            ✅ Согласен со всем блоком (${b.total})
+          </button>
+        </div>
+        <div class="card-body py-2">
+          ${b.cards.map(c => cardHTML(c)).join("")}
+        </div>
+      </div>`;
+}
+
+function cardHTML(it) {
+    const v = it.verdict || {};
+    const n = it.duplicate_count || 1;
+    const ids = it.duplicate_ids || [it.id];
+    const idsJson = JSON.stringify(ids);
+    const conf = it.confidence == null ? "" : `<span class="badge bg-light text-dark">увер. ${it.confidence}</span>`;
+    // Карточка-дубль показывает ОДИН пост, но представляет всю группу дословно
+    // одинаковых: любое действие на ней относится ко всем сразу, иначе
+    // остальные остались бы с прежним вердиктом и невидимыми — их в ленте нет.
+    const dupBadge = n > 1
+        ? `<span class="badge bg-warning text-dark" title="дословных дублей в группе">×${n}</span>`
+        : "";
+    const dupList = n > 1
+        ? `<div class="small text-muted mb-2">в группе: ${(it.duplicate_lips || []).map(l => lipLink(l)).join(" · ")}</div>`
+        : "";
+    const agreeCall = n > 1 ? `agreeGroup(${idsJson}, this)` : `agree(${it.id})`;
+    const act = (a) => n > 1
+        ? `correctGroup(${idsJson}, &quot;action&quot;, &quot;${a}&quot;, this)`
+        : `correctAction(${it.id}, &quot;${a}&quot;)`;
+    return `
+      <div class="card mb-2" data-id="${it.id}">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-1">
+            <div>
+              <span class="badge bg-primary">${esc(v.theme || "?")}</span>
+              <span class="badge bg-secondary">${ACTIONS[v.action] || v.action || "?"}</span>
+              ${dupBadge}
+              ${conf}
+              ${filterBadge(it)}
+            </div>
+            <small class="text-muted">${it.post_url ? `<a href="${esc(it.post_url)}" target="_blank" rel="noopener">${esc(it.lip)}</a>` : esc(it.lip)} · ${esc(it.region_code)} · ${it.source}</small>
+          </div>
+          <div class="text-muted small mb-2" style="white-space:pre-wrap;max-height:6em;overflow:auto;">${esc(it.post_text) || "<i>без текста</i>"}</div>
+          ${dupList}
+          ${v.media_summary ? `<div class="small mb-2"><span class="badge bg-info text-dark">📷 ИИ увидел</span> <span class="text-secondary">${esc(v.media_summary)}</span></div>` : ""}
+          ${v.reasoning ? `<div class="fst-italic small text-secondary mb-2">↳ ${esc(v.reasoning)}</div>` : ""}
+          ${mergeBlock(it, v)}
+          <div class="cf-edits small text-success mb-2 d-none" data-edits="${it.id}"></div>
+          <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-success btn-sm" onclick="${agreeCall}">
+              ✅ Согласен${n > 1 ? ` со всеми ${n}` : " со всем"}
+            </button>
+            <div class="btn-group btn-group-sm" data-theme-dd="${it.id}">
+              <button class="btn btn-outline-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown"
+                      data-bs-auto-close="outside" aria-expanded="false">Изменить тему</button>
+              <div class="dropdown-menu p-2" style="min-width: 260px; max-height: 320px; overflow-y: auto;">
+                ${themeMenuHTML(it.id, v.theme)}
               </div>
             </div>
-          </div>`);
-    }
+            <button class="btn btn-outline-secondary btn-sm" onclick="${act("publish")}">→ публиковать</button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="${act("delete")}">→ удалить</button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="${act("hold")}">→ отложить</button>
+            ${mergeButtonsHTML(it.id, v)}
+            <button class="btn btn-primary btn-sm d-none" data-finalize="${it.id}" onclick="finalize(${it.id})">✔ Готово</button>
+          </div>
+        </div>
+      </div>`;
+}
+
+// ─────────── Групповые действия (заказ владельца 2026-08-19) ───────────
+
+// Группа дословных дублей закрывается ЦЕЛИКОМ: решение по одинаковым текстам
+// одно, и требовать отдельное «Готово» на каждую из четырёх десятков штук —
+// ровно та работа, ради устранения которой группировка и делалась.
+async function agreeGroup(ids, btn) {
+    if (btn) btn.disabled = true;
+    const r = await fetch("/api/classifier-review/bulk/agree", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ids}),
+    });
+    if (!r.ok) { if (btn) btn.disabled = false; return; }
+    await afterBulk();
+}
+
+async function correctGroup(ids, verdict_type, operator_value, btn) {
+    if (btn) btn.disabled = true;
+    const r = await fetch("/api/classifier-review/bulk/correct", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ids, verdict_type, operator_value}),
+    });
+    if (!r.ok) { if (btn) btn.disabled = false; return; }
+    await afterBulk();
+}
+
+// После пачки перечитываем ленту целиком: соседние блоки могли схлопнуться
+// иначе, а прогресс — сдвинуться. Точечное удаление карточки тут соврало бы.
+async function afterBulk() {
+    await Promise.all([loadFeed(), loadProgress(), loadStats()]);
 }
 
 // ─────────── Темы: канонический словарь (/themes, миграция 069) ───────────
@@ -613,9 +781,11 @@ async function loadRules() {
 // против "всё разобрано"), и без загруженного HEALTH объяснение будет общим.
 document.getElementById("cf-refresh").addEventListener("click", () => {
     loadStats();
+    loadProgress();
     loadHealth().then(() => loadThemes()).then(loadFeed);
 });
 document.getElementById("cf-unreacted").addEventListener("change", loadFeed);
+document.getElementById("cf-grouped").addEventListener("change", loadFeed);
 document.getElementById("cf-rules-refresh").addEventListener("click", loadRules);
 document.getElementById("cf-rule-add").addEventListener("click", addRule);
 document.getElementById("cf-theme-add-btn").addEventListener("click", addThemeFromEditor);
@@ -637,6 +807,7 @@ loadStats();
 // Порядок: здоровье → темы → лента. Темы нужны меню карточек, здоровье —
 // объяснению пустой ленты.
 loadHealth().then(() => loadThemes()).then(loadFeed);
+loadProgress();
 loadRules();
 </script>
 {% endblock %}
