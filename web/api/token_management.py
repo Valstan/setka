@@ -3,6 +3,7 @@ VK Tokens Management API
 API для управления токенами VK через веб-интерфейс
 """
 
+import asyncio
 import logging
 import re
 from datetime import datetime
@@ -75,6 +76,15 @@ class TokenResponse(BaseModel):
     consecutive_errors: int = 0
     role: str | None = None  # 'publish' = разрешено публиковать (миграция 023)
     created_at: str | None
+    # Кому принадлежит токен — человеческим языком, а не только `COMM_240944863`.
+    # Имя вида COMM_<id> отвечает на вопрос «какой группе», но не «какой это
+    # район»: чтобы понять, что COMM_240944863 — это Юрья, оператору приходилось
+    # держать соответствие в голове или лезть в другую таблицу той же страницы.
+    subject_kind: str = "unknown"  # community | user | unknown
+    subject_label: str | None = None  # «ЮРЬЯ - ИНФО» / «Валентин Савиных»
+    subject_url: str | None = None  # ссылка в ВК на сообщество или профиль
+    region_code: str | None = None
+    region_name: str | None = None
     updated_at: str | None
 
 
@@ -125,14 +135,83 @@ class TokenValidationResponse(BaseModel):
     permissions: List[str] | None
 
 
+async def _region_by_community(db) -> Dict[int, Any]:
+    """map ``abs(vk_group_id) → Region``. Один запрос на страницу, не на строку."""
+    from database.models import Region
+
+    rows = (await db.execute(select(Region).where(Region.vk_group_id.isnot(None)))).scalars()
+    return {abs(int(r.vk_group_id)): r for r in rows}
+
+
+def _user_display_name(user_info: Any) -> str:
+    """Имя владельца user-токена из снапшота ``user_info``."""
+    if not isinstance(user_info, dict):
+        return ""
+    first = str(user_info.get("first_name") or "").strip()
+    last = str(user_info.get("last_name") or "").strip()
+    full = (first + " " + last).strip()
+    return full or str(user_info.get("name") or "").strip()
+
+
+def describe_subject(
+    *,
+    community_id: Any,
+    user_info: Any,
+    region: Any = None,
+) -> Dict[str, Any]:
+    """Кому принадлежит токен: вид, подпись, ссылка в ВК, район.
+
+    Чистая функция (без БД/IO), поэтому тестируется без прода — как
+    ``compute_token_stats`` рядом.
+
+    Подпись community-токена берётся у региона, а не у самого токена: имя
+    ``COMM_<id>`` говорит про группу, но не про район, и оператор до сих пор
+    держал это соответствие в голове.
+    """
+    if community_id is not None:
+        cid = abs(int(community_id))
+        return {
+            "subject_kind": "community",
+            "subject_label": (getattr(region, "name", None) or f"club{cid}"),
+            "subject_url": f"https://vk.com/club{cid}",
+            "region_code": getattr(region, "code", None),
+            "region_name": getattr(region, "name", None),
+        }
+
+    name = _user_display_name(user_info)
+    uid = None
+    if isinstance(user_info, dict):
+        uid = user_info.get("id")
+    return {
+        "subject_kind": "user" if name or uid else "unknown",
+        "subject_label": name or None,
+        "subject_url": (f"https://vk.com/id{int(uid)}" if uid else None),
+        "region_code": None,
+        "region_name": None,
+    }
+
+
 @router.get("/", response_model=List[TokenResponse])
 async def get_all_tokens(db: AsyncSession = Depends(get_db_session)):
     """Получить все токены"""
     try:
         result = await db.execute(select(VKToken).order_by(VKToken.name))
         tokens = result.scalars().all()
+        regions = await _region_by_community(db)
 
-        return [TokenResponse(**token.to_dict()) for token in tokens]
+        out: List[TokenResponse] = []
+        for token in tokens:
+            data = token.to_dict()
+            cid = token.community_id
+            data.update(
+                describe_subject(
+                    community_id=cid,
+                    user_info=token.user_info,
+                    region=regions.get(abs(int(cid))) if cid is not None else None,
+                )
+            )
+            out.append(TokenResponse(**data))
+        return out
 
     except Exception as e:
         logger.error(f"Error getting tokens: {e}")
@@ -203,9 +282,15 @@ async def get_token_usage(days: int = 7, db: AsyncSession = Depends(get_db_sessi
                 return "резерв публикации"
             return "чтение"
 
-        result = await db.execute(select(VKToken).where(VKToken.is_active.is_(True)))
+        # ВСЕ токены, а не только активные. Прежний фильтр `is_active` молча
+        # убирал из таблицы токен, выключенный кнопкой «Выкл. на 24ч»: строка
+        # исчезала, и отсутствие расхода было неотличимо от отсутствия токена.
+        # Выключенные показываем с пометкой — это и есть «пропуск», который
+        # искали при проверке полноты статистики.
+        result = await db.execute(select(VKToken))
         rows = result.scalars().all()
         known = {t.name.upper(): t for t in rows}
+        regions = await _region_by_community(db)
 
         names = sorted(set(known) | set(today))
         return {
@@ -217,10 +302,30 @@ async def get_token_usage(days: int = 7, db: AsyncSession = Depends(get_db_sessi
                     },
                     "role": _role(name),
                     "known": name in known,
+                    "is_active": (bool(known[name].is_active) if name in known else None),
                     "last_used": (
                         known[name].last_used.isoformat()
                         if name in known and known[name].last_used
                         else None
+                    ),
+                    **(
+                        describe_subject(
+                            community_id=known[name].community_id,
+                            user_info=known[name].user_info,
+                            region=(
+                                regions.get(abs(int(known[name].community_id)))
+                                if known[name].community_id is not None
+                                else None
+                            ),
+                        )
+                        if name in known
+                        else {
+                            "subject_kind": "unknown",
+                            "subject_label": None,
+                            "subject_url": None,
+                            "region_code": None,
+                            "region_name": None,
+                        }
                     ),
                 }
                 for name in names
@@ -362,6 +467,113 @@ async def list_community_tokens(db: AsyncSession = Depends(get_db_session)):
                 )
             )
     return rows
+
+
+@router.get("/communities/ownership-audit")
+async def community_ownership_audit(db: AsyncSession = Depends(get_db_session)):
+    """Сверка «токен ↔ сообщество» опросом самих токенов + дыры покрытия.
+
+    Отвечает на три вопроса, которые страница раньше не задавала ни в каком виде
+    (заказ владельца 2026-08-19):
+
+    1. **Не перепутаны ли ключи.** У каждого community-токена спрашиваем
+       ``groups.getById()`` без аргументов — он отвечает СВОЕЙ группой. Сверяем
+       с тем, под каким ``community_id`` он записан. Прежняя проверка спрашивала
+       про заданную группу, а такую карточку читает любой токен, поэтому
+       перепутанный ключ показывался «ВАЛИДЕН».
+    2. **Нет ли районов без ключа** — регион с ``vk_group_id``, но без токена
+       публикуется только каскадом МАМА → VALSTAN, то есть вся его нагрузка
+       ложится на два общих аккаунта.
+    3. **Нет ли ключей без района** — осиротевший токен (ровно так 25.07 удалили
+       рабочий ключ Радара, посчитав его мусором).
+
+    Read-only: один VK-вызов на токен, ничего не пишем.
+    """
+    import vk_api
+
+    from database.models import Region
+
+    tokens = list(
+        (await db.execute(select(VKToken).where(VKToken.community_id.isnot(None)))).scalars()
+    )
+    regions = list((await db.execute(select(Region))).scalars())
+    by_cid = {abs(int(r.vk_group_id)): r for r in regions if r.vk_group_id is not None}
+
+    def _owning_group(token_value: str):
+        try:
+            api = vk_api.VkApi(token=token_value).get_api()
+            r = api.groups.getById()
+        except Exception as e:  # noqa: BLE001 — аудит не должен падать на одном ключе
+            return None, f"{type(e).__name__}: {e}"
+        grp = None
+        if isinstance(r, list) and r:
+            grp = r[0]
+        elif isinstance(r, dict) and r.get("groups"):
+            grp = r["groups"][0]
+        if not isinstance(grp, dict) or grp.get("id") is None:
+            return None, "groups.getById() не вернул свою группу"
+        return grp, None
+
+    rows: List[Dict[str, Any]] = []
+    mismatches = 0
+    failed = 0
+    for t in sorted(tokens, key=lambda x: x.name):
+        cid = abs(int(t.community_id))
+        region = by_cid.get(cid)
+        grp, err = await asyncio.to_thread(_owning_group, t.token)
+        if err:
+            verdict, actual_id, actual_name = "probe-failed", None, None
+            failed += 1
+        else:
+            actual_id = abs(int(grp["id"]))
+            actual_name = grp.get("name") or ""
+            if actual_id == cid:
+                verdict = "ok"
+            else:
+                verdict = "mismatch"
+                mismatches += 1
+        rows.append(
+            {
+                "token_name": t.name,
+                "community_id": cid,
+                "region_code": getattr(region, "code", None),
+                "region_name": getattr(region, "name", None),
+                "vk_url": f"https://vk.com/club{cid}",
+                "actual_community_id": actual_id,
+                # Имя из ВК, а не из нашей таблицы: расхождение здесь — сигнал,
+                # что группу переименовали, а у нас осталось старое название.
+                "actual_name": actual_name,
+                "verdict": verdict,
+                "error": err,
+            }
+        )
+
+    have = {abs(int(t.community_id)) for t in tokens}
+    regions_without_token = [
+        {
+            "region_code": r.code,
+            "region_name": r.name,
+            "vk_group_id": r.vk_group_id,
+            "is_active": bool(getattr(r, "is_active", False)),
+        }
+        for r in regions
+        if r.vk_group_id is not None and abs(int(r.vk_group_id)) not in have
+    ]
+    tokens_without_region = [
+        {"token_name": t.name, "community_id": abs(int(t.community_id))}
+        for t in tokens
+        if abs(int(t.community_id)) not in by_cid
+    ]
+
+    return {
+        "checked": len(rows),
+        "ok": len(rows) - mismatches - failed,
+        "mismatches": mismatches,
+        "probe_failed": failed,
+        "rows": rows,
+        "regions_without_token": regions_without_token,
+        "tokens_without_region": tokens_without_region,
+    }
 
 
 @router.put("/communities/{community_id}", response_model=CommunityTokenRow)
@@ -977,11 +1189,22 @@ async def validate_community_token(token: str, community_id: int) -> Dict[str, A
         session = vk_api.VkApi(token=token)
         api = session.get_api()
 
-        # 1) Проверим что токен реально принадлежит этому сообществу (groups.getById
-        # доступен community-токену про его собственную группу).
+        # 1) Токен обязан принадлежать ИМЕННО этому сообществу.
+        #
+        # Прежняя версия звала ``groups.getById(group_id=<cid>)`` и считала успех
+        # доказательством принадлежности. Это не доказательство: карточка
+        # публичной группы читается любым токеном, поэтому ключ, вставленный не в
+        # ту строку, проходил проверку с зелёным «ВАЛИДЕН». Ровно тот случай, о
+        # котором спросил владелец 2026-08-19: «вдруг при вставке токена были
+        # перепутаны сообщества».
+        #
+        # Спрашиваем токен о нём самом: ``groups.getById()`` БЕЗ аргументов
+        # community-токен отвечает своей группой. Это единственный ответ, который
+        # он подделать не может.
+        expected = abs(int(community_id))
         group_info = None
         try:
-            r = api.groups.getById(group_id=abs(int(community_id)))
+            r = api.groups.getById()
             if isinstance(r, list) and r:
                 group_info = r[0]
             elif isinstance(r, dict) and r.get("groups"):
@@ -992,6 +1215,30 @@ async def validate_community_token(token: str, community_id: int) -> Dict[str, A
                 "error_message": f"groups.getById failed: {e}",
                 "user_info": None,
                 "permissions": None,
+                "owns_community": None,
+            }
+
+        actual = None
+        if isinstance(group_info, dict) and group_info.get("id") is not None:
+            actual = abs(int(group_info["id"]))
+        if actual is None:
+            return {
+                "is_valid": False,
+                "error_message": "groups.getById() did not return the owning group",
+                "user_info": group_info,
+                "permissions": None,
+                "owns_community": None,
+            }
+        if actual != expected:
+            return {
+                "is_valid": False,
+                "error_message": (
+                    f"токен принадлежит сообществу {actual} "
+                    f"({group_info.get('name') or '?'}), а записан под {expected}"
+                ),
+                "user_info": group_info,
+                "permissions": None,
+                "owns_community": False,
             }
 
         # 2) Проверим scope `messages` — главная цель этого токена.
@@ -1005,6 +1252,7 @@ async def validate_community_token(token: str, community_id: int) -> Dict[str, A
                 "error_message": f"messages.getConversations failed: {e}",
                 "user_info": group_info,
                 "permissions": [],
+                "owns_community": True,
             }
 
         # 3) Дополнительно проверим wall.get (часто доступен community-токену) —
@@ -1020,6 +1268,7 @@ async def validate_community_token(token: str, community_id: int) -> Dict[str, A
             "error_message": None,
             "user_info": group_info,
             "permissions": permissions,
+            "owns_community": True,
         }
     except Exception as e:
         return {
@@ -1027,6 +1276,7 @@ async def validate_community_token(token: str, community_id: int) -> Dict[str, A
             "error_message": str(e),
             "user_info": None,
             "permissions": None,
+            "owns_community": None,
         }
 
 

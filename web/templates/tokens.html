@@ -7,257 +7,243 @@
 
 {% block content %}
 <div class="container-fluid">
-    <!-- Header -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card border-primary">
-                <div class="card-header bg-primary bg-opacity-10">
-                    <h2 class="mb-0">
-                        <i class="bi bi-key"></i> Управление VK Токенами
-                    </h2>
-                    <p class="mb-0 mt-2">Управление токенами доступа к VK API</p>
-                </div>
+    <!-- Шапка и счётчики одной строкой. Раньше это занимало две полноэкранные
+         строки карточек, из-за чего первая же полезная таблица уезжала за
+         нижний край экрана. -->
+    <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+        <h4 class="mb-0"><i class="bi bi-key"></i> VK-токены</h4>
+        <div class="d-flex flex-wrap gap-2 small">
+            <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">
+                главные <b id="main-tokens-count">-</b>
+            </span>
+            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                сообществ <b id="aux-tokens-count">-</b>
+            </span>
+            <span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle">
+                проблемных <b id="broken-tokens-count">-</b>
+            </span>
+            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">
+                всего <b id="total-tokens-count">-</b>
+            </span>
+        </div>
+        <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-outline-primary btn-sm" onclick="refreshAll()">
+                <i class="bi bi-arrow-clockwise"></i> Обновить всё
+            </button>
+            <button class="btn btn-outline-success btn-sm" onclick="validateAllTokens()">
+                <i class="bi bi-check-circle"></i> Проверить все
+            </button>
+        </div>
+    </div>
+
+    <!-- Сверка «токен и сообщество». Раздел первый и открыт по умолчанию:
+         перепутанный ключ выглядит исправным до самой попытки публикации. -->
+    <div class="card mb-2">
+        <div class="card-header py-2 sect-head" data-bs-toggle="collapse" data-bs-target="#sect-ownership"
+             role="button" aria-expanded="true" data-sect="ownership">
+            <span class="fw-semibold">
+                <i class="bi bi-shield-check"></i> Сверка «ключ ↔ сообщество»
+            </span>
+            <span class="ms-2 small" id="ownership-summary"></span>
+            <i class="bi bi-chevron-down float-end"></i>
+        </div>
+        <div class="collapse show" id="sect-ownership">
+            <div class="card-body py-2">
+                <p class="text-muted small mb-2">
+                    У каждого ключа спрашиваем <code>groups.getById()</code> <b>без аргументов</b> —
+                    community-токен отвечает своей группой, и это единственный ответ, который он
+                    не может подделать. Заодно ищем районы без ключа и ключи без района.
+                    <b>Проверка ходит в VK по разу на ключ</b>, поэтому запускается кнопкой.
+                </p>
+                <button class="btn btn-primary btn-sm mb-2" onclick="runOwnershipAudit()">
+                    <i class="bi bi-search"></i> Проверить принадлежность всех ключей
+                </button>
+                <div id="ownership-result" class="small"></div>
             </div>
         </div>
     </div>
 
-    <!-- Token Statistics -->
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="card border-success">
-                <div class="card-body text-center">
-                    <h5 class="card-title">🔑 Главные токены</h5>
-                    <h3 class="text-success" id="main-tokens-count">-</h3>
-                    <small class="text-muted">Полные права</small>
-                </div>
-            </div>
+    <!-- Все токены -->
+    <div class="card mb-2">
+        <div class="card-header py-2 sect-head" data-bs-toggle="collapse" data-bs-target="#sect-tokens"
+             role="button" aria-expanded="true" data-sect="tokens">
+            <span class="fw-semibold"><i class="bi bi-key"></i> Все токены</span>
+            <span class="ms-2 small text-muted" id="tokens-summary"></span>
+            <i class="bi bi-chevron-down float-end"></i>
         </div>
-        <div class="col-md-3">
-            <div class="card border-warning">
-                <div class="card-body text-center">
-                    <h5 class="card-title">🔧 Вспомогательные</h5>
-                    <h3 class="text-warning" id="aux-tokens-count">-</h3>
-                    <small class="text-muted">Только чтение</small>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card border-danger">
-                <div class="card-body text-center">
-                    <h5 class="card-title">❌ Неактивные</h5>
-                    <h3 class="text-danger" id="broken-tokens-count">-</h3>
-                    <small class="text-muted">Требуют внимания</small>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card border-info">
-                <div class="card-body text-center">
-                    <h5 class="card-title">📊 Всего токенов</h5>
-                    <h3 class="text-info" id="total-tokens-count">-</h3>
-                    <small class="text-muted">В системе</small>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Add Token Form -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0">➕ Добавить новый токен</h5>
-                </div>
-                <div class="card-body">
-                    <form id="add-token-form">
-                        <div class="row">
-                            <div class="col-md-3">
-                                <label for="token-name" class="form-label">Название токена</label>
-                                <input type="text" class="form-control" id="token-name" placeholder="Например: VALSTAN" required>
-                            </div>
-                            <div class="col-md-5">
-                                <label for="token-value" class="form-label">Токен доступа</label>
-                                <input type="text" class="form-control" id="token-value" placeholder="vk1.a.xxx..." required>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">&nbsp;</label>
-                                <button type="submit" class="btn btn-success w-100">
-                                    <i class="bi bi-plus-circle"></i> Добавить
-                                </button>
-                            </div>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Tokens Grid -->
-    <div class="row">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">🔑 Все токены</h5>
-                    <div class="d-flex gap-2">
-                        <button class="btn btn-outline-primary btn-sm" onclick="refreshTokens()">
-                            <i class="bi bi-arrow-clockwise"></i> Обновить
-                        </button>
-                        <button class="btn btn-outline-success btn-sm" onclick="validateAllTokens()">
-                            <i class="bi bi-check-circle"></i> Проверить все
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div id="tokens-grid" class="row">
-                        <div class="col-12 text-center">
-                            <div class="spinner-border" role="status">
-                                <span class="visually-hidden">Загрузка токенов...</span>
-                            </div>
-                            <p class="mt-2 text-muted">Загрузка токенов...</p>
-                        </div>
+        <div class="collapse show" id="sect-tokens">
+            <div class="card-body py-2">
+                <div id="tokens-grid" class="row g-2">
+                    <div class="col-12 text-center text-muted py-3">
+                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                        Загрузка токенов...
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Расход токенов: сколько VK-запросов сжёг каждый (Redis-счётчики) -->
-    <div class="row mt-4">
-        <div class="col-12">
-            <div class="card border-secondary">
-                <div class="card-header bg-secondary bg-opacity-10 d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">
-                        <i class="bi bi-speedometer2"></i>
-                        Расход токенов за сегодня
-                    </h5>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="refreshTokenUsage()">
-                        <i class="bi bi-arrow-clockwise"></i> Обновить
-                    </button>
-                </div>
-                <div class="card-body">
-                    <div class="alert alert-light mb-3">
-                        <i class="bi bi-info-circle"></i>
-                        Один инкремент на фактический вызов VK API. Счёт
-                        посуточный и <b>обнуляется в 00:00 по Москве</b> —
-                        накопительной статистики тут нет. Чтение балансируется
-                        по этому счётчику (первым идёт тот, кто сегодня
-                        потратил меньше), поэтому у живых user-токенов числа
-                        должны быть примерно равны.
-                        Строка <code>UNKNOWN:…</code> — расход мимо
-                        маршрутизатора, то есть место в коде, которое строит
-                        VK-клиент напрямую; это сигнал к правке, а не сбой.
-                        Подробнее — <a href="https://github.com/Valstan/setka/blob/main/docs/VK_TOKEN_ROADMAP.md" target="_blank" rel="noopener">дорожная карта токенов</a>.
-                    </div>
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle" id="token-usage-table">
-                            <thead>
-                                <tr>
-                                    <th style="width:22%">Токен</th>
-                                    <th style="width:28%">Роль в каскаде</th>
-                                    <th style="width:10%">Запросов</th>
-                                    <th style="width:40%">Методы</th>
-                                </tr>
-                            </thead>
-                            <tbody id="token-usage-tbody">
-                                <tr>
-                                    <td colspan="4" class="text-center text-muted">
-                                        <div class="spinner-border spinner-border-sm" role="status"></div>
-                                        Загрузка...
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <hr class="my-4">
-
-                    <h6 class="mb-2">
-                        <i class="bi bi-clipboard-check"></i>
-                        Права токенов — замер опытом
-                        <small class="text-muted" id="capabilities-measured-at"></small>
-                    </h6>
-                    <p class="text-muted small mb-3">
-                        Раз в месяц (1-го в 04:10) beat гоняет read-only пробы и
-                        сравнивает с прошлым замером; расхождения уходят в
-                        Telegram-алерт. <code>ok</code> — метод доступен,
-                        <code>errNN</code> — код отказа VK (<code>err27</code> =
-                        метод недоступен групповому токену, <code>err15</code> =
-                        нет доступа). Community-токены ведут себя одинаково,
-                        поэтому меряются все user-токены и два community.
-                    </p>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-bordered align-middle small" id="token-capabilities-table">
-                            <tbody id="token-capabilities-tbody">
-                                <tr>
-                                    <td class="text-center text-muted">
-                                        <div class="spinner-border spinner-border-sm" role="status"></div>
-                                        Загрузка...
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
+    <!-- Ключи сообществ -->
+    <div class="card mb-2">
+        <div class="card-header py-2 sect-head" data-bs-toggle="collapse" data-bs-target="#sect-communities"
+             role="button" aria-expanded="false" data-sect="communities">
+            <span class="fw-semibold">
+                <i class="bi bi-chat-square-text"></i> Ключи сообществ — по одному на группу
+            </span>
+            <span class="ms-2 small text-muted" id="communities-summary"></span>
+            <i class="bi bi-chevron-down float-end"></i>
+        </div>
+        <div class="collapse" id="sect-communities">
+            <div class="card-body py-2">
+                <p class="text-muted small mb-2">
+                    Ключ берётся по каждому сообществу отдельно:
+                    <code>vk.com/club&lt;ID&gt;</code> → <b>Управление</b> → <b>Работа с API</b> →
+                    <b>Создать ключ</b>. Права: <b>«Стена»</b>, <b>«Фотографии»</b>,
+                    <b>«Сообщения сообщества»</b>. Раздел «Работа с API» виден
+                    <b>только владельцу группы</b>, поэтому слот на группу один; отказоустойчивость
+                    даёт каскад ключ сообщества → <b>МАМА</b> → <b>VALSTAN</b> (VITA не публикует
+                    никогда). Подробнее — <a href="https://github.com/Valstan/setka/blob/main/docs/VK_TOKEN_ROADMAP.md" target="_blank" rel="noopener">дорожная карта токенов</a>.
+                </p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle small mb-0" id="community-tokens-table">
+                        <thead>
+                            <tr>
+                                <th style="width:32%">Сообщество</th>
+                                <th style="width:11%">Аккаунт</th>
+                                <th style="width:25%">Ключ</th>
+                                <th style="width:20%">Статус</th>
+                                <th style="width:12%">Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="community-tokens-tbody">
+                            <tr>
+                                <td colspan="5" class="text-center text-muted">
+                                    <div class="spinner-border spinner-border-sm" role="status"></div>
+                                    Загрузка...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Community access tokens (пул публикации + сообщения) -->
-    <div class="row mt-4">
-        <div class="col-12">
-            <div class="card border-info">
-                <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">
-                        <i class="bi bi-chat-square-text"></i>
-                        Токены сообществ — по одному на группу
-                    </h5>
-                    <button class="btn btn-outline-info btn-sm" onclick="refreshCommunityTokens()">
-                        <i class="bi bi-arrow-clockwise"></i> Обновить
-                    </button>
+    <!-- Расход за сегодня -->
+    <div class="card mb-2">
+        <div class="card-header py-2 sect-head" data-bs-toggle="collapse" data-bs-target="#sect-usage"
+             role="button" aria-expanded="false" data-sect="usage">
+            <span class="fw-semibold"><i class="bi bi-speedometer2"></i> Расход за сегодня</span>
+            <span class="ms-2 small text-muted" id="usage-summary"></span>
+            <i class="bi bi-chevron-down float-end"></i>
+        </div>
+        <div class="collapse" id="sect-usage">
+            <div class="card-body py-2">
+                <p class="text-muted small mb-2">
+                    Один инкремент на фактический вызов VK API. Счёт посуточный и
+                    <b>обнуляется в 00:00 по Москве</b> — накопительной статистики тут нет.
+                    Чтение балансируется по этому счётчику (первым идёт тот, кто сегодня потратил
+                    меньше), поэтому у живых user-токенов числа должны быть примерно равны.
+                    Строка <code>UNKNOWN:…</code> — расход мимо маршрутизатора, то есть место
+                    в коде, которое строит VK-клиент напрямую; это сигнал к правке, а не сбой.
+                    <b>Показаны все ключи, включая выключенные</b> — иначе исчезнувшая строка
+                    неотличима от нулевого расхода.
+                </p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle small mb-0" id="token-usage-table">
+                        <thead>
+                            <tr>
+                                <th style="width:32%">Ключ</th>
+                                <th style="width:24%">Роль в каскаде</th>
+                                <th style="width:9%">Запросов</th>
+                                <th style="width:35%">Методы</th>
+                            </tr>
+                        </thead>
+                        <tbody id="token-usage-tbody">
+                            <tr>
+                                <td colspan="4" class="text-center text-muted">
+                                    <div class="spinner-border spinner-border-sm" role="status"></div>
+                                    Загрузка...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
-                <div class="card-body">
-                    <div class="alert alert-light mb-3">
-                        <i class="bi bi-info-circle"></i>
-                        Эти токены берутся в VK по каждому сообществу отдельно:
-                        <code>vk.com/club{ID}</code> → <b>Управление</b> →
-                        <b>Работа с API</b> → <b>Создать ключ</b>.
-                        Дай ключу права <b>«Стена»</b>, <b>«Фотографии»</b> и
-                        <b>«Сообщения сообщества»</b>.
-                        Ключ сообщества выпускает <b>только владелец группы</b> —
-                        у администратора раздела «Работа с API» нет вовсе,
-                        поэтому слот на группу один. Отказоустойчивость даёт
-                        каскад публикации: ключ сообщества → <b>МАМА</b> →
-                        <b>VALSTAN</b> (VITA не публикует никогда). Порядок и
-                        обоснование — <a href="https://github.com/Valstan/setka/blob/main/docs/VK_TOKEN_ROADMAP.md" target="_blank" rel="noopener">дорожная карта токенов</a>.
-                    </div>
+            </div>
+        </div>
+    </div>
 
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle" id="community-tokens-table">
-                            <thead>
-                                <tr>
-                                    <th style="width:22%">Регион</th>
-                                    <th style="width:13%">VK group</th>
-                                    <th style="width:10%">Аккаунт</th>
-                                    <th style="width:30%">Токен</th>
-                                    <th style="width:15%">Статус</th>
-                                    <th style="width:10%">Действия</th>
-                                </tr>
-                            </thead>
-                            <tbody id="community-tokens-tbody">
-                                <tr>
-                                    <td colspan="6" class="text-center text-muted">
-                                        <div class="spinner-border spinner-border-sm" role="status"></div>
-                                        Загрузка...
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
+    <!-- Права — замер опытом -->
+    <div class="card mb-2">
+        <div class="card-header py-2 sect-head" data-bs-toggle="collapse" data-bs-target="#sect-capabilities"
+             role="button" aria-expanded="false" data-sect="capabilities">
+            <span class="fw-semibold"><i class="bi bi-clipboard-check"></i> Права токенов — замер опытом</span>
+            <span class="ms-2 small text-muted" id="capabilities-measured-at"></span>
+            <i class="bi bi-chevron-down float-end"></i>
+        </div>
+        <div class="collapse" id="sect-capabilities">
+            <div class="card-body py-2">
+                <p class="text-muted small mb-2">
+                    Раз в месяц (1-го в 04:10) beat гоняет read-only пробы и сравнивает с прошлым
+                    замером; расхождения уходят в Telegram-алерт. <code>ok</code> — метод доступен,
+                    <code>errNN</code> — код отказа VK (<code>err27</code> = метод недоступен
+                    групповому токену, <code>err15</code> = нет доступа). Community-токены ведут
+                    себя одинаково, поэтому меряются все user-токены и два community.
+                </p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle small mb-0" id="token-capabilities-table">
+                        <tbody id="token-capabilities-tbody">
+                            <tr>
+                                <td class="text-center text-muted">
+                                    <div class="spinner-border spinner-border-sm" role="status"></div>
+                                    Загрузка...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Добавление токена — редкая операция, поэтому свёрнута и в самом низу -->
+    <div class="card mb-2">
+        <div class="card-header py-2 sect-head" data-bs-toggle="collapse" data-bs-target="#sect-add"
+             role="button" aria-expanded="false" data-sect="add">
+            <span class="fw-semibold"><i class="bi bi-plus-circle"></i> Добавить новый токен</span>
+            <i class="bi bi-chevron-down float-end"></i>
+        </div>
+        <div class="collapse" id="sect-add">
+            <div class="card-body py-2">
+                <form id="add-token-form" class="row g-2 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label small mb-1">Название токена</label>
+                        <input type="text" class="form-control form-control-sm" id="token-name"
+                               placeholder="Например: VALSTAN" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small mb-1">Токен доступа</label>
+                        <input type="text" class="form-control form-control-sm" id="token-value"
+                               placeholder="vk1.a.xxx..." required>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-success btn-sm w-100">Добавить</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 </div>
+
+<style>
+/* Заголовок-переключатель: курсор и стрелка, чтобы сворачиваемость была видна
+   без наведения. Класс `.collapsed` Bootstrap вешает на триггер сам. */
+.sect-head { cursor: pointer; user-select: none; }
+.sect-head .bi-chevron-down { transition: transform .15s; }
+.sect-head.collapsed .bi-chevron-down { transform: rotate(-90deg); }
+.subject-line { line-height: 1.2; }
+.token-code { font-size: .72rem; }
+</style>
 
 <!-- Token Modal -->
 <div class="modal fade" id="tokenModal" tabindex="-1" aria-labelledby="tokenModalLabel" aria-hidden="true">
@@ -374,6 +360,7 @@
 <script>
 // Load initial data
 document.addEventListener('DOMContentLoaded', function() {
+    restoreSections();
     loadTokens();
     refreshCommunityTokens();
     refreshTokenUsage();
@@ -381,6 +368,158 @@ document.addEventListener('DOMContentLoaded', function() {
     // Add token form
     document.getElementById('add-token-form').addEventListener('submit', addToken);
 });
+
+function refreshAll() {
+    loadTokens();
+    refreshCommunityTokens();
+    refreshTokenUsage();
+}
+
+// ===========================================================================
+// Память свёрнутости разделов
+//
+// Без неё сворачивание бесполезно: каждый переход на страницу возвращал бы
+// раскладку по умолчанию, и оператор сворачивал бы одно и то же заново.
+// ===========================================================================
+
+const SECT_KEY = 'setka.tokens.sections';
+
+function readSectionState() {
+    try { return JSON.parse(localStorage.getItem(SECT_KEY) || '{}'); } catch (e) { return {}; }
+}
+
+function restoreSections() {
+    const saved = readSectionState();
+    document.querySelectorAll('.sect-head').forEach(head => {
+        const key = head.dataset.sect;
+        const body = document.querySelector(head.dataset.bsTarget);
+        if (!body) return;
+        const open = key in saved ? !!saved[key] : body.classList.contains('show');
+        body.classList.toggle('show', open);
+        head.classList.toggle('collapsed', !open);
+        head.setAttribute('aria-expanded', String(open));
+        body.addEventListener('shown.bs.collapse', () => saveSection(key, true));
+        body.addEventListener('hidden.bs.collapse', () => saveSection(key, false));
+    });
+}
+
+function saveSection(key, open) {
+    const saved = readSectionState();
+    saved[key] = open;
+    try { localStorage.setItem(SECT_KEY, JSON.stringify(saved)); } catch (e) { /* приватный режим */ }
+}
+
+// ===========================================================================
+// Подпись владельца ключа
+//
+// Имя `COMM_240944863` отвечает «какая группа», но не «какой район»: чтобы
+// понять, что это Юрья, оператору приходилось держать соответствие в голове
+// либо искать строку в другой таблице этой же страницы. Показываем и то и
+// другое, а название делаем ссылкой прямо в сообщество.
+// ===========================================================================
+
+function subjectHtml(info, tokenName) {
+    const label = info && info.subject_label;
+    const url = info && info.subject_url;
+    const code = `<div class="text-muted font-monospace token-code">${escapeHtml(tokenName)}</div>`;
+    if (!label) return `<div class="subject-line"><strong>${escapeHtml(tokenName)}</strong></div>`;
+    const link = url
+        ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`
+        : escapeHtml(label);
+    const region = info.region_code
+        ? ` <span class="badge bg-light text-secondary border">${escapeHtml(info.region_code)}</span>`
+        : '';
+    return `<div class="subject-line"><strong>${link}</strong>${region}${code}</div>`;
+}
+
+// ===========================================================================
+// Сверка «ключ и сообщество» (/api/tokens/communities/ownership-audit)
+// ===========================================================================
+
+async function runOwnershipAudit() {
+    const box = document.getElementById('ownership-result');
+    const summary = document.getElementById('ownership-summary');
+    box.innerHTML = `<div class="text-muted">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        Опрашиваю ключи в VK — по одному запросу на каждый...
+    </div>`;
+    summary.textContent = '';
+    try {
+        const r = await fetch('/api/tokens/communities/ownership-audit');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderOwnershipAudit(await r.json());
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger">Ошибка: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderOwnershipAudit(data) {
+    const box = document.getElementById('ownership-result');
+    const summary = document.getElementById('ownership-summary');
+    const bad = (data.mismatches || 0) + (data.probe_failed || 0)
+        + (data.regions_without_token || []).length + (data.tokens_without_region || []).length;
+
+    summary.innerHTML = bad === 0
+        ? `<span class="badge bg-success">все ${data.checked} совпали</span>`
+        : `<span class="badge bg-danger">проблем: ${bad}</span>`;
+
+    const parts = [];
+    parts.push(bad === 0
+        ? `<div class="alert alert-success py-2 mb-2">
+             Проверено ключей: <b>${data.checked}</b>. Все принадлежат тем сообществам, под
+             которыми записаны. Районов без ключа нет, ключей без района нет.
+           </div>`
+        : `<div class="alert alert-danger py-2 mb-2">
+             Проверено ключей: <b>${data.checked}</b>. Совпало ${data.ok},
+             перепутано <b>${data.mismatches}</b>, не удалось опросить ${data.probe_failed}.
+           </div>`);
+
+    const problems = (data.rows || []).filter(r => r.verdict !== 'ok');
+    if (problems.length) {
+        parts.push(`<table class="table table-sm table-bordered align-middle small">
+            <thead><tr><th>Ключ</th><th>Записан под</th><th>Фактически принадлежит</th><th>Что не так</th></tr></thead>
+            <tbody>${problems.map(r => `
+                <tr class="${r.verdict === 'mismatch' ? 'table-danger' : 'table-warning'}">
+                    <td class="font-monospace">${escapeHtml(r.token_name)}</td>
+                    <td>${escapeHtml(r.region_name || '—')}<div class="text-muted token-code">club${r.community_id}</div></td>
+                    <td>${r.actual_community_id
+                        ? `${escapeHtml(r.actual_name || '')}<div class="text-muted token-code">club${r.actual_community_id}</div>`
+                        : '<span class="text-muted">не ответил</span>'}</td>
+                    <td>${escapeHtml(r.error || (r.verdict === 'mismatch' ? 'ключ от другого сообщества' : ''))}</td>
+                </tr>`).join('')}
+            </tbody></table>`);
+    }
+
+    if ((data.regions_without_token || []).length) {
+        parts.push(`<div class="alert alert-warning py-2 mb-2">
+            <b>Районы без своего ключа</b> (публикуются только каскадом МАМА → VALSTAN):
+            ${data.regions_without_token.map(r =>
+                `${escapeHtml(r.region_name)} <span class="text-muted">(${escapeHtml(r.region_code)}${r.is_active ? '' : ', выключен'})</span>`
+            ).join(', ')}
+        </div>`);
+    }
+    if ((data.tokens_without_region || []).length) {
+        parts.push(`<div class="alert alert-warning py-2 mb-2">
+            <b>Ключи без района</b> — проверь до удаления, за ними может стоять живая функция:
+            ${data.tokens_without_region.map(t =>
+                `<span class="font-monospace">${escapeHtml(t.token_name)}</span>`
+            ).join(', ')}
+        </div>`);
+    }
+
+    // Совпавшие — свёрнутым списком: они и есть норма, разворачивать незачем.
+    const good = (data.rows || []).filter(r => r.verdict === 'ok');
+    if (good.length) {
+        parts.push(`<details class="mt-1">
+            <summary class="text-muted">Совпавшие ключи (${good.length})</summary>
+            <div class="mt-2">${good.map(r =>
+                `<div><a href="${escapeHtml(r.vk_url)}" target="_blank" rel="noopener">${escapeHtml(r.actual_name || r.region_name || '')}</a>
+                 <span class="text-muted token-code font-monospace">${escapeHtml(r.token_name)}</span></div>`
+            ).join('')}</div>
+        </details>`);
+    }
+    box.innerHTML = parts.join('');
+}
 
 // ===========================================================================
 // Расход токенов (Redis-счётчики, /api/tokens/usage)
@@ -455,6 +594,8 @@ function renderTokenUsage(today) {
         </td></tr>`;
         return;
     }
+    document.getElementById('usage-summary').textContent =
+        `· ключей: ${rows.length}`;
     tbody.innerHTML = rows.map(([name, info]) => {
         const unknown = name.startsWith('UNKNOWN');
         const methods = Object.entries(info.methods || {})
@@ -462,10 +603,11 @@ function renderTokenUsage(today) {
             .slice(0, 4)
             .map(([m, n]) => `${escapeHtml(m)}&nbsp;<span class="text-muted">${n}</span>`)
             .join(', ') || '<span class="text-muted">—</span>';
+        const off = info.is_active === false
+            ? ' <span class="badge bg-secondary">выключен</span>' : '';
         return `
             <tr${unknown ? ' class="table-warning"' : ''}>
-                <td>
-                    <strong>${escapeHtml(name)}</strong>
+                <td>${subjectHtml(info, name)}${off}
                     ${info.known === false && !unknown ? '<div><small class="text-muted">нет в таблице токенов</small></div>' : ''}
                 </td>
                 <td><small>${escapeHtml(info.role || '')}</small></td>
@@ -482,7 +624,7 @@ function renderTokenUsage(today) {
 
 async function refreshCommunityTokens() {
     const tbody = document.getElementById('community-tokens-tbody');
-    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">
         <div class="spinner-border spinner-border-sm" role="status"></div> Загрузка...
     </td></tr>`;
     try {
@@ -491,16 +633,19 @@ async function refreshCommunityTokens() {
         const rows = await r.json();
         renderCommunityTokens(rows);
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="6" class="text-danger">Ошибка: ${escapeHtml(e.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-danger">Ошибка: ${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
 function renderCommunityTokens(rows) {
     const tbody = document.getElementById('community-tokens-tbody');
     if (!rows || rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">Нет регионов с VK group</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">Нет регионов с VK group</td></tr>`;
         return;
     }
+    const withToken = rows.filter(r => (r.tokens || []).length > 0).length;
+    document.getElementById('communities-summary').textContent =
+        `· ${withToken} из ${rows.length} сообществ с ключом`;
     tbody.innerHTML = rows.map(row => communityTokenRowsHtml(row)).join('');
 }
 
@@ -532,14 +677,11 @@ function communityTokenSlotHtml(row, slot, tokenRow, firstForRegion) {
     return `
         <tr data-cid="${cid}" data-token-name="${escapeHtml(slot.name)}">
             <td>
-                ${firstForRegion ? `<div><strong>${escapeHtml(row.region_name || '')}</strong></div>
-                <small class="text-muted">${escapeHtml(row.region_code || '')}</small>` : ''}
-            </td>
-            <td>
-                ${firstForRegion ? `<a href="https://vk.com/club${cid}" target="_blank" rel="noopener">
-                    club${cid}
-                </a>
-                <div><small class="text-muted">vk_group_id = ${row.vk_group_id}</small></div>` : ''}
+                ${firstForRegion ? `<div class="subject-line">
+                    <strong><a href="https://vk.com/club${cid}" target="_blank" rel="noopener">${escapeHtml(row.region_name || ('club' + cid))}</a></strong>
+                    <span class="badge bg-light text-secondary border">${escapeHtml(row.region_code || '')}</span>
+                    <div class="text-muted font-monospace token-code">club${cid}</div>
+                </div>` : ''}
             </td>
             <td><strong>${escapeHtml(slot.account)}</strong><div><small class="text-muted">${escapeHtml(slot.name)}</small></div></td>
             <td>
@@ -664,6 +806,9 @@ function displayTokens(tokens) {
         return;
     }
     
+    const comm = tokens.filter(t => t.community_id).length;
+    document.getElementById('tokens-summary').textContent =
+        `· ${tokens.length} всего: ${comm} сообществ, ${tokens.length - comm} пользовательских`;
     container.innerHTML = tokens.map(token => {
         const now = new Date();
         const cooldownUntil = token.disabled_until ? new Date(token.disabled_until) : null;
@@ -677,21 +822,21 @@ function displayTokens(tokens) {
         return `
         <div class="col-md-6 col-lg-4">
             <div class="token-card ${getTokenCardClass(token)} ${inCooldown ? 'border-danger' : ''}">
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <h6 class="mb-0">${token.name}</h6>
+                <div class="d-flex justify-content-between align-items-start mb-2 gap-2">
+                    <div class="flex-grow-1">${subjectHtml(token, token.name)}</div>
                     <span class="status-badge ${getTokenStatusBadgeClass(token)}">
                         ${inCooldown ? '⏸ Cooldown' : getTokenStatusText(token)}
                     </span>
                 </div>
 
-                <div class="token-info">
-                    <div><strong>ID:</strong> ${token.id}</div>
-                    <div><strong>Активен:</strong> ${token.is_active ? 'Да' : 'Нет'}</div>
-                    <div><strong>Статус:</strong> ${token.validation_status || 'unknown'}</div>
-                    <div><strong>Токен:</strong> ${escapeHtml(token.token || '')}</div>
+                <div class="token-info small">
+                    <div class="text-muted">
+                        id ${token.id} · ${token.is_active ? 'активен' : 'выключен'} ·
+                        ${escapeHtml(token.validation_status || 'unknown')}
+                    </div>
+                    <div class="font-monospace token-code text-muted">${escapeHtml(token.token || '')}</div>
                     ${cooldownLabel}
                     ${errStreak}
-                    ${token.user_info && (token.user_info.first_name || token.user_info.last_name) ? `<div><strong>Пользователь:</strong> ${escapeHtml((token.user_info.first_name || '') + ' ' + (token.user_info.last_name || ''))}</div>` : ''}
                 </div>
 
                 ${!token.community_id ? `
@@ -932,10 +1077,6 @@ async function validateAllTokens() {
     } catch (error) {
         showError('Ошибка проверки токенов: ' + error.message);
     }
-}
-
-async function refreshTokens() {
-    await loadTokens();
 }
 
 function getTokenCardClass(token) {
