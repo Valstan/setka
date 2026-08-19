@@ -32,7 +32,7 @@
 | `database/migrations/080_post_metrics.sql` (C) | шесть колонок + индекс |
 | `database/models_extended.py` (M) | те же поля в модели `CollectedPostAudit` + `to_dict` |
 | `modules/curation/collection_audit.py` (M) | `_snapshot` пишет `published_at` из `post['date']` |
-| `modules/vk_monitor/post_metrics.py` (C) | общий батч-фетчер `wall.getById` — единственное место, где парсится ответ ВК |
+| `modules/vk_monitor/post_metrics.py` (C) | общий батч-фетчер `wall.getById` — единственное место, где парсится ответ ВК по метрикам |
 | `modules/ad_cabinet/publication_stats.py` (M) | переводится на общий фетчер, своя политика токенов остаётся |
 | `modules/classifier/metrics_refresh.py` (C) | отбор кандидатов на обновление + запись метрик (вся логика, без Celery) |
 | `tasks/celery_app.py` (M) | таска-обёртка `refresh_post_metrics` + запись в beat |
@@ -55,7 +55,13 @@
 - Consumes: `post_popularity(views, likes, comments, reposts) -> float` (существует, `utils/post_utils.py:30`)
 - Produces:
   - `post_rating(views: Optional[int], likes: Optional[int], comments: Optional[int], reposts: Optional[int], *, alpha: float) -> Optional[float]`
+  - `vk_post_datetime(ts: Any) -> Optional[datetime]` — unix-время поста ВК в наивный UTC
   - `get_rating_views_alpha() -> float` в `config/classifier.py`
+
+**Ruling пре-флайта:** `vk_post_datetime` живёт здесь, а не двумя копиями в T3 и T4.
+План требовал одинаковый `_published_at` в `collection_audit.py` и в `post_metrics.py`,
+что противоречит его же доводу в T4 («вторая копия разошлась бы молча»). Два дословных
+парсера даты — тот же дефект на уровень ниже общего фетчера.
 
 **Почему `alpha` — обязательный keyword-аргумент, а не чтение конфига внутри.** `utils/post_utils.py` — низкий уровень без зависимостей на `config/`. Чистая функция остаётся чистой и тестируется без env; конфиг читает вызывающий.
 
@@ -130,6 +136,22 @@ def test_alpha_from_config_defaults_to_quarter(monkeypatch):
 
     monkeypatch.setenv("RATING_VIEWS_ALPHA", "0.5")
     assert get_rating_views_alpha() == pytest.approx(0.5)
+
+
+def test_vk_post_datetime_converts_unix_to_naive_utc():
+    from datetime import datetime
+
+    from utils.post_utils import vk_post_datetime
+
+    assert vk_post_datetime(1787136000) == datetime(2026, 8, 19, 10, 40)
+
+
+def test_vk_post_datetime_returns_none_on_anything_broken():
+    # Подставленная «сейчас» обманула бы отсев по старости в нашу пользу.
+    from utils.post_utils import vk_post_datetime
+
+    for bad in (None, 0, "", "не число", [], 10**20):
+        assert vk_post_datetime(bad) is None, f"ts={bad!r}"
 
 
 def test_broken_alpha_env_falls_back_to_default(monkeypatch):
@@ -223,9 +245,32 @@ def post_rating(
     return engagement / ((int(views) + 1) ** alpha)
 ```
 
-В шапке `utils/post_utils.py` добавить `Optional` в импорт типов:
+Там же добавить общий конвертер времени поста:
 
 ```python
+def vk_post_datetime(ts: Any) -> Optional[datetime]:
+    """Unix-время поста ВК (поле ``date``) → наивный UTC, как времена в БД.
+
+    Одно место на весь проект: этот разбор нужен и аудиту сбора, и фетчеру
+    метрик, а две копии разошлись бы молча — ровно тот класс, из-за которого
+    D-024 сводил три копии ``_call_api`` в один клиент.
+
+    ``datetime.utcfromtimestamp`` не используем: в 3.12 она deprecated. Любое
+    битое значение — ``None``, а не «сейчас»: подставленная дата обманула бы
+    отсев по старости в нашу пользу.
+    """
+    if not ts:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).replace(tzinfo=None)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+```
+
+В шапке `utils/post_utils.py` поправить импорты:
+
+```python
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 ```
 
@@ -233,7 +278,7 @@ from typing import Any, Dict, Optional
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_classifier/test_post_rating.py -q --basetemp=C:/Temp/claude/D--PROGRAMMING-setka/fb2d97a1-a6d0-4c47-8162-2df4d83cc462/scratchpad/pt -p no:cacheprovider`
 
-Expected: PASS, 8 тестов
+Expected: PASS, 10 тестов
 
 - [ ] **Step 6: Коммит**
 
@@ -422,7 +467,7 @@ def test_snapshot_records_vk_post_date():
 
     from modules.curation.collection_audit import build_audit_records
 
-    post = {"owner_id": -100, "id": 7, "text": "текст", "date": 1755600000}
+    post = {"owner_id": -100, "id": 7, "text": "текст", "date": 1787136000}
     records = build_audit_records(
         region_code="mi", theme="novost", region_config=None,
         collected=[post], kept=[post],
@@ -464,38 +509,21 @@ Expected: FAIL, `KeyError: 'published_at'`
 
 - [ ] **Step 3: Реализовать**
 
+**Ruling пре-флайта: своего конвертера здесь НЕ заводим** — берём общий
+`vk_post_datetime` из Task 1. План изначально требовал дословную копию такого же
+парсера и в этом файле, и в `post_metrics.py` (Task 4), что противоречит доводу
+самого плана против копий.
+
 В `modules/curation/collection_audit.py` добавить импорт в шапку:
 
 ```python
-from datetime import datetime, timezone
-```
-
-Добавить функцию перед `_snapshot`:
-
-```python
-def _published_at(post: Dict[str, Any]) -> Optional[datetime]:
-    """Дата поста в ВК (unix ``date``) → наивный UTC, как остальные времена в БД.
-
-    ``datetime.utcfromtimestamp`` не используем: в 3.12 она deprecated, а
-    единообразие с ``datetime.utcnow()`` по проекту сохраняется тем, что мы
-    руками снимаем tzinfo.
-
-    Любое битое значение — ``None``. Аудит никогда не валит сбор, а
-    подставленная «сейчас» обманула бы отсев по старости в нашу пользу.
-    """
-    ts = post.get("date")
-    if not ts:
-        return None
-    try:
-        return datetime.fromtimestamp(int(ts), tz=timezone.utc).replace(tzinfo=None)
-    except (TypeError, ValueError, OSError, OverflowError):
-        return None
+from utils.post_utils import vk_post_datetime
 ```
 
 В `_snapshot` добавить ключ в возвращаемый словарь, сразу после `"post_url"`:
 
 ```python
-        "published_at": _published_at(post),
+        "published_at": vk_post_datetime(post.get("date")),
 ```
 
 - [ ] **Step 4: Прогнать тесты, убедиться что проходят**
@@ -548,7 +576,7 @@ from modules.vk_monitor.post_metrics import fetch_metrics_for_token, parse_metri
 def test_parse_reads_all_four_metrics_and_date():
     items = [
         {
-            "owner_id": -100, "id": 7, "date": 1755600000,
+            "owner_id": -100, "id": 7, "date": 1787136000,
             "views": {"count": 1224}, "likes": {"count": 7},
             "comments": {"count": 2}, "reposts": {"count": 1},
         }
@@ -651,8 +679,9 @@ Expected: FAIL, `ModuleNotFoundError: modules.vk_monitor.post_metrics`
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
+
+from utils.post_utils import vk_post_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -669,17 +698,6 @@ def _count(item: Dict[str, Any], key: str) -> Optional[int]:
     try:
         return int(block["count"])
     except (TypeError, ValueError):
-        return None
-
-
-def _published_at(item: Dict[str, Any]) -> Optional[datetime]:
-    """Unix ``date`` → наивный UTC, как остальные времена в БД."""
-    ts = item.get("date")
-    if not ts:
-        return None
-    try:
-        return datetime.fromtimestamp(int(ts), tz=timezone.utc).replace(tzinfo=None)
-    except (TypeError, ValueError, OSError, OverflowError):
         return None
 
 
@@ -701,7 +719,7 @@ def parse_metrics_items(items: Iterable[Dict[str, Any]]) -> Dict[Ref, Dict[str, 
             "likes": _count(item, "likes"),
             "comments": _count(item, "comments"),
             "reposts": _count(item, "reposts"),
-            "published_at": _published_at(item),
+            "published_at": vk_post_datetime(item.get("date")),
         }
     return out
 
@@ -1110,7 +1128,7 @@ git commit -m "feat(classifier): таска обновления метрик п
 - Consumes: `post_rating` (Task 1), `get_rating_views_alpha` (Task 1), `selection.fetch_publish_lips` (существует)
 - Produces:
   - `rank_rows(rows: Sequence[Dict[str, Any]], *, alpha: float, n: int) -> List[Dict[str, Any]]` — чистая; добавляет ключ `score` и сортирует
-  - `top_by_rating(session, *, region_code: str, theme: Optional[str], n: int, alphas: Sequence[float]) -> Dict[str, Any]`
+  - `top_by_rating(session, *, region_code: str, theme: Optional[str], n: int, alphas: Optional[Sequence[float]] = None) -> Dict[str, Any]` — при `alphas=None` первой идёт настроенная `RATING_VIEWS_ALPHA`, затем опорные 0.5 и 0.0 (дубли схлопываются)
   - `GET /api/classifier-review/rating/top?region=&theme=&n=`
 
 **Маршрут ставится ВЫШЕ параметризованных путей** — как `/bulk/*` после инцидента 2026-08-19. Гейт на затенение в `tests/test_classifier/test_review_api_routes.py` это проверяет автоматически.
@@ -1251,17 +1269,29 @@ async def top_by_rating(
     region_code: str,
     theme: Optional[str] = None,
     n: int = 10,
-    alphas: Sequence[float] = (0.25, 0.5, 0.0),
+    alphas: Optional[Sequence[float]] = None,
 ) -> Dict[str, Any]:
     """Верхушка рейтинга района по каждому из ``alphas``.
+
+    По умолчанию первой идёт НАСТРОЕННАЯ alpha (``RATING_VIEWS_ALPHA``), а не
+    жёсткая 0.25: витрина существует ради выбора этого значения и обязана
+    показывать то, что реально стоит в конфиге. Рядом — две опорные точки:
+    0.5 (как сортируется лента сейчас) и 0 (чистый охват).
 
     Окно — те же 72 часа, что у отбора: показывать надо то, из чего реально
     можно выбрать.
     """
     from sqlalchemy import or_, select
 
+    from config.classifier import get_rating_views_alpha
     from database.models_extended import CollectedPostAudit
     from modules.classifier import selection
+
+    if alphas is None:
+        configured = get_rating_views_alpha()
+        # dict.fromkeys, а не set: порядок колонок на витрине задан, а
+        # настроенная alpha может совпасть с опорной — дубля быть не должно.
+        alphas = list(dict.fromkeys([configured, 0.5, 0.0]))
 
     cutoff = datetime.utcnow() - timedelta(hours=WINDOW_HOURS)
     stmt = select(

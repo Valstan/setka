@@ -19,6 +19,8 @@ Env vars:
                                       # подачи в постулаты → подсветка в панели
   CLASSIFIER_RULES_SNAPSHOT_PATH      # файл снапшота выученных правил (beat);
                                       # дефолт logs/classifier_learned_rules_snapshot.md
+  RATING_VIEWS_ALPHA=0.25     # показатель степени при просмотрах в рейтинге
+                              # отбора; 0.5 = нынешняя post_popularity, 0 = охват
 """
 
 from __future__ import annotations
@@ -144,3 +146,29 @@ def read_postulates() -> str:
         return POSTULATES_PATH.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+# Показатель степени при просмотрах в рейтинге отбора (звено 5, шаг 1).
+# score = engagement / (views + 1) ** alpha
+#   alpha = 0.5 — нынешняя post_popularity (рейтинг вовлечённости: маленькая
+#                 группа с высоким откликом обгоняет районный хит)
+#   alpha = 0.25 — дефолт: охват весомее, но не решает в одиночку
+#   alpha = 0   — чистый абсолютный охват
+# Наружу вынесен сознательно: это редакционная настройка, её подбирают на
+# данных через витрину /api/classifier-review/rating/top, а не в коде.
+RATING_VIEWS_ALPHA_DEFAULT = 0.25
+
+
+def get_rating_views_alpha() -> float:
+    """Показатель степени при просмотрах (env ``RATING_VIEWS_ALPHA``).
+
+    Нечитаемое значение — это дефолт, а не исключение: опечатка в env не
+    должна ронять отбор посреди волны публикации.
+    """
+    raw = (os.getenv("RATING_VIEWS_ALPHA") or "").strip()
+    if not raw:
+        return RATING_VIEWS_ALPHA_DEFAULT
+    try:
+        return float(raw)
+    except ValueError:
+        return RATING_VIEWS_ALPHA_DEFAULT

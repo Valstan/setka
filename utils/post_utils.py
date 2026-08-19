@@ -6,7 +6,8 @@ and other common post operations.
 """
 
 import math
-from typing import Any, Dict
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 
 def lip_of_post(owner_id: int, post_id: int) -> str:
@@ -51,6 +52,58 @@ def post_popularity(views: int, likes: int, comments: int, reposts: int) -> floa
     view_factor = math.sqrt(views + 1)
 
     return engagement / view_factor
+
+
+def post_rating(
+    views: Optional[int],
+    likes: Optional[int],
+    comments: Optional[int],
+    reposts: Optional[int],
+    *,
+    alpha: float,
+) -> Optional[float]:
+    """Рейтинг поста для отбора в корневую группу (звено 5, шаг 1).
+
+    ``score = (likes + 2*comments + 3*reposts) / (views + 1) ** alpha``
+
+    Отличается от ``post_popularity`` ровно одним: показатель степени при
+    просмотрах вынесен наружу. При ``alpha=0.5`` совпадает с ней с точностью
+    до плавающей запятой (гейт в тестах) — то есть это не новая формула, а
+    та же с ручкой. ``alpha`` меньше 0.5 поднимает охват, больше — отклик.
+
+    ``views is None`` → ``None``, и это не то же самое, что ноль: пост, у
+    которого просмотры не измерены, обогнал бы районный хит, потому что
+    делитель схлопнулся бы в единицу. Такие посты уходят в хвост очереди,
+    а не наверх. Реакции же ``None`` считаются нулём — они в знаменателе не
+    стоят и рейтинг не искажают.
+
+    ``alpha`` — обязательный keyword-аргумент, а не чтение конфига внутри:
+    модуль низкоуровневый и на ``config/`` не завязан. Читает вызывающий
+    (``config.classifier.get_rating_views_alpha``).
+    """
+    if views is None:
+        return None
+    engagement = (likes or 0) + (comments or 0) * 2 + (reposts or 0) * 3
+    return engagement / ((int(views) + 1) ** alpha)
+
+
+def vk_post_datetime(ts: Any) -> Optional[datetime]:
+    """Unix-время поста ВК (поле ``date``) → наивный UTC, как времена в БД.
+
+    Одно место на весь проект: этот разбор нужен и аудиту сбора, и фетчеру
+    метрик, а две копии разошлись бы молча — ровно тот класс, из-за которого
+    D-024 сводил три копии ``_call_api`` в один клиент.
+
+    ``datetime.utcfromtimestamp`` не используем: в 3.12 она deprecated. Любое
+    битое значение — ``None``, а не «сейчас»: подставленная дата обманула бы
+    отсев по старости в нашу пользу.
+    """
+    if not ts:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).replace(tzinfo=None)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
 
 
 def clear_copy_history(post_data: Dict[str, Any]) -> Dict[str, Any]:
