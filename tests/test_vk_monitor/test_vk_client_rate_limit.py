@@ -272,3 +272,42 @@ def test_redis_rate_limiter_lua_failure_does_not_crash():
     limiter.wait("token-X")
     elapsed = time.monotonic() - t0
     assert elapsed < 0.02
+
+
+def test_module_level_throttle_shares_the_limiter_with_the_client():
+    """Код, ходящий в ВК мимо VKClient, тормозится ТЕМ ЖЕ лимитером.
+
+    Так ходит батч-фетчер метрик (``vk_monitor/post_metrics.py``): ему дают
+    готовый vk_api-объект, потому что политика выбора токена у кабинета и у
+    обновления метрик разная. Своего sleep у него быть не должно — иначе два
+    тормоза на один токен, и суммарный темп снова выше того, за который ВК
+    ставит cooldown. Здесь это и проверяется: вызов через клиент и вызов через
+    модульную функцию на одном токене разнесены интервалом.
+    """
+    from modules.vk_monitor.vk_client import enforce_token_rate_limit
+
+    interval = 0.1
+    client = _make_client(token="mixed", interval=interval)
+
+    t0 = time.monotonic()
+    client._enforce_rate_limit()
+    enforce_token_rate_limit("mixed", "wall.getById")
+    elapsed = time.monotonic() - t0
+
+    assert elapsed >= interval * 0.9, f"фетчер шёл мимо общего тормоза (took {elapsed:.3f}s)"
+
+
+def test_module_level_throttle_records_the_call_for_the_token_report():
+    """Тот же вызов попадает в учёт расхода по токенам.
+
+    Без него ~620 вызовов в сутки от обновления метрик не видны в отчёте, и
+    расход токена выглядит меньше реального — ровно та слепота, ради которой
+    token_usage и заводился.
+    """
+    from modules.vk_monitor import vk_client as vk_client_mod
+
+    seen = []
+    with patch.object(vk_client_mod, "record_call", lambda t, m="": seen.append((t, m))):
+        vk_client_mod.enforce_token_rate_limit("tok-report", "wall.getById")
+
+    assert seen == [("tok-report", "wall.getById")]

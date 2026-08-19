@@ -652,6 +652,19 @@ class CollectedPostAudit(Base):
     drop_reason = Column(String(32), nullable=True)
     collected_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
+    # --- Метрики поста и его дата (миграция 080, звено 5 шаг 1) ---------------
+    # published_at — дата поста В ВК, а не момент нашей публикации: 72 часа
+    # отсева по старости считаются как возраст поста. Что опубликовали мы —
+    # в work_tables.lip.
+    published_at = Column(DateTime, nullable=True)
+    # NULL ≠ 0. NULL — «не мерили», 0 — «ноль реакций». Дефолта нет намеренно
+    # (см. комментарий миграции 080 и урок #493).
+    views = Column(Integer, nullable=True)
+    likes = Column(Integer, nullable=True)
+    comments = Column(Integer, nullable=True)
+    reposts = Column(Integer, nullable=True)
+    metrics_updated_at = Column(DateTime, nullable=True)
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -665,6 +678,14 @@ class CollectedPostAudit(Base):
             "decision": self.decision,
             "drop_reason": self.drop_reason,
             "collected_at": self.collected_at.isoformat() if self.collected_at else None,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "views": self.views,
+            "likes": self.likes,
+            "comments": self.comments,
+            "reposts": self.reposts,
+            "metrics_updated_at": (
+                self.metrics_updated_at.isoformat() if self.metrics_updated_at else None
+            ),
         }
 
     def __repr__(self):

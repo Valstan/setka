@@ -32,7 +32,9 @@ def _build_default_fetcher(user_token: str, community_tokens: Dict[int, str]):
     """Сборка VK-фетчера метрик через ``wall.getById`` (батч до 100)."""
     import vk_api  # локальный импорт — не тянем в тестах
 
-    def fetch_stats(refs: List[Ref]) -> Dict[Ref, Dict[str, int]]:  # pragma: no cover - сеть
+    # Значения не int: общий фетчер отдаёт Optional[int] по каждой метрике
+    # (поля нет в ответе ВК → None, а не 0) и datetime в published_at.
+    def fetch_stats(refs: List[Ref]) -> Dict[Ref, Dict[str, Any]]:  # pragma: no cover - сеть
         if not refs:
             return {}
         # Группируем по токену: user-token админа (видит просмотры) приоритетнее,
@@ -43,32 +45,17 @@ def _build_default_fetcher(user_token: str, community_tokens: Dict[int, str]):
             if token:
                 by_token.setdefault(token, []).append((owner, pid))
 
-        out: Dict[Ref, Dict[str, int]] = {}
+        from modules.vk_monitor.post_metrics import fetch_metrics_for_token
+
+        out: Dict[Ref, Dict[str, Any]] = {}
         for token, grp in by_token.items():
             api = vk_api.VkApi(token=token).get_api()
-            for i in range(0, len(grp), 100):
-                chunk = grp[i : i + 100]
-                posts_str = ",".join(f"{o}_{p}" for o, p in chunk)
-                try:
-                    resp = api.wall.getById(posts=posts_str)
-                except Exception as e:
-                    logger.warning("wall.getById stats batch failed: %s", e)
-                    continue
-                items = (
-                    resp
-                    if isinstance(resp, list)
-                    else (resp.get("items") if isinstance(resp, dict) else [])
-                )
-                for it in items or []:
-                    try:
-                        key = (int(it.get("owner_id")), int(it.get("id")))
-                    except (TypeError, ValueError):
-                        continue
-                    out[key] = {
-                        "views": int((it.get("views") or {}).get("count", 0)),
-                        "likes": int((it.get("likes") or {}).get("count", 0)),
-                        "reposts": int((it.get("reposts") or {}).get("count", 0)),
-                    }
+            # Разбор, нарезка и тротлинг — в общем модуле (см. его docstring:
+            # вторая копия разошлась бы с первой молча). Своей здесь остаётся
+            # только политика токенов выше: user-token админа видит просмотры,
+            # community — нет. token передаём тот же, под которым собран api:
+            # по нему считается общий с парсером лимит запросов на токен.
+            out.update(fetch_metrics_for_token(api, grp, token=token))
         return out
 
     return fetch_stats
@@ -77,7 +64,7 @@ def _build_default_fetcher(user_token: str, community_tokens: Dict[int, str]):
 async def run_collect_stats(
     *,
     session_factory: Optional[Callable] = None,
-    fetch_stats: Optional[Callable[[List[Ref]], Dict[Ref, Dict[str, int]]]] = None,
+    fetch_stats: Optional[Callable[[List[Ref]], Dict[Ref, Dict[str, Any]]]] = None,
     only_client_id: Optional[int] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
@@ -126,9 +113,12 @@ async def run_collect_stats(
             s = stats.get(key)
             if s is None:
                 continue
-            pub.views = s.get("views", 0)
-            pub.likes = s.get("likes", 0)
-            pub.reposts = s.get("reposts", 0)
+            # Без дефолта: ВК не прислал метрику — значит она не измерена, а не
+            # ноль. NULL честнее нуля; колонка nullable=True (database/models.py)
+            # это допускает.
+            pub.views = s.get("views")
+            pub.likes = s.get("likes")
+            pub.reposts = s.get("reposts")
             pub.stats_updated_at = now
             updated += 1
 

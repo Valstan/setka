@@ -103,3 +103,57 @@ def test_should_audit_gating(monkeypatch):
     monkeypatch.setenv("COLLECTION_AUDIT_REGION_CODES", "mi")
     assert ca.should_audit("mi") is True
     assert ca.should_audit("vp") is False
+
+
+def test_snapshot_records_vk_post_date():
+    """published_at берётся из поля date поста ВК (unix) и хранится наивным UTC.
+
+    Дата нужна для отсева по старости: 72 часа считаются как ВОЗРАСТ ПОСТА,
+    а не как время, прошедшее с нашего сбора. Собрать пост можно сильно позже
+    его публикации, и тогда collected_at соврал бы в нашу пользу.
+    """
+    from datetime import datetime
+
+    from modules.curation.collection_audit import build_audit_records
+
+    post = {"owner_id": -100, "id": 7, "text": "текст", "date": 1787136000}
+    records = build_audit_records(
+        region_code="mi",
+        theme="novost",
+        region_config=None,
+        collected=[post],
+        kept=[post],
+    )
+    assert len(records) == 1
+    assert records[0]["published_at"] == datetime(2026, 8, 19, 10, 40)
+
+
+def test_snapshot_without_date_leaves_published_at_none():
+    """Нет поля date → None, а не «сейчас»: подставленная дата обманула бы отсев."""
+    from modules.curation.collection_audit import build_audit_records
+
+    post = {"owner_id": -100, "id": 8, "text": "текст"}
+    records = build_audit_records(
+        region_code="mi",
+        theme="novost",
+        region_config=None,
+        collected=[post],
+        kept=[post],
+    )
+    assert records[0]["published_at"] is None
+
+
+def test_snapshot_with_broken_date_leaves_published_at_none():
+    """Битое значение date не роняет аудит — он никогда не валит сбор."""
+    from modules.curation.collection_audit import build_audit_records
+
+    for bad in ("не число", None, [], 10**20):
+        post = {"owner_id": -100, "id": 9, "text": "текст", "date": bad}
+        records = build_audit_records(
+            region_code="mi",
+            theme="novost",
+            region_config=None,
+            collected=[post],
+            kept=[post],
+        )
+        assert records[0]["published_at"] is None, f"date={bad!r}"

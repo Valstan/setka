@@ -690,6 +690,36 @@ def classify_pending_posts(limit: int = 0):
         return {"status": f"error:{type(e).__name__}"}
 
 
+@app.task(name="tasks.celery_app.refresh_post_metrics")
+def refresh_post_metrics(hours: int = 0):
+    """Обновление метрик собранных постов — данные под рейтинг (звено 5, шаг 1).
+
+    Метрики в момент сбора почти нулевые (пост собран через минуты после
+    публикации). Рейтинг строится на том, что доросло за окно отсева, поэтому
+    цифры надо догонять фоном.
+    """
+    try:
+        from modules.classifier.audit_window import AUDIT_WINDOW_HOURS
+        from modules.classifier.metrics_refresh import refresh_metrics
+
+        async def _run():
+            from database.connection import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as session:
+                return await refresh_metrics(session, hours=hours or AUDIT_WINDOW_HOURS)
+
+        # run_coro, а не asyncio.run: в prefork-воркере петля переиспользуется
+        # процессом (utils/celery_asyncio) — общая идиома всех async-тасок здесь.
+        return run_coro(_run())
+    except Exception as e:
+        # Обновление метрик — вспомогательная работа: её отказ не должен
+        # ронять beat-цепочку. Но и молчать нельзя, иначе рейтинг тихо
+        # застынет на старых числах (тот же класс, что инцидент 19.08,
+        # где таска рапортовала успех, ничего не сделав).
+        logger.error("refresh_post_metrics failed: %s", e, exc_info=True)
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 @app.task(name="tasks.celery_app.distill_classifier_rules")
 def distill_classifier_rules(limit: int = 200, days: int = 30):
     """Дистилляция правок оператора в предложения правил — звено 7 (D-024).
@@ -2236,6 +2266,16 @@ app.conf.beat_schedule = {
     "classifier-headless": {
         "task": "tasks.celery_app.classify_pending_posts",
         "schedule": crontab(minute=35, hour="*/3"),
+        "options": {"expires": 3 * 3600, "catchup": False},
+    },
+    # Метрики постов под рейтинг отбора (звено 5, шаг 1): каждые 3 часа на :05.
+    # Сдвиг от classifier-headless (:35) — сознательный: обе таски ходят за
+    # живым READ-токеном, и толкаться за ним в одну минуту незачем.
+    # Объём круга посчитан на проде 19.08: окно 72 часа = 7774 поста = 78
+    # батчей wall.getById, ~620 вызовов в сутки.
+    "post-metrics-refresh": {
+        "task": "tasks.celery_app.refresh_post_metrics",
+        "schedule": crontab(minute=5, hour="*/3"),
         "options": {"expires": 3 * 3600, "catchup": False},
     },
     # Дистилляция правок оператора в правила — звено 7 петли (D-024): раз в

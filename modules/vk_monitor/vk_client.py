@@ -27,6 +27,29 @@ def _log_vk_api_error(prefix: str, error: vk_api.exceptions.ApiError) -> None:
     logger.log(level, "%s: %s", prefix, error)
 
 
+def enforce_token_rate_limit(token: str, method: str = "") -> None:
+    """Притормозить и учесть один вызов VK API под ``token``.
+
+    Общая точка для кода, который ходит в ВК **мимо** :class:`VKClient` —
+    сейчас это батч-фетчер метрик ``vk_monitor/post_metrics.py`` (ему на вход
+    дают готовый ``vk_api``-объект, потому что политика выбора токена у
+    кабинета и у обновления метрик района разная).
+
+    Своего sleep такой код заводить не должен: тормоз обязан быть ОДИН на
+    токен. Обновление метрик берёт тот же живой READ-токен, что и боевой
+    парсер, и залп из 78 вызовов подряд поставил бы cooldown/captcha именно на
+    него — вспомогательная работа деградировала бы сбор постов. Тот же
+    лимитер (и тот же Redis-backend при ``VK_RATE_LIMIT_BACKEND=redis``)
+    держит общий счёт по всем процессам Celery.
+
+    Учёт (``token_usage.record_call``) здесь же и по той же причине: иначе
+    ~620 вызовов в сутки не попадут в отчёт по токенам и расход будет
+    выглядеть меньше реального.
+    """
+    VKClient._get_rate_limiter().wait(token)
+    record_call(token, method)
+
+
 class VKClient:
     """VK API Client with token rotation and rate limiting.
 
@@ -87,9 +110,12 @@ class VKClient:
         которую проходит каждый вызов клиента, поэтому счётчик получается
         полным без обвешивания каждого метода. ``method`` — имя VK-метода для
         разбивки в отчёте; учёт best-effort и никогда не роняет вызов.
+
+        Тело делегировано в модульную :func:`enforce_token_rate_limit`, чтобы
+        код, ходящий в ВК мимо клиента (батч-фетчер метрик), тормозил и
+        считался ТЕМ ЖЕ механизмом, а не своей копией.
         """
-        self._get_rate_limiter().wait(self.token)
-        record_call(self.token, method)
+        enforce_token_rate_limit(self.token, method)
 
     def _init_session(self):
         """Initialize VK session"""

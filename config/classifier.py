@@ -19,13 +19,18 @@ Env vars:
                                       # подачи в постулаты → подсветка в панели
   CLASSIFIER_RULES_SNAPSHOT_PATH      # файл снапшота выученных правил (beat);
                                       # дефолт logs/classifier_learned_rules_snapshot.md
+  RATING_VIEWS_ALPHA=0.25     # показатель степени при просмотрах в рейтинге
+                              # отбора; 0.5 = нынешняя post_popularity, 0 = охват
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 # Файл-корректировщик («классификационные постулаты», ADR-0003 §E) — в репо,
 # версия = git. Подаётся в промпт классификатора (рутины/API).
@@ -144,3 +149,56 @@ def read_postulates() -> str:
         return POSTULATES_PATH.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+# Показатель степени при просмотрах в рейтинге отбора (звено 5, шаг 1).
+# score = engagement / (views + 1) ** alpha
+#   alpha = 0.5 — нынешняя post_popularity (рейтинг вовлечённости: маленькая
+#                 группа с высоким откликом обгоняет районный хит)
+#   alpha = 0.25 — дефолт: охват весомее, но не решает в одиночку
+#   alpha = 0   — чистый абсолютный охват
+# Наружу вынесен сознательно: это редакционная настройка, её подбирают на
+# данных через витрину /api/classifier-review/rating/top, а не в коде.
+RATING_VIEWS_ALPHA_DEFAULT = 0.25
+
+
+# Границы разумного для показателя степени. 0 — чистый охват, 1 — просмотры в
+# знаменателе в полную силу (сильнее нынешней 0.5). Всё, что вне, формулу не
+# настраивает, а ломает: alpha < 0 переворачивает смысл (охват начинает
+# УМНОЖАТЬСЯ и районный хит забивает всё), alpha > 1 схлопывает верхушку в
+# посты с двумя просмотрами.
+RATING_VIEWS_ALPHA_MIN = 0.0
+RATING_VIEWS_ALPHA_MAX = 1.0
+
+
+def get_rating_views_alpha() -> float:
+    """Показатель степени при просмотрах (env ``RATING_VIEWS_ALPHA``).
+
+    Нечитаемое значение — это дефолт, а не исключение: опечатка в env не
+    должна ронять отбор посреди волны публикации.
+
+    Тем же дефолтом читается и значение вне диапазона — включая ``nan`` и
+    ``inf``, которые ``float()`` принимает молча. ``nan`` особенно тих: все
+    сравнения с ним ложны, сортировка витрины перестала бы упорядочивать
+    что-либо, и выглядело бы это как «рейтинг почему-то странный», а не как
+    ошибка в env.
+    """
+    raw = (os.getenv("RATING_VIEWS_ALPHA") or "").strip()
+    if not raw:
+        return RATING_VIEWS_ALPHA_DEFAULT
+    try:
+        value = float(raw)
+    except ValueError:
+        return RATING_VIEWS_ALPHA_DEFAULT
+    # not (min <= value <= max) вместо or-цепочки: так же ловится nan, для
+    # которого любое сравнение даёт False.
+    if not (RATING_VIEWS_ALPHA_MIN <= value <= RATING_VIEWS_ALPHA_MAX):
+        logger.warning(
+            "RATING_VIEWS_ALPHA=%r вне диапазона %s..%s — берём дефолт %s",
+            raw,
+            RATING_VIEWS_ALPHA_MIN,
+            RATING_VIEWS_ALPHA_MAX,
+            RATING_VIEWS_ALPHA_DEFAULT,
+        )
+        return RATING_VIEWS_ALPHA_DEFAULT
+    return value
