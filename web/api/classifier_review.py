@@ -42,6 +42,50 @@ async def feed(
     return {"count": len(items), "items": items}
 
 
+# --- Групповые действия -------------------------------------------------------
+#
+# ВЫШЕ параметризованных путей осознанно. Starlette матчит маршруты в порядке
+# регистрации, и `/{classification_id}/agree`, объявленный раньше, съедал
+# `/bulk/agree`: «bulk» уходил в int() → 422, кнопка «Согласен со всем блоком»
+# молча не работала весь день 2026-08-19. Новые статические пути под этим
+# префиксом добавлять сюда же — гейт в tests/test_classifier/test_review_api_routes.py.
+
+
+class BulkAgree(BaseModel):
+    ids: list[int]
+
+
+class BulkCorrect(BaseModel):
+    ids: list[int]
+    verdict_type: str
+    operator_value: Any
+
+
+@router.post("/bulk/agree")
+async def bulk_agree(body: BulkAgree = Body(...)):
+    """✅ «Согласен со всей группой» — одно нажатие закрывает пачку карточек."""
+    ids = [int(i) for i in (body.ids or [])][:2000]
+    if not ids:
+        return {"ok": False, "error": "empty ids"}
+    async with AsyncSessionLocal() as session:
+        return await service.bulk_agree(session, ids)
+
+
+@router.post("/bulk/correct")
+async def bulk_correct(body: BulkCorrect = Body(...)):
+    """Правка вердикта сразу по группе (и закрытие её карточек)."""
+    ids = [int(i) for i in (body.ids or [])][:2000]
+    if not ids:
+        return {"ok": False, "error": "empty ids"}
+    async with AsyncSessionLocal() as session:
+        return await service.bulk_correct(
+            session,
+            ids,
+            verdict_type=body.verdict_type,
+            operator_value=body.operator_value,
+        )
+
+
 @router.post("/{classification_id}/agree")
 async def agree(classification_id: int):
     """✅ «Согласен со всем» — agree по всем типам + финализация (пост уходит из ленты)."""
@@ -202,41 +246,6 @@ async def feed_grouped(
             cards_per_block=cards_per_block,
         )
     return {"blocks": blocks, "count": sum(b["total"] for b in blocks)}
-
-
-class BulkAgree(BaseModel):
-    ids: list[int]
-
-
-class BulkCorrect(BaseModel):
-    ids: list[int]
-    verdict_type: str
-    operator_value: Any
-
-
-@router.post("/bulk/agree")
-async def bulk_agree(body: BulkAgree = Body(...)):
-    """✅ «Согласен со всей группой» — одно нажатие закрывает пачку карточек."""
-    ids = [int(i) for i in (body.ids or [])][:2000]
-    if not ids:
-        return {"ok": False, "error": "empty ids"}
-    async with AsyncSessionLocal() as session:
-        return await service.bulk_agree(session, ids)
-
-
-@router.post("/bulk/correct")
-async def bulk_correct(body: BulkCorrect = Body(...)):
-    """Правка вердикта сразу по группе (и закрытие её карточек)."""
-    ids = [int(i) for i in (body.ids or [])][:2000]
-    if not ids:
-        return {"ok": False, "error": "empty ids"}
-    async with AsyncSessionLocal() as session:
-        return await service.bulk_correct(
-            session,
-            ids,
-            verdict_type=body.verdict_type,
-            operator_value=body.operator_value,
-        )
 
 
 # --- Петля обучения (ADR-0005): оператор утверждает выученные правила ------------
