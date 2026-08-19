@@ -11,13 +11,10 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence
 
 from utils.post_utils import post_rating
-
-logger = logging.getLogger(__name__)
 
 WINDOW_HOURS = 72
 
@@ -80,6 +77,7 @@ async def top_by_rating(
         CollectedPostAudit.post_url,
         CollectedPostAudit.post_text,
         CollectedPostAudit.theme,
+        CollectedPostAudit.decision,
         CollectedPostAudit.views,
         CollectedPostAudit.likes,
         CollectedPostAudit.comments,
@@ -108,6 +106,12 @@ async def top_by_rating(
                 "post_url": r.post_url,
                 "post_text": (r.post_text or "")[:300],
                 "theme": r.theme,
+                # decision алгоритмического фильтра (kept|dropped) — витрина
+                # НЕ фильтрует по нему намеренно (D-024: алгоритмы отсеивают
+                # 43% постов, которые ИИ считает публикуемыми), но обязана
+                # показывать его, а не выдавать чужой отсев за сегодняшний
+                # публикуемый набор.
+                "decision": r.decision,
                 "views": r.views,
                 "likes": r.likes,
                 "comments": r.comments,
@@ -120,6 +124,13 @@ async def top_by_rating(
         )
 
     measured = sum(1 for r in rows if r["views"] is not None)
+    # Витрина считает топ ВНУТРИ разрешённых вердиктом lip'ов, а не внутри
+    # сегодняшнего публикуемого набора — decision алгоритмического фильтра не
+    # фильтруется (см. docstring модуля и D-024). Молча это вводит в
+    # заблуждение: без разбивки владелец решит, что видит уже публикуемое.
+    # Правило после разбора панели (#495): у каждой цифры спрашивать не
+    # значение, а какую долю реальности покрывает её источник.
+    dropped_by_filters = sum(1 for r in rows if r["decision"] == "dropped")
     return {
         "region": region_code,
         "theme": theme or "",
@@ -127,5 +138,6 @@ async def top_by_rating(
         # Охват источника рядом с числом — правило после #493: у каждой цифры
         # на панели спрашивать, какую долю реальности покрывает её источник.
         "measured": measured,
+        "dropped_by_filters": dropped_by_filters,
         "alphas": {str(a): rank_rows(rows, alpha=a, n=n) for a in alphas},
     }

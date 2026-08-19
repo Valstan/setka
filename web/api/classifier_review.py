@@ -53,7 +53,15 @@ async def feed(
 
 @router.get("/rating/top")
 async def rating_top(
-    region: str = Query(..., min_length=1, description="код района (обязателен)"),
+    region: str = Query(
+        ...,
+        min_length=1,
+        # \S — хотя бы один не-пробельный символ. Без этого `region=" "`
+        # проходил min_length=1, .strip() схлопывал его в пустую строку, и
+        # вместо 422 витрина тихо отдавала пустой топ (находка ревью #495).
+        pattern=r"\S",
+        description="код района (обязателен)",
+    ),
     theme: str = Query("", description="тема (опционально)"),
     n: int = Query(10, ge=1, le=100, description="сколько строк в топе"),
 ):

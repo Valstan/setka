@@ -68,29 +68,56 @@ def test_single_agree_still_routes_by_id(client):
     assert fake.await_args.args[1] == 47481
 
 
-def test_no_static_post_path_is_shadowed_by_a_parameterized_one():
-    """Гейт на весь роутер, а не на две починенные ручки.
+def _routes_for_method(method: str):
+    """Пути + скомпилированные regex роутера для одного HTTP-метода.
 
-    Проверяется свойство, а не список: если статический POST-путь объявлен
-    после параметризованного, который его накрывает, — Starlette отдаст запрос
-    первому, и ручка станет недостижимой ровно так же, как ``/bulk/agree``.
-    Новый эндпоинт с таким же дефектом обязан ронять этот тест, а не прод.
+    Starlette матчит маршрут по паре (путь, метод): если путь совпал, но
+    метод — нет, поиск идёт дальше. Поэтому затенение проверяется ВНУТРИ
+    одного метода, а не по всему списку маршрутов сразу.
     """
-    posts = [
-        (r.path, r.path_regex) for r in rev.router.routes if "POST" in getattr(r, "methods", set())
+    return [
+        (r.path, r.path_regex) for r in rev.router.routes if method in getattr(r, "methods", set())
     ]
+
+
+def _shadowed_static_paths(method: str) -> list:
+    """Статические пути метода, недостижимые из-за более раннего параметризованного."""
+    routes = _routes_for_method(method)
     shadowed = []
-    for i, (path, _regex) in enumerate(posts):
+    for i, (path, _regex) in enumerate(routes):
         if "{" in path:
             continue  # сам параметризованный — интересуют статические жертвы
-        for earlier_path, earlier_regex in posts[:i]:
+        for earlier_path, earlier_regex in routes[:i]:
             if "{" not in earlier_path:
                 continue
             if earlier_regex.match(path):
                 shadowed.append(f"{path} затенён {earlier_path}")
-    assert not shadowed, "Статические пути недостижимы: " + "; ".join(shadowed)
+    return shadowed
+
+
+def test_no_static_path_is_shadowed_by_a_parameterized_one():
+    """Гейт на весь роутер и оба метода, а не на две починенные POST-ручки.
+
+    Проверяется свойство, а не список: если статический путь объявлен после
+    параметризованного, который его накрывает, — Starlette отдаст запрос
+    первому, и ручка станет недостижимой ровно так же, как ``/bulk/agree``.
+    Новый эндпоинт с таким же дефектом обязан ронять этот тест, а не прод.
+
+    GET проверяется наравне с POST (находка ревью #495): старый гейт смотрел
+    только на POST и не увидел бы затенение ``GET /rating/top`` вовсе —
+    обещанная бри­фом «автоматическая защита» на GET-маршруты не
+    распространялась.
+    """
+    for method in ("GET", "POST"):
+        shadowed = _shadowed_static_paths(method)
+        assert not shadowed, f"Статические {method}-пути недостижимы: " + "; ".join(shadowed)
 
     # Сам гейт не должен быть зелёным на пустом входе: если разбор маршрутов
     # однажды перестанет их находить, тест обязан упасть, а не молча пройти.
+    gets = _routes_for_method("GET")
+    posts = _routes_for_method("POST")
+    assert gets, "GET-маршрутов не найдено — тест охраняет пустоту"
     assert posts, "POST-маршрутов не найдено — тест охраняет пустоту"
+    # Параметризованные пути сегодня есть только среди POST (/{classification_id}/...) —
+    # GET-гейту пока нечего ловить, поэтому это условие проверяем только для POST.
     assert any("{" in p for p, _ in posts), "параметризованных POST нет — гейту нечего ловить"
