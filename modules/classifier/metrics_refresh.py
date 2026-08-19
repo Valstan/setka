@@ -197,8 +197,16 @@ async def apply_metrics(
                     published_at=published_at, **values
                 )
             )
-            updated += _rowcount(res)
-            if values:
+            filled_date = _rowcount(res)
+            updated += filled_date
+            # Второй UPDATE — только если первый ни во что не попал. lip
+            # уникален, поэтому обе ветки бьют в ОДНУ строку: без условия
+            # строка с пустой датой обновлялась бы дважды подряд и дважды же
+            # считалась. На первом прод-круге published_at пуст у всех 7774
+            # строк — таска отрапортовала бы updated вдвое больше checked, и
+            # цифра, по которой читают исход круга, обещала бы больше, чем
+            # меряет.
+            if values and not filled_date:
                 res = await session.execute(
                     stmt.where(CollectedPostAudit.published_at.isnot(None)).values(**values)
                 )

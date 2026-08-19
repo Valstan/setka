@@ -403,3 +403,56 @@ async def test_refresh_metrics_releases_db_before_going_to_vk(db_session, monkey
     assert result["ok"] is True and result["updated"] == 1
     assert events.index("commit") < events.index("vk"), events
     assert seen_kwargs["token"] == "tok"
+
+
+@pytest.mark.asyncio
+async def test_apply_metrics_counts_a_freshly_dated_row_once(db_session):
+    """Строка с пустой published_at считается ОДИН раз, а не два.
+
+    lip уникален, поэтому обе ветки записи (по IS NULL и по IS NOT NULL) бьют
+    в одну и ту же строку. Без условия второй UPDATE переписывал бы её же
+    значения в той же транзакции и инкремент шёл бы дважды. На первом прод-круге
+    published_at пуст у всех 7774 строк — таска отрапортовала бы updated вдвое
+    больше checked, и число, по которому читают исход круга, врало бы вдвое.
+    """
+    db_session.add(_row("7_1", -1, 1, published_at=None))
+    await db_session.commit()
+
+    new_date = datetime.utcnow() - timedelta(hours=2)
+    metrics = {
+        (-1, 1): {"views": 10, "likes": 1, "comments": 0, "reposts": 0, "published_at": new_date}
+    }
+
+    assert await apply_metrics(db_session, metrics, {(-1, 1): "7_1"}) == 1
+
+    row = (
+        await db_session.execute(select(CollectedPostAudit).where(CollectedPostAudit.lip == "7_1"))
+    ).scalar_one()
+    assert row.published_at == new_date
+    assert row.views == 10
+
+
+@pytest.mark.asyncio
+async def test_apply_metrics_counts_an_already_dated_row_once(db_session):
+    """Вторая ветка (дата уже есть) тоже даёт ровно один инкремент и не трогает дату."""
+    existing_date = datetime.utcnow() - timedelta(days=2)
+    db_session.add(_row("7_2", -1, 2, published_at=existing_date))
+    await db_session.commit()
+
+    metrics = {
+        (-1, 2): {
+            "views": 20,
+            "likes": 2,
+            "comments": 0,
+            "reposts": 0,
+            "published_at": datetime.utcnow() - timedelta(hours=1),
+        }
+    }
+
+    assert await apply_metrics(db_session, metrics, {(-1, 2): "7_2"}) == 1
+
+    row = (
+        await db_session.execute(select(CollectedPostAudit).where(CollectedPostAudit.lip == "7_2"))
+    ).scalar_one()
+    assert row.published_at == existing_date  # дата поста не меняется
+    assert row.views == 20
