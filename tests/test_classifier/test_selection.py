@@ -176,3 +176,123 @@ def test_alert_cooldown_is_per_region_not_per_theme(monkeypatch):
     assert first == "alert-sent"
     assert second == "skipped:cooldown"
     assert len(sent) == 1
+
+
+# ───────── apply_wave_selection — врезка в волну (шаг 2) ─────────
+
+
+import pytest  # noqa: E402
+
+
+def _post(owner, pid):
+    return {"owner_id": owner, "id": pid, "text": f"post {pid}"}
+
+
+@pytest.mark.asyncio
+async def test_gate_off_leaves_wave_untouched(monkeypatch):
+    monkeypatch.delenv("CLASSIFIER_SELECTION_ENABLED", raising=False)
+    posts = [_post(-100, 1), _post(-100, 2)]
+    out, mode, removed = await selection.apply_wave_selection(
+        None, posts, region_code="mi", theme="novost"
+    )
+    assert out == posts
+    assert mode == selection.MODE_DISABLED
+    assert removed == 0
+
+
+@pytest.mark.asyncio
+async def test_verdicts_mode_keeps_only_publish_lips(monkeypatch):
+    monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
+
+    async def fake_fetch(session, region_code):
+        return {"100_1"}
+
+    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_VERDICTS, False))
+    posts = [_post(-100, 1), _post(-100, 2), _post(-100, 3)]
+    out, mode, removed = await selection.apply_wave_selection(
+        None, posts, region_code="mi", theme="novost"
+    )
+    assert [p["id"] for p in out] == [1]
+    assert mode == selection.MODE_VERDICTS
+    assert removed == 2
+
+
+@pytest.mark.asyncio
+async def test_skip_wave_returns_empty_and_alerts(monkeypatch):
+    monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
+
+    async def fake_fetch(session, region_code):
+        return set()
+
+    alerts = []
+    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_SKIP_WAVE, True))
+    monkeypatch.setattr(selection, "maybe_alert", lambda **kw: alerts.append(kw) or "alert-sent")
+    posts = [_post(-100, 1)]
+    out, mode, removed = await selection.apply_wave_selection(
+        None, posts, region_code="mi", theme="novost"
+    )
+    assert out == []
+    assert mode == selection.MODE_SKIP_WAVE
+    assert removed == 1
+    assert alerts and alerts[0]["region_code"] == "mi"
+
+
+@pytest.mark.asyncio
+async def test_fallback_mode_publishes_by_algorithms(monkeypatch):
+    monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
+
+    async def fake_fetch(session, region_code):
+        return set()
+
+    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_FALLBACK, True))
+    monkeypatch.setattr(selection, "maybe_alert", lambda **kw: "alert-sent")
+    posts = [_post(-100, 1), _post(-100, 2)]
+    out, mode, removed = await selection.apply_wave_selection(
+        None, posts, region_code="mi", theme="novost"
+    )
+    assert out == posts
+    assert mode == selection.MODE_FALLBACK
+    assert removed == 0
+
+
+@pytest.mark.asyncio
+async def test_internal_crash_is_fail_open_and_loud(monkeypatch, caplog):
+    monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
+
+    async def broken_fetch(session, region_code):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(selection, "fetch_publish_lips", broken_fetch)
+    posts = [_post(-100, 1)]
+    with caplog.at_level("ERROR", logger="modules.classifier.selection"):
+        out, mode, removed = await selection.apply_wave_selection(
+            None, posts, region_code="mi", theme="novost"
+        )
+    assert out == posts
+    assert mode == "error"
+    assert removed == 0
+    assert any("fail-open" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_alert_failure_does_not_break_the_wave(monkeypatch):
+    monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
+
+    async def fake_fetch(session, region_code):
+        return {"100_1"}
+
+    def broken_alert(**kw):
+        raise RuntimeError("telegram down")
+
+    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_VERDICTS, True))
+    monkeypatch.setattr(selection, "maybe_alert", broken_alert)
+    posts = [_post(-100, 1), _post(-100, 2)]
+    out, mode, removed = await selection.apply_wave_selection(
+        None, posts, region_code="mi", theme="novost"
+    )
+    assert [p["id"] for p in out] == [1]
+    assert mode == selection.MODE_VERDICTS

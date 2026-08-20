@@ -260,3 +260,112 @@ def maybe_alert(
         except Exception:  # noqa: BLE001
             pass
     return "alert-sent"
+
+
+MODE_DISABLED = "disabled"  # гейт выключен — волна идёт как раньше
+
+
+def selection_enabled() -> bool:
+    """Отбирать ли в сводку по меткам (env, дефолт — выкл; зеркало prepublish)."""
+    import os
+
+    return os.getenv("CLASSIFIER_SELECTION_ENABLED", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+async def apply_wave_selection(
+    session,
+    posts,
+    *,
+    region_code: str,
+    theme: str,
+) -> Tuple[list, str, int]:
+    """Единственная точка входа отбора для волны публикации (звено 5, шаг 2).
+
+    Возвращает ``(посты, режим, сколько_убрано)``. Порядок в волне жёсткий:
+    вызывается ПОСЛЕ prepublish — тот доклассифицирует свежесобранное и
+    записывает вердикты, которые здесь читает ``fetch_publish_lips``. Обратный
+    порядок оставил бы свежие посты без вердиктов, и отбор «только publish»
+    выбрасывал бы их все.
+
+    Redis и Telegram-конфиг добываются здесь, а не пробрасываются через волну:
+    отказ любого из них деградирует политику (см. ``decide_mode``/``maybe_alert``),
+    но не меняет сигнатуру вызова. Любой НЕполитический отказ — fail-open с
+    ERROR: усилитель, не точка отказа (тот же контракт, что у prepublish).
+    """
+    if not selection_enabled() or not posts:
+        return list(posts), MODE_DISABLED, 0
+
+    try:
+        from modules.classifier.prepublish import post_lip
+
+        publish_lips = await fetch_publish_lips(session, region_code)
+
+        redis_client = None
+        try:
+            from modules.notifications.storage import NotificationsStorage
+
+            redis_client = NotificationsStorage().redis_client
+        except Exception:  # noqa: BLE001 — без Redis политика деградирует сама
+            logger.debug("classifier selection: redis unavailable", exc_info=True)
+
+        mode, need_alert = decide_mode(
+            publish_lips=publish_lips,
+            region_code=region_code,
+            theme=theme,
+            redis_client=redis_client,
+        )
+
+        if need_alert:
+            try:
+                from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+
+                # Та же эвристика, что _pick_telegram_bot_token в celery_app;
+                # импортировать её оттуда нельзя — модуль не должен тянуть
+                # celery-приложение с его import-side-effects.
+                tokens = dict(TELEGRAM_TOKENS)
+                bot_token = next(
+                    (tokens[k] for k in ("VALSTANBOT", "ALERT", "AFONYA") if tokens.get(k)),
+                    next(iter(tokens.values()), None),
+                )
+                status = maybe_alert(
+                    mode=mode,
+                    region_code=region_code,
+                    theme=theme,
+                    telegram_token=bot_token,
+                    chat_id=TELEGRAM_ALERT_CHAT_ID,
+                    redis_client=redis_client,
+                )
+                logger.warning(
+                    "classifier selection: фильтр молчит (%s/%s), режим=%s, алёрт=%s",
+                    region_code,
+                    theme,
+                    mode,
+                    status,
+                )
+            except Exception:  # noqa: BLE001 — алёрт не важнее волны
+                logger.error("classifier selection: алёрт не отправлен", exc_info=True)
+
+        if mode == MODE_SKIP_WAVE:
+            return [], mode, len(posts)
+        if mode == MODE_FALLBACK:
+            return list(posts), mode, 0
+
+        selected = [p for p in posts if post_lip(p) in publish_lips]
+        removed = len(posts) - len(selected)
+        logger.info(
+            "classifier selection: регион=%s тема=%s кандидатов=%d отобрано=%d убрано=%d",
+            region_code,
+            theme,
+            len(posts),
+            len(selected),
+            removed,
+        )
+        return selected, mode, removed
+    except Exception as e:  # noqa: BLE001 — усилитель, не точка отказа
+        logger.error("classifier selection failed — fail-open: %s", e, exc_info=True)
+        return list(posts), "error", 0

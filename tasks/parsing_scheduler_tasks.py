@@ -330,6 +330,31 @@ def parse_and_publish_theme(
                         before_prepublish,
                     )
 
+            # 5c. Отбор В сводку по меткам (звено 5, шаг 2): в волне остаются
+            #     ТОЛЬКО publish-посты; при молчании фильтра — политика
+            #     деградации владельца (пропуск волны → алгоритмический
+            #     fallback). Строго ПОСЛЕ prepublish: тот записал вердикты,
+            #     которые отбор читает. Гейт CLASSIFIER_SELECTION_ENABLED.
+            from modules.classifier import selection as classifier_selection
+
+            posts, selection_mode, selection_removed = (
+                await classifier_selection.apply_wave_selection(
+                    session, posts, region_code=region_code, theme=theme
+                )
+            )
+            if selection_removed:
+                parser_stats["posts_filtered_selection"] = selection_removed
+            if selection_mode == classifier_selection.MODE_SKIP_WAVE:
+                return {
+                    "success": True,
+                    "message": (
+                        "classifier selection: вердиктов нет, волна пропущена "
+                        "(политика деградации, шаг 2 звена 5)"
+                    ),
+                    "posts_published": 0,
+                    "stats": parser_stats,
+                }
+
             # 6. Split by sentiment
             splitter = BulletinSplitter()
             mourning_posts, regular_posts = splitter.split_posts(posts)
