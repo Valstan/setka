@@ -8,6 +8,8 @@ print("=" * 70)
 print("DEEP VK TOKEN DIAGNOSTIC")
 print("=" * 70)
 
+import hashlib  # noqa: E402
+
 import vk_api  # noqa: E402
 
 from config.runtime import VK_TOKENS  # noqa: E402
@@ -16,9 +18,12 @@ for name in sorted(VK_TOKENS.keys()):
     token = VK_TOKENS[name]
     print(f"\n{'='*70}")
     print(f"TOKEN: {name}")
-    print(f"  Full token: {token}")
+    # Отпечаток, а не значение и не префикс: диагностика обязана различать
+    # токены, но не разглашать их. Печать полного токена держалась тут до
+    # 2026-08-20 — диагностический скрипт был сам по себе каналом утечки,
+    # ровно того класса, из-за которого угнали ботов 12.08.
+    print(f"  Fingerprint: {hashlib.sha256(token.encode()).hexdigest()[:8]}")
     print(f"  Length: {len(token)}")
-    print(f"  Prefix: {token[:30]}")
 
     # Create session
     session = vk_api.VkApi(token=token)

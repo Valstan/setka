@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
-"""Check VK tokens on VPS"""
+"""Check VK tokens on VPS.
+
+Значения токенов не печатаются нигде — только отпечаток sha256[:8], которого
+достаточно, чтобы отличить один токен от другого и сверить с ``/tokens``.
+Прежние «превью» (первые 15 и последние 5 символов) выдавали 20 символов
+секрета в вывод, который потом уезжает в тикет или в чат.
+"""
+import hashlib
 import os
+
+
+def fingerprint(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()[:8]
+
 
 print("=== VK TOKENS from env ===")
 for k, v in sorted(os.environ.items()):
     if k.startswith("VK_TOKEN"):
         name = k.replace("VK_TOKEN_", "")
-        token_preview = v[:15] + "..." + v[-5:] if len(v) > 20 else v
-        print(f"  {name}: {token_preview} (len={len(v)})")
+        print(f"  {name}: fp={fingerprint(v)} (len={len(v)})")
 
 print()
 print("=== VK_PUBLISH_TOKEN_NAME ===")
@@ -21,7 +32,9 @@ print(f"  VK_PUBLISH_TOKEN_NAME (from config): {VK_PUBLISH_TOKEN_NAME}")
 
 pt = get_publish_token()
 if pt:
-    print(f"  Publish token preview: {pt[:15]}...{pt[-5:]}")
+    # Отпечаток вместо «превью»: 15 первых и 5 последних символов — это 20
+    # символов секрета в выводе, который потом уезжает в тикет или в чат.
+    print(f"  Publish token fingerprint: {hashlib.sha256(pt.encode()).hexdigest()[:8]}")
     for n, t in VK_TOKENS.items():
         if t == pt:
             print(f"  => Name: {n}")
