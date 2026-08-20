@@ -156,6 +156,87 @@ class VKClient:
             logger.error(f"Unexpected error fetching posts from {owner_id}: {e}")
             return []
 
+    # Сколько стен упаковываем в один ``execute``. Предел ВК — 25 вызовов API
+    # внутри одного VKScript; берём 20 с запасом: у скрипта есть и собственные
+    # ограничения (время выполнения, размер ответа), а 20 групп по 20 постов с
+    # вложениями — уже сотни килобайт JSON.
+    EXECUTE_BATCH_SIZE: ClassVar[int] = 20
+
+    def get_wall_posts_batch(
+        self, owner_ids: List[int], count: int = 20
+    ) -> Dict[int, List[Dict[str, Any]]]:
+        """Стены НЕСКОЛЬКИХ сообществ за один запрос (VK ``execute``).
+
+        Возвращает ``{owner_id: [посты]}``. Сообщество, которое ВК не отдал
+        (удалено, закрыто, забанено), приходит с пустым списком — как и при
+        поштучном чтении, где ``get_wall_posts`` глотает ApiError и отдаёт ``[]``.
+
+        **Зачем.** Измерено 2026-08-20: весь расход трёх user-токенов — это
+        ``wall.get`` по донорским стенам, один вызов на группу на волну (5282
+        сканирования против 5361 вызова за те же часы). ``execute`` исполняет до
+        25 вызовов API на стороне ВК за один запрос, то есть волна из 13-14 групп
+        укладывается в один вызов вместо четырнадцати.
+
+        **Порядок ответа не гарантирован по смыслу, поэтому не используется.**
+        VKScript возвращает массив в порядке вызовов, но сопоставлять по индексу
+        опасно: при частичном отказе ВК кладёт в элемент ``false``, и сдвиг на
+        один превратил бы посты одного района в посты соседнего. Поэтому
+        owner_id берётся из самих постов, а индекс служит только для тех групп,
+        которые не отдали ни одного поста.
+        """
+        out: Dict[int, List[Dict[str, Any]]] = {oid: [] for oid in owner_ids}
+        if not owner_ids:
+            return out
+
+        per_call = min(int(count), 100)
+        for i in range(0, len(owner_ids), self.EXECUTE_BATCH_SIZE):
+            chunk = owner_ids[i : i + self.EXECUTE_BATCH_SIZE]
+            ids_literal = ",".join(str(int(o)) for o in chunk)
+            # var-объявления и while — VKScript не знает for-of и шаблонных строк.
+            code = (
+                f"var ids=[{ids_literal}];var i=0;var r=[];"
+                f'while(i<ids.length){{r.push(API.wall.get({{"owner_id":ids[i],'
+                f'"count":{per_call},"extended":0}}));i=i+1;}}return r;'
+            )
+            try:
+                self._enforce_rate_limit("execute")
+                resp = self.session.method("execute", {"code": code})
+            except vk_api.exceptions.ApiError as e:
+                # Отказ ВСЕГО батча — не тихий ноль: вызывающий обязан узнать и
+                # перечитать группы поштучно, иначе волна выйдет с пустой лентой
+                # и это будет выглядеть как «сегодня новостей нет».
+                _log_vk_api_error(f"VK execute batch error ({len(chunk)} групп)", e)
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected execute batch error: {e}")
+                raise
+
+            items = resp if isinstance(resp, list) else []
+            for pos, entry in enumerate(items):
+                if not isinstance(entry, dict):
+                    # false — ВК отказал по этой конкретной группе (закрыта,
+                    # удалена, бан). Оставляем пустой список: поведение то же,
+                    # что у поштучного чтения.
+                    continue
+                posts = entry.get("items") or []
+                if not posts:
+                    continue
+                owner = posts[0].get("owner_id")
+                if owner is None and pos < len(chunk):
+                    owner = chunk[pos]
+                if owner is None:
+                    continue
+                out.setdefault(int(owner), []).extend(posts)
+
+        total = sum(len(v) for v in out.values())
+        logger.info(
+            "execute batch: %d групп за %d запрос(ов), постов %d",
+            len(owner_ids),
+            (len(owner_ids) + self.EXECUTE_BATCH_SIZE - 1) // self.EXECUTE_BATCH_SIZE,
+            total,
+        )
+        return out
+
     def get_posts_by_ids(self, refs: List[tuple]) -> List[Dict[str, Any]]:
         """
         Пакетная загрузка постов wall.getById (до 100 за запрос).

@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from config.runtime import (
     bulletin_jaccard_dedup_enabled,
+    execute_batch_enabled,
     get_bulletin_jaccard_min_tokens,
     get_bulletin_jaccard_threshold,
     get_bulletin_simhash_bucket_gate,
@@ -213,6 +214,11 @@ class AdvancedVKParser:
         if shuffle_communities:
             random.shuffle(community_ids)
 
+        # Пакетное чтение стен ДО цикла (execute, 2026-08-20): один запрос на
+        # 20 групп вместо запроса на группу. Отказ пакета оставляет кэш пустым,
+        # и цикл ниже читает поштучно, как раньше.
+        await self._prefetch_walls(community_ids, effective_count)
+
         all_posts = []
 
         # Аудит сбора (ADR-0004, shadow): под гейтом копим сырой собранный батч,
@@ -386,10 +392,55 @@ class AdvancedVKParser:
             )
         return all_posts
 
+    async def _prefetch_walls(self, community_ids: List[int], count: int) -> None:
+        """Прочитать стены ВСЕХ доноров волны пакетом (VK ``execute``).
+
+        Измерено 2026-08-20: весь расход трёх user-токенов — это ``wall.get`` по
+        донорским стенам, один вызов на группу на волну (5282 сканирования против
+        5361 вызова за те же часы, при 1520 активных донорах). ``execute``
+        исполняет до 25 вызовов на стороне ВК за один запрос, и волна из 13-14
+        групп укладывается в один вызов вместо четырнадцати.
+
+        **Отказ пакета не ломает волну.** Кэш просто остаётся пустым, и цикл
+        читает группы поштучно, как раньше. Это единственная причина, по которой
+        врезка сделана предзагрузкой, а не заменой чтения: путь «как было»
+        остаётся живым и рабочим, а не аварийным.
+        """
+        self._wall_cache = {}
+        if not community_ids or not execute_batch_enabled():
+            return
+        if not hasattr(self.vk_client, "get_wall_posts_batch"):
+            return
+
+        owner_ids = [-abs(int(cid)) for cid in community_ids]
+        try:
+            import asyncio
+
+            self._wall_cache = await asyncio.to_thread(
+                self.vk_client.get_wall_posts_batch, owner_ids, count
+            )
+        except Exception as e:  # noqa: BLE001 — пакет не обязан быть точкой отказа
+            # WARNING, а не debug: прод гоняет LOG_LEVEL=INFO, и тихий откат на
+            # поштучное чтение выглядел бы как «батчинг работает», хотя он не
+            # работает ни дня. Ровно так однажды уже потеряли трое суток.
+            logger.warning("execute-батч стен не удался (%s) — волна читает группы поштучно", e)
+            self._wall_cache = {}
+
     async def _fetch_community_posts(self, community_id: int, count: int) -> List[Dict]:
         """Fetch posts from a single VK community."""
         # Use VK client to get wall posts
         # Implementation depends on your VK client setup
+
+        # Пакетная предзагрузка (execute): группа уже прочитана — берём оттуда.
+        # pop, а не get: стена нужна ровно один раз за волну, и держать её в
+        # памяти до конца разбора незачем.
+        cached = getattr(self, "_wall_cache", None)
+        if cached is not None and -abs(community_id) in cached:
+            posts = cached.pop(-abs(community_id)) or []
+            for post in posts:
+                if "owner_id" not in post:
+                    post["owner_id"] = -abs(community_id)
+            return posts
 
         if hasattr(self.vk_client, "get_wall_posts"):
             # VKClient is synchronous, run in thread
