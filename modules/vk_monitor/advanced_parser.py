@@ -32,6 +32,7 @@ from modules.deduplication.fingerprints import (
     text_to_rafinad,
     text_token_set,
 )
+from modules.filters.ads_filter import is_marked_advertisement
 from modules.vk_monitor.vk_client import VKClient
 from utils.post_utils import clear_copy_history, lip_of_post, post_popularity
 from utils.text_utils import check_blacklist, is_advertisement, is_hard_spam, is_neighbor_bulletin
@@ -116,6 +117,11 @@ class AdvancedVKParser:
             "posts_filtered_black_id": 0,
             "posts_filtered_no_region_words": 0,
             "posts_filtered_advertisement": 0,
+            # Чужая размеченная реклама (метка ВК / erid / #реклама) — считается
+            # отдельно от posts_filtered_advertisement: тот отсев работает по
+            # commercial-scoring и в теме reklama выключен, а этот — надёжные
+            # маркеры рекламодателя, режущие во всех темах.
+            "posts_filtered_marked_ad": 0,
             "posts_filtered_hard_spam": 0,
             "posts_filtered_neighbor_bulletin": 0,
             "posts_filtered_classifier": 0,
@@ -530,6 +536,20 @@ class AdvancedVKParser:
         #     иначе матрёшка «сводка в сводке» (инцидент Малмыж 2026-07-27).
         if is_neighbor_bulletin(text):
             self.stats["posts_filtered_neighbor_bulletin"] += 1
+            return None
+
+        # 5c. Чужая РАЗМЕЧЕННАЯ реклама — режем во всех темах, включая reklama.
+        #     Рубрика «объявления» строится из чужих агрегаторов, и ради частных
+        #     объявлений рекламный фильтр там выключен целиком (шаг 5 ниже). Но
+        #     выключен он был заодно и для коммерческой рекламы с легальной
+        #     маркировкой — а именно за её ре-трансляцию ВК банит аккаунт админа
+        #     (Уржум 2026-07-08, G151). Официальная метка ВК `marked_as_ads` при
+        #     этом не проверялась НИ В ОДНОЙ теме: is_advertisement смотрит
+        #     только текст.
+        #     Маркеры узкие (`erid:`/`#реклама`/метка ВК) — их носит рекламодатель,
+        #     частное «продам мёд» не носит, поэтому рубрика не обнуляется.
+        if is_marked_advertisement(post_data):
+            self.stats["posts_filtered_marked_ad"] += 1
             return None
 
         # 5. Advertisement filter

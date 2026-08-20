@@ -5,7 +5,34 @@ Migrated from old_postopus bin/utils/is_advertisement.py
 Detects commercial/advertising content using multiple signal levels.
 """
 
+from typing import Any, Dict
+
 from modules.filters.base import BaseFilter, FilterResult
+
+
+def is_marked_advertisement(post: Dict[str, Any]) -> bool:
+    """Размечена ли реклама её собственным рекламодателем. Чистая.
+
+    Только надёжные сигналы: официальная метка ВК ``marked_as_ads`` и легальные
+    маркеры (``erid:``, ``#реклама``, «на правах рекламы»). НАМЕРЕННО без
+    commercial-scoring (цена/руб/купить/скидка) — он тюнингован под локальные
+    объявления, и рубрику «объявления» такой отсев обнулил бы целиком.
+
+    Разница принципиальная: маркеры выше носит ЧУЖОЙ рекламодатель, а частное
+    объявление («продам мёд, 500 руб») не носит их никогда. Поэтому по ним
+    можно резать даже там, где реклама ожидаема, — и нужно: за ре-трансляцию
+    чужой рекламы ВК банил аккаунт админа паблика (инцидент Уржум 2026-07-08).
+
+    Одно определение на три вызова (парсер, кругозор-рассылка, аудит сбора):
+    раньше оно жило копией в ``krugozor_broadcast._is_promo``, а на пути
+    парсинга не жило вовсе.
+    """
+    if not isinstance(post, dict):
+        return False
+    if post.get("marked_as_ads"):
+        return True
+    text = (post.get("text") or "").lower()
+    return any(marker.lower() in text for marker in AdvertisementFilter.LEGAL_MARKERS)
 
 
 class AdvertisementFilter(BaseFilter):

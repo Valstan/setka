@@ -24,6 +24,7 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence
 
 from config.runtime import collection_audit_shadow_enabled, get_collection_audit_region_codes
+from modules.filters.ads_filter import is_marked_advertisement
 from utils.post_utils import clear_copy_history, lip_of_post, vk_post_datetime
 from utils.text_utils import check_blacklist, is_advertisement, is_hard_spam
 from utils.vk_attachments import summarize_media
@@ -72,6 +73,10 @@ def _derive_drop_reason(post: Dict[str, Any], theme: str, region_config: Any) ->
     # _filter_post шаг 5a). Проверяем первым — совпадает с порядком фильтра.
     if is_hard_spam(text):
         return "hard_spam"
+    # Шаг 5c: чужая РАЗМЕЧЕННАЯ реклама — тоже для всех тем, включая reklama.
+    # Порядок и определение те же, что в _filter_post (coupling ADR-0004).
+    if is_marked_advertisement(post):
+        return "marked_ad"
     # Шаг 5: реклама (для темы reklama фильтр не срабатывает — как в _filter_post).
     if theme != "reklama" and is_advertisement(text, skip_for_reklama=False, theme=theme):
         return "advertisement"

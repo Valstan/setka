@@ -48,20 +48,17 @@ def _empty_stats() -> Dict[str, int]:
 def _is_promo(post: Dict[str, Any]) -> bool:
     """Высокоточная проверка «это реклама/промо». Чистая.
 
-    Только надёжные сигналы — официальная VK-метка `marked_as_ads` + легальные
-    рекламные маркеры (`erid:`/`#реклама`/«на правах рекламы»), переиспользуем
-    список из AdvertisementFilter. НАМЕРЕННО без commercial-scoring (цена/руб/
-    купить/скидка): он тюнингован под локальные объявления и ложно бил бы по
-    научному тексту. Консервативно: лучше пропустить редкий промо, чем выкинуть
-    научпоп из сводки."""
-    if not isinstance(post, dict):
-        return False
-    if post.get("marked_as_ads"):
-        return True
-    from modules.filters.ads_filter import AdvertisementFilter
+    Определение общее с путём парсинга — ``ads_filter.is_marked_advertisement``:
+    официальная VK-метка `marked_as_ads` + легальные маркеры. Здесь оно нужно
+    ещё и потому, что commercial-scoring ложно бил бы по научному тексту;
+    консервативно — лучше пропустить редкий промо, чем выкинуть научпоп.
 
-    text = (post.get("text") or "").lower()
-    return any(m.lower() in text for m in AdvertisementFilter.LEGAL_MARKERS)
+    Копия этого правила жила тут до 2026-08-20, а на пути парсинга не жила
+    вовсе: рубрика «объявления» ре-транслировала чужую размеченную рекламу.
+    """
+    from modules.filters.ads_filter import is_marked_advertisement
+
+    return is_marked_advertisement(post)
 
 
 def _newest_unseen(
