@@ -288,22 +288,39 @@ class BulletinBuilder:
         return "\n".join(parts)
 
     def _sort_by_popularity(self, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Sort posts by popularity score (descending)."""
-        from utils.post_utils import post_popularity
+        """Sort posts by rating score, descending (звено 5, шаг 2).
+
+        ``post_rating`` с настраиваемой ``RATING_VIEWS_ALPHA`` вместо жёсткой
+        ``post_popularity`` (та же формула при alpha=0.5 — гейт в тестах).
+        Дефолт 0.25 выбран владельцем 2026-08-20 по витрине на 1078 измеренных
+        кандидатах 28 районов. Откат — env, без деплоя.
+
+        Пост без ``views`` → ``score = None`` → хвост очереди, как в витрине:
+        прежний дефолт 0 схлопывал делитель в единицу, и пост без единого
+        просмотра мог обогнать районный хит.
+        """
+        from config.classifier import get_rating_views_alpha
+        from utils.post_utils import post_rating
+
+        alpha = get_rating_views_alpha()
 
         def get_score(post_data):
-            return post_popularity(
-                views=(
-                    post_data.get("views", {}).get("count", 0)
-                    if isinstance(post_data.get("views"), dict)
-                    else post_data.get("views", 0)
-                ),
+            views = post_data.get("views")
+            if isinstance(views, dict):
+                views = views.get("count")
+            return post_rating(
+                views=views,
                 likes=post_data.get("likes", {}).get("count", 0),
                 comments=post_data.get("comments", {}).get("count", 0),
                 reposts=post_data.get("reposts", {}).get("count", 0),
+                alpha=alpha,
             )
 
-        return sorted(posts, key=get_score, reverse=True)
+        return sorted(
+            posts,
+            key=lambda p: ((s := get_score(p)) is not None, s or 0.0),
+            reverse=True,
+        )
 
     def _available_length(self, current_parts: List[str], post_number: int) -> int:
         """Calculate available length for current post."""

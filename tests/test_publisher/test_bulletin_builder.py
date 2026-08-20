@@ -105,3 +105,52 @@ def test_at_least_one_post_fits_produces_normal_bulletin():
     assert "Заголовок" in r.text
     assert "Короткий валидный текст" in r.text
     assert "#тег" in r.text
+
+
+# ───────── сортировка по рейтингу (звено 5, шаг 2) ─────────
+
+
+def _p(pid, views, likes, comments=0, reposts=0):
+    return {
+        "owner_id": -100,
+        "id": pid,
+        "text": f"post {pid}",
+        "views": {"count": views} if views is not None else None,
+        "likes": {"count": likes},
+        "comments": {"count": comments},
+        "reposts": {"count": reposts},
+    }
+
+
+def test_sort_follows_post_rating_with_configured_alpha(monkeypatch):
+    """alpha=0 = чистое вовлечение: 100 лайков при 10k просмотров обгоняют
+    12 лайков при 20 просмотрах (при 0.5 было бы наоборот — гейт ниже)."""
+    monkeypatch.setenv("RATING_VIEWS_ALPHA", "0")
+    b = BulletinBuilder(header="")
+    out = b._sort_by_popularity([_p(1, 20, 12), _p(2, 10_000, 100)])
+    assert [p["id"] for p in out] == [2, 1]
+
+
+def test_alpha_05_reproduces_old_post_popularity_order(monkeypatch):
+    """Гейт «формула вырождается в нынешнюю»: при 0.5 порядок старый."""
+    monkeypatch.setenv("RATING_VIEWS_ALPHA", "0.5")
+    b = BulletinBuilder(header="")
+    out = b._sort_by_popularity([_p(1, 20, 12), _p(2, 10_000, 100)])
+    assert [p["id"] for p in out] == [1, 2]
+
+
+def test_post_without_views_goes_to_tail_not_top(monkeypatch):
+    """Раньше отсутствующие views считались нулём, делитель схлопывался в 1,
+    и пост без единого просмотра обгонял районный хит."""
+    monkeypatch.setenv("RATING_VIEWS_ALPHA", "0.25")
+    b = BulletinBuilder(header="")
+    no_views = {
+        "owner_id": -100,
+        "id": 3,
+        "text": "post 3",
+        "likes": {"count": 50},
+        "comments": {"count": 0},
+        "reposts": {"count": 0},
+    }
+    out = b._sort_by_popularity([no_views, _p(1, 1000, 5)])
+    assert [p["id"] for p in out] == [1, 3]

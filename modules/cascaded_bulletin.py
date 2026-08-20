@@ -479,6 +479,29 @@ async def run_cascaded_bulletin(
         posts = [p for p in posts if post_lip(p) not in prepublish_blocked]
         debug_counters["filtered_posts_classifier_prepublish"] = before_prepublish - len(posts)
 
+    # Отбор В сводку по меткам (звено 5, шаг 2) — симметрично районной волне
+    # (прецедент симметрии — prepublish выше). Строго ПОСЛЕ prepublish: тот
+    # записал вердикты, которые отбор читает. Гейт CLASSIFIER_SELECTION_ENABLED.
+    from modules.classifier import selection as classifier_selection
+
+    posts, selection_mode, selection_removed = await classifier_selection.apply_wave_selection(
+        session, posts, region_code=region_code, theme=theme
+    )
+    if selection_removed:
+        debug_counters["filtered_posts_selection"] = selection_removed
+    if selection_mode == classifier_selection.MODE_SKIP_WAVE:
+        return {
+            "success": True,
+            "message": (
+                "classifier selection: вердиктов нет, каскадная волна пропущена "
+                "(политика деградации, шаг 2 звена 5)"
+            ),
+            "posts_published": 0,
+            "bulletins_count": 0,
+            "stats": {},
+            "debug": debug_counters,
+        }
+
     parser_stats = parser.get_stats()
 
     # Hard-exclude'им рекламу + addons + религию (требование пользователя

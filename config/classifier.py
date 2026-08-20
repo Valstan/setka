@@ -15,6 +15,11 @@ Env vars:
   CLASSIFIER_PREPUBLISH_ENABLED=0     # классифицировать кандидатов ВНУТРИ волны,
                                       # до первой публикации (см.
                                       # modules/classifier/prepublish.py); дефолт выкл
+  CLASSIFIER_SELECTION_ENABLED=0      # отбор В сводку по меткам нейросети
+                                      # (звено 5, шаг 2): в волне остаются только
+                                      # publish-посты, при молчании фильтра —
+                                      # политика деградации владельца (см.
+                                      # modules/classifier/selection.py); дефолт выкл
   CLASSIFIER_RULE_STALE_DAYS=90       # aging: approved-правило старше порога без
                                       # подачи в постулаты → подсветка в панели
   CLASSIFIER_RULES_SNAPSHOT_PATH      # файл снапшота выученных правил (beat);
