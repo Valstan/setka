@@ -147,9 +147,20 @@
                 <h6 class="mb-0"><i class="bi bi-person-check"></i> Вы и движок
                     <span class="text-muted small" id="cf-progress"></span>
                 </h6>
-                <div class="form-check form-switch mb-0">
-                    <input class="form-check-input" type="checkbox" id="cf-grouped" checked>
-                    <label class="form-check-label small" for="cf-grouped">группировать похожее</label>
+                <div class="d-flex gap-3 align-items-center flex-wrap">
+                    <!-- Случайная выборка (заказ владельца 2026-08-20): очередь сверху
+                         вниз держит оператора в одном пласте неделями, а завал в
+                         остальных темах никто не видит. Режим по умолчанию. -->
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="cf-random" checked>
+                        <label class="form-check-label small" for="cf-random">
+                            случайная пачка (все районы, одна тема)
+                        </label>
+                    </div>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="cf-grouped" checked>
+                        <label class="form-check-label small" for="cf-grouped">группировать похожее</label>
+                    </div>
                 </div>
             </div>
         </div>
@@ -454,12 +465,71 @@ function esc(s) {
     return (s || "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
 
+// ─────────── Случайная пачка на проверку (заказ владельца 2026-08-20) ───────────
+//
+// Что уже показывали в этом заходе. Нужно только для «дать ещё 10»: закрытые
+// карточки уходят из очереди сами (reviewed_at), а вот ПРОПУЩЕННЫЕ вернулись бы
+// в следующей пачке и оператор ходил бы по кругу. Список живёт до перезагрузки
+// страницы — обновил страницу, начал с чистого листа, как и просили.
+let RANDOM_SEEN = [];
+
+async function loadRandomBatch({more = false} = {}) {
+    const feed = document.getElementById("cf-feed");
+    const empty = document.getElementById("cf-empty");
+    if (!more) RANDOM_SEEN = [];
+    feed.innerHTML = "";
+    const r = await fetch("/api/classifier-review/feed/random?limit=10"
+        + (RANDOM_SEEN.length ? `&exclude=${RANDOM_SEEN.join(",")}` : ""));
+    const data = await r.json();
+    empty.classList.toggle("d-none", data.count > 0);
+    if (!data.count) { emptyText(empty); return; }
+    for (const b of data.blocks) {
+        RANDOM_SEEN.push(...b.ids);
+        feed.insertAdjacentHTML("beforeend", blockHTML(b));
+    }
+    feed.insertAdjacentHTML("beforeend", moreButtonHTML(data));
+}
+
+// Кнопка стоит под пачкой всегда, а не появляется по факту разбора: пачку можно
+// и пропустить целиком (тема не пошла), и упереться в карточку, по которой
+// решения нет. Когда пачка разобрана до конца, кнопка становится крупной и
+// зелёной — тогда это единственное оставшееся действие на экране.
+function moreButtonHTML(data) {
+    const themes = data.themes_available
+        ? `<div class="text-muted small mt-1">тема выбрана случайно из ${data.themes_available}
+           присутствующих в очереди; следующая пачка — другая тема</div>`
+        : "";
+    return `
+      <div class="text-center my-3" id="cf-more-box">
+        <button class="btn btn-outline-primary" id="cf-more" onclick="loadRandomBatch({more:true})">
+          🎲 Дать ещё 10 постов на проверку
+        </button>
+        ${themes}
+      </div>`;
+}
+
+// Пачка разобрана — подсветить кнопку. Отдельная функция, потому что зовётся из
+// двух мест: после группового действия и после закрытия последней карточки.
+function refreshMoreButton() {
+    const btn = document.getElementById("cf-more");
+    if (!btn) return;
+    const left = document.querySelectorAll("#cf-feed .card[data-id]").length;
+    btn.classList.toggle("btn-outline-primary", left > 0);
+    btn.classList.toggle("btn-success", left === 0);
+    btn.classList.toggle("btn-lg", left === 0);
+}
+
 async function loadFeed() {
     const region = document.getElementById("cf-region").value.trim();
     const unreacted = document.getElementById("cf-unreacted").checked;
     const grouped = document.getElementById("cf-grouped").checked;
     const feed = document.getElementById("cf-feed");
     const empty = document.getElementById("cf-empty");
+
+    if (document.getElementById("cf-random").checked) {
+        await loadRandomBatch();
+        return;
+    }
     feed.innerHTML = "";
 
     // Группировка идёт по ВСЕЙ очереди, а не по видимой странице: группа из
@@ -507,7 +577,9 @@ function blockHTML(b) {
       <div class="card mb-3 border-secondary">
         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
           <div>
-            <span class="badge bg-secondary">${ACTIONS[b.action] || b.action}</span>
+            ${b.action
+                ? `<span class="badge bg-secondary">${ACTIONS[b.action] || b.action}</span>`
+                : ""}
             <span class="badge bg-primary">${esc(b.theme)}</span>
             <span class="text-muted small">— ${b.total} шт.${
                 b.hidden_cards ? ` (показано ${b.cards.length}, скрыто ${b.hidden_cards})` : ""
@@ -626,7 +698,7 @@ async function runBulk(btn, n, url, payload) {
             bulkFailed(btn, restore, out.error || "отказ без причины", "");
             return;
         }
-        await afterBulk();
+        await afterBulk(payload.ids);
     } catch (e) {
         bulkFailed(btn, restore, "запрос не дошёл", String(e));
     }
@@ -650,7 +722,25 @@ function bulkFailed(btn, restore, reason, detail) {
 
 // После пачки перечитываем ленту целиком: соседние блоки могли схлопнуться
 // иначе, а прогресс — сдвинуться. Точечное удаление карточки тут соврало бы.
-async function afterBulk() {
+//
+// Исключение — случайный режим: там перечитать ленту значит выбросить недоразобранную
+// пачку и подсунуть новую тему на полпути. Оператор нажал «согласен с группой»,
+// а у него сменился весь экран — так режим бессмысленен. Поэтому здесь как раз
+// точечное удаление закрытого, а новая пачка приходит только по кнопке.
+async function afterBulk(closedIds) {
+    if (document.getElementById("cf-random")?.checked) {
+        for (const id of closedIds || []) {
+            document.querySelector(`#cf-feed .card[data-id="${id}"]`)?.remove();
+        }
+        // Блок, из которого убрали все карточки, оставляет висеть заголовок с
+        // групповой кнопкой на пустоту — убираем и его.
+        for (const block of document.querySelectorAll("#cf-feed .card.border-secondary")) {
+            if (!block.querySelector(".card[data-id]")) block.remove();
+        }
+        refreshMoreButton();
+        await Promise.all([loadProgress(), loadStats()]);
+        return;
+    }
     await Promise.all([loadFeed(), loadProgress(), loadStats()]);
 }
 
@@ -823,6 +913,7 @@ async function post(id, path, body) {
 async function finalizeReact(id, path) {
     await post(id, path);
     document.querySelector(`.card[data-id="${id}"]`)?.remove();
+    refreshMoreButton();
     loadStats();
 }
 
@@ -941,6 +1032,7 @@ document.getElementById("cf-refresh").addEventListener("click", () => {
 });
 document.getElementById("cf-unreacted").addEventListener("change", loadFeed);
 document.getElementById("cf-grouped").addEventListener("change", loadFeed);
+document.getElementById("cf-random").addEventListener("change", loadFeed);
 document.getElementById("cf-rules-refresh").addEventListener("click", loadRules);
 document.getElementById("cf-rule-add").addEventListener("click", addRule);
 document.getElementById("cf-theme-add-btn").addEventListener("click", addThemeFromEditor);

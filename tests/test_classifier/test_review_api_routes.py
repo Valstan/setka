@@ -121,3 +121,29 @@ def test_no_static_path_is_shadowed_by_a_parameterized_one():
     # Параметризованные пути сегодня есть только среди POST (/{classification_id}/...) —
     # GET-гейту пока нечего ловить, поэтому это условие проверяем только для POST.
     assert any("{" in p for p, _ in posts), "параметризованных POST нет — гейту нечего ловить"
+
+
+def test_feed_random_reaches_the_service_and_not_the_id_route(client):
+    """GET /feed/random обязан доехать до ``service.review_feed_random``.
+
+    Гейт на затенение (инцидент 2026-08-19): параметризованные
+    ``/{classification_id}/…`` объявлены ВЫШЕ этого маршрута, и проверять это
+    рассуждением («у них литерал вторым сегментом») мы уже пробовали — стоило
+    прод-дня. Проверяем HTTP-запросом.
+    """
+    fake = AsyncMock(return_value={"blocks": [], "count": 0, "theme": None, "themes_available": 0})
+    with patch.object(rev.service, "review_feed_random", fake):
+        r = client.get("/api/classifier-review/feed/random?limit=10")
+    assert r.status_code == 200, r.text
+    assert fake.await_count == 1
+    assert fake.await_args.kwargs["limit"] == 10
+
+
+def test_feed_random_passes_exclude_ids_as_numbers(client):
+    """``exclude`` приходит строкой CSV, сервис ждёт числа. Мусор отбрасывается,
+    а не роняет ручку 422: список показанного — подсказка, а не контракт."""
+    fake = AsyncMock(return_value={"blocks": [], "count": 0})
+    with patch.object(rev.service, "review_feed_random", fake):
+        r = client.get("/api/classifier-review/feed/random?exclude=5,7;9,%20,abc")
+    assert r.status_code == 200, r.text
+    assert fake.await_args.kwargs["exclude_ids"] == [5, 7, 9]

@@ -359,11 +359,16 @@ async def review_feed(
     if only_unreviewed:
         stmt = stmt.where(ContentClassification.reviewed_at.is_(None))
     rows = (await session.execute(stmt)).scalars().all()
-    items = [c.to_dict() for c in rows]
+    return await _attach_filter_decision(session, rows)
 
-    # Прикрепить решение детерминированного фильтра (ADR-0004): оператор видит
-    # «🚫 отсеян: реклама» vs «✅ прошёл фильтр». Несогласие на dropped = сигнал
-    # пере-фильтрации, на kept = пере-публикации.
+
+async def _attach_filter_decision(session, rows: Sequence[Any]) -> List[Dict[str, Any]]:
+    """Строки вердиктов → dict'ы с решением детерминированного фильтра (ADR-0004).
+
+    Оператор видит «🚫 отсеян: реклама» vs «✅ прошёл фильтр». Несогласие на
+    dropped = сигнал пере-фильтрации, на kept = пере-публикации.
+    """
+    items = [c.to_dict() for c in rows]
     lips = [c.lip for c in rows]
     if lips:
         audit_rows = (
@@ -1277,3 +1282,114 @@ async def bulk_correct(
         await finalize(session, int(cid))
         corrected += 1
     return {"ok": True, "corrected": corrected, "missing": missing}
+
+
+# Сколько непроверенных строк тянем в пул перед случайным выбором темы.
+# Пул нужен, чтобы тема выбиралась из ТОГО, что реально есть в очереди, а не из
+# справочника тем: справочник знает «православие», которого в завале может не
+# быть ни одного поста, и оператор получал бы пустые выдачи. Полторы тысячи —
+# компромисс: на завале в 44 тысячи это заметная доля тем, а сортировка
+# random() по такому объёму стоит десятки миллисекунд.
+RANDOM_REVIEW_POOL = 1500
+
+
+async def review_feed_random(
+    session,
+    *,
+    limit: int = 10,
+    exclude_ids: Optional[Sequence[int]] = None,
+) -> Dict[str, Any]:
+    """Случайная пачка непроверенных постов ОДНОЙ случайной темы (заказ владельца 2026-08-20).
+
+    Зачем отдельно от ``review_feed_grouped``. Та лента ходит по очереди сверху
+    вниз, крупными блоками, и оператор неделями разбирает один и тот же пласт:
+    свежие вердикты одной темы вытесняют остальные, а завал в других темах
+    никто не видит. Дистилляция 2026-08-18 напоролась ровно на это — «мерили
+    покойника», потому что сырьё приходило из одного угла потока.
+
+    Что делает: берёт случайный пул непроверенных вердиктов **по всем районам**,
+    смотрит, какие темы в нём реально есть, выбирает одну случайно и отдаёт из
+    неё до ``limit`` случайных постов. Тема одна на выдачу сознательно — так
+    оператор держит в голове один критерий, а не переключается между «мусором» и
+    «происшествиями» на каждой карточке.
+
+    Форма ответа — тот же блок, что у ``review_feed_grouped`` (``action``,
+    ``theme``, ``total``, ``ids``, ``cards``): панель рисует и групповые кнопки
+    применяет одним и тем же кодом. Разница внутри блока одна — здесь он
+    собирается по теме, а не по паре «действие × тема», потому что владелец
+    ориентируется по теме, а действия внутри пачки как раз и надо сравнить.
+
+    ``exclude_ids`` — что уже показано в этом заходе: кнопка «дать ещё 10» не
+    должна возвращать те же карточки, пока оператор их не закрыл.
+    """
+    import random
+
+    excluded = {int(i) for i in (exclude_ids or [])}
+
+    stmt = (
+        select(ContentClassification)
+        .where(ContentClassification.reviewed_at.is_(None))
+        .order_by(func.random())
+        .limit(RANDOM_REVIEW_POOL)
+    )
+    rows = [r for r in (await session.execute(stmt)).scalars().all() if r.id not in excluded]
+    if not rows:
+        return {"blocks": [], "count": 0, "theme": None, "themes_available": 0}
+
+    canon_map = await _theme_canon_map(session)
+
+    by_theme: Dict[str, List[ContentClassification]] = {}
+    for row in rows:
+        verdict = row.verdict if isinstance(row.verdict, dict) else {}
+        theme = canonicalize_theme(verdict.get("theme"), canon_map) or "—"
+        by_theme.setdefault(theme, []).append(row)
+
+    # Тема выбирается равновероятно среди присутствующих, а НЕ пропорционально
+    # объёму: иначе «мусор», которого в завале больше всего, выпадал бы почти
+    # всегда, и редкие темы оператор не увидел бы никогда — то самое, от чего
+    # эта выдача и лечит.
+    theme = random.choice(sorted(by_theme))
+    picked = by_theme[theme]
+    random.shuffle(picked)
+    picked = picked[:limit]
+
+    items = await _attach_filter_decision(session, picked)
+
+    # Дословные дубли схлопываются так же, как в блочной ленте: пачка из десяти
+    # копий одного текста — это одно решение оператора, а не десять.
+    cards: List[Dict[str, Any]] = []
+    by_text: Dict[str, Dict[str, Any]] = {}
+    for item in items:
+        norm = _normalized_text(item.get("post_text"))
+        existing = by_text.get(norm) if norm else None
+        if existing is None:
+            card = dict(item)
+            card["duplicate_count"] = 1
+            card["duplicate_ids"] = [item["id"]]
+            card["duplicate_lips"] = [item["lip"]]
+            cards.append(card)
+            if norm:
+                by_text[norm] = card
+        else:
+            existing["duplicate_count"] += 1
+            existing["duplicate_ids"].append(item["id"])
+            existing["duplicate_lips"].append(item["lip"])
+
+    block = {
+        # Действия внутри пачки разные (в этом и смысл случайной выборки),
+        # поэтому в заголовке блока — тема, а поле action пустое. Панель
+        # показывает действие на каждой карточке отдельно.
+        "action": "",
+        "theme": theme,
+        "total": sum(c["duplicate_count"] for c in cards),
+        "ids": [i for c in cards for i in c["duplicate_ids"]],
+        "cards": cards,
+        "hidden_cards": 0,
+        "random": True,
+    }
+    return {
+        "blocks": [block],
+        "count": block["total"],
+        "theme": theme,
+        "themes_available": len(by_theme),
+    }

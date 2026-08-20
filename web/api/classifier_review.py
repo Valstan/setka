@@ -274,6 +274,31 @@ async def feed_grouped(
     return {"blocks": blocks, "count": sum(b["total"] for b in blocks)}
 
 
+@router.get("/feed/random")
+async def feed_random(
+    limit: int = Query(10, ge=1, le=50, description="сколько постов в пачке"),
+    exclude: str = Query("", description="id уже показанных карточек (CSV)"),
+):
+    """Случайная пачка непроверенных постов ОДНОЙ случайной темы (заказ владельца 2026-08-20).
+
+    Посты берутся из всех районов сразу, тема на каждую выдачу выбирается заново.
+
+    Затенения параметризованными ``/{classification_id}/…`` тут нет, хотя те и
+    объявлены выше: у них вторым сегментом стоит литерал (``agree``, ``correct``,
+    ``finalize``), а голого ``/{classification_id}`` в роутере не существует.
+    Проверяется это не рассуждением, а HTTP-тестом в
+    ``tests/test_classifier/test_review_api_routes.py`` — после инцидента
+    2026-08-19 (PR #496) на слово тут не верим.
+    """
+    exclude_ids = []
+    for chunk in (exclude or "").replace(";", ",").split(","):
+        chunk = chunk.strip()
+        if chunk.isdigit():
+            exclude_ids.append(int(chunk))
+    async with AsyncSessionLocal() as session:
+        return await service.review_feed_random(session, limit=limit, exclude_ids=exclude_ids)
+
+
 # --- Петля обучения (ADR-0005): оператор утверждает выученные правила ------------
 
 
