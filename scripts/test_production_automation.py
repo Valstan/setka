@@ -122,25 +122,6 @@ async def test_production_workflow():
         return False
 
 
-async def test_celery_task():
-    """Тест Celery task напрямую"""
-    logger.info("\n🔧 Testing Celery task directly")
-
-    try:
-        from tasks.production_workflow_tasks import run_single_region_workflow
-
-        result = await run_single_region_workflow(
-            region_code="mi", max_posts=5, publish_mode="test"
-        )
-
-        logger.info(f"✅ Celery task result: {result}")
-        return result.get("success", False)
-
-    except Exception as e:
-        logger.error(f"❌ Celery task test failed: {e}", exc_info=True)
-        return False
-
-
 async def test_vk_publisher():
     """Тест VK Publisher"""
     logger.info("\n📤 Testing VK Publisher")
@@ -186,12 +167,12 @@ async def main():
     if await test_production_workflow():
         tests_passed += 1
 
-    # Тест 2: Celery Task
-    total_tests += 1
-    if await test_celery_task():
-        tests_passed += 1
+    # «Тест 2: Celery Task» убран 2026-08-20 вместе с tasks/production_workflow_tasks.py.
+    # Он импортировал `run_single_region_workflow`, которой в том модуле не было НИКОГДА —
+    # импорт падал внутри `except Exception` и молча возвращал False. То есть тест не
+    # проверял ничего и годами показывал «провал» как норму.
 
-    # Тест 3: VK Publisher
+    # Тест 2: VK Publisher
     total_tests += 1
     if await test_vk_publisher():
         tests_passed += 1

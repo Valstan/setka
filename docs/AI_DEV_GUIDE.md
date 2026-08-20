@@ -35,12 +35,12 @@
 │   ├── notifications/          # Система уведомлений (VK checkers, storage)
 │   └── monitoring/             # Health checker, Telegram notifier
 ├── tasks/                      # Celery задачи и расписания
-│   ├── celery_app.py           # Celery app + beat_schedule
+│   ├── celery_app.py           # Celery app + beat_schedule (большинство задач живёт здесь)
 │   ├── parsing_tasks.py        # Parsing tasks
 │   ├── parsing_scheduler_tasks.py  # Postopus scheduling (27 тем)
-│   ├── publishing_tasks.py     # Publishing tasks
-│   ├── analysis_tasks.py       # AI analysis tasks
-│   └── monitoring_tasks.py     # Monitoring tasks
+│   ├── discovery_tasks.py      # Подбор сообществ + еженедельная перепроверка
+│   ├── radar_tasks.py          # Контент-радар: fan-out опрос источников
+│   └── broadcast_tasks.py      # Сетевая рассылка: диспетчер-публикатор
 ├── web/                        # Web слой
 │   ├── api/                    # REST API endpoints (17 роутеров)
 │   ├── static/                 # Static files (CSS, JS)
