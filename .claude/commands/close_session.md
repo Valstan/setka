@@ -219,8 +219,12 @@ bash scripts/git_sync_check.sh --gate
 
 ```bash
 PR_NUM=<номер открытого PR>
-# Разрешены: два handoff-дока + любое письмо-находка под mailbox/to-brain/.
-ALLOWED='docs/SESSION_HANDOFF.md docs/PENDING_FOLLOWUPS.md'
+# Разрешены: handoff-доки, журнал дистилляций + любое письмо-находка под mailbox/to-brain/.
+# DISTILL_LOG.md штатно едет вместе с handoff'ом, если в сессии была дистилляция,
+# и без него фильтр отбраковывал заведомо doc-only PR.
+# docs/REGION_REFRESH_LOG.md сюда НЕ добавлять: он исторически едет вместе с
+# миграциями и конфигами регионов, то есть такой PR не doc-only.
+ALLOWED='docs/SESSION_HANDOFF.md docs/PENDING_FOLLOWUPS.md docs/ops/DISTILL_LOG.md'
 files=$(gh pr view "$PR_NUM" --json files --jq '.files[].path')
 extra=$(echo "$files" \
   | grep -v -F -x -f <(echo "$ALLOWED" | tr ' ' '\n') \
@@ -229,16 +233,30 @@ extra=$(echo "$files" \
 
 Если `extra` непустой — пропустить авто-merge, доложить: «PR содержит код — merge руками после ревью или через `/reliz`: `gh pr merge $PR_NUM --squash --delete-branch`».
 
-Иначе дождаться CI и смёрджить:
+Иначе дождаться **обязательной** проверки и смёрджить:
 
 ```bash
-gh pr checks "$PR_NUM" --watch --interval 15      # блокирует, пока checks не завершатся
-# Если CI не запустился за 180s — не зацикливаться, сказать «merge руками» и выйти.
-gh pr merge "$PR_NUM" --squash --delete-branch
-git checkout main && git pull --ff-only origin main
+# Ждём, пока GitHub зарегистрирует прогон: сразу после push список чеков пуст,
+# и `--watch` на пустом списке вернул бы успех, ничего не дождавшись.
+for _ in $(seq 1 12); do
+  n=$(gh pr checks "$PR_NUM" --required --json name --jq 'length' 2>/dev/null || echo 0)
+  [ "${n:-0}" -gt 0 ] && break
+  sleep 15
+done
+gh pr checks "$PR_NUM" --required --watch --interval 15 \
+  && gh pr merge "$PR_NUM" --squash --delete-branch \
+  && git checkout main && git pull --ff-only origin main
 ```
 
-**Не использовать `--admin`**, не amend/force-push, не запускать CI вручную.
+`--required` — не украшение: защита `main` требует ровно **`test (3.12)`** (директива brain
+2026-08-17, сверено с сервером 2026-08-20), и ждать «все чеки» значит ждать не то.
+
+**Если цикл ожидания истёк или `--watch` вернул не 0** — авто-merge отменён. Доложить: «PR #N ждёт
+зелёной `test (3.12)`, merge руками: `gh pr merge N --squash --delete-branch`». Не повторять в цикле,
+не запускать CI вручную, не amend/force-push.
+
+**`--admin` не пробует помочь даже теоретически:** при `enforce_admins: true` сервер отклоняет его и
+у владельца. `--auto` тоже недоступен — в настройках репозитория `allow_auto_merge: false`.
 
 ## Шаг 10. Финальный отчёт
 
@@ -257,7 +275,7 @@ git checkout main && git pull --ff-only origin main
 
 - **Не push на прод** (`ssh setka`), не перезапускать сервисы, не применять миграции — это `/reliz`.
 - **Не direct push в main** ([ADR-0002](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)) — даже handoff идёт через PR.
-- **Не `gh pr merge --admin`** — даже если CI залип; доложить, merge руками.
+- **Не `gh pr merge --admin`** — даже если CI залип. И дело не только в правиле: при `enforce_admins: true` сервер отклоняет `--admin` и у владельца, то есть обойти обязательную проверку нечем. Доложить, merge руками после позеленения.
 - **Не объявлять сессию закрытой, пока `git_sync_check.sh --gate` не вернёт exit 0.**
 - **Не дублировать `PENDING_FOLLOWUPS` в handoff** — handoff ссылается, не повторяет.
 

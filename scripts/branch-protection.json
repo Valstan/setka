@@ -1,6 +1,6 @@
 {
   "required_status_checks": {
-    "strict": true,
+    "strict": false,
     "contexts": ["test (3.12)"]
   },
   "enforce_admins": true,
