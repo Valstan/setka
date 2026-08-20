@@ -278,6 +278,10 @@ async def record_verdicts(
     unknown_themes: Dict[str, int] = {}
 
     recorded = skipped_existing = skipped_missing = 0
+    # Вердикты, у которых движок положил действие в поле темы. Считаем отдельно:
+    # INFO про «темы вне канона» их не покажет — тема уже обнулена, — и молчание
+    # тут означало бы, что поток теряет тематизацию, а мы об этом не знаем.
+    action_in_theme: List[str] = []
     for v in verdicts:
         if v.lip in already:
             skipped_existing += 1
@@ -288,6 +292,8 @@ async def record_verdicts(
             skipped_missing += 1
             continue
         verdict_json = v.to_verdict_json()
+        if not verdict_json.get("theme") and (v.theme or "").strip():
+            action_in_theme.append(v.lip)
         theme = canonicalize_theme(verdict_json.get("theme"), canon_map)
         if theme is not None:
             verdict_json["theme"] = theme
@@ -309,6 +315,14 @@ async def record_verdicts(
         )
         already.add(v.lip)
         recorded += 1
+
+    if action_in_theme:
+        logger.warning(
+            "классификатор: движок положил действие в поле темы — %s вердиктов, "
+            "тема обнулена (lip: %s)",
+            len(action_in_theme),
+            ", ".join(action_in_theme[:10]),
+        )
 
     if unknown_themes:
         # Не глушим: неизвестное написание — кандидат в синонимы, и увидеть

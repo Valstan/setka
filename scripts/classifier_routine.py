@@ -120,6 +120,11 @@ def validate_verdicts(payload: object) -> list[str]:
             errors.append(f"[{i}] нет lip")
         if v.get("action") not in VALID_ACTIONS:
             errors.append(f"[{i}] action={v.get('action')!r} не из {list(VALID_ACTIONS)}")
+        # Зеркало к проверке выше: у action словарь есть, у theme его нет, и
+        # модель кладёт туда название действия. Сервер такую тему обнулит
+        # молча — здесь она названа до отправки.
+        if str(v.get("theme") or "").strip().casefold() in VALID_ACTIONS:
+            errors.append(f"[{i}] theme={v.get('theme')!r} — это действие, а не тема")
         conf = v.get("confidence")
         if conf is not None and not (
             isinstance(conf, (int, float)) and not isinstance(conf, bool) and 0 <= conf <= 100

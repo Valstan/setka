@@ -233,3 +233,53 @@ async def test_canonicalize_existing_is_idempotent(db_session):
     second = await service.canonicalize_existing(db_session)
 
     assert second["moved"] == 0
+
+
+# ---------- симметрия словарей: действие не должно оседать в теме ----------
+#
+# У ``action`` словарь закрытый: ``normalized_action`` сводит всё неопознанное
+# к ``hold``. У ``theme`` словаря нет вовсе — она свободная строка, и когда
+# движок кладёт в неё название действия, оно едет в Корпус как полноценная
+# тема. Перестановки полей в коде при этом НЕТ ни на одном пути: дефект не в
+# «виновнике-коде», а в отсутствующей валидации. Цена — ось agree-rate и
+# группировки правил получают фантомную тему «hold», а сам вердикт вдобавок
+# блокирует пост, потому что `hold` под звеном 5 значит «не публиковать».
+
+
+@pytest.mark.parametrize("word", ["hold", "publish", "delete", "HOLD", "  Hold  "])
+def test_action_word_in_theme_is_dropped(word):
+    verdict = ClassifierVerdict(
+        lip="9_1", theme=word, action="hold", confidence=80, model="test", region_code="mi"
+    )
+    assert verdict.to_verdict_json()["theme"] == ""
+
+
+@pytest.mark.parametrize("theme", ["новости", "объявления", "холдинг", "публикация"])
+def test_real_theme_survives(theme):
+    """Отбрасывается ровно слово-действие, а не всё, что на него похоже."""
+    verdict = ClassifierVerdict(
+        lip="9_2", theme=theme, action="publish", confidence=80, model="test", region_code="mi"
+    )
+    assert verdict.to_verdict_json()["theme"] == theme
+
+
+def test_verdict_with_action_in_theme_is_not_lost():
+    """Тема обнуляется, но вердикт остаётся: его ``action`` управляет публикацией."""
+    verdict = ClassifierVerdict(
+        lip="9_3", theme="delete", action="delete", confidence=90, model="test", region_code="mi"
+    )
+    out = verdict.to_verdict_json()
+    assert out["theme"] == ""
+    assert out["action"] == "delete"
+
+
+@pytest.mark.asyncio
+async def test_action_word_in_theme_does_not_reach_corpus(db_session):
+    """Сквозная проверка: до Корпуса фантомная тема не доезжает."""
+    await _seed_dictionary(db_session)
+    verdict = ClassifierVerdict(
+        lip="9_4", theme="hold", action="hold", confidence=70, model="test", region_code="mi"
+    )
+    await service.record_verdicts(db_session, [verdict], source="test")
+
+    assert await _theme_of(db_session, "9_4") == ""

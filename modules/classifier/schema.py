@@ -42,6 +42,22 @@ class ClassifierVerdict(BaseModel):
         a = (self.action or "").strip().lower()
         return a if a in ACTIONS else "hold"
 
+    def normalized_theme(self) -> str:
+        """Тема без названия действия внутри.
+
+        У ``action`` словарь закрытый, у ``theme`` его нет вовсе — она свободная
+        строка, и движок этим пользуется: кладёт в неё ``hold``/``delete``, и
+        оно едет в Корпус как полноценная тема. Перестановки полей в коде при
+        этом нет ни на одном пути — дефект в отсутствующей валидации, поэтому
+        чинится он здесь, на сериализации, а не поиском «виновника».
+
+        Тема обнуляется, а вердикт остаётся: его ``action`` управляет
+        публикацией, и терять вердикт целиком было бы дороже пустой темы —
+        пустую весь код уже умеет показывать («?» в ленте, «—» в пачке).
+        """
+        theme = (self.theme or "").strip()
+        return "" if theme.casefold() in ACTIONS else theme
+
     def has_merge_signal(self) -> bool:
         """Есть ли у вердикта суждение о склейке (merge/split) — для agree-rate типа merge."""
         return bool(self.merge_with) or bool(self.split)
@@ -49,7 +65,7 @@ class ClassifierVerdict(BaseModel):
     def to_verdict_json(self) -> dict:
         """Сериализация в JSONB-колонку ``content_classifications.verdict``."""
         out = {
-            "theme": self.theme.strip(),
+            "theme": self.normalized_theme(),
             "action": self.normalized_action(),
             "merge_with": [str(x) for x in self.merge_with],
             "split": bool(self.split),
