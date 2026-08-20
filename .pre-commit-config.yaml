@@ -52,3 +52,15 @@ repos:
         entry: python scripts/check_commit_msg.py
         language: system
         stages: [commit-msg]
+
+      # Секрет-сканер на staged-изменениях. Раннее предупреждение перед push;
+      # обязательный гейт — тот же gitleaks в CI. Обёртка, а не штатный хук
+      # gitleaks: тот `language: golang` и требует Go-тулчейн, которого на
+      # Windows-машине владельца нет. Без бинарника хук ГРОМКО пропускает, а не
+      # падает — иначе он ломал бы commit там, где защита и так есть.
+      - id: gitleaks-staged
+        name: secret scan (staged)
+        entry: python scripts/gitleaks_precommit.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

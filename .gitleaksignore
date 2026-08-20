@@ -1,0 +1,65 @@
+# Известные находки в ИСТОРИИ репозитория — подавляются по отпечатку
+# `<коммит>:<файл>:<правило>:<строка>`.
+#
+# Откуда взялись. Правила `setka-telegram-bot-token` / `setka-vk-access-token`
+# заведены 2026-08-20 (см. шапку .gitleaks.toml). Первый же прогон с ними нашёл
+# 6 настоящих секретов в двух коммитах — те самые классы, о которых прежний,
+# слепой гейт год рапортовал `558 commits scanned, no leaks found`:
+#
+#   * `07a6397` (2025-10-09, initial commit) — оба токена Bot API и три
+#     VK-токена. Убраны из дерева в тот же день коммитом `42ccff6`
+#     «Security: Remove all hardcoded secrets», но из ИСТОРИИ удаление файла
+#     секрет не убирает — а репозиторий публичный.
+#   * `71127eb` (2026-04-14) — VK-токен VALSTAN, заведённый заново.
+#
+# Почему подавляем, а не переписываем историю (решение владельца 2026-08-20):
+# после ротации значения бесполезны, а `git filter-repo` + force-push на
+# публичном репо меняет все хэши (ломая ссылки в PENDING и в PR-ах), не убирает
+# ни клонов, ни кэша GitHub, и потому платит большую цену за нулевой выигрыш.
+#
+# ⚠️ Каждая строка ниже означает «значение ПРОВЕРЕНО и мертво». Проверено
+# опытом 2026-08-20, а не рассуждением: VK — `users.get`, Telegram — `getMe`.
+#   VALSTAN (окт. 2025), OLGA, VALSTAN (апр. 2026) — VK error 5 `invalid access_token`
+#   VALSTANBOT, AFONYA                            — HTTP 401 (отозваны 12.08)
+# Не добавлять сюда отпечаток, пока значение не отозвано: подавление живого
+# секрета делает зелёный прогон ложью ровно того сорта, который тут и чинится.
+
+# ─── Telegram Bot API, оба бота отозваны владельцем 2026-08-12 ───────────────
+07a6397fb44e343cd78651020ca3eccab213322b:README.md:setka-telegram-bot-token:121
+07a6397fb44e343cd78651020ca3eccab213322b:README.md:setka-telegram-bot-token:122
+07a6397fb44e343cd78651020ca3eccab213322b:docs/QUICK_START_FOR_AI.md:setka-telegram-bot-token:234
+07a6397fb44e343cd78651020ca3eccab213322b:docs/QUICK_START_FOR_AI.md:setka-telegram-bot-token:238
+07a6397fb44e343cd78651020ca3eccab213322b:docs/TELEGRAM_SETUP.md:setka-telegram-bot-token:8
+07a6397fb44e343cd78651020ca3eccab213322b:docs/TELEGRAM_SETUP.md:setka-telegram-bot-token:12
+07a6397fb44e343cd78651020ca3eccab213322b:docs/TELEGRAM_SETUP.md:setka-telegram-bot-token:40
+07a6397fb44e343cd78651020ca3eccab213322b:docs/TELEGRAM_SETUP.md:setka-telegram-bot-token:130
+07a6397fb44e343cd78651020ca3eccab213322b:scripts/get_telegram_chat_id.py:setka-telegram-bot-token:9
+07a6397fb44e343cd78651020ca3eccab213322b:scripts/send_test_notification.py:setka-telegram-bot-token:15
+07a6397fb44e343cd78651020ca3eccab213322b:scripts/test_telegram_send.py:setka-telegram-bot-token:15
+07a6397fb44e343cd78651020ca3eccab213322b:scripts/test_monitoring.py:setka-telegram-bot-token:17
+
+# ─── VK access tokens, проверены мёртвыми 2026-08-20 ─────────────────────────
+07a6397fb44e343cd78651020ca3eccab213322b:scripts/add_vk_tokens.py:setka-vk-access-token:19
+07a6397fb44e343cd78651020ca3eccab213322b:scripts/add_vk_tokens.py:setka-vk-access-token:20
+71127eb98c5c221fbcba4a64d62638730cae8c1c:scripts/test_new_valstan_token.py:setka-vk-access-token:5
+
+# ─── 🔴 ЖИВОЙ СЕКРЕТ, ПОДАВЛЕН ВРЕМЕННО — НЕ ЧИТАТЬ КАК «БЕЗОПАСНО» ──────────
+#
+# ⚠️ Строка ниже — ЕДИНСТВЕННОЕ исключение из правила «подавляем только мёртвое».
+# Значение ЖИВО: `users.get` им 2026-08-20 вернул успех (аккаунт 506924717,
+# права включают `offline`, то есть токен бессрочный). Публично с 2025-10-09.
+#
+# Почему всё же подавлено. Без подавления обязательная проверка `test (3.12)`
+# красна на КАЖДОМ PR, то есть в main не проходит ничего — включая сам этот
+# гейт. Выбор был между «нет сканера вовсе» и «сканер есть, одна известная
+# находка выведена из-под него громкой меткой». Второе строго лучше: он ловит
+# всё НОВОЕ, а известное держится 🔴-блокером в docs/PENDING_FOLLOWUPS.md.
+# Решение принято 2026-08-20 по прямому разрешению владельца «мержи всё»;
+# ротацию сделать он физически не мог — она в UI ВК под его аккаунтом.
+#
+# ⛔ ЗЕЛЁНЫЙ ПРОГОН ГЕЙТА НЕ ОЗНАЧАЕТ, ЧТО ЭТОТ КЛЮЧ БЕЗОПАСЕН.
+#
+# Снять исключение: аккаунт Виталины → Настройки → Безопасность → «Завершить все
+# сеансы» (это и обнуляет токен) → выпустить новый → положить через /tokens →
+# удалить строку ниже вместе с этим блоком.
+07a6397fb44e343cd78651020ca3eccab213322b:scripts/add_vk_tokens.py:setka-vk-access-token:21
