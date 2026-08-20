@@ -189,6 +189,11 @@ def parse_chunk_response(
             problems.append(f"дубль вердикта на {v.lip!r}")
             continue
         seen.add(v.lip)
+        # Действие в поле темы тема обнуляет молча (schema.normalized_theme).
+        # В сводке прогона это должно быть видно: молчание тут читалось бы как
+        # «модель тематизировала пачку», хотя тематизации не случилось.
+        if not v.normalized_theme():
+            problems.append(f"действие в поле темы у {v.lip!r} — тема обнулена")
         # Склейка допустима только внутри поданной пачки — иначе модель
         # ссылается на пост, которого не видела.
         v.merge_with = [m for m in v.merge_with if m in by_lip and m != v.lip]
