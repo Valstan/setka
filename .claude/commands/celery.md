@@ -14,7 +14,7 @@ allowed-tools: Bash, Read, Grep, AskUserQuestion
 
 ## Шаг 2. Параллельные проверки
 
-В одном SSH-блоке (через `ssh setka "..."`):
+В одном SSH-блоке (через `ssh sarafan "..."`):
 
 ```bash
 echo '=== systemd ==='

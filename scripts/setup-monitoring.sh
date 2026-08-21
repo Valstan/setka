@@ -5,7 +5,7 @@
 # Однократный запуск. Идемпотентность через apt + проверки `systemctl is-enabled`.
 # Сразу копирует конфиги из репо в /etc/prometheus, /etc/grafana, /var/lib/grafana/dashboards.
 #
-# Запуск: ssh setka 'cd /home/valstan/SETKA && sudo bash scripts/setup-monitoring.sh'
+# Запуск: ssh sarafan 'cd /home/valstan/SETKA && sudo bash scripts/setup-monitoring.sh'
 #
 # Требования прод-сервера: Ubuntu/Debian, root доступ через sudo, свободные
 # порты 9090 (Prometheus) и 3000 (Grafana). Memory budget — ~500MB RAM.
@@ -200,7 +200,7 @@ fi
 
 echo
 echo "Готово. Доступ:"
-echo "  ssh -L 3000:127.0.0.1:3000 setka"
+echo "  ssh -L 3000:127.0.0.1:3000 sarafan"
 echo "  затем http://localhost:3000  (логин admin/admin при первом входе)"
 echo
 echo "Дашборд: SETKA → SETKA — состояние дайджестов"

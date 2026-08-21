@@ -12,7 +12,7 @@ Probe-before-build (#020), директива brain 2026-06-11 (content-radar ki
   4. Rate-limit: burst одинаковых запросов — когда появляется 429/капча.
 
 Read-only, stdlib-only (urllib + re) — запускается на проде голым python3
-без зависимостей: `ssh setka "python3 -" < scripts/probe_tme_s_parsing.py`.
+без зависимостей: `ssh sarafan "python3 -" < scripts/probe_tme_s_parsing.py`.
 
 Примеры:
 

@@ -12,7 +12,7 @@ SSH к проду). Данные — в **прод-БД**, поэтому скр
 ## Шаг 0. Проверить, есть ли что курировать
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/curate_pending.py --list --limit 20"
+ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/curate_pending.py --list --limit 20"
 ```
 
 Пусто (`[]`) → доложить «нет pending-прогонов» и завершить (в режиме /loop —
@@ -36,7 +36,7 @@ ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/curate_pending.py
 грубая оценка токенов, потраченных на этот прогон (для token-economy ack):
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/curate_pending.py --apply" <<'JSON'
+ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/curate_pending.py --apply" <<'JSON'
 {"id": 12, "tokens_estimate": 700,
  "verdicts": [
    {"lip": "168170001_3005", "verdict": "keep", "reason": ""},
@@ -53,7 +53,7 @@ JSON
 После прогона показать агрегат — это и есть датапоинт для ack brain'у:
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/curate_pending.py --stats"
+ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/curate_pending.py --stats"
 ```
 
 Доложить кратко: обработано прогонов N / отсеяно (drop) M из K кандидатов

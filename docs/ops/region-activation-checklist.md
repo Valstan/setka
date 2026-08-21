@@ -153,7 +153,7 @@ VALSTAN последним, потому что его бан гасит воо�
 vk_group_id IS NOT NULL`, то есть неактивный сосед в сводку не попадает.
 
 ```bash
-ssh setka "sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/073_kirov_oblast_neighbors.sql"
+ssh sarafan "sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/073_kirov_oblast_neighbors.sql"
 ```
 
 ## Шаг 5. Активация
@@ -162,7 +162,7 @@ ssh setka "sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrat
 отчёт готовности, запись только с `--apply`.
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/activate_regions.py omutninsk belholunitsa verhnekame=kirs_info43 afanasyevo"
+ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/activate_regions.py omutninsk belholunitsa verhnekame=kirs_info43 afanasyevo"
 ```
 
 Скрипт по каждому району находит группу в VK, считает пул, проверяет
@@ -181,7 +181,7 @@ community-токен, neighbors и права токена, и печатает 
 ## Шаг 6. Проверка живьём
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py --region omutninsk --theme novost --min-posts 1"
+ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py --region omutninsk --theme novost --min-posts 1"
 ```
 
 Dry-run гоняет пайплайн без публикации: токены → VK → парсинг → фильтр → сборка

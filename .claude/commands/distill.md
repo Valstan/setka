@@ -18,9 +18,9 @@ NB: файл ключа хранит строку `CLASSIFIER_INGEST_KEY=<зна
 ключ) — извлекать через `cut`, иначе 401 (проверено live 2026-07-14):
 
 ```bash
-ssh setka 'cd /home/valstan/SETKA && CLASSIFIER_INGEST_KEY=$(sudo -n grep -m1 "^CLASSIFIER_INGEST_KEY=" /etc/setka/classifier-routine-key.txt | cut -d= -f2- | tr -d "[:space:]") python3 scripts/classifier_routine.py corrections --limit 200 --days 30 --out /tmp/distill_run'
-ssh setka "cat /tmp/distill_run/corrections.json"
-ssh setka "cat /tmp/distill_run/postulates.md"
+ssh sarafan 'cd /home/valstan/SETKA && CLASSIFIER_INGEST_KEY=$(sudo -n grep -m1 "^CLASSIFIER_INGEST_KEY=" /etc/setka/classifier-routine-key.txt | cut -d= -f2- | tr -d "[:space:]") python3 scripts/classifier_routine.py corrections --limit 200 --days 30 --out /tmp/distill_run'
+ssh sarafan "cat /tmp/distill_run/corrections.json"
+ssh sarafan "cat /tmp/distill_run/postulates.md"
 ```
 
 `--days` брать как **дней с прошлой дистилляции минус один**: правки, сделанные в день
@@ -58,8 +58,8 @@ ssh setka "cat /tmp/distill_run/postulates.md"
 Записать `proposals.json` локально (scratchpad), закинуть на VPS и отправить:
 
 ```bash
-scp <scratchpad>/proposals.json setka:/tmp/distill_run/proposals.json
-ssh setka 'cd /home/valstan/SETKA && CLASSIFIER_INGEST_KEY=$(sudo -n grep -m1 "^CLASSIFIER_INGEST_KEY=" /etc/setka/classifier-routine-key.txt | cut -d= -f2- | tr -d "[:space:]") python3 scripts/classifier_routine.py propose /tmp/distill_run/proposals.json'
+scp <scratchpad>/proposals.json sarafan:/tmp/distill_run/proposals.json
+ssh sarafan 'cd /home/valstan/SETKA && CLASSIFIER_INGEST_KEY=$(sudo -n grep -m1 "^CLASSIFIER_INGEST_KEY=" /etc/setka/classifier-routine-key.txt | cut -d= -f2- | tr -d "[:space:]") python3 scripts/classifier_routine.py propose /tmp/distill_run/proposals.json'
 ```
 
 Формат: `{"proposals": [{"rule_text", "rationale", "evidence": [{"lip", "verdict_type",

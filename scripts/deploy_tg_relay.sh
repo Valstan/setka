@@ -3,7 +3,7 @@
 # через голый CF API (без wrangler/node). Запускать НА ПРОДЕ (setka), где
 # в /etc/setka/setka.env лежат CLOUDFLARE_API_TOKEN и TG_RELAY_SECRET (#008):
 #
-#   ssh setka "cd /home/valstan/SETKA && sudo bash scripts/deploy_tg_relay.sh"
+#   ssh sarafan "cd /home/valstan/SETKA && sudo bash scripts/deploy_tg_relay.sh"
 #
 # Идемпотентен: повторный запуск перезаливает скрипт той же командой.
 set -euo pipefail

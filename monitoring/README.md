@@ -11,7 +11,7 @@ Prometheus + Grafana стек для наблюдения за сводками,
 ## Установка (один раз на проде)
 
 ```bash
-ssh setka 'cd /home/valstan/SETKA && sudo bash scripts/setup-monitoring.sh'
+ssh sarafan 'cd /home/valstan/SETKA && sudo bash scripts/setup-monitoring.sh'
 ```
 
 Скрипт ставит `prometheus` и `grafana` через apt, копирует конфиги из репо. Идемпотентен — повторный запуск только обновляет конфиги. Доп. флаги:
@@ -23,7 +23,7 @@ PROM_RETENTION=14d sudo bash scripts/setup-monitoring.sh
 ## Доступ к Grafana
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 setka
+ssh -L 3000:127.0.0.1:3000 sarafan
 ```
 
 Открыть `http://localhost:3000`. Первый вход — `admin/admin`, сменить пароль.

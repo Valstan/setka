@@ -6,7 +6,7 @@
 #
 # - .claude/commands/  — исполняемые памятки процедур (start, reliz, close_session, …)
 # - .claude/agents/    — кастомные субагенты (если появятся)
-# - .claude/settings.json — командная политика permissions (ssh setka allowlist) + hooks (SessionStart git-sync)
+# - .claude/settings.json — командная политика permissions (ssh sarafan allowlist) + hooks (SessionStart git-sync)
 # - .codex/hooks.json  — тот же SessionStart-хук git-sync для Codex (аналог settings.json)
 # Остальное (worktrees, локальная сессия, settings.local.json конкретного компа) — локально.
 .claude/*

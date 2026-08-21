@@ -14,8 +14,8 @@
 Идемпотентно: повторный запуск после ``--apply`` покажет «0 region(s) would change».
 
 Запуск на проде:
-    ssh setka 'cd /home/valstan/SETKA && ./venv/bin/python scripts/normalize_neighbors.py'
-    ssh setka 'cd /home/valstan/SETKA && ./venv/bin/python scripts/normalize_neighbors.py --apply'
+    ssh sarafan 'cd /home/valstan/SETKA && ./venv/bin/python scripts/normalize_neighbors.py'
+    ssh sarafan 'cd /home/valstan/SETKA && ./venv/bin/python scripts/normalize_neighbors.py --apply'
 """
 
 from __future__ import annotations

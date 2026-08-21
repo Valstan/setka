@@ -18,8 +18,8 @@ endpoint, — единый источник правды.
 **Урок PR1: всегда сначала dry-run, проверить мелкие районы, потом --apply.**
 
 Запуск на проде:
-    ssh setka 'cd /home/valstan/SETKA && ./venv/bin/python scripts/backfill_region_geo.py'
-    ssh setka 'cd /home/valstan/SETKA && ./venv/bin/python scripts/backfill_region_geo.py --apply'
+    ssh sarafan 'cd /home/valstan/SETKA && ./venv/bin/python scripts/backfill_region_geo.py'
+    ssh sarafan 'cd /home/valstan/SETKA && ./venv/bin/python scripts/backfill_region_geo.py --apply'
 """
 
 from __future__ import annotations

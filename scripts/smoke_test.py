@@ -14,8 +14,8 @@
 
 Использование (на проде, из venv проекта — скрипт импортирует
 ``tasks.celery_app``, поэтому чужим интерпретатором не запускается):
-    ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py"
-    ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py \\
+    ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py"
+    ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py \\
         --region mi --theme novost --min-posts 1"
 
 Exit 0 — smoke прошёл; exit 1 — провал (детали в stderr); exit 2 — ошибка

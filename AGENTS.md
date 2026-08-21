@@ -126,7 +126,7 @@ Brain-мандат [#027](../brain_matrica/cross-project-ideas/ideas/027-gate-re
 
 **Запрещено безусловно** (Claude Code выражает это машинно через `permissions.deny`, который побеждает всё; агент без такого механизма держит тот же запрет поведенчески — сила запрета одинакова): `git push --force`, `git push origin main/master` (только через PR, [ADR-0002](../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)), `git reset --hard`, `rm -rf`.
 
-**Почему человеческий гейт не выражается конфигом.** У Claude Code разрешительные правила сопоставляются по префиксу команды; у других агентов фильтр устроен иначе, а часто его нет вовсе. Общее одно: **destructive-дискриминатор сидит внутри кавычек** — префикс не отличает read-only `ssh setka "..."` от `ssh setka "...psql DROP..."`. Поэтому черту держит **поведение агента, а не конфиг**, и нарушать её нельзя. Памятка [`sql`](.claude/commands/sql.md) гейтит DML, релизная процедура ведёт миграции под подтверждением.
+**Почему человеческий гейт не выражается конфигом.** У Claude Code разрешительные правила сопоставляются по префиксу команды; у других агентов фильтр устроен иначе, а часто его нет вовсе. Общее одно: **destructive-дискриминатор сидит внутри кавычек** — префикс не отличает read-only `ssh sarafan "..."` от `ssh sarafan "...psql DROP..."`. Поэтому черту держит **поведение агента, а не конфиг**, и нарушать её нельзя. Памятка [`sql`](.claude/commands/sql.md) гейтит DML, релизная процедура ведёт миграции под подтверждением.
 
 **Не полагайся на то, что фильтр инструмента остановит тебя перед продом** — у разных агентов фильтры разные или их нет вовсе. Ответственность за подтверждение прод-операций лежит на агенте, а не на конфиге.
 
@@ -208,7 +208,7 @@ Brain-мандат [#027](../brain_matrica/cross-project-ideas/ideas/027-gate-re
 ### Прод-доступ — только SSH
 - Прод-хост в `~/.ssh/config` — `setka` (`/home/valstan/SETKA`).
 - **Единственный признанный канал к проду — `ssh setka`. Любой другой канал удалённого выполнения запрещён**: MCP-серверы IDE, встроенные remote-exec инструменты агента, веб-консоли хостера — все они путают разные VPS. Если у агента есть свой способ «выполнить на сервере» — он не применяется к SETKA.
-- Перед любой удалённой командой убедиться, что попал в SETKA: `ssh setka 'test -f /home/valstan/SETKA/main.py && echo OK_SETKA'`.
+- Перед любой удалённой командой убедиться, что попал в SETKA: `ssh sarafan 'test -f /home/valstan/SETKA/main.py && echo OK_SETKA'`.
 - Прод соседних проектов — **не наш прод**. Их серверы трогаем только через опубликованный HTTP-интерфейс, а не по SSH.
 
 ### Безопасность
@@ -258,29 +258,29 @@ Co-Authored-By: <агент и версия> <noreply@...>
 
 ```bash
 # health прода
-ssh setka "curl -s http://127.0.0.1:8000/api/health/full"
+ssh sarafan "curl -s http://127.0.0.1:8000/api/health/full"
 
 # статус сервисов
-ssh setka "systemctl status setka setka-celery-worker setka-celery-beat --no-pager | head -50"
+ssh sarafan "systemctl status setka setka-celery-worker setka-celery-beat --no-pager | head -50"
 
 # свежий лог worker
-ssh setka "tail -100 /home/valstan/SETKA/logs/celery-worker.log"
+ssh sarafan "tail -100 /home/valstan/SETKA/logs/celery-worker.log"
 
 # какие регионы публиковали в текущем часу (Redis cooldown)
-ssh setka "redis-cli --scan --pattern 'setka:digest_last_published:*' | sort"
+ssh sarafan "redis-cli --scan --pattern 'setka:digest_last_published:*' | sort"
 
 # pg_dump прод-БД (на ssh-host, дальше scp)
-ssh setka "sudo -u postgres pg_dump -Fc setka > /tmp/setka-$(date +%Y%m%d).dump"
+ssh sarafan "sudo -u postgres pg_dump -Fc setka > /tmp/setka-$(date +%Y%m%d).dump"
 ```
 
 ---
 
 ## Когда что-то идёт не так
 
-- **Прод 502 / health не отвечает** → `ssh setka "journalctl -u setka -n 100 --no-pager"`. Чаще всего — `setka.service` упал, нужен `systemctl restart`.
+- **Прод 502 / health не отвечает** → `ssh sarafan "journalctl -u setka -n 100 --no-pager"`. Чаще всего — `setka.service` упал, нужен `systemctl restart`.
 - **Сводки не выходят** → проверить по памятке [`celery`](.claude/commands/celery.md): жив ли beat, нет ли регионов на cooldown, нет ли ошибок в `celery-worker.log`.
 - **`pytest` падает локально** → проверить, что worktree свежий (`git pull origin <ветка>`), venv обновлён (`pip install -r requirements.txt`), есть `pytest pytest-asyncio`.
-- **Миграция не применилась** → SQL-файлы в `database/migrations/*.sql`, применяются вручную через `ssh setka 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/NNN_*.sql'`. Памятка [`sql`](.claude/commands/sql.md) это умеет.
+- **Миграция не применилась** → SQL-файлы в `database/migrations/*.sql`, применяются вручную через `ssh sarafan 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/NNN_*.sql'`. Памятка [`sql`](.claude/commands/sql.md) это умеет.
 
 ---
 

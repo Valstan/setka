@@ -7,7 +7,7 @@ per-post вердикт keep/drop и пишет его назад. Все нео
 детерминированным кодом (тут только UPDATE verdicts), черту #025/#027 не трогаем.
 
 Запуск на проде (данные в прод-БД):
-    ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/curate_pending.py --list"
+    ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/curate_pending.py --list"
 
 Подкоманды:
   --list [--limit N] [--region CODE]   pending-прогоны как JSON (для рубрики)
