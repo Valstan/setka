@@ -23,7 +23,7 @@ Probe-before-build (#020): ДО постройки in-app переписки п�
 пытается удалить (`messages.delete delete_for_all=1`). Если revert не прошёл —
 печатает message_id для ручной чистки.
 
-Примеры (на проде через `ssh setka`):
+Примеры (на проде через `ssh sarafan`):
 
     # read-only диагностика (авто-выбор сообщества с входящими ЛС)
     python3 scripts/probe_community_dm_capabilities.py

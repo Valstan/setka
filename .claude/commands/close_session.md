@@ -273,7 +273,7 @@ gh pr checks "$PR_NUM" --required --watch --interval 15 \
 
 ## Что НЕ делать в `/close_session`
 
-- **Не push на прод** (`ssh setka`), не перезапускать сервисы, не применять миграции — это `/reliz`.
+- **Не push на прод** (`ssh sarafan`), не перезапускать сервисы, не применять миграции — это `/reliz`.
 - **Не direct push в main** ([ADR-0002](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)) — даже handoff идёт через PR.
 - **Не `gh pr merge --admin`** — даже если CI залип. И дело не только в правиле: при `enforce_admins: true` сервер отклоняет `--admin` и у владельца, то есть обойти обязательную проверку нечем. Доложить, merge руками после позеленения.
 - **Не объявлять сессию закрытой, пока `git_sync_check.sh --gate` не вернёт exit 0.**

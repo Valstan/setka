@@ -18,7 +18,7 @@ Probe-before-build (#020 / G19): ДО постройки метрики «рос
 проде) — этот probe только про ПРОСМОТРЫ/ОХВАТ, которые директива пометила
 probe-gated.
 
-Примеры (на проде через `ssh setka`):
+Примеры (на проде через `ssh sarafan`):
 
     # все community-группы, окно 7 дней
     python3 scripts/probe_stats_get_capability.py

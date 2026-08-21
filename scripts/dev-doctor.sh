@@ -145,7 +145,7 @@ if [[ -x "scripts/git_sync_check.sh" ]]; then
 fi
 
 # --- 7. SSH-доступ к проду (best-effort) ---
-section "Прод (ssh setka)"
+section "Прод (ssh sarafan)"
 if [[ "$NO_PROD" == "1" ]]; then
     echo "  ${C_DIM}— пропущено (--no-prod)${C_RST}"
 elif ! command -v ssh >/dev/null 2>&1; then
