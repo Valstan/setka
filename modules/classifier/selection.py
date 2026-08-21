@@ -357,13 +357,26 @@ async def apply_wave_selection(
 
         selected = [p for p in posts if post_lip(p) in publish_lips]
         removed = len(posts) - len(selected)
+        # Сколько из убранных движок не судил вовсе. Пост без текста headless
+        # пропускает намеренно (`has_text`, headless.py:85), вердикта у него не
+        # появляется — а отбор берёт ТОЛЬКО publish, и «нет вердикта» молча
+        # значит «не публиковать». В вычитающем мире такой пост публиковался.
+        # Без этого числа `отобрано=0` неразличимо: то ли нейросеть отбраковала
+        # всё, то ли ей нечего было судить. Замер 2026-08-21: 56% пустых волн —
+        # второе. Берём ИМЕННО `has_text` движка, а не свою копию условия:
+        # разошедшиеся определения — самый незаметный способ мерить не то.
+        from modules.classifier.headless import has_text
+
+        no_text = sum(1 for p in posts if post_lip(p) not in publish_lips and not has_text(p))
         logger.info(
-            "classifier selection: регион=%s тема=%s кандидатов=%d отобрано=%d убрано=%d",
+            "classifier selection: регион=%s тема=%s кандидатов=%d отобрано=%d"
+            " убрано=%d безтекста=%d",
             region_code,
             theme,
             len(posts),
             len(selected),
             removed,
+            no_text,
         )
         return selected, mode, removed
     except Exception as e:  # noqa: BLE001 — усилитель, не точка отказа
