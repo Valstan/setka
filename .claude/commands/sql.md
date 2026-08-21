@@ -13,7 +13,7 @@ allowed-tools: Bash, Read, Glob, AskUserQuestion
 ## Параметры подключения
 
 ```
-ssh setka 'sudo -u postgres psql -d setka -c "<SQL>"'
+ssh sarafan 'sudo -u postgres psql -d setka -c "<SQL>"'
 ```
 
 (на проде sudo без пароля, БД `setka`, пользователь приложения — `setka_user`, для админ-запросов — `postgres`).
@@ -47,15 +47,15 @@ ssh setka 'sudo -u postgres psql -d setka -c "<SQL>"'
 **Однострочный:**
 
 ```bash
-ssh -o ConnectTimeout=20 setka 'sudo -u postgres psql -d setka -c "<SQL>"' 2>&1
+ssh -o ConnectTimeout=20 sarafan 'sudo -u postgres psql -d setka -c "<SQL>"' 2>&1
 ```
 
 **Многострочный/файловый:**
 
 ```bash
 # Залить временный файл и применить
-scp /tmp/setka-sql-$$.sql setka:/tmp/setka-apply.sql
-ssh setka 'sudo -u postgres psql -d setka -f /tmp/setka-apply.sql && rm /tmp/setka-apply.sql' 2>&1
+scp /tmp/setka-sql-$$.sql sarafan:/tmp/setka-apply.sql
+ssh sarafan 'sudo -u postgres psql -d setka -f /tmp/setka-apply.sql && rm /tmp/setka-apply.sql' 2>&1
 ```
 
 (или heredoc через ssh — на выбор).
@@ -82,9 +82,9 @@ ssh setka 'sudo -u postgres psql -d setka -f /tmp/setka-apply.sql && rm /tmp/set
    - «Отмена»
 4. При «да»:
    ```bash
-   scp database/migrations/<file>.sql setka:/tmp/setka-migration.sql
-   ssh setka 'sudo -u postgres psql -d setka -f /tmp/setka-migration.sql' 2>&1
-   ssh setka 'rm /tmp/setka-migration.sql'
+   scp database/migrations/<file>.sql sarafan:/tmp/setka-migration.sql
+   ssh sarafan 'sudo -u postgres psql -d setka -f /tmp/setka-migration.sql' 2>&1
+   ssh sarafan 'rm /tmp/setka-migration.sql'
    ```
 5. Напомнить зафиксировать факт применения миграции в commit message следующего PR (что/когда/на каком хосте — это заменяет старую запись в DEV_HISTORY.md, см. [ADR-0001](../../docs/adr/0001-archive-dev-history.md)).
 
@@ -92,7 +92,7 @@ ssh setka 'sudo -u postgres psql -d setka -f /tmp/setka-apply.sql && rm /tmp/set
 
 - **Backup перед опасной операцией:** для `DROP TABLE` / `TRUNCATE` / массового `UPDATE` без явной микро-области — предложить через `AskUserQuestion` сначала сделать pg_dump:
   ```bash
-  ssh setka "sudo -u postgres pg_dump -Fc -t <table> setka > /tmp/setka-<table>-$(date +%Y%m%d-%H%M).dump"
+  ssh sarafan "sudo -u postgres pg_dump -Fc -t <table> setka > /tmp/setka-<table>-$(date +%Y%m%d-%H%M).dump"
   ```
 - **Никогда не выполнять** mutating-запрос, который видит впервые, без явного «да».
 - **Никогда не повторять** опасную команду после отказа пользователя.

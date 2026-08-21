@@ -15,8 +15,8 @@
 ``000`` (нет соединения — сервис ещё стартует) → ретрай до дедлайна.
 
 Использование (на проде, после рестарта):
-    ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py"
-    ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py \\
+    ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py"
+    ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py \\
         --url http://127.0.0.1:8000/api/health/full --timeout 90 --interval 3"
 
 Exit 0 — дождались ``expect``; exit 1 — таймаут (последний статус в stderr).

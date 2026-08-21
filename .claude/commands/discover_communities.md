@@ -40,8 +40,8 @@ VK-токен живёт **только на проде**. В чат НЕ печ
 
 ## Шаг 0. Подтверждение прод-доступа
 SSH на прод классификатор может блокировать → подтвердить через `AskUserQuestion`
-(«дать доступ ssh setka на сессию»). Проверка попадания в SETKA:
-`ssh setka 'test -f /home/valstan/SETKA/main.py && echo OK_SETKA'`.
+(«дать доступ ssh sarafan на сессию»). Проверка попадания в SETKA:
+`ssh sarafan 'test -f /home/valstan/SETKA/main.py && echo OK_SETKA'`.
 
 ## Шаг 1. Запросы по темам
 Составь `queries.json` — список `{"q": "<запрос>", "label": "<тема>"}`. Принципы
@@ -60,7 +60,7 @@ SSH на прод классификатор может блокировать �
 
 ## Шаг 2. Залить сканер + запросы на прод
 ```bash
-scp scripts/discover_scan.py /tmp/queries.json setka:/tmp/
+scp scripts/discover_scan.py /tmp/queries.json sarafan:/tmp/
 ```
 
 ## Шаг 3. Запустить скан на проде (read-only, токен не светится)
@@ -78,7 +78,7 @@ SCAN_VK_TOKEN="$TOKEN" /home/valstan/SETKA/venv/bin/python /tmp/discover_scan.py
   --name-filter '(<тематические корни, если добираешь нишу>)'
 ```
 (SQL-фильтр токена зеркалит `modules.vk_token_router.get_active_parse_tokens`.)
-`scp scripts/_run.sh setka:/tmp/run.sh && ssh setka 'bash /tmp/run.sh'`.
+`scp scripts/_run.sh sarafan:/tmp/run.sh && ssh sarafan 'bash /tmp/run.sh'`.
 
 **Эволюция фильтров (важно — иначе мусор):**
 1. Без фильтров + сортировка по подписчикам → перекос в общегородские гиганты и коммерцию.
@@ -115,7 +115,7 @@ SCAN_VK_TOKEN="$TOKEN" /home/valstan/SETKA/venv/bin/python /tmp/discover_scan.py
 
 ## Шаг 4. Забрать результат и классифицировать в чате
 ```bash
-scp setka:/tmp/scan.json ./_scan.json
+scp sarafan:/tmp/scan.json ./_scan.json
 ```
 `Read` файла (большой — читать страницами). Для **каждого** кандидата прочитай
 `recent_posts` и реши. **Правила (нейро-классификация):**
@@ -136,21 +136,21 @@ scp setka:/tmp/scan.json ./_scan.json
 `communities.vk_id` хранится **отрицательным**; уникального constraint нет — сидер
 дедуплит сам по (region, abs(vk_id), category).
 ```bash
-scp scripts/seed_region_communities.py ./seed.json setka:/tmp/
+scp scripts/seed_region_communities.py ./seed.json sarafan:/tmp/
 # DRY-RUN
-ssh setka "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd /home/valstan/SETKA && ./venv/bin/python /tmp/seed_region_communities.py --region-code <code> --file /tmp/seed.json --dry-run'"
+ssh sarafan "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd /home/valstan/SETKA && ./venv/bin/python /tmp/seed_region_communities.py --region-code <code> --file /tmp/seed.json --dry-run'"
 # WRITE (после проверки вывода)
-ssh setka "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd /home/valstan/SETKA && ./venv/bin/python /tmp/seed_region_communities.py --region-code <code> --file /tmp/seed.json'"
+ssh sarafan "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd /home/valstan/SETKA && ./venv/bin/python /tmp/seed_region_communities.py --region-code <code> --file /tmp/seed.json'"
 ```
 (env читается под `sudo`, т.к. `valstan` сам `/etc/setka/setka.env` не видит.)
 
 ## Шаг 7. Проверка
 ```bash
-ssh setka "sudo -u postgres psql -d setka -tA -c \"SELECT category, count(*) FROM communities WHERE region_id=(SELECT id FROM regions WHERE code='<code>') AND is_active GROUP BY category ORDER BY count(*) DESC;\""
+ssh sarafan "sudo -u postgres psql -d setka -tA -c \"SELECT category, count(*) FROM communities WHERE region_id=(SELECT id FROM regions WHERE code='<code>') AND is_active GROUP BY category ORDER BY count(*) DESC;\""
 ```
 
 ## Шаг 8. Уборка
-- Прод `/tmp`: `ssh setka 'rm -f /tmp/discover_scan.py /tmp/seed_region_communities.py /tmp/queries.json /tmp/scan.json /tmp/run.sh /tmp/seed.json'`.
+- Прод `/tmp`: `ssh sarafan 'rm -f /tmp/discover_scan.py /tmp/seed_region_communities.py /tmp/queries.json /tmp/scan.json /tmp/run.sh /tmp/seed.json'`.
 - Локально: `_scan*.json`, `_*.json`, `_run*.sh` — **scratch, не коммитить** (в `.gitignore`
   или удалить). Коммитим только `scripts/discover_scan.py` и `scripts/seed_region_communities.py`.
 

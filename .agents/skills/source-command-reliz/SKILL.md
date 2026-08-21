@@ -149,7 +149,7 @@ Merge-стратегия по умолчанию `--squash` (для коротк
 ## Шаг 6. Прод: pull кода
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && git fetch --all && git log --oneline HEAD..origin/main 2>&1 | head -10"
+ssh sarafan "cd /home/valstan/SETKA && git fetch --all && git log --oneline HEAD..origin/main 2>&1 | head -10"
 ```
 
 Показать пользователю diff. Если есть конфликты или нет fast-forward — стоп, разобраться вручную.
@@ -157,7 +157,7 @@ ssh setka "cd /home/valstan/SETKA && git fetch --all && git log --oneline HEAD..
 Если всё чисто:
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && git pull --ff-only origin main && git log --oneline -3"
+ssh sarafan "cd /home/valstan/SETKA && git pull --ff-only origin main && git log --oneline -3"
 ```
 
 ## Шаг 7. Миграции БД (если есть)
@@ -176,20 +176,20 @@ git log --since=<previous-prod-commit> --name-only --diff-filter=A -- 'database/
 2. `AskUserQuestion`: «Применить миграцию <NNN_file.sql> на прод?» с опциями «да / dry-run / отмена».
 3. При «да» — через `/sql migrate <file>` или эквивалентно:
    ```bash
-   ssh setka 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/<file>'
+   ssh sarafan 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/<file>'
    ```
 4. Зафиксировать факт применения в commit message следующего коммита (если ещё не указали).
 
 Если в pull притянулся `requirements.txt` — тогда:
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && source venv/bin/activate && pip install -r requirements.txt 2>&1 | tail -10"
+ssh sarafan "cd /home/valstan/SETKA && source venv/bin/activate && pip install -r requirements.txt 2>&1 | tail -10"
 ```
 
 Если в pull притянулся `pyproject.toml` (либо это первый деплой с editable install после 2026-05-24, либо `pyproject.toml` изменён — посмотри `git diff --name-only HEAD~1 HEAD -- pyproject.toml`) — переустановить editable пакет:
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && source venv/bin/activate && pip install -e . 2>&1 | tail -5"
+ssh sarafan "cd /home/valstan/SETKA && source venv/bin/activate && pip install -e . 2>&1 | tail -5"
 ```
 
 Это регистрирует `setka` как editable-пакет в venv, чтобы `from modules.X import Y` работало из любой папки без `sys.path.insert` (см. PR #28 от 2026-05-24, `gh pr view 28`). Прод-systemd-сервисы продолжают использовать `PYTHONPATH=/home/valstan/SETKA`, ничего там менять не нужно.
@@ -205,7 +205,7 @@ ssh setka "cd /home/valstan/SETKA && source venv/bin/activate && pip install -e 
 Если «да»:
 
 ```bash
-ssh setka "sudo systemctl restart <services> && sleep 4 && systemctl is-active <services>"
+ssh sarafan "sudo systemctl restart <services> && sleep 4 && systemctl is-active <services>"
 ```
 
 После рестарта **дождаться готовности web поллингом**, а не одиночным curl —
@@ -214,7 +214,7 @@ ssh setka "sudo systemctl restart <services> && sleep 4 && systemctl is-active <
 2026-06-07 — цикл 6× зря рестартил прод). Если рестартили `setka` (web):
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 90 --interval 3"
+ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 90 --interval 3"
 ```
 
 Exit 0 — web поднялся (health 200). Exit 1 — не поднялся за 90с: **тогда**
@@ -234,7 +234,7 @@ Exit 0 — web поднялся (health 200). Exit 1 — не поднялся �
 При «да»:
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py --region mi --theme novost"
+ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py --region mi --theme novost"
 ```
 
 Exit 0 — пайплайн жив (в stderr: `posts_parsed=…, would_publish=…`). Exit 1 — провал
@@ -250,13 +250,13 @@ Exit 2 — сетевая ошибка/нет `task_id` (API не поднялс
 
 ```bash
 # Поллер (Шаг 8) уже дождался 200; этот вызов вернётся сразу, если web жив.
-ssh setka "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 30 --interval 3"
+ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 30 --interval 3"
 
-ssh setka "systemctl is-active setka setka-celery-worker setka-celery-beat"
+ssh sarafan "systemctl is-active setka setka-celery-worker setka-celery-beat"
 
-ssh setka "journalctl -u setka -u setka-celery-worker -u setka-celery-beat --since '2 minutes ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -10"
+ssh sarafan "journalctl -u setka -u setka-celery-worker -u setka-celery-beat --since '2 minutes ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -10"
 
-ssh setka "tail -50 /home/valstan/SETKA/logs/uvicorn_production.log 2>&1 | grep -iE 'error|critical|exception|traceback' | tail -5"
+ssh sarafan "tail -50 /home/valstan/SETKA/logs/uvicorn_production.log 2>&1 | grep -iE 'error|critical|exception|traceback' | tail -5"
 ```
 
 Через внешний домен (опционально):
@@ -279,7 +279,7 @@ curl -s -o /dev/null -w 'public /: %{http_code}\n' --max-time 20 http://3931b3fe
 
 - **Тесты упали** → стоп до коммита, разобраться. **Никогда не** обходить через `--no-verify`.
 - **psql упал на миграции** → откатить если можно (`BEGIN; ... ROLLBACK;` либо обратная миграция). Зафиксировать в `PENDING_FOLLOWUPS.md` как 🔴.
-- **Сервис не запускается после restart** → `journalctl -u <service> -n 100 --no-pager`. Чаще всего — синтакс/импорт ошибка от свежего коммита. Откатить prod-репо: `ssh setka "cd /home/valstan/SETKA && git reset --hard <prev-hash>"` + restart. **Только с явным «да» пользователя через AskUserQuestion.**
+- **Сервис не запускается после restart** → `journalctl -u <service> -n 100 --no-pager`. Чаще всего — синтакс/импорт ошибка от свежего коммита. Откатить prod-репо: `ssh sarafan "cd /home/valstan/SETKA && git reset --hard <prev-hash>"` + restart. **Только с явным «да» пользователя через AskUserQuestion.**
 - **`/api/health/full` отвечает 500** → тоже самое: журнал, откат.
 
 Никогда не оставляй прод в сломанном виде. Если не можешь починить за 5 минут — спроси «откатываемся?», и при «да» выполни откат.

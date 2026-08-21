@@ -155,7 +155,7 @@ elif ! grep -qiE '^host[[:space:]]+setka([[:space:]]|$)' "$HOME/.ssh/config" 2>/
     hint "см. docs/REMOTE_ACCESS.md — прод-доступ только по SSH через alias setka"
 else
     ok "alias 'setka' есть в ~/.ssh/config"
-    if ssh -o ConnectTimeout=8 -o BatchMode=yes setka 'test -f /home/valstan/SETKA/main.py && echo OK' 2>/dev/null | grep -q OK; then
+    if ssh -o ConnectTimeout=8 -o BatchMode=yes sarafan 'test -f /home/valstan/SETKA/main.py && echo OK' 2>/dev/null | grep -q OK; then
         ok "прод достижим, это SETKA (main.py на месте)"
     else
         warn "прод не ответил за 8с / BatchMode (норма, если нужен пароль/2FA или ты офлайн)"

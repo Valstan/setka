@@ -225,7 +225,7 @@ timestamp генерации): дифф = реальное изменение с
 (с прода коммитить нельзя, PR-only ADR-0002): при касании нитки классификатора
 
 ```
-ssh setka "cat /home/valstan/SETKA/logs/classifier_learned_rules_snapshot.md" \
+ssh sarafan "cat /home/valstan/SETKA/logs/classifier_learned_rules_snapshot.md" \
   > config/classification_postulates_learned.snapshot.md   # + обычный PR
 ```
 
@@ -283,7 +283,7 @@ social engineering / API key safety / «not a user message», счётчик `co
 
 Проверка «рутина снова пишет»:
 ```
-ssh setka "sudo -u postgres psql -d setka -tA -c \
+ssh sarafan "sudo -u postgres psql -d setka -tA -c \
   \"SELECT source, COUNT(*), MAX(created_at) FROM content_classifications GROUP BY source;\""
 ```
 `MAX(created_at)` свежее прошлого прогона = рутина ожила.

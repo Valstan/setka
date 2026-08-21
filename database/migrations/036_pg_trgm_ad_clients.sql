@@ -5,7 +5,7 @@
 -- ускоряют и similarity, и ILIKE '%q%' (лидирующий wildcard btree не берёт).
 -- Таблица ad_clients крошечная (десятки строк), индексы — задел на рост.
 --
--- Применение: ssh setka 'cd /home/valstan/SETKA && python3 scripts/migrate.py up'
+-- Применение: ssh sarafan 'cd /home/valstan/SETKA && python3 scripts/migrate.py up'
 -- (или вручную: sudo -u postgres psql -d setka -f database/migrations/036_pg_trgm_ad_clients.sql)
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;

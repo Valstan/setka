@@ -4,7 +4,7 @@
 Операторы создаются ТОЛЬКО этим CLI (публичный /api/auth/register умеет лишь
 role=radar по инвайт-коду — эскалации через web нет). Запуск на проде:
 
-    ssh setka "cd /home/valstan/SETKA && set -a && source /etc/setka/setka.env && set +a \
+    ssh sarafan "cd /home/valstan/SETKA && set -a && source /etc/setka/setka.env && set +a \
         && ./venv/bin/python scripts/create_radar_user.py --login valstan --role operator"
 
 Пароль спрашивается интерактивно (getpass, не light up в shell history), либо

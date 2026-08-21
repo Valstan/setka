@@ -145,7 +145,7 @@ Postgres на каждый запрос в горячем пути парсин�
 **Где смотреть таблицу расхода:**
 
 ```bash
-ssh setka "curl -s http://127.0.0.1:8000/api/tokens/usage?days=7"
+ssh sarafan "curl -s http://127.0.0.1:8000/api/tokens/usage?days=7"
 ```
 
 Ответ: `today` — расход за сутки с разбивкой по методам и ролью токена в
@@ -198,8 +198,8 @@ ssh setka "curl -s http://127.0.0.1:8000/api/tokens/usage?days=7"
 перемерьте:
 
 ```bash
-scp scripts/probe_token_capabilities.py setka:/tmp/
-ssh setka "sudo -u postgres psql -d setka -tAF\$'\t' -c \"SELECT name, token FROM vk_tokens WHERE is_active\" > /tmp/tk.tsv && python3 /tmp/probe_token_capabilities.py --own-group 158787639 --foreign-group 168170215 --donor-group 24611937 < /tmp/tk.tsv; rm -f /tmp/tk.tsv /tmp/probe_token_capabilities.py"
+scp scripts/probe_token_capabilities.py sarafan:/tmp/
+ssh sarafan "sudo -u postgres psql -d setka -tAF\$'\t' -c \"SELECT name, token FROM vk_tokens WHERE is_active\" > /tmp/tk.tsv && python3 /tmp/probe_token_capabilities.py --own-group 158787639 --foreign-group 168170215 --donor-group 24611937 < /tmp/tk.tsv; rm -f /tmp/tk.tsv /tmp/probe_token_capabilities.py"
 ```
 
 Скрипт трогает **только read-only** методы: ничего не публикует, не

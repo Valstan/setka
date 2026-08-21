@@ -25,7 +25,7 @@
 Точный **HostName**, **Port** и **IdentityFile** задаются в **локальном** `~/.ssh/config` (у каждого разработчика свой). Пример структуры (без реальных секретов):
 
 ```sshconfig
-Host setka
+Host sarafan
     HostName <ваш_хост_SETKA>
     Port <порт>
     User valstan
@@ -37,7 +37,7 @@ Host setka
 Подключение:
 
 ```bash
-ssh setka
+ssh sarafan
 cd /home/valstan/SETKA
 ```
 
@@ -52,9 +52,9 @@ test -f /home/valstan/SETKA/main.py && echo OK_SETKA
 ## Типичные операции по SSH
 
 ```bash
-ssh setka "cd /home/valstan/SETKA && git status && git pull origin main"
-ssh setka "systemctl status setka setka-celery-worker setka-celery-beat --no-pager"
-ssh setka "curl -sS http://127.0.0.1:8000/api/health/"
+ssh sarafan "cd /home/valstan/SETKA && git status && git pull origin main"
+ssh sarafan "systemctl status setka setka-celery-worker setka-celery-beat --no-pager"
+ssh sarafan "curl -sS http://127.0.0.1:8000/api/health/"
 ```
 
 Логи: `/home/valstan/SETKA/logs/` (см. также [`START_HERE.md`](START_HERE.md)).
