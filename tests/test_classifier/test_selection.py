@@ -296,3 +296,69 @@ async def test_alert_failure_does_not_break_the_wave(monkeypatch):
     )
     assert [p["id"] for p in out] == [1]
     assert mode == selection.MODE_VERDICTS
+
+
+# ───────── «безтекста» в строке лога — атрибуция пустой волны ─────────
+#
+# `отобрано=0` само по себе неоднозначно: то ли нейросеть отбраковала всё, то ли
+# ей нечего было судить. Пост без текста headless пропускает намеренно
+# (`has_text`, headless.py:85), вердикта у него не появляется, а отбор берёт
+# ТОЛЬКО publish — значит «нет вердикта» молча означает «не публиковать».
+# В вычитающем мире (вердикт ЗАБЛОКИРОВАЛ бы публикацию) такой пост публиковался.
+# Замер 2026-08-21: 56% пустых волн — именно этот случай, а не отбраковка.
+
+
+def _post_no_text(owner, pid):
+    return {"owner_id": owner, "id": pid, "text": "   "}
+
+
+@pytest.mark.asyncio
+async def test_log_separates_no_text_from_rejected(monkeypatch, caplog):
+    """Бестекстовый убран — но по другой причине, и в логе это видно."""
+    monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
+
+    async def fake_fetch(session, region_code):
+        return {"100_1"}
+
+    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_VERDICTS, False))
+
+    # 1 — publish, 2 — судим и отбракован, 3 и 4 — судить было нечем.
+    posts = [_post(-100, 1), _post(-100, 2), _post_no_text(-100, 3), _post_no_text(-100, 4)]
+    with caplog.at_level("INFO", logger="modules.classifier.selection"):
+        out, mode, removed = await selection.apply_wave_selection(
+            None, posts, region_code="mi", theme="novost"
+        )
+
+    assert [p["id"] for p in out] == [1]
+    assert removed == 3
+    line = next(r.getMessage() for r in caplog.records if "кандидатов=" in r.getMessage())
+    assert "убрано=3" in line
+    assert "безтекста=2" in line
+
+
+@pytest.mark.asyncio
+async def test_no_text_counts_only_the_removed(monkeypatch, caplog):
+    """Бестекстовый с publish-вердиктом прошёл — в «безтекста» он не попадает.
+
+    Иначе счётчик мерил бы состав волны, а не причину отсева, и в пустых волнах
+    выглядел бы одинаково независимо от того, что произошло.
+    """
+    monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
+
+    async def fake_fetch(session, region_code):
+        return {"100_3"}
+
+    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_VERDICTS, False))
+
+    posts = [_post(-100, 1), _post_no_text(-100, 3)]
+    with caplog.at_level("INFO", logger="modules.classifier.selection"):
+        out, _mode, removed = await selection.apply_wave_selection(
+            None, posts, region_code="mi", theme="novost"
+        )
+
+    assert [p["id"] for p in out] == [3]
+    assert removed == 1
+    line = next(r.getMessage() for r in caplog.records if "кандидатов=" in r.getMessage())
+    assert "безтекста=0" in line
