@@ -127,6 +127,11 @@ class AdvancedVKParser:
             "posts_filtered_classifier": 0,
             "posts_filtered_no_attachments": 0,
             "posts_filtered_blacklist_text": 0,
+            # Тема sosed берёт только посты с #новости. До 2026-08-21 этот отсев
+            # был ЕДИНСТВЕННЫМ в цепочке без счётчика — молчаливый `return None`
+            # между двумя считающими соседями. Невидимый отсев нельзя ни measure-
+            # before-promote, ни заметить, когда он начнёт резать лишнее.
+            "posts_filtered_sosed_no_hashtag": 0,
             "posts_final_count": 0,
             "groups_with_posts": 0,
         }
@@ -603,6 +608,7 @@ class AdvancedVKParser:
         # 9. Theme-specific filters
         if theme == "sosed":
             if "#новости" not in text.lower():
+                self.stats["posts_filtered_sosed_no_hashtag"] += 1
                 return None
 
         # 10. Дедуп по медиа (набор id вложений в этом прогоне + известные hash из work_table)
