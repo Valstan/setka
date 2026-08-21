@@ -57,7 +57,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -76,7 +76,7 @@ FATE_UNKNOWN = "neyasno"
 FATE_TITLES = {
     FATE_ASLEEP: "СПИТ — новых постов после выноса нет, вердикт автомата держится",
     FATE_REVIVED: "ОЖИЛ — есть пост позже disabled_at, а мы на него больше не смотрели",
-    FATE_UNREACHABLE: "НЕДОСТУПЕН — VK: удалено/забанено/закрыто (вынесен как dormant, а на деле dead)",
+    FATE_UNREACHABLE: "НЕДОСТУПЕН — удалено/забанено/закрыто (а вынесен как dormant)",
     FATE_UNKNOWN: "НЕЯСНО — transient-ошибка VK, судьба не установлена (повторить)",
 }
 
@@ -195,7 +195,9 @@ def _classify(
 
 
 async def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--reason", default="dormant_t1_auto", help="disabled_reason для выборки")
     ap.add_argument("--limit", type=int, default=0, help="0 = все")
     ap.add_argument("--count", type=int, default=5, help="сколько постов запрашивать у wall.get")
@@ -270,7 +272,8 @@ async def main() -> int:
             when = o.newest_post_at_vk.strftime("%Y-%m-%d") if o.newest_post_at_vk else "—"
             dis = o.disabled_at.strftime("%Y-%m-%d") if o.disabled_at else "—"
             code = f" err={o.error_code}" if o.error_code else ""
-            print(f"  id={o.community_id:<6} vk={o.vk_id:<12} вынесен={dis} новейший_пост={when}{code}  {o.name}")
+            head = f"  id={o.community_id:<6} vk={o.vk_id:<12} вынесен={dis}"
+            print(f"{head} новейший={when}{code}  {o.name}")
             if o.note:
                 print(f"      {o.note}")
 
