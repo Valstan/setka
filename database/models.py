@@ -763,7 +763,7 @@ class AdScheduledPost(Base):
 
     __tablename__ = "ad_scheduled_posts"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     community_vk_id = Column(BigInteger, nullable=False)  # owner_id группы (отрицательный)
     region_id = Column(Integer, ForeignKey("regions.id", ondelete="SET NULL"), nullable=True)
 
@@ -779,15 +779,30 @@ class AdScheduledPost(Base):
     signed = Column(Boolean, nullable=False, default=False)
     comments_enabled = Column(Boolean, nullable=False, default=True)
 
+    # Клиентский флоу (миграция 082) добавил значения:
+    #   pending  — создан не-trusted клиентом, ждёт одобрения владельца,
+    #              в VK НИЧЕГО не отправлено;
+    #   rejected — отклонён владельцем (moderation_comment виден клиенту).
+    # publish_reconciler не задевается: он выбирает только 'scheduled'.
     status = Column(
         String(20), nullable=False, default="draft", index=True
-    )  # draft|scheduled|published|failed|cancelled
+    )  # draft|pending|scheduled|published|failed|cancelled|rejected
     vk_postponed_post_id = Column(BigInteger, nullable=True)  # id в VK-отложке (отмена/трекинг)
     source_ad_request_id = Column(BigInteger, nullable=True)  # из какой заявки/предложки
 
-    # Задел под учёт (фаза C) — пока без FK.
-    client_id = Column(BigInteger, nullable=True)
+    # Учёт (фаза C): FK довешен миграцией 082 — клиентская изоляция стоит на нём.
+    client_id = Column(BigInteger, ForeignKey("ad_clients.id", ondelete="SET NULL"), nullable=True)
     price = Column(Numeric(12, 2), nullable=True)
+
+    # Кабинет рекламодателя (миграция 082). created_by_user_id: кто создал пост
+    # из кабинета, NULL = оператор (как раньше). order_ref: N районов одного
+    # сабмита несут один uuid — только группировка UI, деньги не считаются.
+    created_by_user_id = Column(
+        Integer, ForeignKey("radar_users.id", ondelete="SET NULL"), nullable=True
+    )
+    order_ref = Column(String(36), nullable=True)
+    moderated_at = Column(DateTime, nullable=True)
+    moderation_comment = Column(Text, nullable=True)
 
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -817,6 +832,10 @@ class AdScheduledPost(Base):
             "source_ad_request_id": self.source_ad_request_id,
             "client_id": self.client_id,
             "price": float(self.price) if self.price is not None else None,
+            "created_by_user_id": self.created_by_user_id,
+            "order_ref": self.order_ref,
+            "moderated_at": self.moderated_at.isoformat() if self.moderated_at else None,
+            "moderation_comment": self.moderation_comment,
             "error_message": self.error_message,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
@@ -840,7 +859,7 @@ class AdClient(Base):
 
     __tablename__ = "ad_clients"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     author_vk_id = Column(
         BigInteger, nullable=True
     )  # VK id заказчика (neg=группа); ключ сведения; NULL — без VK
@@ -861,6 +880,17 @@ class AdClient(Base):
     # отправке алёрта, сбрасывается в NULL при новой оплате — «доплатил → можно
     # напомнить снова». NULL — ещё не напоминали / пакет в норме.
     spend_alerted_at = Column(DateTime, nullable=True)
+    # Кабинет рекламодателя (миграция 081): аккаунт ЕСА, которому принадлежит
+    # карточка. NULL — клиент в кабинет не входил. Линковка только по
+    # VK-identity либо при самозаводе (advertiser_link.py) — никогда из ручного
+    # ввода клиента. Partial-unique: один аккаунт — максимум одна карточка.
+    radar_user_id = Column(
+        Integer, ForeignKey("radar_users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Модерация новых клиентов (решение владельца 2026-08-25): не-trusted
+    # публикует через одобрение; после N одобренных постов — trusted.
+    trusted = Column(Boolean, nullable=False, default=False)
+    approved_posts_count = Column(SmallInteger, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -891,6 +921,9 @@ class AdClient(Base):
             "telegram": self.telegram,
             "email": self.email,
             "postal_address": self.postal_address,
+            "radar_user_id": self.radar_user_id,
+            "trusted": bool(self.trusted),
+            "approved_posts_count": self.approved_posts_count or 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -901,7 +934,7 @@ class AdPayment(Base):
 
     __tablename__ = "ad_payments"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     client_id = Column(
         BigInteger, ForeignKey("ad_clients.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -915,6 +948,11 @@ class AdPayment(Base):
     bank = Column(String(40), nullable=True)  # банк зачисления (фикс-список AD_PAYMENT_BANKS)
     ad_request_id = Column(BigInteger, nullable=True)  # опц. за какую заявку
     scheduled_post_id = Column(BigInteger, nullable=True)  # опц. за какой отложенный пост
+    # Задел под платёжного провайдера (миграция 083): NULL = ручная/legacy,
+    # 'manual' — подтверждено владельцем из кабинета, позже 'yookassa' и т.п.
+    # (provider, external_id) уникальны — идемпотентность будущих вебхуков.
+    provider = Column(String(30), nullable=True)
+    external_id = Column(String(100), nullable=True)
     note = Column(Text, nullable=True)
     paid_at = Column(DateTime, default=datetime.utcnow)
     paid_confirmed_at = Column(DateTime, nullable=True)  # когда awaiting → paid
@@ -934,6 +972,8 @@ class AdPayment(Base):
             "bank": self.bank,
             "ad_request_id": self.ad_request_id,
             "scheduled_post_id": self.scheduled_post_id,
+            "provider": self.provider,
+            "external_id": self.external_id,
             "note": self.note,
             "paid_at": self.paid_at.isoformat() if self.paid_at else None,
             "paid_confirmed_at": (
@@ -948,7 +988,7 @@ class AdPublication(Base):
 
     __tablename__ = "ad_publications"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     client_id = Column(
         BigInteger, ForeignKey("ad_clients.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -1032,7 +1072,7 @@ class AdInteraction(Base):
 
     __tablename__ = "ad_interactions"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     client_id = Column(BigInteger, ForeignKey("ad_clients.id", ondelete="SET NULL"), nullable=True)
     ad_request_id = Column(BigInteger, nullable=True)
     scheduled_post_id = Column(BigInteger, nullable=True)
@@ -1109,6 +1149,41 @@ class AdOrderItem(Base):
             "note": self.note,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class AdChatMessage(Base):
+    """Сообщение чата клиент↔владелец в кабинете рекламодателя. Миграция 084.
+
+    Отдельная таблица, НЕ ``ad_interactions``: у аудит-журнала другой жизненный
+    цикл (рендер в таймлайн карточки, операторское удаление событий), а чату
+    нужны unread-семантика (``read_at``) и выборка «после id N» под polling.
+    VK-тред (``client_thread``/``client_reply``) остаётся вторым каналом для
+    VK-клиентов; здесь — in-app канал, работающий и для клиентов без VK.
+    """
+
+    __tablename__ = "ad_chat_messages"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    client_id = Column(
+        BigInteger, ForeignKey("ad_clients.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sender = Column(String(10), nullable=False)  # client | owner
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    read_at = Column(DateTime, nullable=True)  # NULL = не прочитано другой стороной
+
+    def __repr__(self):
+        return f"<AdChatMessage {self.id} client={self.client_id} {self.sender}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "sender": self.sender,
+            "body": self.body,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "read_at": self.read_at.isoformat() if self.read_at else None,
         }
 
 

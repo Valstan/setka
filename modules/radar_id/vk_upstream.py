@@ -206,6 +206,53 @@ def is_radar_host(current_host: Optional[str]) -> bool:
         return False
 
 
+# Канонический публичный хост кабинета рекламодателя (кабинет.вмалмыже.рф,
+# punycode). Кабинет живёт на корне своего поддомена — как Радар.
+AD_CABINET_CANONICAL_HOST_DEFAULT = "xn--80acmlhv0b.xn--80adkdyec4j.xn--p1ai"
+
+
+def ad_cabinet_canonical_redirect(current_host: Optional[str]) -> Optional[str]:
+    """Абсолютный URL кабинета рекламодателя на каноническом хосте — или ``None``.
+
+    Паттерн ``radar_canonical_redirect``: ``None`` (= остаёмся на месте), если
+    уже на каноническом хосте, хост вне куки-зоны или зона/канон не настроены.
+    """
+    canonical = (
+        os.getenv("AD_CABINET_CANONICAL_HOST", AD_CABINET_CANONICAL_HOST_DEFAULT).strip().lower()
+    )
+    if not canonical:
+        return None
+    host = (current_host or "").strip().lower().rstrip(".")
+    try:
+        host = host.encode("idna").decode("ascii")
+        canonical = canonical.encode("idna").decode("ascii")
+    except (UnicodeError, UnicodeDecodeError):
+        return None
+    if not host or host == canonical:
+        return None
+    if not (_host_shares_session(host) and _host_shares_session(canonical)):
+        return None
+    return f"https://{canonical}/"
+
+
+def is_ad_cabinet_host(current_host: Optional[str]) -> bool:
+    """True, если запрос пришёл на канонический хост кабинета рекламодателя.
+
+    На этом хосте интерфейс кабинета отдаётся с корня ``/``. Сравнение — в
+    punycode (кириллица == punycode), паттерн ``is_radar_host``.
+    """
+    canonical = (
+        os.getenv("AD_CABINET_CANONICAL_HOST", AD_CABINET_CANONICAL_HOST_DEFAULT).strip().lower()
+    )
+    host = (current_host or "").strip().lower().rstrip(".")
+    if not canonical or not host:
+        return False
+    try:
+        return host.encode("idna").decode("ascii") == canonical.encode("idna").decode("ascii")
+    except (UnicodeError, UnicodeDecodeError):
+        return False
+
+
 def safe_next(next_url: Optional[str]) -> str:
     """Куда вернуть пользователя после ВК-входа.
 

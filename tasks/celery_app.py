@@ -1735,6 +1735,17 @@ app.conf.beat_schedule = {
             "catchup": False,
         },
     },
+    # Второй слот тех же метрик — 17:30 MSK (кабинет рекламодателя: клиент
+    # видит статистику «1-2 раза в день», заказ владельца 2026-08-25).
+    # Та же задача, run_collect_stats идемпотентен — просто свежий снимок.
+    "collect-ad-publication-stats-evening": {
+        "task": "tasks.celery_app.collect_ad_publication_stats",
+        "schedule": crontab(minute=30, hour=17),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
     # Суточный снимок числа подписчиков сообществ (фундамент графика роста) — 04:00 MSK
     "collect-member-snapshots-daily": {
         "task": "tasks.celery_app.collect_member_snapshots",

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Рекламный кабинет САРАФАН</title>
+    <meta name="theme-color" content="#198754">
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('setka-theme') || 'light';
+                document.documentElement.setAttribute('data-bs-theme', t);
+            } catch (e) { /* localStorage недоступен — остаёмся в light */ }
+        })();
+    </script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        .cab-text { white-space: pre-wrap; word-break: break-word; }
+        .cab-photo-thumb { width: 72px; height: 72px; object-fit: cover; border-radius: .375rem; }
+        .region-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: .25rem .75rem; }
+        .chat-box { max-height: 55vh; overflow-y: auto; }
+        .chat-msg { max-width: 85%; border-radius: .75rem; padding: .4rem .75rem; margin-bottom: .35rem; }
+        .chat-mine { background: var(--bs-success-bg-subtle); margin-left: auto; }
+        .chat-theirs { background: var(--bs-secondary-bg-subtle); margin-right: auto; }
+        @media (max-width: 576px) { .container { padding-left: .5rem; padding-right: .5rem; } }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand navbar-dark bg-success sticky-top">
+        <div class="container" style="max-width: 860px;">
+            <a class="navbar-brand" href="/"><i class="bi bi-megaphone"></i> Реклама</a>
+            <ul class="nav nav-pills flex-row gap-1 me-auto" id="cab-tabs">
+                <li class="nav-item"><a class="nav-link active text-white" data-tab="posts" role="button">Мои посты</a></li>
+                <li class="nav-item"><a class="nav-link text-white" data-tab="new" role="button">Новый пост</a></li>
+                <li class="nav-item"><a class="nav-link text-white" data-tab="money" role="button">Оплата</a></li>
+                <li class="nav-item">
+                    <a class="nav-link text-white" data-tab="chat" role="button">
+                        Чат <span class="badge bg-light text-success d-none" id="chat-badge"></span>
+                    </a>
+                </li>
+            </ul>
+            <ul class="navbar-nav flex-row gap-3">
+                <li class="nav-item"><span class="nav-link" id="me-badge"></span></li>
+                <li class="nav-item">
+                    <a class="nav-link" role="button" id="logout-btn" title="Выйти">
+                        <i class="bi bi-box-arrow-right"></i>
+                    </a>
+                </li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container py-3" style="max-width: 860px;">
+        <!-- Онбординг: показывается, пока юзер не рекламодатель -->
+        <div id="onboarding" class="d-none">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Стать рекламодателем САРАФАН</h5>
+                    <p class="text-body-secondary">
+                        Размещайте объявления в районных сообществах Кировской области:
+                        сами выбираете районы, дату и время выхода, видите статистику.
+                    </p>
+                    <div class="row g-2" style="max-width: 480px;">
+                        <div class="col-12">
+                            <input class="form-control" id="onb-name" placeholder="Имя или название организации">
+                        </div>
+                        <div class="col-12">
+                            <input class="form-control" id="onb-phone" placeholder="Телефон для связи">
+                        </div>
+                        <div class="col-12">
+                            <button class="btn btn-success" id="onb-submit">Открыть кабинет</button>
+                        </div>
+                    </div>
+                    <p class="small text-body-secondary mt-2 mb-0">
+                        Первые публикации проходят одобрение владельцем сети — потом посты
+                        выходят без модерации.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div id="cabinet" class="d-none">
+            <!-- Мои посты -->
+            <div data-pane="posts">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <h5 class="mb-0">Мои посты</h5>
+                    <div class="small text-body-secondary" id="balance-line"></div>
+                </div>
+                <div id="posts-list" class="vstack gap-2"></div>
+            </div>
+
+            <!-- Новый пост -->
+            <div data-pane="new" class="d-none">
+                <h5>Новый пост</h5>
+                <div class="mb-2">
+                    <textarea class="form-control" id="np-text" rows="6" maxlength="4000"
+                              placeholder="Текст объявления…"></textarea>
+                    <div class="form-text"><span id="np-text-count">0</span>/4000, время публикации — МСК</div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label mb-1">Фото (JPG/PNG, до 12 МБ)</label>
+                    <input class="form-control" type="file" id="np-file" accept=".jpg,.jpeg,.png">
+                    <div class="d-flex flex-wrap gap-2 mt-2" id="np-photos"></div>
+                </div>
+                <div class="mb-2">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <label class="form-label mb-1">Районы</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="np-whole">
+                            <label class="form-check-label" for="np-whole">Вся сеть</label>
+                        </div>
+                    </div>
+                    <div class="region-grid border rounded p-2" id="np-regions"></div>
+                </div>
+                <div class="row g-2 align-items-end mb-2">
+                    <div class="col-auto">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="np-when" id="np-now" checked>
+                            <label class="form-check-label" for="np-now">Опубликовать сразу</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="np-when" id="np-later">
+                            <label class="form-check-label" for="np-later">По расписанию (МСК)</label>
+                        </div>
+                    </div>
+                    <div class="col-auto">
+                        <input class="form-control" type="datetime-local" id="np-datetime" disabled>
+                    </div>
+                </div>
+                <div class="alert alert-light border d-flex justify-content-between align-items-center py-2">
+                    <span>Стоимость: <b id="np-price">0 ₽</b> <span class="text-body-secondary" id="np-price-note"></span></span>
+                    <button class="btn btn-success" id="np-submit">Разместить</button>
+                </div>
+                <div class="small text-body-secondary d-none" id="np-moderation-note">
+                    Ваши посты пока проходят одобрение владельцем — пост уйдёт в публикацию после проверки.
+                </div>
+            </div>
+
+            <!-- Оплата -->
+            <div data-pane="money" class="d-none">
+                <h5>Оплата и баланс</h5>
+                <div class="card mb-3"><div class="card-body" id="money-balance"></div></div>
+                <h6>Реквизиты для перевода</h6>
+                <div id="money-requisites" class="vstack gap-1 mb-3"></div>
+                <h6>История оплат</h6>
+                <div id="money-list" class="vstack gap-1"></div>
+            </div>
+
+            <!-- Чат -->
+            <div data-pane="chat" class="d-none">
+                <h5>Чат с владельцем сети</h5>
+                <div class="chat-box border rounded p-2 mb-2" id="chat-box"></div>
+                <div class="input-group">
+                    <input class="form-control" id="chat-input" maxlength="2000"
+                           placeholder="Сообщение…">
+                    <button class="btn btn-success" id="chat-send"><i class="bi bi-send"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/advertiser_cabinet.js"></script>
+</body>
+</html>

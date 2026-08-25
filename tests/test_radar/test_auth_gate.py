@@ -30,8 +30,12 @@ INTRUDER = SimpleNamespace(
 OWNER_VK = SimpleNamespace(
     id=5, role="radar", is_active=True, password_hash=None, login=None, vk_user_id=20002978
 )
+# Клиент рекламного кабинета (кабинет рекламодателя).
+ADVERTISER = SimpleNamespace(
+    id=6, role="advertiser", is_active=True, password_hash=RADAR_HASH, login="adv"
+)
 
-USERS = {1: OPERATOR, 2: RADAR, 3: INACTIVE, 4: INTRUDER, 5: OWNER_VK}
+USERS = {1: OPERATOR, 2: RADAR, 3: INACTIVE, 4: INTRUDER, 5: OWNER_VK, 6: ADVERTISER}
 
 
 async def _loader(uid):
@@ -88,6 +92,26 @@ def client():
     @app.get("/api/radar/sources")
     async def radar_api():
         return {"radar": "zone"}
+
+    @app.get("/cabinet")
+    async def cabinet_page():
+        return {"page": "cabinet"}
+
+    @app.get("/api/advertiser/me")
+    async def advertiser_me():
+        return {"advertiser": "me"}
+
+    @app.post("/api/advertiser/onboarding")
+    async def advertiser_onboarding():
+        return {"advertiser": "onboarding"}
+
+    @app.get("/api/advertiser/orders")
+    async def advertiser_orders():
+        return {"advertiser": "zone"}
+
+    @app.get("/api/ad-crm/clients")
+    async def ad_crm_clients():
+        return {"operator": "crm"}
 
     return TestClient(app)
 
@@ -177,6 +201,44 @@ def test_radar_browser_redirected_to_radar_from_operator_pages(client):
     resp = client.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers["location"] == "/radar"
+
+
+# ─── Роль advertiser (кабинет рекламодателя) ─────────────────────
+
+
+def test_advertiser_reaches_cabinet_zone_only(client):
+    client.cookies.update(_cookie_for(ADVERTISER))
+    assert client.get("/cabinet").status_code == 200
+    assert client.get("/api/advertiser/orders").status_code == 200
+    # Операторские зоны закрыты — и общий setka, и владельческий ad-CRM:
+    assert client.get("/api/regions").status_code == 403
+    assert client.get("/api/ad-crm/clients").status_code == 403
+    # Чужая клиентская зона (радар) тоже:
+    assert client.get("/api/radar/sources").status_code == 403
+
+
+def test_radar_blocked_from_advertiser_zone_except_onboarding(client):
+    """Радар-юзер не видит чужой кабинет, но онбординг ему открыт —
+    иначе некому становиться рекламодателем."""
+    client.cookies.update(_cookie_for(RADAR))
+    assert client.get("/api/advertiser/orders").status_code == 403
+    assert client.get("/cabinet").status_code == 200  # экран онбординга
+    assert client.get("/api/advertiser/me").status_code == 200
+    assert client.post("/api/advertiser/onboarding").status_code == 200
+
+
+def test_advertiser_browser_redirected_to_cabinet_from_operator_pages(client):
+    client.cookies.update(_cookie_for(ADVERTISER))
+    resp = client.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/cabinet"
+
+
+def test_owner_reaches_advertiser_zone_too(client):
+    """Владелец проходит всюду — кабинетная зона не исключение."""
+    client.cookies.update(_cookie_for(OPERATOR))
+    assert client.get("/api/advertiser/orders").status_code == 200
+    assert client.get("/api/ad-crm/clients").status_code == 200
 
 
 # ─── Инвалидация сессий ──────────────────────────────────────────
