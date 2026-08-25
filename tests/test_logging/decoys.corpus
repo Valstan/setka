@@ -1,0 +1,502 @@
+# decoys.corpus — приёмочный корпус подсадных для секрет-сканера и маскирования логов.
+# ВСЕ ЗНАЧЕНИЯ СИНТЕТИЧЕСКИЕ. Заменять их живыми запрещено: файл коммитится.
+# Формат описан в docstring ранера. Сканеру отдаются ТОЛЬКО байты между @payload и @end,
+# и КАЖДАЯ запись — отдельным временным файлом (иначе keywords-префильтр течёт между записями).
+#
+# Сам файл выведен из-под гейта записью в [allowlist] paths .gitleaks.toml (иначе он валит
+# КАЖДЫЙ прогон: замер 2026-08-25 — 44 находки). Приёмка от этого не страдает: ранер пишет
+# payload во ВРЕМЕННЫЙ файл с именем из @as, а тот под allowlist по пути не попадает.
+# Тест test_corpus_path_is_allowlisted_but_tmp_copies_are_not держит оба конца.
+#
+# Вердикты:
+#   hit  — сканер обязан найти @secret; редактор обязан вычистить его целиком.
+#   miss — сканер обязан молчать (НОЛЬ находок); редактор обязан вернуть payload дословно.
+#   gap  — сегодня не ловим/не маскируем, дыра известна. Тест падает при изменении В ЛЮБУЮ сторону.
+#   fp   — сегодня СРАБАТЫВАЕТ на не-секрете, и это принятая цена. Тест тоже падает в обе стороны:
+#          исчезло срабатывание — значит кто-то сузил правило и, скорее всего, уронил парный hit.
+
+# ===================== TELEGRAM: путь URL и текст исключения (12.08, G239) =====================
+
+@case tg-path-exc
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via exc
+@secret 8154739206:AAEHm4Qv-Rr8dK2tXbN_9wZs6LpG3yUvJ7c
+@why Дословная форма инцидента 12.08: токен в ПУТИ URL внутри текста исключения requests.
+@why Между "t" литерала bot и первой цифрой нет границы слова — на этом промахнулся первый фильтр.
+@payload
+Telegram sendMessage request error: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot8154739206:AAEHm4Qv-Rr8dK2tXbN_9wZs6LpG3yUvJ7c/sendMessage (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7f2c1d3a90>: Failed to establish a new connection: [Errno 111] Connection refused'))
+@end
+
+@case tg-path-plain
+@expect_scan hit
+@expect_redact hit
+@as app.py
+@via msg
+@secret 8154739206:AAEHm4Qv-Rr8dK2tXbN_9wZs6LpG3yUvJ7c
+@why Тот же путь URL, но без исключения и без слова "error": проверяет форму, а не окружающий текст.
+@payload
+resp = requests.post("https://api.telegram.org/bot8154739206:AAEHm4Qv-Rr8dK2tXbN_9wZs6LpG3yUvJ7c/setWebhook", json=payload, timeout=30)
+@end
+
+@case tg-return-error
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via msg
+@secret 8154739206:AAEHm4Qv-Rr8dK2tXbN_9wZs6LpG3yUvJ7c
+@why Второй вынос из heartbeat.py:173 / bulletin_heartbeat.py:214 — str(exc) уезжает как ВОЗВРАЩАЕМОЕ
+@why значение задачи ("error:" + str(exc)), то есть в результат Celery мимо точки логирования.
+@payload
+[2026-08-19 03:14:07,882: INFO/MainProcess] Task modules.classifier.heartbeat.stale_alert succeeded in 1.2s: 'error:HTTPSConnectionPool(host=\'api.telegram.org\', port=443): Max retries exceeded with url: /bot8154739206:AAEHm4Qv-Rr8dK2tXbN_9wZs6LpG3yUvJ7c/sendMessage'
+@end
+
+@case tg-httpx-urlobj
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via argobj
+@secret 6083517249:AAZk7-Ys3RtNq_XbV9mLc4WhJ2uEg8FdP6a
+@why Механизм 19.08, применённый к Telegram (bot_intake.py ходит через httpx): секрет приходит
+@why в лог не строкой, а ОБЪЕКТОМ httpx.URL, склейка происходит в record.getMessage() ПОСЛЕ фабрики.
+@why Ранер обязан подать payload завёрнутым в объект с __str__, а не строкой.
+@payload
+HTTP Request: GET https://api.telegram.org/bot6083517249:AAZk7-Ys3RtNq_XbV9mLc4WhJ2uEg8FdP6a/getUpdates?offset=447192&timeout=25 "HTTP/1.1 200 OK"
+@end
+
+@case tg-dictarg
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via dictarg
+@secret 8154739206:AAEHm4Qv-Rr8dK2tXbN_9wZs6LpG3yUvJ7c
+@nothit -1001234567890
+@why Третий носитель: секрет внутри dict-аргумента записи лога. Ассерт двойной — токен вычищен,
+@why chat_id (длинное отрицательное число) не считается находкой.
+@payload
+tg payload: {'url': 'https://api.telegram.org/bot8154739206:AAEHm4Qv-Rr8dK2tXbN_9wZs6LpG3yUvJ7c/sendMessage', 'chat_id': -1001234567890, 'parse_mode': 'HTML'}
+@end
+
+# ===================== TELEGRAM: конфиги и присвоения =====================
+
+@case tg-assign-env
+@expect_scan hit
+@expect_redact hit
+@as setka.env
+@via msg
+@secret 7620418395:AAGfT2n_Hq9XbLm4-VwZc7RsK1yPu8DjA5e
+@why Очевидная форма. Оставлена как база: если промахивается ОНА — набор дальше можно не смотреть.
+@payload
+TELEGRAM_BOT_TOKEN=7620418395:AAGfT2n_Hq9XbLm4-VwZc7RsK1yPu8DjA5e
+@end
+
+@case tg-json-config
+@expect_scan hit
+@expect_redact hit
+@as config.json
+@via msg
+@secret 7620418395:AAGfT2n_Hq9XbLm4-VwZc7RsK1yPu8DjA5e
+@nothit -1001234567890
+@why JSON-payload: значение в кавычках, вокруг фигурные скобки и запятые, а не пробелы.
+@payload
+{"telegram": {"bot_token": "7620418395:AAGfT2n_Hq9XbLm4-VwZc7RsK1yPu8DjA5e", "chat_id": -1001234567890, "enabled": true}}
+@end
+
+@case tg-yaml
+@expect_scan hit
+@expect_redact hit
+@as docker-compose.override.yml
+@via msg
+@secret 7620418395:AAGfT2n_Hq9XbLm4-VwZc7RsK1yPu8DjA5e
+@why YAML-скаляр БЕЗ кавычек: правило, требующее кавычку или знак = после имени, здесь слепнет.
+@payload
+services:
+  worker:
+    environment:
+      TELEGRAM_BOT_TOKEN: 7620418395:AAGfT2n_Hq9XbLm4-VwZc7RsK1yPu8DjA5e
+      RADAR_BOT_NAME: valstan_bot
+@end
+
+@case tg-caps-canary
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via msg
+@secret 8302947156:AAFQXZR7TVMB-KDWNLYCJ4HGSP_UEA2ZQ6R
+@why КАНАРЕЙКА РЕГИСТРА. Тело после AA почти целиком заглавные. Дефолтное правило gitleaks требует
+@why A[a-z0-9_-]{34} и на этой записи молчит. Если запись позеленела — правило унаследовало слепоту,
+@why из-за которой год не ловился ни один живой токен.
+@payload
+telegram bot guard: getMe rejected token 8302947156:AAFQXZR7TVMB-KDWNLYCJ4HGSP_UEA2ZQ6R (401 Unauthorized)
+@end
+
+# ===================== VK: query string и объект URL (19.08) =====================
+
+@case vk-httpx-urlobj
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via argobj
+@secret vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G
+@why Дословный рецидив 19.08: 2602 строки в celery-worker.log. Промахнулись ОБА слоя — «по форме»
+@why потому что request.url был объектом, «по значению» потому что community-токены живут в БД, не в env.
+@why Ранер обязан подать payload объектом с __str__ и НЕ класть значение в окружение.
+@payload
+HTTP Request: GET https://api.vk.com/method/wall.get?access_token=vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G&owner_id=-142102689&count=20&v=5.199 "HTTP/1.1 200 OK"
+@end
+
+@case vk-query-str
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via msg
+@secret vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G
+@why Та же query-строка, но обычной строкой: разводит «умеем форму» и «умеем объекты» на два ассерта.
+@why Токен упирается в & — проверка, что после тела не требуется граница слова.
+@payload
+vk probe failed: url=https://api.vk.com/method/users.get?access_token=vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G&v=5.199 status=5
+@end
+
+@case vk-traceback
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via excinfo
+@secret vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G
+@why Многострочный носитель: секрет в record.exc_text, а не в msg/args. Проверяет предзаполнение
+@why exc_text фабрикой, а не только маскирование сообщения. Для сканера — многострочный фрагмент.
+@payload
+Traceback (most recent call last):
+  File "/opt/setka/modules/vk_monitor/vk_client_async.py", line 122, in _call
+    async with session.get(url, params=params) as resp:
+aiohttp.client_exceptions.ClientConnectorError: Cannot connect to host api.vk.com:443 ssl:default [Connection reset by peer] url=https://api.vk.com/method/wall.get?access_token=vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G&v=5.199
+@end
+
+@case vk-repr
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via msg
+@secret vk1.a.Kc7Rt2mQvB4nZs8LxE1dTgHu6JpWo3RfYi9AkCmS7ubN-eXq2GtVr5ZwLc8DhJ1mPo4yKfA6nRsI3TjE9vZaQd_LkM3xBt7YeUw2SpH5rGn8CiFo1JhX4dRq6TmEs2Wb-yLp9NcVj4ZkQr7XuAg1DoI3fHt5RnPz8JwYc4LqNb_5eSxG2mVt7ZhKr9UdFa3IoPj6CnRy1XtQb5MzLe8-WsNr3GkYv7DpAc2HuJi9OfTn4RxBm6Zq
+@why Третья каноническая форма утечки: repr объекта. Ни оператора присваивания, ни кавычек вокруг
+@why значения — токен стоит между "=" внутри repr и запятой. Правило, требующее ' " или пробел, слепнет.
+@payload
+VKToken(name='COMM_224851070_VALSTAN', community_id=224851070, access_token=vk1.a.Kc7Rt2mQvB4nZs8LxE1dTgHu6JpWo3RfYi9AkCmS7ubN-eXq2GtVr5ZwLc8DhJ1mPo4yKfA6nRsI3TjE9vZaQd_LkM3xBt7YeUw2SpH5rGn8CiFo1JhX4dRq6TmEs2Wb-yLp9NcVj4ZkQr7XuAg1DoI3fHt5RnPz8JwYc4LqNb_5eSxG2mVt7ZhKr9UdFa3IoPj6CnRy1XtQb5MzLe8-WsNr3GkYv7DpAc2HuJi9OfTn4RxBm6Zq, valid=True, updated_at=datetime(2026, 8, 19, 3, 14))
+@end
+
+@case vk-post-body
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via msg
+@secret vk1.a.Kc7Rt2mQvB4nZs8LxE1dTgHu6JpWo3RfYi9AkCmS7ubN-eXq2GtVr5ZwLc8DhJ1mPo4yKfA6nRsI3TjE9vZaQd_LkM3xBt7YeUw2SpH5rGn8CiFo1JhX4dRq6TmEs2Wb-yLp9NcVj4ZkQr7XuAg1DoI3fHt5RnPz8JwYc4LqNb_5eSxG2mVt7ZhKr9UdFa3IoPj6CnRy1XtQb5MzLe8-WsNr3GkYv7DpAc2HuJi9OfTn4RxBm6Zq
+@why vk_api кладёт access_token в ТЕЛО POST (form-urlencoded). Тот же access_token=, но не в URL —
+@why правило, привязанное к "?" или "&" после хоста, здесь промахнётся.
+@payload
+POST https://api.vk.com/method/groups.getById body=access_token=vk1.a.Kc7Rt2mQvB4nZs8LxE1dTgHu6JpWo3RfYi9AkCmS7ubN-eXq2GtVr5ZwLc8DhJ1mPo4yKfA6nRsI3TjE9vZaQd_LkM3xBt7YeUw2SpH5rGn8CiFo1JhX4dRq6TmEs2Wb-yLp9NcVj4ZkQr7XuAg1DoI3fHt5RnPz8JwYc4LqNb_5eSxG2mVt7ZhKr9UdFa3IoPj6CnRy1XtQb5MzLe8-WsNr3GkYv7DpAc2HuJi9OfTn4RxBm6Zq&group_ids=224851070&v=5.199
+@end
+
+@case vk-json-api
+@expect_scan hit
+@expect_redact hit
+@as body.json
+@via msg
+@secret vk1.a.Kc7Rt2mQvB4nZs8LxE1dTgHu6JpWo3RfYi9AkCmS7ubN-eXq2GtVr5ZwLc8DhJ1mPo4yKfA6nRsI3TjE9vZaQd_LkM3xBt7YeUw2SpH5rGn8CiFo1JhX4dRq6TmEs2Wb-yLp9NcVj4ZkQr7XuAg1DoI3fHt5RnPz8JwYc4LqNb_5eSxG2mVt7ZhKr9UdFa3IoPj6CnRy1XtQb5MzLe8-WsNr3GkYv7DpAc2HuJi9OfTn4RxBm6Zq
+@nothit 224851070
+@why Тело нашего собственного API (PUT /api/tokens/communities/{cid}/tokens/{name}). Имя JSON-поля
+@why короткое — "token", контекст даёт соседний COMM_<id>. Community_id находкой быть не должен.
+@payload
+{"name": "COMM_224851070_VALSTAN", "community_id": 224851070, "token": "vk1.a.Kc7Rt2mQvB4nZs8LxE1dTgHu6JpWo3RfYi9AkCmS7ubN-eXq2GtVr5ZwLc8DhJ1mPo4yKfA6nRsI3TjE9vZaQd_LkM3xBt7YeUw2SpH5rGn8CiFo1JhX4dRq6TmEs2Wb-yLp9NcVj4ZkQr7XuAg1DoI3fHt5RnPz8JwYc4LqNb_5eSxG2mVt7ZhKr9UdFa3IoPj6CnRy1XtQb5MzLe8-WsNr3GkYv7DpAc2HuJi9OfTn4RxBm6Zq", "note": "restored 2026-08-19"}
+@end
+
+@case vk-yaml
+@expect_scan hit
+@expect_redact hit
+@as tokens.yml
+@via msg
+@secret vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G
+@why YAML-скаляр без кавычек, имя ключа — просто VALSTAN (слова token/vk рядом с ЗНАЧЕНИЕМ нет).
+@payload
+vk:
+  tokens:
+    VALSTAN: vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G
+    RADAR_BOT_NAME: valstan_bot
+@end
+
+@case vk-env-dump
+@expect_scan hit
+@expect_redact hit
+@as deploy.log
+@via msg
+@secret vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G
+@why Дамп окружения в логе деплоя (env / systemctl show-environment). Классический носитель.
+@payload
+VK_TOKEN_VALSTAN=vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G
+@end
+
+@case vk-psql-transit
+@expect_scan hit
+@expect_redact hit
+@as discover.log
+@via msg
+@secret vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G
+@why Транзит через shell: SELECT token FROM vk_tokens -> вывод psql -> экспорт в SCAN_VK_TOKEN.
+@why Носитель — табличный вывод с пробелами и вертикальной чертой, не URL и не присвоение.
+@payload
+      name       |                                                                token                                                                 | community_id
+-----------------+--------------------------------------------------------------------------------------------------------------------------------------+--------------
+ COMM_224851070  | vk1.a.Kc7Rt2mQwZ9pLxN4vBs6HdJ1yFgU8aEo3TnW5rXi0uPvC-bMk9SqYj7ZlA2dHf4gRnT6wEx3IcOb8VtUs5NmXe1LrKp7QzB9vD-oJhY4tGf2WaSu6CiRn8Zd3yTqLbV_cM8jHw5XkP1eNr7GsAu9ZoDf4iRt6BmYx2QnJ7WvEg5LpCd_1TsKb8ZaHm3RyU6oFi9tNr4VwS1-jXo5MzQb7CtEr2LnYk9G |    224851070
+(1 row)
+token loaded (len 230)
+@end
+
+# ===================== ЗАКРЫТЫЕ ДЫРЫ (были gap до D-036) =====================
+
+@case vk-legacy-hex-anchored
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via msg
+@secret 9f3c1b7ad42e8506cb17e0a95d3f261c8b74af097b2d4e19c6f8035ab1dec48a0f52e7b3d916084c3ad7f
+@why Легаси-форма VK (85 строчных hex) в query. Была gap; закрыта правилом setka-vk-legacy-hex-token.
+@why Полоса redact зеленела ЕЩЁ ДО правила — но не по форме, а по якорю access_token= в _QUERY_SECRET_RE.
+@why Именно поэтому рядом стоит vk-legacy-psql: без якоря маскирования не было (замер 2026-08-25).
+@payload
+vk legacy probe: https://api.vk.com/method/users.get?access_token=9f3c1b7ad42e8506cb17e0a95d3f261c8b74af097b2d4e19c6f8035ab1dec48a0f52e7b3d916084c3ad7f&v=5.131
+@end
+
+@case vk-legacy-psql
+@expect_scan hit
+@expect_redact hit
+@as discover.log
+@via msg
+@secret 9f3c1b7ad42e8506cb17e0a95d3f261c8b74af097b2d4e19c6f8035ab1dec48a0f52e7b3d916084c3ad7f
+@why ЦЕНА ЯКОРЯ, выставленная в явном виде. Тот же легаси-токен, но носитель — табличный вывод psql:
+@why ни access_token=, ни VK_TOKEN_*=. Правило с контекстным якорем (как предлагали подсадные) здесь
+@why слепнет, и слепнет молча. Пара с neg-hex85-bare: одна запись — цена FP, эта — цена его отсутствия.
+@payload
+      name       |                                 token                                 | community_id
+-----------------+-----------------------------------------------------------------------+--------------
+ VALSTAN_LEGACY  | 9f3c1b7ad42e8506cb17e0a95d3f261c8b74af097b2d4e19c6f8035ab1dec48a0f52e7b3d916084c3ad7f |    224851070
+(1 row)
+@end
+
+@case vk2-query
+@expect_scan hit
+@expect_redact hit
+@as celery-worker.log
+@via msg
+@secret vk2.a.Hd9pWq3ZmT5xLc7RvB2nEs8YkJ1uGf4aNi6oXtCr0DjPy-lMz6QbVe4wSh2ItKa9UnRf3gCo7XmYd5Zu1FvNr8QeLb_3ZtAw6XcHj2SpMk5yDo9GiUn4RqTz
+@why Новая форма VK ID. Была gap; закрыта расширением vk1 -> vk[12] в правиле и в _VK_TOKEN_RE.
+@why Полоса redact и здесь зеленела до правки — по якорю access_token=, а не по префиксу. Парная
+@why запись без якоря — vk2-repr.
+@payload
+HTTP Request: GET https://api.vk.com/method/account.getInfo?access_token=vk2.a.Hd9pWq3ZmT5xLc7RvB2nEs8YkJ1uGf4aNi6oXtCr0DjPy-lMz6QbVe4wSh2ItKa9UnRf3gCo7XmYd5Zu1FvNr8QeLb_3ZtAw6XcHj2SpMk5yDo9GiUn4RqTz&v=5.199 "HTTP/1.1 200 OK"
+@end
+
+@case vk2-yaml-bare
+@expect_scan hit
+@expect_redact hit
+@as tokens.yml
+@via msg
+@secret vk2.a.Hd9pWq3ZmT5xLc7RvB2nEs8YkJ1uGf4aNi6oXtCr0DjPy-lMz6QbVe4wSh2ItKa9UnRf3gCo7XmYd5Zu1FvNr8QeLb_3ZtAw6XcHj2SpMk5yDo9GiUn4RqTz
+@why ЕДИНСТВЕННАЯ запись, которая ловит расхождение половин защиты по vk2. Замер 2026-08-25:
+@why vk2-query и даже repr-форма зеленеют БЕЗ правки _VK_TOKEN_RE — их спасает _QUERY_SECRET_RE,
+@why которому достаточно литерала `access_token=` где угодно, хоть внутри repr. Необходимость
+@why зеркальной правки доказывает только носитель БЕЗ знака `=`: YAML-скаляр, psql, лог-строка.
+@why Убрать эту запись = снова разъехаться молча, оставив зелёный тест как доказательство.
+@payload
+vk:
+  tokens:
+    RADAR_ID_UPSTREAM: vk2.a.Hd9pWq3ZmT5xLc7RvB2nEs8YkJ1uGf4aNi6oXtCr0DjPy-lMz6QbVe4wSh2ItKa9UnRf3gCo7XmYd5Zu1FvNr8QeLb_3ZtAw6XcHj2SpMk5yDo9GiUn4RqTz
+    RADAR_BOT_NAME: valstan_bot
+@end
+
+# ===================== ИЗВЕСТНЫЕ ДЫРЫ (gap): сегодня молчим, и это зафиксировано =====================
+
+@case oidc-id-token-jwt
+@expect_scan hit
+@expect_redact gap
+@as celery-worker.log
+@via msg
+@secret eyJhbGciOiJSUzI1NiIsImtpZCI6InZraWQtMSJ9.eyJzdWIiOiIxNzQ5MjMwNTUiLCJhdWQiOiI1MzIxNDQ4IiwiZXhwIjoxNzg5NDU2MTIzfQ.Rn7Qb2wLxK9eZt4YcVs8HdJ1gUp6EaTm5RiXo3BkQz-fMv2LsNr7WdGh4TjPy8Uc1XbKe9AoIf3ZmQtRy6NvJl0DsWkBx2CeHgVu5PdTn8RaLm4YqFi7ZoXb3Jc9GtSw
+@why id_token из потока VK ID (radar_id/vk_upstream.py:324-326) приходит в теле рядом с access_token.
+@why ЗАМЕР 2026-08-25 ОПРОВЕРГ ИСХОДНОЕ ОЖИДАНИЕ: сканер ловит JWT уже сегодня — ДЕФОЛТНЫМ правилом
+@why `jwt` (entropy 3, keywords ["ey"]), без всякого участия наших. То есть решение «ловим ли мы JWT»
+@why давно принято за нас, и коммит id_token в репозиторий уже красит гейт. Своего правила не нужно.
+@why Полоса redact остаётся gap: log_redaction.py про JWT не знает, а id_token в лог попадает
+@why в теле ответа (не в query, не в Bearer). Дыра узкая и НЕ закрывается этим внедрением.
+@payload
+vk id exchange ok: {"access_token": "vk2.a.REDACTED", "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InZraWQtMSJ9.eyJzdWIiOiIxNzQ5MjMwNTUiLCJhdWQiOiI1MzIxNDQ4IiwiZXhwIjoxNzg5NDU2MTIzfQ.Rn7Qb2wLxK9eZt4YcVs8HdJ1gUp6EaTm5RiXo3BkQz-fMv2LsNr7WdGh4TjPy8Uc1XbKe9AoIf3ZmQtRy6NvJl0DsWkBx2CeHgVu5PdTn8RaLm4YqFi7ZoXb3Jc9GtSw", "device_id": "f47ac10b58cc4372", "expires_in": 3600}
+@end
+
+# ===================== НЕГАТИВЫ: сканер обязан молчать =====================
+
+@case neg-hex85-bare
+@expect_scan fp
+@expect_redact fp
+@as celery-worker.log
+@via msg
+@secret -
+@why ПРИНЯТОЕ ЛОЖНОЕ СРАБАТЫВАНИЕ, а не провал. Исходное ожидание было miss с доводом «85 hex без
+@why якоря неотличимы от токена, значит ловить нельзя». Довод верен наполовину: неотличимы — да,
+@why «значит нельзя» — нет. Выбор сделан в пользу FP (см. vk-legacy-psql: цена якоря — молчаливый
+@why пропуск токена в psql/yaml/repr). Цена FP замерена, а не оценена: 0 находок на 618 коммитах
+@why истории и 0 в рабочем дереве; 85 — НЕЧЁТНАЯ длина, ни один дайджест такой не имеет.
+@why Лечится .gitleaksignore на конкретную строку, а не ослаблением правила.
+@payload
+vendor payload checksum: 1d0f6b39ac72e5804fb163ea9d51c807b2f43a6e08c74d1fb52a9e63071d5b3f8027ae14c6d9f2b804a7c (ok)
+@end
+
+@case neg-sha256-digest
+@expect_scan miss
+@expect_redact miss
+@as deploy.log
+@via msg
+@secret -
+@why 64 hex после ДВОЕТОЧИЯ: форма "цифры-двоеточие-длинный алфавит" визуально близка к Telegram.
+@why Дискриминатор — слева от двоеточия не 6-12 цифр, а слово. Если фиксится — сломан весь деплой-лог.
+@payload
+Pulled registry.setka.local/setka-web@sha256:4f8d3a1c9b2e7605fa41cd83e29b7f6015ad4c8e3b7192df06a5e4c1b83d792a in 4.2s
+@end
+
+@case neg-git-sha
+@expect_scan miss
+@expect_redact miss
+@as deploy.log
+@via msg
+@secret -
+@why 40 hex и короткий SHA. Встречается в каждом логе релиза; ложное срабатывание = гейт неюзабелен.
+@payload
+git pull: HEAD -> 3591cf8a2d47e01b6c9f5a83d2e740b18cf3629d (was 974e01e), 12 files changed
+@end
+
+@case neg-uuid
+@expect_scan fp
+@expect_redact miss
+@as celery-worker.log
+@via msg
+@secret -
+@why UUID с дефисами и без. Второй — 32 hex подряд, смешивается с «высокоэнтропийной строкой».
+@why ЗАМЕР 2026-08-25: сканер здесь СРАБАТЫВАЕТ, и это ложное срабатывание ДЕФОЛТНОГО правила
+@why generic-api-key на `idempotency_key=<32 hex>` (имя поля содержит `key`, дальше присвоение).
+@why К D-036 отношения не имеет: воспроизводится и на текущем .gitleaks.toml, до всякой правки.
+@why Держим как fp, а не глушим allowlist'ом: allowlist на generic-api-key ослабил бы дефолт целиком.
+@payload
+request_id=f47ac10b-58cc-4372-a567-0e02b2c3d479 idempotency_key=9c8b7a6d5e4f3021bacd8f7e6d5c4b3a task=aggregation.run
+@end
+
+@case neg-base64-std
+@expect_scan miss
+@expect_redact miss
+@as template.html
+@via msg
+@secret -
+@why Обычный base64 С ПАДДИНГОМ: есть '=', есть '/'. Наличие '+/=' — сигнал, что это НЕ токен VK.
+@why Длинная высокоэнтропийная строка; ловится любым правилом «на энтропию» — и это провал приёмки.
+@payload
+<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" alt="">
+@end
+
+@case neg-base64url-cursor
+@expect_scan miss
+@expect_redact miss
+@as celery-worker.log
+@via msg
+@secret -
+@why base64url БЕЗ паддинга — тот же алфавит, что у тела токена VK, но без префикса vk1.a.
+@why Самый опасный негатив: отличается от секрета ТОЛЬКО отсутствием якоря. Проверяет, что якорь — префикс,
+@why а не энтропия.
+@payload
+aggregation cursor=eyJyZWdpb24iOiJrb3RlbG5pY2giLCJwYWdlIjoyfQ next_page=3 items=40
+@end
+
+@case neg-numeric-ids
+@expect_scan miss
+@expect_redact miss
+@as celery-worker.log
+@via msg
+@secret -
+@why Длинные id и время с двоеточиями. chat_id -1001234567890 — 13 цифр, ровно та форма, что стоит
+@why слева от двоеточия в токене Telegram. Проверяет, что правило требует ПРАВУЮ часть, а не просто цифры.
+@payload
+[2026-08-19 03:14:07,882: INFO] publish ok chat_id=-1001234567890 owner_id=-142102689 peer_id=2000000042 group_id=224851070 elapsed=00:01:23
+@end
+
+@case neg-our-masks
+@expect_scan miss
+@expect_redact miss
+@as celery-worker.log
+@via msg
+@secret -
+@why НАШИ СОБСТВЕННЫЕ маски: token[:20]+"..." (models.py:483) и token[:12]+"…"+token[-4:]
+@why (token_management.py:445). Плюс безопасный отпечаток sha256[:8] и строка "(short)".
+@why Если сканер на них срабатывает — каждый прод-лог и каждый ответ API становится «находкой»,
+@why и гейт начнут глушить. Маска обязана оставаться тихой.
+@payload
+tokens list: VALSTAN vk1.a.Kc7Rt2mQwZ9pLx... | COMM_224851070 vk1.a.Kc7Rt2…Yk9G | VITA (short) | fp=4f8d3a1c (len=230)
+@end
+
+@case neg-placeholders
+@expect_scan miss
+@expect_redact miss
+@as app.py
+@via msg
+@secret -
+@why Шаблоны URL и плейсхолдеры из .env.example / config/setka.env.example. Ложное срабатывание здесь
+@why блокирует коммит в файлы, которые ОБЯЗАНЫ лежать в репозитории.
+@why Внимание: запись доказывает поведение ПРАВИЛА только при отключённом path-allowlist.
+@payload
+_TG_API = "https://api.telegram.org/bot{token}/{method}"
+VK_TOKEN_VALSTAN = os.environ.get("VK_TOKEN_VALSTAN", "vk1.a.CHANGE_ME")
+BOT_TOKEN_HINT = "<YOUR_BOT_TOKEN>"  # формат: 1234567890:AA...
+@end
+
+@case neg-redacted-output
+@expect_scan miss
+@expect_redact miss
+@as celery-worker.log
+@via msg
+@secret -
+@why ИДЕМПОТЕНТНОСТЬ: уже замаскированные строки (наш собственный вывод после фабрики и правило
+@why .claude/commands/logs.md:97). Повторный прогон по своим же логам обязан быть тихим,
+@why а redact() обязан вернуть строку БЕЗ изменений — иначе маски множатся при каждом проходе.
+@payload
+HTTP Request: GET https://api.vk.com/method/wall.get?access_token=***&v=5.199 "HTTP/1.1 200 OK"
+telegram send failed: Max retries exceeded with url: /bot***/sendMessage
+VK_TOKEN_VALSTAN=vk1.a.***
+@end
+
+@case neg-split-literal
+@expect_scan miss
+@expect_redact miss
+@as app.py
+@via msg
+@secret -
+@why ОСОЗНАННО НЕ ЛОВИМ. Секрет разорван между двумя литералами: непрерывной последовательности байт
+@why в файле НЕТ, поймать её можно только склейкой соседних литералов, т.е. разбором AST, а не сканером.
+@why Реальный риск закрыт другим слоем: в лог значение попадает УЖЕ собранным и маскируется «по значению».
+@why Обфускацию регексом не догнать (следующий шаг — "".join / base64). Если решим ловить — запись
+@why удаляется отдельным коммитом с обоснованием, а не переворачивается флагом.
+@payload
+TOKEN = (
+    "9471250683:AAWp4Lm-Ct8ZxQ2nRj_"
+    "YvB7ehK5dGa1UsF3"
+)
+@end
+
+# ===================== РАСШИРЕНИЕ (вне ТЗ, но того же класса) =====================
+
+@case ext-bearer-vault
+@expect_scan gap
+@expect_redact hit
+@as celery-worker.log
+@via msg
+@secret Xr7Qm2LtZb9YfKp4NcVs8HdJ1gUw6EaTn5RiXo3Bk_M
+@why Единственное место, где у нас секрет ходит в ЗАГОЛОВКЕ: Authorization: Bearer <SECRETS_TOKEN>
+@why к комнате КАРМАНа (secrets_bootstrap.py:223). Редактор знает форму Bearer -> hit.
+@why Гейт на мерже про неё, судя по всему, не знает -> gap. Запись разводит две полосы явно.
+@payload
+secrets bootstrap: GET https://karman.example/api/secrets -H "Authorization: Bearer Xr7Qm2LtZb9YfKp4NcVs8HdJ1gUw6EaTn5RiXo3Bk_M" -> 200, 7 keys
+@end

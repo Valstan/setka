@@ -72,8 +72,19 @@ from typing import Any, Callable, Iterable, List, Pattern, Tuple
 # альтернативы не срабатывал ровно на том тексте, из-за которого всё и
 # случилось (поймано тестом test_url_with_token_in_path_redacted).
 _TELEGRAM_TOKEN_RE = re.compile(r"\b(bot)?(\d{6,12}):[A-Za-z0-9_-]{30,}")
-# VK access token нового формата.
-_VK_TOKEN_RE = re.compile(r"\bvk1\.a\.[A-Za-z0-9_-]{20,}")
+# VK access token нового формата. `vk2.a.` — форма VK ID: она уже ходит в
+# потоках radar_id, а до 2026-08-25 про неё не знала ни одна строка проекта.
+# Префикс вынесен в ГРУППУ и возвращается через \1: подставлять литерал
+# "vk1.a." значило бы переписывать vk2-токен в vk1 и врать в логе о том, секрет
+# какого формата засветился.
+_VK_TOKEN_RE = re.compile(r"\b(vk[12]\.a\.)[A-Za-z0-9_-]{20,}")
+# VK access token легаси-формата: ровно 85 hex, без префикса. Дискриминатор —
+# нечётная длина: hex-представления дайджестов бывают 32/40/64/96/128 символов,
+# 85 не бывает ни одно. Границы — lookaround, а не классы символов: класс съел
+# бы соседний символ, и REDACTED склеился бы с текстом строки.
+# Зеркало правила setka-vk-legacy-hex-token из .gitleaks.toml. Расходиться этим
+# двум нельзя: ровно на таком расхождении держались оба инцидента (D-036).
+_VK_LEGACY_TOKEN_RE = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{85}(?![0-9a-fA-F])")
 # Секрет в query-строке: ?access_token=..., &api_key=..., &key=...
 _QUERY_SECRET_RE = re.compile(
     r"(?i)\b(access_token|api_key|apikey|auth_token|token|secret|password|pwd|key)"
@@ -89,7 +100,8 @@ REDACTED = "[REDACTED]"
 _PATTERNS: Tuple[Tuple[Pattern[str], str], ...] = (
     # Несработавшая группа ``bot`` подставляется пустой строкой (re.sub, 3.5+).
     (_TELEGRAM_TOKEN_RE, r"\1\2:" + REDACTED),
-    (_VK_TOKEN_RE, "vk1.a." + REDACTED),
+    (_VK_TOKEN_RE, r"\1" + REDACTED),
+    (_VK_LEGACY_TOKEN_RE, REDACTED),
     (_QUERY_SECRET_RE, r"\1=" + REDACTED),
     (_BEARER_RE, r"\1 " + REDACTED),
     (_URL_CRED_RE, r"\1://\2:" + REDACTED + "@"),
