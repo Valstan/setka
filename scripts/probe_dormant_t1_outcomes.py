@@ -57,141 +57,32 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 from sqlalchemy import select
 
 from database.connection import AsyncSessionLocal
 from database.models import Community
-from modules.discovery.health_check import DEAD_ERROR_CODES
+from modules.discovery.dormant_outcomes import (
+    FATE_ASLEEP,
+    FATE_REVIVED,
+    FATE_TITLES,
+    FATE_UNKNOWN,
+    FATE_UNREACHABLE,
+    Outcome,
+    classify,
+    newest_post_dt,
+    wall_get,
+)
 from modules.vk_monitor.vk_client import VKClient
 
-FATE_ASLEEP = "spit"
-FATE_REVIVED = "ozhil"
-FATE_UNREACHABLE = "nedostupen"
-FATE_UNKNOWN = "neyasno"
-
-FATE_TITLES = {
-    FATE_ASLEEP: "СПИТ — новых постов после выноса нет, вердикт автомата держится",
-    FATE_REVIVED: "ОЖИЛ — есть пост позже disabled_at, а мы на него больше не смотрели",
-    FATE_UNREACHABLE: "НЕДОСТУПЕН — удалено/забанено/закрыто (а вынесен как dormant)",
-    FATE_UNKNOWN: "НЕЯСНО — transient-ошибка VK, судьба не установлена (повторить)",
-}
-
-
-@dataclass
-class Outcome:
-    community_id: int
-    vk_id: int
-    name: str
-    disabled_at: Optional[datetime]
-    last_post_at_db: Optional[datetime]
-    newest_post_at_vk: Optional[datetime]
-    fate: str
-    error_code: Optional[int] = None
-    note: str = ""
-
-    def as_dict(self) -> Dict[str, Any]:
-        def iso(v: Optional[datetime]) -> Optional[str]:
-            return v.isoformat() if v else None
-
-        return {
-            "community_id": self.community_id,
-            "vk_id": self.vk_id,
-            "name": self.name,
-            "disabled_at_utc": iso(self.disabled_at),
-            "last_post_at_db_utc": iso(self.last_post_at_db),
-            "newest_post_at_vk_utc": iso(self.newest_post_at_vk),
-            "fate": self.fate,
-            "error_code": self.error_code,
-            "note": self.note,
-        }
-
-
-def _newest_post_dt(items: List[Dict[str, Any]]) -> Optional[datetime]:
-    """Самый свежий пост стены в наивном UTC.
-
-    Берём max по всем items, а не items[0]: первым VK отдаёт ЗАКРЕПЛЁННЫЙ пост,
-    который часто старше остальных. Читать items[0] — классический способ
-    объявить живое сообщество мёртвым.
-    """
-    stamps = [int(it.get("date") or 0) for it in items if it.get("date")]
-    stamps = [s for s in stamps if s > 0]
-    if not stamps:
-        return None
-    return datetime.utcfromtimestamp(max(stamps))
-
-
-async def _wall_get(client: VKClient, owner_id: int, count: int) -> Dict[str, Any]:
-    return await asyncio.to_thread(
-        client.api_call,
-        "wall.get",
-        {"owner_id": owner_id, "count": count, "extended": 0},
-    )
-
-
-def _classify(
-    community: Community,
-    resp: Dict[str, Any],
-) -> Outcome:
-    vk_id = abs(int(community.vk_id or 0))
-    base = dict(
-        community_id=community.id,
-        vk_id=vk_id,
-        name=(community.name or "")[:60],
-        disabled_at=community.disabled_at,
-        last_post_at_db=community.last_post_at,
-    )
-
-    if isinstance(resp, dict) and resp.get("error"):
-        err = resp.get("error") or {}
-        code = int(err.get("error_code") or 0)
-        msg = (err.get("error_msg") or "").strip()
-        if code in DEAD_ERROR_CODES:
-            return Outcome(
-                **base,
-                newest_post_at_vk=None,
-                fate=FATE_UNREACHABLE,
-                error_code=code,
-                note=msg,
-            )
-        return Outcome(
-            **base,
-            newest_post_at_vk=None,
-            fate=FATE_UNKNOWN,
-            error_code=code,
-            note=f"transient: {msg}" if msg else "transient",
-        )
-
-    items = (resp or {}).get("items") or []
-    newest = _newest_post_dt(items)
-
-    if newest is None:
-        return Outcome(
-            **base,
-            newest_post_at_vk=None,
-            fate=FATE_ASLEEP,
-            note="стена пуста или посты без даты",
-        )
-
-    disabled_at = community.disabled_at
-    if disabled_at is not None and newest > disabled_at:
-        delta_days = (newest - disabled_at).days
-        return Outcome(
-            **base,
-            newest_post_at_vk=newest,
-            fate=FATE_REVIVED,
-            note=f"пост через {delta_days} сут после выноса",
-        )
-
-    return Outcome(
-        **base,
-        newest_post_at_vk=newest,
-        fate=FATE_ASLEEP,
-        note="последний пост старше выноса",
-    )
+# Логика судьбы вынесена в modules/discovery/dormant_outcomes.py 2026-08-25:
+# её же использует ежемесячная ре-проверка (tasks.discovery_tasks.dormant_recheck_disabled).
+# Две копии расходятся молча, а здесь расхождение означало бы, что замер и рутина
+# считают разное одним словом.
+_newest_post_dt = newest_post_dt
+_wall_get = wall_get
+_classify = classify
 
 
 async def main() -> int:
