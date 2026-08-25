@@ -86,15 +86,23 @@ git checkout -b <type>/<slug>   # feat/, fix/, chore/, docs/, refactor/
 # Конкретные пути, НЕ git add -A
 git add docs/PENDING_FOLLOWUPS.md <other-paths>
 
-git commit -m "$(cat <<'EOF'
+git commit -F <scratchpad>/commitmsg.txt
+```
+
+Сообщение **написать файлом** (`Write` в scratchpad), а команде отдать путь — heredoc
+и `-m` с переносами запрещены каноном (`AGENTS.md` §«Локальная разработка», заказ
+владельца 2026-08-25). Содержимое `commitmsg.txt`:
+
+```text
 feat(scope): краткое описание
 
 Опционально — тело с подробностями (что и почему).
 
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
-EOF
-)"
+Co-Authored-By: <агент и его фактическая версия> <noreply@anthropic.com>
 ```
+
+После коммита проверить `git log -1 --format='%s'` — subject не должен быть `@` или
+первой строкой тела (G190 мозга).
 
 Покажи пользователю `git log -1 --stat` для подтверждения.
 
@@ -103,7 +111,12 @@ EOF
 ```bash
 git push -u origin <type>/<slug>
 
-gh pr create --title "<short subject, под 70 символов>" --body "$(cat <<'EOF'
+gh pr create --title "<short subject, под 70 символов>" --body-file <scratchpad>/prbody.md
+```
+
+Содержимое `prbody.md` (тоже файлом, не heredoc'ом):
+
+```markdown
 ## Summary
 - bullet 1
 - bullet 2
@@ -114,8 +127,6 @@ gh pr create --title "<short subject, под 70 символов>" --body "$(cat
 - [ ] /check skill после merge
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
-EOF
-)"
 ```
 
 Покажи пользователю URL созданного PR и `gh pr diff` для финального review. **Без явного OK пользователя на diff — не мержить.**
