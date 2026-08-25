@@ -35,6 +35,7 @@ from database.models import (
     AdPayment,
     AdPublication,
     AdRequest,
+    AdScheduledPost,
 )
 from modules.ad_cabinet.auto_greeting import get_network_stats, resolve_greeting_text
 from modules.ad_cabinet.balance import compute_balance, summarize
@@ -99,6 +100,9 @@ class ClientUpdateIn(BaseModel):
     telegram: Optional[str] = None
     email: Optional[str] = None
     postal_address: Optional[str] = None
+    # Кабинет рекламодателя: ручной тумблер доверия (авто — по порогу
+    # одобренных постов, modules/ad_cabinet/client_orders.TRUST_AFTER_POSTS).
+    trusted: Optional[bool] = None
 
 
 class PaymentCreateIn(BaseModel):
@@ -2140,3 +2144,164 @@ async def greeting_text(db: AsyncSession = Depends(get_db_session)):
         "mangled": looks_mangled(body),
         **stats,
     }
+
+
+# ----------------------------------------------------------------------
+# Модерация клиентских постов (кабинет рекламодателя)
+# ----------------------------------------------------------------------
+
+
+class RejectIn(BaseModel):
+    comment: str = ""
+
+
+def _cabinet_publisher_factory(db):
+    async def factory(gid: int):
+        from modules.publisher.vk_publisher_extended import VKPublisher
+
+        return await VKPublisher.create_with_policy(db, target_group_id=gid)
+
+    return factory
+
+
+@router.get("/moderation")
+async def moderation_queue(db: AsyncSession = Depends(get_db_session)):
+    """Клиентские посты, ждущие одобрения владельца (``status='pending'``)."""
+    rows = (
+        await db.execute(
+            select(AdScheduledPost, AdClient)
+            .join(AdClient, AdClient.id == AdScheduledPost.client_id)
+            .where(AdScheduledPost.status == "pending")
+            .order_by(AdScheduledPost.id.asc())
+        )
+    ).all()
+    return {"pending": [{**post.to_dict(), "client": client.to_dict()} for post, client in rows]}
+
+
+@router.post("/moderation/{post_id}/approve")
+async def moderation_approve(post_id: int, db: AsyncSession = Depends(get_db_session)):
+    """Одобрить pending-пост: отправка в VK-отложку + счётчик доверия клиента.
+
+    Идемпотентно (повторный клик не публикует второй раз — approve_post
+    возвращает не-pending пост как есть).
+    """
+    from modules.ad_cabinet import client_orders
+    from modules.vk_token_router import load_vk_routing
+    from web.api.advertiser_cabinet import _msk_to_unix, _real_attachment_builder
+
+    row = await db.get(AdScheduledPost, post_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="post not found")
+    was_pending = row.status == "pending"
+
+    user_token, _community_tokens = await load_vk_routing()
+    await client_orders.approve_post(
+        db,
+        row,
+        publisher_factory=_cabinet_publisher_factory(db),
+        attachment_builder=_real_attachment_builder(row.client_id, user_token),
+        msk_to_unix=_msk_to_unix,
+    )
+    if was_pending:
+        log_interaction(
+            db,
+            kind="moderation_approved" if row.status == "scheduled" else "moderation_failed",
+            client_id=row.client_id,
+            scheduled_post_id=row.id,
+            summary=(
+                "Пост клиента одобрен и отправлен в отложку"
+                if row.status == "scheduled"
+                else f"Одобрение не дошло до VK: {row.error_message}"
+            ),
+        )
+    await db.commit()
+    await db.refresh(row)
+    return row.to_dict()
+
+
+@router.post("/moderation/{post_id}/reject")
+async def moderation_reject(
+    post_id: int, payload: RejectIn, db: AsyncSession = Depends(get_db_session)
+):
+    """Отклонить pending-пост; причина видна клиенту в кабинете."""
+    from modules.ad_cabinet import client_orders
+
+    row = await db.get(AdScheduledPost, post_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="post not found")
+    was_pending = row.status == "pending"
+    await client_orders.reject_post(db, row, comment=payload.comment)
+    if was_pending:
+        log_interaction(
+            db,
+            kind="moderation_rejected",
+            client_id=row.client_id,
+            scheduled_post_id=row.id,
+            summary=f"Пост клиента отклонён: {payload.comment or 'без причины'}",
+        )
+    await db.commit()
+    await db.refresh(row)
+    return row.to_dict()
+
+
+# ----------------------------------------------------------------------
+# Чат с клиентами кабинета (владелец: слева список, справа переписка)
+# ----------------------------------------------------------------------
+
+
+class OwnerChatIn(BaseModel):
+    body: str
+
+
+@router.get("/chat/overview")
+async def chat_overview(db: AsyncSession = Depends(get_db_session)):
+    """Список тредов: клиент, последнее сообщение, unread-счётчик владельца."""
+    from modules.ad_cabinet import chat as cabinet_chat
+
+    return {"threads": await cabinet_chat.owner_overview(db)}
+
+
+@router.get("/chat/{client_id}")
+async def chat_thread(
+    client_id: int,
+    after_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Переписка с клиентом (чтение помечает входящие прочитанными)."""
+    from modules.ad_cabinet import chat as cabinet_chat
+
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    rows = await cabinet_chat.fetch_thread(
+        db, client_id, reader=cabinet_chat.SENDER_OWNER, after_id=after_id
+    )
+    await db.commit()  # отметки read_at
+    return {"client": client.to_dict(), "messages": [r.to_dict() for r in rows]}
+
+
+@router.post("/chat/{client_id}")
+async def chat_reply(
+    client_id: int, payload: OwnerChatIn, db: AsyncSession = Depends(get_db_session)
+):
+    """Ответ владельца в тред клиента."""
+    from modules.ad_cabinet import chat as cabinet_chat
+
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    try:
+        row = await cabinet_chat.post_message(
+            db, client_id, cabinet_chat.SENDER_OWNER, payload.body
+        )
+    except cabinet_chat.ChatError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log_interaction(
+        db,
+        kind="chat_reply",
+        client_id=client_id,
+        summary="Ответ клиенту в чате кабинета",
+    )
+    await db.commit()
+    await db.refresh(row)
+    return row.to_dict()

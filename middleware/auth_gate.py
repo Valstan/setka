@@ -115,6 +115,10 @@ OPERATOR_CANONICAL_EXEMPT = (
     "/oidc/",
     # Своя зона со своим каноническим хостом (radar_canonical_redirect).
     "/radar",
+    # Кабинет рекламодателя: своя зона на кабинет.вмалмыже.рф. Без этой строки
+    # GET /cabinet на любом хосте утаскивало бы на сарафан, где не-владельцу
+    # закрыто всё, — клиент не смог бы войти в собственный кабинет.
+    "/cabinet",
     # Машинные вызовы. Страховка: их и так отсекает _wants_html, но цена ошибки
     # здесь — молчаливо сломанный VK-шлюз соседних проектов.
     "/api/",
@@ -168,6 +172,28 @@ RADAR_PREFIXES = (
     "/api/auth/logout",
     "/api/auth/me",
     "/oidc/",  # OIDC authorize: любой залогиненный RadarUser может входить на сайты
+)
+
+# Куда пускаем роль advertiser — клиента рекламного кабинета (плюс PUBLIC
+# сверху). Операторские /ad и /api/ad-crm сюда сознательно НЕ входят: клиент
+# заперт в своей зоне, изоляция «видит только своё» дальше держится фильтром
+# client_id в каждом хендлере /api/advertiser/*.
+ADVERTISER_PREFIXES = (
+    "/cabinet",
+    "/api/advertiser/",
+    "/api/auth/logout",
+    "/api/auth/me",
+    "/oidc/",  # как и radar: залогиненный юзер может входить на сайты экосистемы
+)
+
+# Онбординг рекламодателя: страница кабинета, статус-эндпоинт и сам POST
+# онбординга открыты ЛЮБОМУ аутентифицированному (точное сравнение путей).
+# Иначе radar-юзеру некуда прийти, чтобы стать рекламодателем: роль advertiser
+# выдаёт именно онбординг, а до него у юзера её ещё нет.
+ADVERTISER_ONBOARDING_EXACT = (
+    "/cabinet",
+    "/api/advertiser/me",
+    "/api/advertiser/onboarding",
 )
 
 UserLoader = Callable[[int], Awaitable[Optional[object]]]
@@ -237,6 +263,31 @@ def _radar_canonical_url(request: Request) -> Optional[str]:
         return None
 
 
+def _on_ad_cabinet_host(request: Request) -> bool:
+    """Запрос пришёл на канонический хост кабинета рекламодателя?"""
+    try:
+        from modules.radar_id.vk_upstream import is_ad_cabinet_host
+
+        return is_ad_cabinet_host(request.url.hostname)
+    except Exception:  # noqa: BLE001 - хост-детект не должен ронять гейт
+        return False
+
+
+def _ad_cabinet_canonical_url(request: Request) -> Optional[str]:
+    """Абсолютный адрес кабинета рекламодателя на его домене — или ``None``.
+
+    Нужен, чтобы advertiser-юзера, забредшего на домен САРАФАНА, отправить
+    домой, а не на витрину рекламы (паттерн ``_radar_canonical_url``).
+    """
+    try:
+        from modules.radar_id.vk_upstream import ad_cabinet_canonical_redirect
+
+        return ad_cabinet_canonical_redirect(request.url.hostname)
+    except Exception:  # noqa: BLE001 - косметика маршрутизации не роняет гейт
+        logger.warning("AuthGate: ad cabinet canonical resolve failed", exc_info=True)
+        return None
+
+
 def _on_sarafan_host(request: Request) -> bool:
     """Запрос пришёл на публичный домен сети (сарафан.вмалмыже.рф)?
 
@@ -293,6 +344,10 @@ def _operator_canonical_redirect(request: Request) -> Optional[str]:
     if not host or host == canonical:
         return None
     if _on_radar_host(request):
+        return None
+    # Хост кабинета рекламодателя — своя зона (как радар): любой GET на нём
+    # остаётся на месте, интерфейс кабинета живёт на корне этого поддомена.
+    if _on_ad_cabinet_host(request):
         return None
     path = request.url.path
     if _is_prefixed(path, OPERATOR_CANONICAL_EXEMPT):
@@ -444,6 +499,8 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
                 target = None
                 if user.role == "radar":
                     target = _radar_canonical_url(request)
+                elif user.role == "advertiser":
+                    target = _ad_cabinet_canonical_url(request)
                 return RedirectResponse(target or LANDING_PATH, status_code=302)
             return JSONResponse({"detail": "Forbidden on this host"}, status_code=403)
 
@@ -454,10 +511,31 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             # для radar-роли «/» там своя зона, а не операторский дашборд.
             return await call_next(request)
 
+        # Клиент рекламного кабинета: своя зона — страница /cabinet и
+        # /api/advertiser/*. На каноническом хосте кабинета интерфейс живёт
+        # на корне (как у Радара).
+        if user.role == "advertiser" and (
+            _is_prefixed(path, ADVERTISER_PREFIXES)
+            or (path == "/" and _on_ad_cabinet_host(request))
+        ):
+            return await call_next(request)
+
+        # Онбординг рекламодателя открыт любому аутентифицированному: страница
+        # кабинета (и корень его хоста) показывает не-advertiser'у экран «стать
+        # рекламодателем», а точечные эндпоинты обслуживают этот экран.
+        if _is_exact(path, ADVERTISER_ONBOARDING_EXACT) or (
+            path == "/" and _on_ad_cabinet_host(request)
+        ):
+            return await call_next(request)
+
         # Аутентифицирован, но зона не его: не-владелец в операторском setka
         # (роль radar — обычный случай; роль operator без владельческого
         # аккаунта — тоже сюда, роль сама по себе доступа больше не даёт).
         if _wants_html(request) and request.method == "GET":
+            if user.role == "advertiser":
+                return RedirectResponse(
+                    "/" if _on_ad_cabinet_host(request) else "/cabinet", status_code=302
+                )
             return RedirectResponse("/" if _on_radar_host(request) else "/radar", status_code=302)
         return JSONResponse({"detail": "Forbidden for this role"}, status_code=403)
 

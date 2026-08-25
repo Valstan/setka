@@ -1705,3 +1705,153 @@ async function copyGreetingText() {
         setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 1800);
     }
 }
+
+// ======================================================================
+// Вкладка «Кабинеты»: модерация клиентских постов + чат (кабинет рекламодателя)
+// ======================================================================
+
+let _ownerChatClientId = null;
+let _ownerChatLastId = 0;
+let _ownerChatTimer = null;
+
+async function refreshCabinetsBadge() {
+    try {
+        const data = await apiClient.request('/ad-crm/moderation');
+        const badge = document.getElementById('cabinets-badge');
+        if (!badge) return;
+        const n = (data.pending || []).length;
+        badge.textContent = n;
+        badge.classList.toggle('d-none', n === 0);
+    } catch (e) { /* бейдж не критичен */ }
+}
+
+function initCabinets() {
+    loadModerationQueue();
+    loadChatThreads();
+}
+
+async function loadModerationQueue() {
+    const box = document.getElementById('moderation-list');
+    box.innerHTML = '<div class="text-muted small">Загрузка…</div>';
+    try {
+        const data = await apiClient.request('/ad-crm/moderation');
+        const items = (data.pending || []).map((p) => `
+            <div class="card"><div class="card-body py-2">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <div class="small">
+                        <b>${escapeHtml(p.client?.name || ('Клиент #' + p.client_id))}</b>
+                        · район ${p.region_id ?? '—'} · выход ${escapeHtml((p.publish_date || '').replace('T', ' ').slice(0, 16))} МСК
+                        · ${p.price != null ? p.price + ' ₽' : 'без цены'}
+                    </div>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-success" onclick="moderationApprove(${p.id})">
+                            <i class="bi bi-check-lg"></i> Одобрить
+                        </button>
+                        <button class="btn btn-outline-danger" onclick="moderationReject(${p.id})">
+                            Отклонить
+                        </button>
+                    </div>
+                </div>
+                <div class="small" style="white-space: pre-wrap;">${escapeHtml((p.text || '').slice(0, 500))}</div>
+            </div></div>`);
+        box.innerHTML = items.length ? items.join('')
+            : '<div class="text-muted small">Постов на одобрении нет.</div>';
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">${escapeHtml(e.message)}</div>`;
+    }
+    refreshCabinetsBadge();
+}
+
+async function moderationApprove(postId) {
+    try {
+        const res = await apiClient.request(`/ad-crm/moderation/${postId}/approve`, { method: 'POST' });
+        if (res.status === 'failed') alert('VK не принял пост: ' + (res.error_message || ''));
+    } catch (e) { alert(e.message); }
+    loadModerationQueue();
+}
+
+async function moderationReject(postId) {
+    const comment = prompt('Причина отказа (видна клиенту):') || '';
+    try {
+        await apiClient.request(`/ad-crm/moderation/${postId}/reject`, {
+            method: 'POST',
+            body: JSON.stringify({ comment }),
+        });
+    } catch (e) { alert(e.message); }
+    loadModerationQueue();
+}
+
+async function loadChatThreads() {
+    const box = document.getElementById('chat-threads');
+    try {
+        const data = await apiClient.request('/ad-crm/chat/overview');
+        const items = (data.threads || []).map((t) => `
+            <div class="p-2 border-bottom" role="button"
+                 onclick="ownerChatOpen(${t.client.id}, this)">
+                <div class="d-flex justify-content-between">
+                    <b class="small">${escapeHtml(t.client.name || ('Клиент #' + t.client.id))}</b>
+                    ${t.unread ? `<span class="badge text-bg-danger">${t.unread}</span>` : ''}
+                </div>
+                <div class="small text-muted text-truncate">${escapeHtml(t.last_message.body)}</div>
+            </div>`);
+        box.innerHTML = items.length ? items.join('')
+            : '<div class="text-muted small">Переписок пока нет.</div>';
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">${escapeHtml(e.message)}</div>`;
+    }
+}
+
+async function ownerChatOpen(clientId, el) {
+    _ownerChatClientId = clientId;
+    _ownerChatLastId = 0;
+    document.getElementById('owner-chat-box').innerHTML = '';
+    document.getElementById('owner-chat-input-group').classList.remove('d-none');
+    document.querySelectorAll('#chat-threads [role="button"]').forEach((d) => d.classList.remove('bg-body-secondary'));
+    if (el) el.classList.add('bg-body-secondary');
+    await ownerChatPoll(true);
+    // Карточка клиента: долг/оплачено из единого источника (client_balance).
+    try {
+        const bal = await apiClient.request(`/ad-crm/clients/${clientId}/balance`);
+        document.getElementById('chat-client-card').innerHTML =
+            `Оплачено <b>${fmtMoney(bal.paid)}</b> · израсходовано <b>${fmtMoney(bal.spent)}</b>` +
+            ` · остаток <b>${fmtMoney(bal.remaining)}</b>` +
+            (bal.awaiting ? ` · ожидается <b>${fmtMoney(bal.awaiting)}</b>` : '') +
+            ` — <a href="/ad/client/${clientId}">карточка клиента</a>`;
+    } catch (e) { /* карточка не критична */ }
+    if (_ownerChatTimer) clearInterval(_ownerChatTimer);
+    _ownerChatTimer = setInterval(() => ownerChatPoll(false), 5000);
+}
+
+async function ownerChatPoll(reset) {
+    if (_ownerChatClientId == null) return;
+    try {
+        const qs = reset ? '' : `?after_id=${_ownerChatLastId}`;
+        const data = await apiClient.request(`/ad-crm/chat/${_ownerChatClientId}${qs}`);
+        const box = document.getElementById('owner-chat-box');
+        (data.messages || []).forEach((m) => {
+            const div = document.createElement('div');
+            div.className = 'small mb-1 ' + (m.sender === 'owner' ? 'text-end' : '');
+            div.innerHTML = `<span class="badge ${m.sender === 'owner' ? 'text-bg-primary' : 'text-bg-secondary'}">` +
+                `${m.sender === 'owner' ? 'вы' : 'клиент'}</span> ` +
+                `<span style="white-space: pre-wrap;">${escapeHtml(m.body)}</span>`;
+            box.appendChild(div);
+            if (m.id > _ownerChatLastId) _ownerChatLastId = m.id;
+        });
+        if ((data.messages || []).length) box.scrollTop = box.scrollHeight;
+    } catch (e) { /* сеть мигнула — следующий tick */ }
+}
+
+async function ownerChatSend() {
+    const input = document.getElementById('owner-chat-input');
+    const body = input.value.trim();
+    if (!body || _ownerChatClientId == null) return;
+    try {
+        await apiClient.request(`/ad-crm/chat/${_ownerChatClientId}`, {
+            method: 'POST',
+            body: JSON.stringify({ body }),
+        });
+        input.value = '';
+        ownerChatPoll(false);
+        loadChatThreads();
+    } catch (e) { alert(e.message); }
+}

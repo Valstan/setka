@@ -40,6 +40,13 @@
                 <i class="bi bi-graph-up-arrow"></i> Статистика
             </button>
         </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-cabinets-btn" data-bs-toggle="tab"
+                    data-bs-target="#tab-cabinets" type="button" role="tab">
+                <i class="bi bi-person-workspace"></i> Кабинеты
+                <span class="badge text-bg-danger d-none" id="cabinets-badge"></span>
+            </button>
+        </li>
     </ul>
 
     <div class="tab-content">
@@ -372,6 +379,40 @@
             </div>
         </div>
 
+        <!-- ====================== Вкладка 5: Кабинеты клиентов ====================== -->
+        <div class="tab-pane fade" id="tab-cabinets" role="tabpanel" aria-labelledby="tab-cabinets-btn">
+            <p class="text-muted">
+                Клиенты, работающие через <strong>кабинет рекламодателя</strong>: их посты на
+                одобрении и переписка. Пост не-доверенного клиента не уходит в VK, пока вы его
+                не одобрите; после трёх одобрений клиент публикует сам (порог —
+                env <code>AD_TRUST_AFTER_POSTS</code>).
+            </p>
+
+            <h6><i class="bi bi-patch-check"></i> На одобрении</h6>
+            <div id="moderation-list" class="vstack gap-2 mb-4">
+                <div class="text-muted small">Загрузка…</div>
+            </div>
+
+            <h6><i class="bi bi-chat-dots"></i> Чат с клиентами</h6>
+            <div class="row" style="min-height: 360px;">
+                <div class="col-md-4 border-end" id="chat-threads">
+                    <div class="text-muted small">Загрузка…</div>
+                </div>
+                <div class="col-md-8">
+                    <div id="chat-client-card" class="small text-muted mb-2">Выберите клиента слева</div>
+                    <div id="owner-chat-box" class="border rounded p-2 mb-2"
+                         style="max-height: 40vh; overflow-y: auto; min-height: 200px;"></div>
+                    <div class="input-group d-none" id="owner-chat-input-group">
+                        <input class="form-control" id="owner-chat-input" maxlength="2000"
+                               placeholder="Ответ клиенту…">
+                        <button class="btn btn-primary" onclick="ownerChatSend()">
+                            <i class="bi bi-send"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
     </div>
 </div>
 
@@ -580,7 +621,7 @@
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="/static/js/ad_cabinet.js?v=20260629_i5"></script>
-<script src="/static/js/ad_crm.js?v=20260808_copytext"></script>
+<script src="/static/js/ad_crm.js?v=20260826_cabinets"></script>
 <script>
 // Единый рекламный кабинет: логика вкладок (С1).
 document.addEventListener('DOMContentLoaded', () => {
@@ -602,6 +643,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (schBtn && typeof initScheduler === 'function') {
         schBtn.addEventListener('shown.bs.tab', () => initScheduler(), { once: true });
     }
+    // Кабинеты клиентов: модерация + чат, лениво при первом открытии.
+    const cabBtn = document.getElementById('tab-cabinets-btn');
+    if (cabBtn && typeof initCabinets === 'function') {
+        cabBtn.addEventListener('shown.bs.tab', () => initCabinets(), { once: true });
+    }
+    // Бейдж «ждут одобрения» — сразу при загрузке страницы.
+    if (typeof refreshCabinetsBadge === 'function') refreshCabinetsBadge();
     // Chart.js (responsive) в скрытой вкладке имеет нулевую ширину — подтолкнуть
     // перерисовку при показе любой вкладки.
     document.querySelectorAll('[data-bs-toggle="tab"]').forEach((b) => {
