@@ -56,17 +56,29 @@ bash scripts/git_sync_check.sh --gate || true       # текущее состо�
    git checkout -b <type>/<slug>   # feat/ fix/ chore/ docs/ refactor/
    ```
 2. **Описательный commit message** (Conventional Commits; хронология ведётся в git — [ADR-0001](../../docs/adr/0001-archive-dev-history.md)): subject ≤70 символов + тело (что меняли, почему, какие тесты, как применять на проде — миграция? restart? оба? ничего?).
+   Текст сообщения **написать файлом** (`Write` в scratchpad), а команде отдать путь —
+   heredoc и `-m` с переносами запрещены каноном (`AGENTS.md` §«Локальная разработка»,
+   заказ владельца 2026-08-25): содержимое в командной строке проходит через четыре
+   парсера, и backtick/`$`/кавычка/кириллица ломаются на любом из них.
+
    ```bash
    git add -A
-   git commit -m "$(cat <<'EOF'
+   git commit -F <scratchpad>/commitmsg.txt
+   ```
+
+   Содержимое `commitmsg.txt`:
+
+   ```text
    <type>(scope): <subject под 70 символов>
 
    <тело: что меняли, почему, какие тесты прошли, как применять на проде.>
 
-   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
-   EOF
-   )"
+   Co-Authored-By: <агент и его фактическая версия> <noreply@anthropic.com>
    ```
+
+   После коммита — **проверить subject**: `git log -1 --format='%s'`. Если там одинокий
+   `@` или первая строка тела, сообщение съехало (G190 мозга) — чинить до push, после
+   squash-мержа в `main` заголовок не правится (force-push в `main` запрещён).
 3. `git push -u origin <branch>`.
 
 Если кода значимо много / он сырой — спроси пользователя через `AskUserQuestion`, коммитить ли всё одним коммитом или он хочет разбить. Но **по умолчанию цель — ничего не оставить незапушенным**: push в feature-ветку снимает риск рассинхрона между машинами, даже если PR ещё не смержен.
@@ -164,23 +176,33 @@ bash scripts/git_sync_check.sh --gate || true       # текущее состо�
 ```bash
 # mailbox/to-brain/ — если Шаг 5.5 написал письмо-находку; иначе no-op.
 git add docs/SESSION_HANDOFF.md docs/PENDING_FOLLOWUPS.md mailbox/to-brain/
-git commit -m "$(cat <<'EOF'
+git commit -F <scratchpad>/handoffmsg.txt
+git push
+```
+
+Содержимое `handoffmsg.txt` (пишется `Write`'ом, не heredoc'ом — см. Шаг 2):
+
+```text
 chore(session): handoff — <одна строка о нитке или «закрытие сессии IDLE»>
 
 <2-3 строки: что сделано, какая нитка остаётся активной (или почему IDLE), что следующее.>
 
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
-EOF
-)"
-git push
+Co-Authored-By: <агент и его фактическая версия> <noreply@anthropic.com>
 ```
 
 ## Шаг 7. PR
 
 Если PR ещё нет — создать; если уже открыт (с Шага 2) — handoff-коммит уже в нём, ничего создавать не нужно.
 
+Тело PR — тоже файлом, через `--body-file`:
+
 ```bash
-gh pr create --title "<type>(scope): <тема>" --body "$(cat <<'EOF'
+gh pr create --title "<type>(scope): <тема>" --body-file <scratchpad>/prbody.md
+```
+
+Содержимое `prbody.md`:
+
+```markdown
 ## Summary
 
 <что меняли и почему; если handoff-only — «Handoff обновлён через /close_session».>
@@ -194,8 +216,6 @@ gh pr create --title "<type>(scope): <тема>" --body "$(cat <<'EOF'
 - [x] pytest tests/ -q — N/N (если код)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
-EOF
-)"
 ```
 
 ## Шаг 8. Sync-gate part B — проверка «всё на GitHub» (жёсткий гейт)
