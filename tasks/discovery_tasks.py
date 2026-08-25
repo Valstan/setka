@@ -23,6 +23,7 @@ from sqlalchemy import func, select, update
 
 from database.connection import AsyncSessionLocal
 from database.models import Community, CommunityCandidate, Region
+from modules.discovery import dormant_outcomes
 from modules.discovery.ai_categorizer import categorize_candidate
 from modules.discovery.health_check import (
     DEFAULT_DORMANT_DAYS,
@@ -919,6 +920,144 @@ async def dormant_disable_digest_async(*, send_telegram: bool = True) -> Dict[st
     return {"success": True, "count": len(items), "items": items}
 
 
+# ─── Ре-проверка авто-вынесенных (рекомендация brain 2026-08-22, пул #182) ───
+
+DORMANT_RECHECK_WALL_COUNT = 5  # хватает: ищем сам факт поста позже disabled_at
+DORMANT_RECHECK_LIMIT = 200  # предохранитель от неожиданно большой выборки
+
+
+def _format_dormant_recheck(revived: List[Dict[str, Any]], counts: Dict[str, int]) -> str:
+    lines = [
+        "<b>Ре-проверка авто-вынесенных</b>",
+        "",
+        (
+            f"проверено {counts.get('checked', 0)} · ожили {counts.get('revived', 0)} · "
+            f"спят {counts.get('asleep', 0)} · недоступны {counts.get('unreachable', 0)} · "
+            f"неясно {counts.get('unknown', 0)}"
+        ),
+    ]
+    if revived:
+        lines.append("")
+        lines.append("<b>Возвращены в парс:</b>")
+        for it in revived:
+            lines.append(f"• {it['name']} (vk {it['vk_id']}) — {it['note']}")
+    lines.append("")
+    lines.append("Вынос dormant-политикой отзывается автоматически, если стена ожила.")
+    return "\n".join(lines)
+
+
+async def dormant_recheck_disabled_async(
+    *,
+    send_telegram: bool = True,
+    revive: bool = True,
+    reason: str = "dormant_t1_auto",
+    limit: int = DORMANT_RECHECK_LIMIT,
+) -> Dict[str, Any]:
+    """Ежемесячно перепроверить сообщества, вынесенные dormant-политикой.
+
+    **Зачем.** Авто-вынос выводит предмет из области наблюдения: вынесенное
+    сообщество больше не опрашивается, и ошибка выноса становится ненаблюдаемой
+    по построению. Пока вердикт ставил человек, «вынес и забыл» было приемлемо;
+    с июля его ставит автомат (рекомендация brain 2026-08-22, замер «3 судьбы»
+    2026-08-21: 46 спят, 2 ожили, 0 недоступны). Правило: **автоматический
+    вердикт, выводящий предмет из наблюдения, не должен быть неотзывным.**
+
+    **Флип-флопа не будет.** Обратный вынос требует двух подряд `dormant` **и**
+    tier T1 (последний пост старше 12 мес). У ожившего `last_post_at` свежий,
+    значит T1 он уже не проходит — вернуть его обратно в вынос ближайший
+    weekly-recheck не может.
+
+    Цена — по одному `wall.get` на строку, ~48 вызовов в месяц.
+    """
+    token = _pick_parse_token()
+    if not token:
+        logger.warning("dormant-recheck: нет VK parse-токена, пропуск")
+        return {"success": False, "error": "no_token"}
+
+    async with AsyncSessionLocal() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(Community)
+                    .where(
+                        Community.disabled_reason == reason,
+                        Community.is_active.is_(False),
+                    )
+                    .order_by(Community.disabled_at)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        counts = {"checked": 0, "revived": 0, "asleep": 0, "unreachable": 0, "unknown": 0}
+        revived_items: List[Dict[str, Any]] = []
+
+        if not rows:
+            logger.info("dormant-recheck: выносов нет, пропуск")
+            return {"success": True, **counts}
+
+        client = VKClient(token=token)
+        now = datetime.utcnow()
+
+        for row in rows:
+            owner_id = -abs(int(row.vk_id or 0))
+            try:
+                resp = await dormant_outcomes.wall_get(client, owner_id, DORMANT_RECHECK_WALL_COUNT)
+            except Exception as e:  # pragma: no cover — сеть/VK
+                logger.warning("dormant-recheck: %s — ошибка запроса: %s", row.vk_id, e)
+                counts["unknown"] += 1
+                continue
+
+            outcome = dormant_outcomes.classify(row, resp)
+            counts["checked"] += 1
+            row.checked_at = now
+
+            if outcome.fate == dormant_outcomes.FATE_REVIVED:
+                counts["revived"] += 1
+                if outcome.newest_post_at_vk is not None:
+                    row.last_post_at = outcome.newest_post_at_vk
+                if revive:
+                    row.is_active = True
+                    row.disabled_at = None
+                    row.disabled_reason = None
+                    row.health_status = "active"
+                    row.last_error_code = None
+                revived_items.append(
+                    {
+                        "name": outcome.name,
+                        "vk_id": outcome.vk_id,
+                        "note": outcome.note,
+                    }
+                )
+                logger.info(
+                    "dormant-recheck: ОЖИЛ %s (vk %s) — %s",
+                    outcome.name,
+                    outcome.vk_id,
+                    outcome.note,
+                )
+            elif outcome.fate == dormant_outcomes.FATE_UNREACHABLE:
+                counts["unreachable"] += 1
+                # Вынесен как dormant, а на деле удалён/забанен — записываем истинную
+                # причину, но из выноса НЕ возвращаем.
+                row.health_status = "dead"
+                row.last_error_code = outcome.error_code
+            elif outcome.fate == dormant_outcomes.FATE_UNKNOWN:
+                counts["unknown"] += 1
+            else:
+                counts["asleep"] += 1
+
+        await session.commit()
+
+    if send_telegram and counts["revived"]:
+        _send_telegram_html(
+            _format_dormant_recheck(revived_items, counts), log_prefix="dormant-recheck"
+        )
+
+    return {"success": True, **counts, "revived_items": revived_items}
+
+
 # ─── Celery wrapper (для будущего шедулирования) ───
 # Импортируем app только тут, чтобы тесты на async-core не тащили Celery.
 
@@ -957,6 +1096,11 @@ try:
     def discover_rolling_one_region():
         """Celery beat task: daily rolling discovery (1 регион — самый давний)."""
         return _run_coro(discover_rolling_one_region_async())
+
+    @_celery_app.task(name="tasks.discovery_tasks.dormant_recheck_disabled")
+    def dormant_recheck_disabled():
+        """Celery beat task: ежемесячная ре-проверка авто-вынесенных (brain 2026-08-22)."""
+        return _run_coro(dormant_recheck_disabled_async())
 
     @_celery_app.task(name="tasks.discovery_tasks.dormant_disable_digest")
     def dormant_disable_digest():
