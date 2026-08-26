@@ -257,12 +257,18 @@ async def summary(request: Request, db: AsyncSession = Depends(get_db_session)):
     )
     planned = sum(float(p.price) for p in scheduled if p.price is not None)
     unread = await chat.unread_count(db, client.id, reader=chat.SENDER_CLIENT)
+    from modules.ad_cabinet import packages as pkgs
+
+    pkg_state = await pkgs.get_state(db, client.id)
     return {
         "client": client.to_dict(),
         "balance": compute_balance(payments, publications),
         "planned_total": round(planned, 2),
         "planned_posts": len(scheduled),
         "chat_unread": unread,
+        "package": pkg_state["package"].to_dict() if pkg_state["package"] else None,
+        "package_block": pkg_state["block_reason"],
+        "packages": [p.to_dict() for p in pkg_state["packages"]],
     }
 
 
@@ -295,10 +301,31 @@ class QuoteIn(BaseModel):
 
 @router.post("/quote")
 async def quote(payload: QuoteIn, request: Request, db: AsyncSession = Depends(get_db_session)):
-    """Предварительная цена выбора — тем же ``quote_price``, что и при заказе."""
-    await _current_client(request, db)
+    """Предварительная цена выбора — тем же ``quote_price``, что и при заказе.
+
+    Пакет учитывается ДО сабмита (should-fix ревью 2026-08-26): клиент с
+    промо/пакетом видит «в счёт пакета, 0 ₽», с долгом — блокировку, при выборе
+    сверх остатка — предупреждение, а не сюрприз-400 после заполнения формы.
+    """
+    _user, client = await _current_client(request, db)
     targets = await client_orders.resolve_targets(db, payload.region_ids)
-    return quote_price(len(targets))
+    base = quote_price(len(targets))
+    from modules.ad_cabinet import packages as pkgs
+
+    state = await pkgs.get_state(db, client.id)
+    if state["block_reason"]:
+        return {**base, "blocked": state["block_reason"]}
+    pkg = state["package"]
+    if pkg is not None:
+        left = max(0, int(pkg.posts_total or 0) - int(pkg.posts_used or 0))
+        return {
+            "n": len(targets),
+            "price": 0,
+            "base_price": base["price"],
+            "package": pkg.to_dict(),
+            "over_limit": len(targets) > left,
+        }
+    return base
 
 
 # ----------------------------------------------------------------------
@@ -561,7 +588,10 @@ async def cancel_post(post_id: int, request: Request, db: AsyncSession = Depends
     row = await db.get(AdScheduledPost, post_id)
     if not row or row.client_id != client.id:
         raise HTTPException(status_code=404, detail="Пост не найден")
-    if row.status in ("published", "cancelled", "rejected"):
+    # failed тоже терминален: он УЖЕ возвращён в пакет при сбое отправки —
+    # cancel по нему не должен ни зваться в VK, ни возвращать слот второй раз
+    # (блокер adversarial-ревью 2026-08-26; refund и сам идемпотентен).
+    if row.status in ("published", "cancelled", "rejected", "failed"):
         return row.to_dict()
     if row.status == "scheduled" and row.vk_postponed_post_id:
         from modules.publisher.vk_publisher_extended import VKPublisher
@@ -573,6 +603,9 @@ async def cancel_post(post_id: int, request: Request, db: AsyncSession = Depends
         if not res.get("success"):
             return {**row.to_dict(), "cancel_error": res.get("error")}
     row.status = "cancelled"
+    from modules.ad_cabinet import packages as pkgs
+
+    await pkgs.refund_post(db, row)  # пакетный пост возвращается в пакет
     log_interaction(
         db,
         kind="cancelled",

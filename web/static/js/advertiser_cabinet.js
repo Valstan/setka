@@ -106,7 +106,40 @@
                 badge.classList.add('d-none');
             }
             if (s.client && !s.client.trusted) $('np-moderation-note').classList.remove('d-none');
+            renderPackage(s);
         } catch (e) { /* сводка не критична */ }
+    }
+
+    // Пакеты (заказ владельца 2026-08-26): плашка остатка / блокировки.
+    function renderPackage(s) {
+        var box = $('package-line');
+        if (!box) return;
+        if (s.package_block) {
+            box.className = 'alert alert-warning py-2 small';
+            box.textContent = '⛔ ' + s.package_block;
+            box.classList.remove('d-none');
+            return;
+        }
+        var p = s.package;
+        if (p) {
+            var kindName = { free_promo: 'Акция — бесплатные посты', prepaid: 'Оплаченный пакет', postpaid: 'Пакет с постоплатой' }[p.kind] || 'Пакет';
+            box.className = 'alert alert-success py-2 small';
+            box.textContent = '🎁 ' + kindName + ': осталось ' + p.posts_left + ' из ' + p.posts_total +
+                (p.period_end ? ' до ' + p.period_end : '') +
+                ' — посты в счёт пакета, без оплаты по прайсу';
+            box.classList.remove('d-none');
+            return;
+        }
+        var waiting = (s.packages || []).filter(function (x) {
+            return x.is_active && x.kind === 'prepaid' && !x.paid;
+        });
+        if (waiting.length) {
+            box.className = 'alert alert-info py-2 small';
+            box.textContent = '⌛ Пакет ждёт подтверждения оплаты владельцем — после отметки посты пойдут в счёт пакета';
+            box.classList.remove('d-none');
+            return;
+        }
+        box.classList.add('d-none');
     }
 
     // ---------------- Мои посты ----------------
@@ -234,6 +267,18 @@
             if (!ids.length) { $('np-price').textContent = '0 ₽'; $('np-price-note').textContent = ''; return; }
             try {
                 var q = await api('/quote', { method: 'POST', body: JSON.stringify({ region_ids: ids }) });
+                if (q.blocked) {
+                    $('np-price').textContent = '—';
+                    $('np-price-note').textContent = '⛔ ' + q.blocked;
+                    return;
+                }
+                if (q.package) {
+                    $('np-price').textContent = '0 ₽';
+                    $('np-price-note').textContent = q.over_limit
+                        ? '⚠️ в пакете осталось ' + q.package.posts_left + ' постов — выберите меньше районов'
+                        : '🎁 в счёт пакета (осталось ' + q.package.posts_left + ' из ' + q.package.posts_total + ')';
+                    return;
+                }
                 $('np-price').textContent = q.price + ' ₽';
                 $('np-price-note').textContent = q.anchor ? '(' + q.anchor + (q.saved ? ', выгода ' + q.saved + ' ₽' : '') + ')' : '';
             } catch (e) { $('np-price-note').textContent = e.message; }

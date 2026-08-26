@@ -23,13 +23,14 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
 from database.models import (
     AdClient,
+    AdClientPackage,
     AdInteraction,
     AdOrderItem,
     AdPayment,
@@ -2152,6 +2153,211 @@ async def greeting_text(db: AsyncSession = Depends(get_db_session)):
         "mangled": looks_mangled(body),
         **stats,
     }
+
+
+# ----------------------------------------------------------------------
+# Пакеты постов клиентов кабинета (заказ владельца 2026-08-26)
+# ----------------------------------------------------------------------
+
+
+class PackageIn(BaseModel):
+    """Новый пакет клиенту. ``monthly=True`` — на текущий календарный месяц
+    (МСК); иначе бессрочный. ``free_promo`` — акция: цена 0, по умолчанию
+    3 поста; малмыжским ``site_ad=True`` — плюс размещение на сайте (вручную)."""
+
+    kind: str = Field(..., pattern=r"^(free_promo|prepaid|postpaid)$")
+    posts_total: int = Field(..., ge=1, le=100)
+    # Верхняя граница спасает от Infinity и переполнения NUMERIC(10,2) — 500 на
+    # flush превращается в валидационную 422 (ревью 2026-08-26).
+    price: float = Field(0, ge=0, le=9_999_999)
+    monthly: bool = False
+    site_ad: bool = False
+    paid: bool = False  # prepaid: галочка «уже оплачено» сразу при создании
+    note: Optional[str] = None
+
+
+def _msk_today():
+    from datetime import timedelta as _td
+
+    return (datetime.utcnow() + _td(hours=3)).date()
+
+
+def _month_bounds(day):
+    import calendar
+    from datetime import date as _date
+
+    last = calendar.monthrange(day.year, day.month)[1]
+    return _date(day.year, day.month, 1), _date(day.year, day.month, last)
+
+
+@router.get("/clients/{client_id}/packages")
+async def client_packages(client_id: int, db: AsyncSession = Depends(get_db_session)):
+    """Пакеты клиента (все, свежие сверху) + текущее состояние enforcement."""
+    from modules.ad_cabinet import packages as pkgs
+
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    rows = (
+        (
+            await db.execute(
+                select(AdClientPackage)
+                .where(AdClientPackage.client_id == client_id)
+                .order_by(AdClientPackage.id.desc())
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    state = await pkgs.get_state(db, client_id)
+    return {
+        "packages": [r.to_dict() for r in rows],
+        "active_package": state["package"].to_dict() if state["package"] else None,
+        "block_reason": state["block_reason"],
+    }
+
+
+@router.post("/clients/{client_id}/packages")
+async def create_package(
+    client_id: int, payload: PackageIn, db: AsyncSession = Depends(get_db_session)
+):
+    """Выдать пакет: акционный бесплатный, предоплатный или постоплатный."""
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    period_start = period_end = None
+    if payload.monthly:
+        period_start, period_end = _month_bounds(_msk_today())
+    row = AdClientPackage(
+        client_id=client_id,
+        kind=payload.kind,
+        posts_total=payload.posts_total,
+        price=payload.price if payload.kind != "free_promo" else 0,
+        period_start=period_start,
+        period_end=period_end,
+        paid_at=datetime.utcnow() if (payload.paid or payload.kind == "free_promo") else None,
+        site_ad=payload.site_ad,
+        note=payload.note,
+    )
+    db.add(row)
+    await db.flush()
+    log_interaction(
+        db,
+        kind="package_created",
+        client_id=client_id,
+        summary=(
+            f"Пакет {row.kind}: {row.posts_total} постов"
+            + (f", {float(row.price):.0f} ₽" if float(row.price or 0) else ", бесплатно")
+            + (f", до {period_end.isoformat()}" if period_end else ", бессрочно")
+            + (" + реклама на сайте" if row.site_ad else "")
+        ),
+    )
+    await db.commit()
+    await db.refresh(row)
+    return row.to_dict()
+
+
+async def _get_package(db, package_id: int) -> AdClientPackage:
+    row = await db.get(AdClientPackage, package_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="package not found")
+    return row
+
+
+@router.post("/packages/{package_id}/mark-paid")
+async def package_mark_paid(package_id: int, db: AsyncSession = Depends(get_db_session)):
+    """Галочка «оплачено»: prepaid открывается, postpaid-долг снимается."""
+    row = await _get_package(db, package_id)
+    if row.paid_at is None:
+        row.paid_at = datetime.utcnow()
+        log_interaction(
+            db,
+            kind="package_paid",
+            client_id=row.client_id,
+            summary=f"Пакет #{row.id} отмечен оплаченным ({float(row.price or 0):.0f} ₽)",
+        )
+        await db.commit()
+    await db.refresh(row)
+    return row.to_dict()
+
+
+@router.post("/packages/{package_id}/extend")
+async def package_extend(package_id: int, db: AsyncSession = Depends(get_db_session)):
+    """Продлить месячный пакет на СЛЕДУЮЩИЙ месяц (новая строка, оплата не
+    проставляется — в долг по доверию либо до галочки). Только вручную —
+    авто-продления нет (решение владельца)."""
+    import calendar
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    row = await _get_package(db, package_id)
+    if not row.period_end:
+        raise HTTPException(status_code=400, detail="бессрочный пакет не продлевается")
+    nxt = row.period_end + _td(days=1)
+    # Идемпотентность: двойной клик «продлить» не выдаёт двойную квоту.
+    exists = (
+        await db.execute(
+            select(AdClientPackage.id).where(
+                AdClientPackage.client_id == row.client_id,
+                AdClientPackage.is_active.is_(True),
+                AdClientPackage.period_start == nxt.replace(day=1),
+            )
+        )
+    ).first()
+    if exists:
+        raise HTTPException(status_code=409, detail="на этот месяц пакет уже выдан")
+    last = calendar.monthrange(nxt.year, nxt.month)[1]
+    new = AdClientPackage(
+        client_id=row.client_id,
+        kind=row.kind,
+        posts_total=row.posts_total,
+        price=row.price,
+        period_start=_date(nxt.year, nxt.month, 1),
+        period_end=_date(nxt.year, nxt.month, last),
+        site_ad=False,
+        note=f"продление пакета #{row.id}",
+    )
+    db.add(new)
+    await db.flush()
+    log_interaction(
+        db,
+        kind="package_extended",
+        client_id=row.client_id,
+        summary=f"Пакет продлён на {new.period_start.isoformat()[:7]} (#{row.id} → #{new.id})",
+    )
+    await db.commit()
+    await db.refresh(new)
+    return new.to_dict()
+
+
+@router.post("/packages/{package_id}/deactivate")
+async def package_deactivate(package_id: int, db: AsyncSession = Depends(get_db_session)):
+    row = await _get_package(db, package_id)
+    row.is_active = False
+    log_interaction(
+        db, kind="package_deactivated", client_id=row.client_id, summary=f"Пакет #{row.id} закрыт"
+    )
+    await db.commit()
+    await db.refresh(row)
+    return row.to_dict()
+
+
+@router.post("/packages/{package_id}/site-ad-done")
+async def package_site_ad_done(package_id: int, db: AsyncSession = Depends(get_db_session)):
+    """Отметить выполненным размещение на сайте вМалмыже.рф (акция; руками)."""
+    row = await _get_package(db, package_id)
+    if row.site_ad_done_at is None:
+        row.site_ad_done_at = datetime.utcnow()
+        log_interaction(
+            db,
+            kind="package_site_ad_done",
+            client_id=row.client_id,
+            summary="Реклама на сайте вМалмыже.рф размещена (акция)",
+        )
+        await db.commit()
+    await db.refresh(row)
+    return row.to_dict()
 
 
 # ----------------------------------------------------------------------

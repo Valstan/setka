@@ -1156,6 +1156,9 @@ async def cancel_scheduled(
         summary="Отменён запланированный пост",
     )
     row.status = "cancelled"
+    from modules.ad_cabinet import packages as pkgs
+
+    await pkgs.refund_post(db, row)  # пакетный пост клиента возвращается в пакет
     await db.commit()
     await db.refresh(row)
     return row.to_dict()

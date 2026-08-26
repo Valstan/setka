@@ -62,8 +62,8 @@ class OrderError(ValueError):
     """Ошибка валидации заказа — текст безопасен для показа клиенту."""
 
 
-async def resolve_targets(session, region_ids: Sequence[int]) -> List[Tuple[int, int]]:
-    """Районы заказа → [(region_id, community_vk_id)].
+async def resolve_targets(session, region_ids: Sequence[int]) -> List[Tuple[int, int, str]]:
+    """Районы заказа → [(region_id, community_vk_id, region_name)].
 
     Только активные регионы с ``vk_group_id`` (критерий ``get_vk_links``):
     заготовка района без группы клиенту недоступна. ``community_vk_id`` —
@@ -76,7 +76,7 @@ async def resolve_targets(session, region_ids: Sequence[int]) -> List[Tuple[int,
     rows = (
         (
             await session.execute(
-                select(Region.id, Region.vk_group_id).where(
+                select(Region.id, Region.vk_group_id, Region.name).where(
                     Region.id.in_(wanted),
                     Region.is_active.is_(True),
                     Region.vk_group_id.isnot(None),
@@ -86,11 +86,11 @@ async def resolve_targets(session, region_ids: Sequence[int]) -> List[Tuple[int,
         .tuples()
         .all()
     )
-    found = {rid for rid, _ in rows}
+    found = {rid for rid, _, _ in rows}
     missing = [r for r in wanted if r not in found]
     if missing:
         raise OrderError(f"Районы недоступны для размещения: {missing}")
-    return [(rid, -abs(int(gid))) for rid, gid in rows]
+    return [(rid, -abs(int(gid)), name or f"район {rid}") for rid, gid, name in rows]
 
 
 async def all_target_region_ids(session) -> List[int]:
@@ -244,13 +244,56 @@ async def submit_order(
     targets = await resolve_targets(session, region_ids)
     when = validate_publish_at(publish_at, publish_now=publish_now, now=now)
 
-    quote = quote_price(len(targets))
-    prices = price_split(Decimal(quote["price"]), len(targets))
+    from modules.ad_cabinet import packages as pkgs
+
+    # Анти-спам: один рекламный пост клиента в одно сообщество в один
+    # календарный день МСК (в разные районы — сколько угодно в рамках пакета;
+    # раскладку по дням даёт publish_at).
+    busy = await pkgs.busy_days(session, client.id, targets, when.date())
+    if busy:
+        names = [t[2] for t in targets if t[1] in set(busy)]
+        raise OrderError(
+            "На этот день у вас уже есть пост в: "
+            + ", ".join(names)
+            + " — не больше одного рекламного поста в сообщество в день; "
+            "выберите другую дату для этих районов"
+        )
+
+    # Пакеты (решения владельца 2026-08-26): долг/исчерпанный месяц — блок;
+    # доступный пакет — заказ ТОЛЬКО в счёт пакета, сверх остатка — отказ.
+    state = await pkgs.get_state(session, client.id, today=now.date())
+    if state["block_reason"]:
+        raise OrderError(state["block_reason"])
+    package = state["package"]
+    if package is not None:
+        left = max(0, int(package.posts_total or 0) - int(package.posts_used or 0))
+        if len(targets) > left:
+            raise OrderError(
+                f"В пакете осталось {left} постов, а районов выбрано {len(targets)} — "
+                "уменьшите выбор или договоритесь с владельцем о расширении"
+            )
+        # Месячный пакет тратится на публикации ВНУТРИ месяца: отложка за
+        # период — это перенос квоты через границу, не «10 постов в месяц»
+        # (should-fix ревью 2026-08-26).
+        if package.period_end is not None and not pkgs.period_covers(package, when.date()):
+            raise OrderError(
+                f"Пакет действует до {package.period_end.isoformat()} — "
+                "выберите дату публикации внутри периода пакета"
+            )
+        if not await pkgs.consume(session, package, len(targets)):
+            raise OrderError(
+                "Остаток пакета уже израсходован параллельным заказом — обновите страницу"
+            )
+        quote = {"n": len(targets), "price": 0, "package_id": package.id, "kind": package.kind}
+        prices = [Decimal("0")] * len(targets)
+    else:
+        quote = quote_price(len(targets))
+        prices = price_split(Decimal(quote["price"]), len(targets))
     order_ref = str(uuid.uuid4())
     trusted = bool(client.trusted)
 
     rows: List[AdScheduledPost] = []
-    for (region_id, gid), price in zip(targets, prices):
+    for (region_id, gid, _name), price in zip(targets, prices):
         row = AdScheduledPost(
             community_vk_id=gid,
             region_id=region_id,
@@ -265,6 +308,7 @@ async def submit_order(
             price=price,
             created_by_user_id=user_id,
             order_ref=order_ref,
+            package_id=package.id if package is not None else None,
         )
         session.add(row)
         rows.append(row)
@@ -278,6 +322,8 @@ async def submit_order(
                 image_paths=image_paths,
                 msk_to_unix=msk_to_unix,
             )
+            if row.status == "failed":
+                await pkgs.refund_post(session, row)  # VK не принял — вернуть в пакет
 
     return {
         "order_ref": order_ref,
@@ -285,6 +331,7 @@ async def submit_order(
         "quote": quote,
         "posts": rows,
         "moderation": not trusted,
+        "package": package.to_dict() if package is not None else None,
     }
 
 
@@ -316,6 +363,10 @@ async def approve_post(
         msk_to_unix=msk_to_unix,
     )
     post.moderated_at = datetime.utcnow()  # таймстампы моделей — наивный UTC
+    if post.status == "failed":
+        from modules.ad_cabinet import packages as pkgs
+
+        await pkgs.refund_post(session, post)  # одобрение не дошло до VK
 
     if post.status == "scheduled" and post.client_id:
         client = await session.get(AdClient, post.client_id)
@@ -332,10 +383,16 @@ async def approve_post(
 
 
 async def reject_post(session, post: AdScheduledPost, *, comment: str) -> AdScheduledPost:
-    """Владелец отклоняет pending-пост; причина видна клиенту в кабинете."""
+    """Владелец отклоняет pending-пост; причина видна клиенту в кабинете.
+
+    Пост возвращается в пакет: списание — только за реальные размещения.
+    """
     if post.status != "pending":
         return post
     post.status = "rejected"
     post.moderation_comment = (comment or "").strip() or None
     post.moderated_at = datetime.utcnow()  # таймстампы моделей — наивный UTC
+    from modules.ad_cabinet import packages as pkgs
+
+    await pkgs.refund_post(session, post)
     return post
