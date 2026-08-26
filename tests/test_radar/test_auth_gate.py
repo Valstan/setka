@@ -840,3 +840,82 @@ def test_single_host_mode_has_no_canonical_redirect(monkeypatch):
     )
     assert resp.status_code == 302
     assert "/login" in resp.headers["location"]
+
+
+# ─── Кабинет на сарафан…/cabinet (решение владельца 2026-08-26) ──
+
+
+def _sarafan_cabinet_client(host: str):
+    """Мини-приложение с кабинетной зоной для проверок на домене сети."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.add_middleware(AuthGateMiddleware, user_loader=_loader)
+
+    @app.get("/")
+    async def dashboard():
+        return {"page": "dashboard"}
+
+    @app.get("/cabinet")
+    async def cabinet():
+        return {"page": "cabinet"}
+
+    @app.get("/api/advertiser/orders")
+    async def advertiser_orders():
+        return {"zone": "advertiser"}
+
+    @app.get("/api/advertiser/me")
+    async def advertiser_me():
+        return {"zone": "onboarding"}
+
+    return TestClient(app, base_url=f"https://{host}")
+
+
+def test_sarafan_opens_cabinet_zone_for_advertiser(monkeypatch):
+    """Кабинет канонически живёт на домене сети — advertiser проходит."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    client = _sarafan_cabinet_client(_SARAFAN_HOST)
+    client.cookies.update(_cookie_for(ADVERTISER))
+    assert client.get("/cabinet").status_code == 200
+    assert client.get("/api/advertiser/orders").status_code == 200
+
+
+def test_sarafan_root_sends_advertiser_to_cabinet_path(monkeypatch):
+    """С витрины advertiser уезжает на /cabinet того же домена (не цикл)."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    client = _sarafan_cabinet_client(_SARAFAN_HOST)
+    client.cookies.update(_cookie_for(ADVERTISER))
+    resp = client.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == f"https://{_SARAFAN_HOST}/cabinet"
+
+
+def test_sarafan_onboarding_open_for_radar_guest(monkeypatch):
+    """Radar-юзер на домене сети может стать рекламодателем (онбординг)."""
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    client = _sarafan_cabinet_client(_SARAFAN_HOST)
+    client.cookies.update(_cookie_for(RADAR))
+    assert client.get("/cabinet").status_code == 200
+    assert client.get("/api/advertiser/me").status_code == 200
+
+
+def test_cabinet_canonical_helpers(monkeypatch):
+    """vk_upstream: канон = сарафан…/cabinet, legacy-хост уводится, канон — нет."""
+    from modules.radar_id import vk_upstream as vu
+
+    monkeypatch.delenv("AD_CABINET_CANONICAL_HOST", raising=False)
+    monkeypatch.setenv("SESSION_COOKIE_DOMAIN", _COOKIE_DOMAIN)
+    assert vu.ad_cabinet_canonical_url() == f"https://{_SARAFAN_HOST}/cabinet"
+    # Уже на каноне — остаёмся на месте.
+    assert vu.ad_cabinet_canonical_redirect(_SARAFAN_HOST) is None
+    # Прежний выделенный поддомен — редирект на канонический путь.
+    assert vu.is_ad_cabinet_host(vu.AD_CABINET_LEGACY_HOST) is True
+    assert (
+        vu.ad_cabinet_canonical_redirect(vu.AD_CABINET_LEGACY_HOST)
+        == f"https://{_SARAFAN_HOST}/cabinet"
+    )
+    # Другой хост зоны (ЕСА) — тоже на канон.
+    assert vu.ad_cabinet_canonical_redirect(_ISSUER_HOST) == f"https://{_SARAFAN_HOST}/cabinet"
+    # Сарафан больше НЕ «кабинет на корне»: корень — витрина/дашборд.
+    assert vu.is_ad_cabinet_host(_SARAFAN_HOST) is False

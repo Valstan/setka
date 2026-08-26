@@ -226,8 +226,9 @@ async def root(request: Request):
     if vk_upstream.is_radar_host(request.url.hostname):
         return templates.TemplateResponse("radar.html", _radar_template_ctx(request))
     if vk_upstream.is_ad_cabinet_host(request.url.hostname):
-        # Кабинет рекламодателя живёт на корне своего поддомена (как Радар).
-        return templates.TemplateResponse("advertiser_cabinet.html", {"request": request})
+        # Прежний выделенный поддомен кабинета: уводим на канонический адрес
+        # сарафан…/cabinet (решение владельца 2026-08-26 — бренд САРАФАН).
+        return RedirectResponse(vk_upstream.ad_cabinet_canonical_url(), status_code=302)
     return templates.TemplateResponse("index.html", {"request": request})
 
 
@@ -282,14 +283,13 @@ async def radar_page(request: Request):
 async def advertiser_cabinet_page(request: Request):
     """Кабинет рекламодателя (клиентская половина ad-CRM).
 
-    На своём поддомене (кабинет.вмалмыже.рф) живёт на корне — «/cabinet»
-    редиректится туда; на остальных хостах зоны отдаётся по этому пути
-    (паттерн Радара). Не-рекламодателю страница показывает онбординг.
+    Канонический адрес — сарафан.вмалмыже.рф/cabinet (решение владельца
+    2026-08-26): бренд САРАФАН знаком клиентам всех районов, TLS уже есть.
+    С других хостов зоны путь уводит на канон. Не-рекламодателю страница
+    показывает онбординг.
     """
     from modules.radar_id import vk_upstream
 
-    if vk_upstream.is_ad_cabinet_host(request.url.hostname):
-        return RedirectResponse("/", status_code=302)
     canonical = vk_upstream.ad_cabinet_canonical_redirect(request.url.hostname)
     if canonical:
         return RedirectResponse(canonical, status_code=302)
