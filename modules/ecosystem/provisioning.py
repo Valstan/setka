@@ -231,6 +231,45 @@ def validate_project_name(value: str) -> str:
     return value
 
 
+MAX_BINDING_TARGETS = 50  # у реальных потребителей 1–6 целей; 50 — щедрый потолок
+
+
+def _validate_gateway_binding(
+    owner_ids: Optional[List[int]], screen_names: Optional[List[str]]
+) -> tuple:
+    """Нормализовать привязку D-047: (list[int], list[str]) либо ProvisioningError.
+
+    Валидация — та же, что у enforcement (:mod:`modules.gateway.scope`), чтобы
+    записанное здесь гарантированно читалось там: один словарь на обе стороны.
+    """
+    from modules.gateway.scope import KeyBinding, ScopeRefused, is_valid_screen_name
+
+    try:
+        binding = KeyBinding.from_lists(owner_ids, screen_names)
+    except ScopeRefused as e:
+        raise ProvisioningError("bad_binding", f"привязка не читается: {e}", status=400)
+    for name in binding.screen_names:
+        if re.fullmatch(r"-?\d+", name):
+            raise ProvisioningError(
+                "bad_binding", f"числовая цель {name!r} идёт в owner_ids, не в имена", status=400
+            )
+        if not is_valid_screen_name(name):
+            raise ProvisioningError(
+                "bad_binding",
+                f"screen name {name!r} не в форме [a-z0-9_.] — enforcement его никогда не примет",
+                status=400,
+            )
+    if not binding.is_bound:
+        raise ProvisioningError(
+            "bad_binding", "привязка пуста: нужен хотя бы один owner_id или screen name", status=400
+        )
+    if len(binding.owner_ids) + len(binding.screen_names) > MAX_BINDING_TARGETS:
+        raise ProvisioningError(
+            "bad_binding", f"слишком много целей (> {MAX_BINDING_TARGETS})", status=400
+        )
+    return (sorted(binding.owner_ids), sorted(binding.screen_names))
+
+
 # ---------------------------------------------------------------------------
 # Выдача клиента ЕСА (OIDC)
 # ---------------------------------------------------------------------------
@@ -349,6 +388,8 @@ async def provision_gateway_key(
     current_secret: Optional[str] = None,
     allow_update: bool = False,
     set_active: Optional[bool] = None,
+    owner_ids: Optional[List[int]] = None,
+    screen_names: Optional[List[str]] = None,
 ) -> ProvisionResult:
     """Выдать (или ротировать) ключ VK-шлюза проекту.
 
@@ -359,6 +400,13 @@ async def provision_gateway_key(
     ``set_active`` — только для CLI (``--disable`` / ``--enable``). Self-serve
     состояние ключа не трогает: отключённый оператором ключ не воскрешается
     предъявлением старого секрета.
+
+    ``owner_ids``/``screen_names`` (D-047) — привязка ключа к разрешённым целям.
+    На **создании** её может задать любой канал (объявить свою группу — часть
+    нормальной заявки; якорь доверия self-serve — экосистемный ключ). На
+    **существующем** ключе привязку меняет только оператор (``allow_update``):
+    иначе держатель ключа расширил бы себе радиус предъявлением своего же
+    секрета, и изоляция по владельцу перестала бы что-либо значить.
     """
     from database import models  # noqa: F401 — конфигурация мапперов
     from database.connection import AsyncSessionLocal
@@ -367,6 +415,10 @@ async def provision_gateway_key(
     from modules.gateway.usage import record_request
 
     name = validate_project_name(project)
+    binding_requested = owner_ids is not None or screen_names is not None
+    normalized_binding = None
+    if binding_requested:
+        normalized_binding = _validate_gateway_binding(owner_ids, screen_names)
 
     secret_plain: Optional[str] = None
     async with AsyncSessionLocal() as session:
@@ -383,9 +435,18 @@ async def provision_gateway_key(
                 is_active=set_active is not False,
                 note=note,
             )
+            if normalized_binding is not None:
+                row.allowed_owner_ids = normalized_binding[0]
+                row.allowed_screen_names = normalized_binding[1]
             session.add(row)
             action = "created"
         else:
+            if binding_requested and not allow_update:
+                raise ProvisioningError(
+                    "binding_operator_only",
+                    f"привязку существующего ключа {name!r} меняет только оператор (D-047)",
+                    status=403,
+                )
             if not allow_update:
                 if not row.is_active:
                     raise ProvisioningError(
@@ -418,9 +479,16 @@ async def provision_gateway_key(
                 action = "rotated"
             else:
                 action = "unchanged"
+            if normalized_binding is not None:  # сюда доходит только оператор (гейт выше)
+                row.allowed_owner_ids = normalized_binding[0]
+                row.allowed_screen_names = normalized_binding[1]
+                if action == "unchanged":
+                    action = "rebound"
         if note is not None:
             row.note = note
         active = bool(row.is_active)
+        bound_ids = list(row.allowed_owner_ids or [])
+        bound_names = list(row.allowed_screen_names or [])
         await session.commit()
 
     # Событие выдачи видно на /gateway-stats (best-effort, #018).
@@ -431,5 +499,8 @@ async def provision_gateway_key(
 
     logger.info("ecosystem: gateway key %s (%s)", name, action)
     return ProvisionResult(
-        action=action, identifier=name, secret=secret_plain, details={"active": active}
+        action=action,
+        identifier=name,
+        secret=secret_plain,
+        details={"active": active, "owner_ids": bound_ids, "screen_names": bound_names},
     )

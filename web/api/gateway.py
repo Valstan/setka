@@ -16,6 +16,9 @@ SARAFAN своим токеном, наружу уходит только рез
   env ``GATEWAY_KEY_<PROJECT>`` — bootstrap-fallback; см.
   :mod:`modules.gateway.keys`), сравнение constant-time; в логи пишем только
   имя проекта, не секрет;
+- привязка к владельцу (D-047, миграция 085): у ключа список разрешённых
+  ``owner_id``/screen names (:mod:`modules.gateway.scope`) — вызов по чужой
+  цели или без явной цели → 403; ключ без привязки owner-scoped не читает;
 - квота на ключ (:class:`modules.gateway.quota.GatewayQuota`) — чтобы один
   потребитель не выел общий VK-бюджет;
 - агрегатный бюджет шлюза (env ``GATEWAY_GLOBAL_QUOTA_PER_MIN``) — сумма по
@@ -155,8 +158,21 @@ def _check_enabled() -> None:
 async def _run_and_log(
     project: str, endpoint: str, method: str, params: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """Исполнить read-вызов и записать его в лог статистики (best-effort)."""
+    """Исполнить read-вызов и записать его в лог статистики (best-effort).
+
+    Перед исполнением — проверка привязки ключа к владельцу (D-047): цель
+    вызова обязана быть явной и разрешённой этому ключу. Отказ виден на
+    /gateway-stats как 403 — потребитель с неполной привязкой диагностируется
+    по логу, а не молчаливой пустотой.
+    """
+    from modules.gateway.scope import check_call_scope
     from modules.gateway.usage import record_request
+
+    refusal = await check_call_scope(project, method, params)
+    if refusal is not None:
+        logger.info("gateway: %s scope-refused %s (%s): %s", project, method, endpoint, refusal)
+        await record_request(project, endpoint, method, params, status=403, ok=False)
+        raise HTTPException(status_code=403, detail=refusal)
 
     start = time.monotonic()
     try:

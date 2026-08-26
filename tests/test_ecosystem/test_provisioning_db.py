@@ -191,3 +191,47 @@ class TestGatewayKeySelfServe:
         result = await _issue(_key_row(), current_secret="right-key")
         assert result.action == "unchanged"
         assert result.secret is None
+
+
+class TestGatewayKeyBinding:
+    """D-047: привязка к владельцам на выдаче."""
+
+    @pytest.mark.asyncio
+    async def test_new_key_created_with_binding(self):
+        result = await _issue(None, owner_ids=[-195583920], screen_names=["rmz43"])
+        assert result.action == "created"
+        assert result.details["owner_ids"] == [-195583920]
+        assert result.details["screen_names"] == ["rmz43"]
+
+    @pytest.mark.asyncio
+    async def test_self_serve_cannot_rebind_existing_key(self):
+        """Держатель ключа не расширяет себе радиус предъявлением секрета."""
+        with pytest.raises(ProvisioningError) as e:
+            await _issue(_key_row(), current_secret="right-key", owner_ids=[-24611937])
+        assert e.value.code == "binding_operator_only"
+        assert e.value.status == 403
+
+    @pytest.mark.asyncio
+    async def test_operator_can_rebind(self):
+        result = await _issue(_key_row(), allow_update=True, owner_ids=[-86517261])
+        assert result.action == "rebound"
+        assert result.details["owner_ids"] == [-86517261]
+
+    @pytest.mark.asyncio
+    async def test_garbage_binding_rejected(self):
+        with pytest.raises(ProvisioningError) as e:
+            await _issue(None, owner_ids=["abc"])
+        assert e.value.code == "bad_binding"
+
+    @pytest.mark.asyncio
+    async def test_numeric_screen_name_rejected(self):
+        """Число в именах — почти наверняка перепутанный owner_id: явный отказ."""
+        with pytest.raises(ProvisioningError) as e:
+            await _issue(None, screen_names=["195583920"])
+        assert e.value.code == "bad_binding"
+
+    @pytest.mark.asyncio
+    async def test_empty_binding_rejected(self):
+        with pytest.raises(ProvisioningError) as e:
+            await _issue(None, owner_ids=[], screen_names=[])
+        assert e.value.code == "bad_binding"

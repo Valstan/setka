@@ -101,6 +101,7 @@ def build_rows(
                 "last_used": stat.get("last_used"),
                 "calls": int(stat.get("calls") or 0),
                 "note": key.get("note") or "",
+                "binding": _fmt_binding(key.get("owner_ids"), key.get("screen_names")),
             }
         )
     for name in sorted(env_set - seen):
@@ -116,10 +117,17 @@ def build_rows(
                 "last_used": stat.get("last_used"),
                 "calls": int(stat.get("calls") or 0),
                 "note": "только в env (bootstrap-fallback, в БД записи нет)",
+                "binding": _fmt_binding(None, None),
             }
         )
     rows.sort(key=lambda r: r["name"])
     return rows
+
+
+def _fmt_binding(owner_ids: Any, screen_names: Any) -> str:
+    """Привязка D-047 одной ячейкой; непривязанный ключ виден сразу."""
+    parts = [str(v) for v in (owner_ids or [])] + [str(v) for v in (screen_names or [])]
+    return ",".join(parts) if parts else "НЕ ПРИВЯЗАН (owner-scoped → 403)"
 
 
 def render(rows: List[Dict[str, Any]], fmt: str, retention_days: int) -> str:
@@ -129,7 +137,10 @@ def render(rows: List[Dict[str, Any]], fmt: str, retention_days: int) -> str:
             "retention_days": retention_days,
             "keys": [
                 {
-                    **{k: r[k] for k in ("name", "source", "is_active", "prefix", "calls")},
+                    **{
+                        k: r[k]
+                        for k in ("name", "source", "is_active", "prefix", "calls", "binding")
+                    },
                     "created_at": r["created_at"].isoformat() if r["created_at"] else None,
                     "rotated_at": r["rotated_at"].isoformat() if r["rotated_at"] else None,
                     "last_used": r["last_used"].isoformat() if r["last_used"] else None,
@@ -153,10 +164,21 @@ def render(rows: List[Dict[str, Any]], fmt: str, retention_days: int) -> str:
             _fmt_dt(r["rotated_at"]),
             _fmt_dt(r["last_used"]),
             str(r["calls"]),
+            r.get("binding") or "—",
         ]
         for r in rows
     ]
-    titles = ["name", "source", "active", "prefix", "created", "rotated", "last_used", "calls"]
+    titles = [
+        "name",
+        "source",
+        "active",
+        "prefix",
+        "created",
+        "rotated",
+        "last_used",
+        "calls",
+        "binding",
+    ]
 
     if fmt == "md":
         lines = [header, ""]
@@ -195,6 +217,8 @@ async def _load(
             GatewayKey.rotated_at,
             GatewayKey.secret_prefix,
             GatewayKey.note,
+            GatewayKey.allowed_owner_ids,
+            GatewayKey.allowed_screen_names,
         )
         if active_only:
             stmt = stmt.where(GatewayKey.is_active.is_(True))
@@ -206,6 +230,8 @@ async def _load(
                 "rotated_at": row.rotated_at,
                 "prefix": row.secret_prefix,
                 "note": row.note,
+                "owner_ids": list(row.allowed_owner_ids or []),
+                "screen_names": list(row.allowed_screen_names or []),
             }
             for row in (await session.execute(stmt)).all()
         ]

@@ -534,6 +534,10 @@ class GatewayKey(Base):
     secret_prefix = Column(String(16), nullable=True)  # первые символы, для опознания человеком
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     note = Column(Text, nullable=True)  # кто/зачем (заявка, письмо brain)
+    # D-047 (миграция 085): разрешённые цели ключа. NULL/[] = не привязан →
+    # отказ по owner-scoped методам (modules/gateway/scope.py).
+    allowed_owner_ids = Column(JSON, nullable=True)  # list[int], подписанные owner_id
+    allowed_screen_names = Column(JSON, nullable=True)  # list[str], lowercase
     created_at = Column(DateTime, default=datetime.utcnow)
     rotated_at = Column(DateTime, nullable=True)
 

@@ -141,6 +141,8 @@ def client():
 
 
 def test_auth_accepts_db_key(client, monkeypatch):
+    # Метод глобальный (groups.search): предмет теста — auth по БД-ключу,
+    # привязка D-047 здесь ни при чём (у мока сессии нет колонок привязки).
     monkeypatch.delenv("GATEWAY_KEY_DBPROJ", raising=False)
     fake_read = AsyncMock(return_value={"ok": True, "response": []})
     fake_log = AsyncMock()
@@ -152,7 +154,7 @@ def test_auth_accepts_db_key(client, monkeypatch):
     ):
         r = client.post(
             "/api/gateway/call",
-            json={"method": "wall.get", "params": {}},
+            json={"method": "groups.search", "params": {"q": "test"}},
             headers={"X-API-Key": "db-key"},
         )
     assert r.status_code == 200
@@ -219,7 +221,9 @@ def test_global_budget_disabled_by_zero(client, monkeypatch):
     ):
         r = client.post(
             "/api/gateway/call",
-            json={"method": "wall.get", "params": {}},
+            # groups.search — глобальный: env-ключ без строки в БД не привязан,
+            # owner-scoped метод дал бы 403 и заслонил бы предмет теста (бюджет).
+            json={"method": "groups.search", "params": {"q": "test"}},
             headers={"X-API-Key": "kg"},
         )
     assert r.status_code == 200

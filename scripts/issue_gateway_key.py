@@ -23,6 +23,11 @@ Usage (на хосте setka, под env приложения):
     python scripts/issue_gateway_key.py KAZANSKAYA --enable     # включить обратно
     python scripts/issue_gateway_key.py --import-env            # перенести env-ключи в БД
 
+Привязка к владельцам (D-047, миграция 085) — новый ключ выдавать сразу с ней,
+без привязки owner-scoped методы шлюза отвечают 403:
+    python scripts/issue_gateway_key.py RMZ --owner-ids "-195583920" --screen-names "rmz43"
+    python scripts/issue_gateway_key.py RMZ --owner-ids "-195583920,-1234"   # переписать (оператор)
+
 Печатает секрет ОДИН раз — передать потребителю по защищённому каналу.
 Повторный запуск без --rotate секрет НЕ меняет (идемпотентно).
 Каждая выдача/ротация/переключение пишется в usage-лог шлюза
@@ -100,6 +105,16 @@ async def main() -> int:
     parser.add_argument(
         "--import-env", action="store_true", help="перенести env-ключи GATEWAY_KEY_* в БД"
     )
+    parser.add_argument(
+        "--owner-ids",
+        default=None,
+        help="D-047: разрешённые owner_id через запятую (сообщество — с минусом)",
+    )
+    parser.add_argument(
+        "--screen-names",
+        default=None,
+        help="D-047: разрешённые screen names своих сообществ через запятую",
+    )
     args = parser.parse_args()
 
     if args.import_env:
@@ -115,6 +130,13 @@ async def main() -> int:
     elif args.enable:
         set_active = True
 
+    owner_ids = None
+    if args.owner_ids is not None:
+        owner_ids = [p.strip() for p in args.owner_ids.split(",") if p.strip()]
+    screen_names = None
+    if args.screen_names is not None:
+        screen_names = [p.strip() for p in args.screen_names.split(",") if p.strip()]
+
     try:
         result = await provision_gateway_key(
             project=args.project,
@@ -122,6 +144,8 @@ async def main() -> int:
             rotate=args.rotate,
             allow_update=True,
             set_active=set_active,
+            owner_ids=owner_ids,
+            screen_names=screen_names,
         )
     except ProvisioningError as e:
         print(f"отказ ({e.code}): {e.message}", file=sys.stderr)
@@ -130,6 +154,10 @@ async def main() -> int:
     print(f"project: {result.identifier}")
     print(f"action: {result.action}")
     print(f"active: {result.details.get('active')}")
+    print(
+        f"owner_ids: {result.details.get('owner_ids') or '— (не привязан: owner-scoped будет 403)'}"
+    )
+    print(f"screen_names: {result.details.get('screen_names') or '—'}")
     if result.secret:
         print("secret (показывается ОДИН раз, передать потребителю по защищённому каналу):")
         print(result.secret)
