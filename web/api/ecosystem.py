@@ -104,6 +104,15 @@ class GatewayKeyIn(BaseModel):
     current_secret: Optional[str] = Field(
         default=None, description="текущий ключ — нужен для ротации"
     )
+    # D-047: привязка ключа к своим сообществам. Задаётся при СОЗДАНИИ ключа;
+    # без неё ключ получит отказ на всех owner-scoped методах. Изменить привязку
+    # существующего ключа self-serve не может — только оператор.
+    owner_ids: Optional[List[int]] = Field(
+        default=None, description="разрешённые owner_id (сообщество — со знаком минус)"
+    )
+    screen_names: Optional[List[str]] = Field(
+        default=None, description="разрешённые screen names своих сообществ"
+    )
 
 
 def _payload(result: ProvisionResult, extra: Dict[str, object]) -> Dict[str, object]:
@@ -158,6 +167,8 @@ async def issue_gateway_key(body: GatewayKeyIn, _: str = Depends(require_ecosyst
             note=body.note,
             rotate=body.rotate,
             current_secret=body.current_secret,
+            owner_ids=body.owner_ids,
+            screen_names=body.screen_names,
         )
     except ProvisioningError as e:
         raise HTTPException(status_code=e.status, detail={"error": e.code, "message": e.message})

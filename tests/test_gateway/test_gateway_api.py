@@ -10,16 +10,29 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from modules.gateway.quota import GatewayQuota
+from modules.gateway.scope import KeyBinding
 from modules.vk_token_router import TokenCandidate
 from web.api import gateway as gw
 
 API_KEY = "s3cret-test-key"
+
+# Привязка тестового ключа (D-047): цели, которыми пользуются тесты ниже.
+TEST_BINDING = KeyBinding.from_lists(owner_ids=[-1], screen_names=["apiclub"])
 
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     monkeypatch.setenv("GATEWAY_KEY_TEST", API_KEY)
     monkeypatch.delenv("GATEWAY_DISABLED", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _binding():
+    """Ключ в тестах привязан (D-047): env-bootstrap без строки в БД — «не
+    привязан» и ловил бы 403 на каждом owner-scoped вызове. Тесты enforcement
+    перекрывают этот патч своим значением."""
+    with patch("modules.gateway.scope.load_binding", AsyncMock(return_value=TEST_BINDING)):
+        yield
 
 
 @pytest.fixture
@@ -103,6 +116,103 @@ def test_community_convenience_endpoint(client):
     method, params = fake_read.await_args.args
     assert method == "groups.getById"
     assert params["group_ids"] == "apiclub"
+
+
+# --- привязка к владельцу (D-047) ---------------------------------------
+def test_foreign_owner_403_logged(client):
+    """Цель вне привязки — 403, и отказ виден на /gateway-stats."""
+    fake_read = AsyncMock()
+    fake_log = AsyncMock()
+    with (
+        patch.object(gw, "_gateway_vk_read", fake_read),
+        patch("modules.gateway.usage.record_request", fake_log),
+    ):
+        r = client.post(
+            "/api/gateway/call",
+            json={"method": "wall.get", "params": {"owner_id": -24611937}},
+            headers={"X-API-Key": API_KEY},
+        )
+    assert r.status_code == 403
+    assert "-24611937" in r.json()["detail"]
+    fake_read.assert_not_awaited()  # до VK чужая цель не доходит
+    fake_log.assert_awaited_once()
+    assert fake_log.await_args.kwargs["status"] == 403
+
+
+def test_unbound_key_403_for_owner_scoped(client):
+    """Ключ без привязки owner-scoped не читает (мандат: отказ, не «всё»)."""
+    fake_read = AsyncMock()
+    with (
+        patch("modules.gateway.scope.load_binding", AsyncMock(return_value=None)),
+        patch.object(gw, "_gateway_vk_read", fake_read),
+        patch("modules.gateway.usage.record_request", AsyncMock()),
+    ):
+        r = client.post(
+            "/api/gateway/call",
+            json={"method": "wall.get", "params": {"owner_id": -1}},
+            headers={"X-API-Key": API_KEY},
+        )
+    assert r.status_code == 403
+    fake_read.assert_not_awaited()
+
+
+def test_unbound_key_global_method_still_works(client):
+    """Глобальные методы (поиск/справочники) не owner-scoped — живут без привязки."""
+    fake_read = AsyncMock(return_value={"ok": True, "response": {"count": 0}})
+    with (
+        patch("modules.gateway.scope.load_binding", AsyncMock(return_value=None)),
+        patch.object(gw, "_gateway_vk_read", fake_read),
+        patch("modules.gateway.usage.record_request", AsyncMock()),
+    ):
+        r = client.post(
+            "/api/gateway/call",
+            json={"method": "groups.search", "params": {"q": "малмыж"}},
+            headers={"X-API-Key": API_KEY},
+        )
+    assert r.status_code == 200
+    fake_read.assert_awaited_once()
+
+
+def test_missing_target_403(client):
+    """Без явной цели VK подставил бы владельца НАШЕГО токена — отказ."""
+    fake_read = AsyncMock()
+    with (
+        patch.object(gw, "_gateway_vk_read", fake_read),
+        patch("modules.gateway.usage.record_request", AsyncMock()),
+    ):
+        r = client.post(
+            "/api/gateway/call",
+            json={"method": "video.get", "params": {"count": 5}},
+            headers={"X-API-Key": API_KEY},
+        )
+    assert r.status_code == 403
+    fake_read.assert_not_awaited()
+
+
+def test_wall_convenience_endpoint_enforced(client):
+    """Обёртка /wall проходит ту же проверку, что и /call."""
+    fake_read = AsyncMock()
+    with (
+        patch.object(gw, "_gateway_vk_read", fake_read),
+        patch("modules.gateway.usage.record_request", AsyncMock()),
+    ):
+        r = client.get(
+            "/api/gateway/wall?owner_id=-24611937&count=5", headers={"X-API-Key": API_KEY}
+        )
+    assert r.status_code == 403
+    fake_read.assert_not_awaited()
+
+
+def test_community_convenience_endpoint_enforced(client):
+    """Обёртка /community — тоже: чужое сообщество не читается."""
+    fake_read = AsyncMock()
+    with (
+        patch.object(gw, "_gateway_vk_read", fake_read),
+        patch("modules.gateway.usage.record_request", AsyncMock()),
+    ):
+        r = client.get("/api/gateway/community?group=durov_club", headers={"X-API-Key": API_KEY})
+    assert r.status_code == 403
+    fake_read.assert_not_awaited()
 
 
 # --- квота --------------------------------------------------------------
