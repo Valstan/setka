@@ -194,6 +194,9 @@ ADVERTISER_ONBOARDING_EXACT = (
     "/cabinet",
     "/api/advertiser/me",
     "/api/advertiser/onboarding",
+    # Телеметрия браузера клиента: ошибка на странице онбординга — самый ценный
+    # сигнал, а роли advertiser у такого юзера ещё нет.
+    "/api/advertiser/telemetry",
 )
 
 UserLoader = Callable[[int], Awaitable[Optional[object]]]

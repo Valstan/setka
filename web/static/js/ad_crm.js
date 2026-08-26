@@ -1727,7 +1727,34 @@ async function refreshCabinetsBadge() {
 
 function initCabinets() {
     loadModerationQueue();
+    loadCabinetActivity();
     loadChatThreads();
+}
+
+// Иконки событий ленты активности; ошибки красным (is_error с сервера).
+const CABINET_ACTIVITY_ICONS = {
+    cabinet_signup: '🆕', cabinet_visit: '👀', cabinet_js_error: '⚠️',
+    cabinet_order_refused: '⛔', client_order: '🛎', cancelled: '↩️',
+    moderation_approved: '✅', moderation_rejected: '🚫', moderation_failed: '💥',
+};
+
+async function loadCabinetActivity() {
+    const box = document.getElementById('cabinet-activity');
+    if (!box) return;
+    try {
+        const data = await apiClient.request('/ad-crm/cabinet-activity?limit=60');
+        const rows = (data.activity || []).map((a) => `
+            <div class="d-flex gap-2 border-bottom py-1 ${a.is_error ? 'text-danger' : ''}">
+                <span>${CABINET_ACTIVITY_ICONS[a.kind] || '·'}</span>
+                <span class="text-muted text-nowrap">${escapeHtml((a.created_at || '').replace('T', ' ').slice(0, 16))}</span>
+                <b class="text-nowrap">${escapeHtml(a.client_name || (a.client_id ? 'Клиент #' + a.client_id : 'до онбординга'))}</b>
+                <span>${escapeHtml(a.summary || a.kind)}</span>
+            </div>`);
+        box.innerHTML = rows.length ? rows.join('')
+            : '<div class="text-muted">Активности пока нет — клиенты ещё не заходили.</div>';
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger">${escapeHtml(e.message)}</div>`;
+    }
 }
 
 async function loadModerationQueue() {

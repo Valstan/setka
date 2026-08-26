@@ -160,6 +160,52 @@
         </div>
     </div>
 
+    <script>
+    // Телеметрия кабинета (заказ владельца 2026-08-26): владелец видит, что
+    // клиенты приходят и что у них ломается, не дожидаясь жалобы. Инлайном и
+    // ДО основного скрипта — чтобы поймать в том числе его падение при
+    // загрузке. Fire-and-forget: телеметрия никогда не мешает клиенту.
+    (function () {
+        var sent = 0;
+        var seen = {};
+        function beacon(kind, message, source) {
+            try {
+                fetch('/api/advertiser/telemetry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    keepalive: true,
+                    body: JSON.stringify({
+                        kind: kind,
+                        message: String(message || '').slice(0, 500),
+                        source: String(source || '').slice(0, 300),
+                    }),
+                }).catch(function () {});
+            } catch (e) { /* телеметрия молчит о себе */ }
+        }
+        function reportError(message, source) {
+            // Анти-шторм: не больше 5 ошибок за загрузку, повторы не шлём.
+            var key = String(message).slice(0, 120);
+            if (sent >= 5 || seen[key]) return;
+            seen[key] = true;
+            sent += 1;
+            beacon('js_error', message, source);
+        }
+        // capture-фаза: без неё не видно провала ЗАГРУЗКИ ресурсов — а «404 на
+        // сам advertiser_cabinet.js» это и есть сценарий «кабинет мёртв целиком».
+        window.addEventListener('error', function (e) {
+            if (e.target && e.target !== window && (e.target.src || e.target.href)) {
+                reportError('resource failed: ' + (e.target.src || e.target.href), 'resource');
+                return;
+            }
+            reportError(e.message || 'script error', (e.filename || '') + ':' + (e.lineno || ''));
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+            var r = e.reason;
+            reportError((r && (r.message || String(r))) || 'unhandled rejection', 'promise');
+        });
+        beacon('visit', '', location.pathname);
+    })();
+    </script>
     <script src="/static/js/advertiser_cabinet.js"></script>
 </body>
 </html>
