@@ -24,7 +24,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
@@ -1488,7 +1488,12 @@ async def client_timeline(
     limit: int = 200,
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Хронология событий клиента (свежие сверху) — из ``ad_interactions``."""
+    """Хронология событий клиента (свежие сверху) — из ``ad_interactions``.
+
+    ``cabinet_visit`` исключён: до 24 строк «открыл кабинет» в сутки вытеснили
+    бы из окна заказы и оплаты — то, ради чего оператор открывает карточку
+    (should-fix ревью 2026-08-26). Визиты видны в сводной ленте вкладки.
+    """
     client = await db.get(AdClient, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="client not found")
@@ -1496,7 +1501,10 @@ async def client_timeline(
         (
             await db.execute(
                 select(AdInteraction)
-                .where(AdInteraction.client_id == client_id)
+                .where(
+                    AdInteraction.client_id == client_id,
+                    AdInteraction.kind != "cabinet_visit",
+                )
                 .order_by(AdInteraction.created_at.desc(), AdInteraction.id.desc())
                 .limit(limit)
             )
@@ -2242,6 +2250,65 @@ async def moderation_reject(
     await db.commit()
     await db.refresh(row)
     return row.to_dict()
+
+
+# События кабинета в сводной ленте активности: приход/визиты/действия клиентов
+# и всё, что у них ломается. Операторские правки карточек сюда не входят —
+# лента отвечает на вопрос «что делают КЛИЕНТЫ», а не «что делал я сам».
+CABINET_ACTIVITY_KINDS = (
+    "cabinet_signup",
+    "cabinet_visit",
+    "cabinet_js_error",
+    "cabinet_order_refused",
+    "client_order",
+    "cancelled",
+    "moderation_approved",
+    "moderation_rejected",
+    "moderation_failed",
+)
+
+# Ошибочные события — UI подсвечивает красным.
+CABINET_ACTIVITY_ERROR_KINDS = ("cabinet_js_error", "cabinet_order_refused", "moderation_failed")
+
+
+@router.get("/cabinet-activity")
+async def cabinet_activity(limit: int = 60, db: AsyncSession = Depends(get_db_session)):
+    """Сводная лента активности кабинетов — по всем клиентам, свежие сверху.
+
+    Заказ владельца 2026-08-26: видеть, что клиенты ПРИХОДЯТ и что у них
+    РАБОТАЕТ/ЛОМАЕТСЯ, не открывая карточку каждого. Источник — тот же
+    ``ad_interactions``, что и per-client таймлайн.
+    """
+    limit = max(1, min(int(limit), 300))
+    # «cancelled»/«client_order» пишет и операторский CRM (actor='operator') —
+    # в ленту КЛИЕНТСКОЙ активности такие не идут: массовая операторская отмена
+    # не должна выглядеть приходом клиентов (should-fix ревью 2026-08-26).
+    ambiguous = ("cancelled", "client_order")
+    rows = (
+        await db.execute(
+            select(AdInteraction, AdClient.name)
+            .outerjoin(AdClient, AdClient.id == AdInteraction.client_id)
+            .where(
+                AdInteraction.kind.in_(CABINET_ACTIVITY_KINDS),
+                or_(
+                    AdInteraction.kind.notin_(ambiguous),
+                    AdInteraction.actor == "client",
+                ),
+            )
+            .order_by(AdInteraction.created_at.desc(), AdInteraction.id.desc())
+            .limit(limit)
+        )
+    ).all()
+    return {
+        "activity": [
+            {
+                **rec.to_dict(),
+                "client_name": client_name,
+                "is_error": rec.kind in CABINET_ACTIVITY_ERROR_KINDS,
+            }
+            for rec, client_name in rows
+        ]
+    }
 
 
 # ----------------------------------------------------------------------

@@ -98,15 +98,134 @@ async def onboarding(
     возвращает уже привязанную карточку.
     """
     user = _current_user(request)
+    was_new = await advertiser_link.resolve_client(db, user) is None
     client = await advertiser_link.onboard_client(db, user, name=payload.name, phone=payload.phone)
     if getattr(user, "role", None) not in ("advertiser", "operator"):
         # Роль читается из БД на каждом запросе — вступает в силу сразу,
         # без перевыпуска сессионной куки.
         user.role = "advertiser"
         db.add(user)
+    if was_new:
+        await db.flush()  # id новой карточки нужен журналу до commit
+        log_interaction(
+            db,
+            kind="cabinet_signup",
+            client_id=client.id,
+            summary=f"Новый клиент в кабинете: {client.name or getattr(user, 'login', '?')}",
+            actor="client",
+        )
     await db.commit()
     await db.refresh(client)
+    if was_new:
+        import asyncio
+
+        from modules.ad_cabinet import owner_ping
+
+        # Глобальный бюджет пинга: регистрация публична, и скриптовые аккаунты
+        # не должны превращать Telegram владельца в ленту «новых клиентов»
+        # (should-fix ревью). Событие в таймлайне пишется всегда — бюджет
+        # только на пинг.
+        if await asyncio.to_thread(owner_ping.event_budget_pass, "signup_ping", limit=5, ttl=3600):
+            await asyncio.to_thread(
+                owner_ping.notify_owner,
+                f"🆕 Кабинет: новый клиент «{_telemetry_identity(user, client)}» "
+                "прошёл онбординг — карточка в /ad → Кабинеты",
+            )
     return {"is_advertiser": True, "client": client.to_dict()}
+
+
+class TelemetryIn(BaseModel):
+    """Событие из браузера клиента: визит либо JS-ошибка.
+
+    Пишется в тот же таймлайн ``ad_interactions`` — владелец видит, что клиенты
+    ПРИХОДЯТ и что у них ЛОМАЕТСЯ, не дожидаясь жалобы (заказ владельца
+    2026-08-26: «клиенты заходили, ничего не работало, а я не знал»).
+    """
+
+    kind: str = Field(..., pattern=r"^(visit|js_error)$")
+    message: str = Field("", max_length=500)
+    source: str = Field("", max_length=300)
+
+
+def _telemetry_identity(user, client) -> str:
+    """Имя для сводной ленты: ВК-аккаунт без login не должен светиться «None»."""
+    return (
+        (client.name if client is not None else None)
+        or getattr(user, "display_name", None)
+        or getattr(user, "login", None)
+        or f"user#{getattr(user, 'id', '?')}"
+    )
+
+
+# Потолок записей js_error на аккаунт в час — контент-независимый (ротация
+# текста не выбивает новые вёдра, блокер ревью 2026-08-26).
+JS_ERROR_BUDGET_PER_HOUR = 10
+
+
+@router.post("/telemetry")
+async def telemetry(
+    payload: TelemetryIn, request: Request, db: AsyncSession = Depends(get_db_session)
+):
+    """Принять событие браузера клиента (доступен ЛЮБОМУ аутентифицированному —
+    ошибка на странице онбординга ценнее прочих: до неё клиент ещё «никто»).
+
+    Анти-шум: ``visit`` пишется не чаще раза в час на аккаунт; ``js_error`` —
+    бюджет 10/час на аккаунт + дедуп одинакового текста на 10 минут; пинг
+    владельцу — не чаще раза в час на аккаунт. Троттлы зовутся в thread'е
+    (синхронный Redis не блокирует event loop). Ответ фиксированный — состояние
+    серверных окон клиенту не раскрывается.
+    """
+    import asyncio
+
+    user = _current_user(request)
+    client = await advertiser_link.resolve_client(db, user)
+    client_id = client.id if client is not None else None
+    who = _telemetry_identity(user, client)
+
+    from modules.ad_cabinet import owner_ping
+
+    logged = False
+    ping_text = None
+    if payload.kind == "visit":
+        if await asyncio.to_thread(owner_ping.ping_dedup_pass, f"visit:{user.id}", ttl=3600):
+            log_interaction(
+                db,
+                kind="cabinet_visit",
+                client_id=client_id,
+                summary=f"Клиент открыл кабинет: {who}",
+                actor="client",
+            )
+            logged = True
+    else:  # js_error
+        detail = " ".join(x for x in (payload.message.strip(), payload.source.strip()) if x)
+        budget_ok = await asyncio.to_thread(
+            owner_ping.event_budget_pass,
+            f"js_error:{user.id}",
+            limit=JS_ERROR_BUDGET_PER_HOUR,
+            ttl=3600,
+        )
+        fresh = budget_ok and await asyncio.to_thread(
+            owner_ping.ping_dedup_pass,
+            f"js_error_log:{user.id}:{owner_ping.stable_digest(detail[:200])}",
+            ttl=600,
+        )
+        if fresh:
+            log_interaction(
+                db,
+                kind="cabinet_js_error",
+                client_id=client_id,
+                summary=f"Ошибка в браузере клиента {who}: {detail[:400]}",
+                meta={"message": payload.message, "source": payload.source},
+                actor="client",
+            )
+            logged = True
+        ping_text = f"⚠️ Кабинет: у клиента «{who}» ошибка в браузере — {detail[:200]}"
+    if logged:
+        await db.commit()
+    if ping_text:
+        # После commit: висящий Telegram не держит открытую транзакцию.
+        await asyncio.to_thread(owner_ping.notify_owner, ping_text, dedup_key=f"js_error:{user.id}")
+    return {"ok": True}
 
 
 @router.get("/summary")
@@ -340,6 +459,24 @@ async def create_order(
             msk_to_unix=_msk_to_unix,
         )
     except client_orders.OrderError as e:
+        # Отказ формы — тоже событие для владельца: клиент ПЫТАЛСЯ заказать и
+        # упёрся. Пишется не чаще раза в 10 минут на клиента (should-fix ревью:
+        # зацикленный невалидный запрос не заливает ленту строкой на каждый 400).
+        import asyncio
+
+        from modules.ad_cabinet import owner_ping
+
+        if await asyncio.to_thread(
+            owner_ping.ping_dedup_pass, f"order_refused:{client.id}", ttl=600
+        ):
+            log_interaction(
+                db,
+                kind="cabinet_order_refused",
+                client_id=client.id,
+                summary=f"Заказ не прошёл валидацию: {e}",
+                actor="client",
+            )
+            await db.commit()
         raise HTTPException(status_code=400, detail=str(e))
 
     log_interaction(
@@ -353,7 +490,9 @@ async def create_order(
     await db.commit()
 
     if result["moderation"]:
-        _notify_owner_pending(client, result)
+        import asyncio
+
+        await asyncio.to_thread(_notify_owner_pending, client, result)
 
     return {
         "order_ref": result["order_ref"],
@@ -365,42 +504,15 @@ async def create_order(
 
 
 def _notify_owner_pending(client, result) -> None:
-    """Telegram владельцу: новый заказ ждёт модерации (best-effort).
+    """Telegram владельцу: новый заказ ждёт модерации (без дедупа — каждый
+    заказ важен). Механика отправки — общая (``modules/ad_cabinet/owner_ping``)."""
+    from modules.ad_cabinet.owner_ping import notify_owner
 
-    Паттерн alert-рассылок discovery (``_send_telegram_html``): первый рабочий
-    бот-токен + ``TELEGRAM_ALERT_CHAT_ID``; любая ошибка глотается — уведомление
-    не роняет заказ.
-    """
-    try:
-        import requests
-
-        from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
-
-        bot_token = None
-        for key in ("VALSTANBOT", "ALERT", "AFONYA"):
-            bot_token = (TELEGRAM_TOKENS or {}).get(key)
-            if bot_token:
-                break
-        if not bot_token:
-            bot_token = next(iter((TELEGRAM_TOKENS or {}).values()), None)
-        if not bot_token or not TELEGRAM_ALERT_CHAT_ID:
-            logger.info("owner pending notification: telegram not configured")
-            return
-        requests.post(
-            f"https://api.telegram.org/bot{bot_token}/sendMessage",
-            json={
-                "chat_id": TELEGRAM_ALERT_CHAT_ID,
-                "text": (
-                    f"🛎 Кабинет: клиент «{client.name or client.id}» создал заказ на "
-                    f"{len(result['posts'])} районов ({result['price_total']:.0f} ₽) — "
-                    "ждёт одобрения в /ad"
-                ),
-                "disable_web_page_preview": True,
-            },
-            timeout=10,
-        )
-    except Exception:  # noqa: BLE001 - уведомление не роняет заказ
-        logger.warning("owner pending notification failed", exc_info=True)
+    notify_owner(
+        f"🛎 Кабинет: клиент «{client.name or client.id}» создал заказ на "
+        f"{len(result['posts'])} районов ({result['price_total']:.0f} ₽) — "
+        "ждёт одобрения в /ad"
+    )
 
 
 @router.get("/posts")
@@ -528,4 +640,15 @@ async def send_chat(payload: ChatIn, request: Request, db: AsyncSession = Depend
         raise HTTPException(status_code=400, detail=str(e))
     await db.commit()
     await db.refresh(row)
+    import asyncio
+
+    from modules.ad_cabinet import owner_ping
+
+    # Пинг о новом сообщении — не чаще раза в час на клиента: владелец узнаёт,
+    # что клиент написал, не входя в /ad; переписка спамом в Telegram не льётся.
+    await asyncio.to_thread(
+        owner_ping.notify_owner,
+        f"💬 Кабинет: сообщение от «{client.name or client.id}» — ответить в /ad → Кабинеты",
+        dedup_key=f"chat:{client.id}",
+    )
     return row.to_dict()
