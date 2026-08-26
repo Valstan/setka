@@ -807,6 +807,11 @@ class AdScheduledPost(Base):
     order_ref = Column(String(36), nullable=True)
     moderated_at = Column(DateTime, nullable=True)
     moderation_comment = Column(Text, nullable=True)
+    # Пакет, в счёт которого создан пост (миграция 086). NULL — обычный платный
+    # заказ по прайсу. Терминальный не-published статус возвращает пост в пакет.
+    package_id = Column(
+        BigInteger, ForeignKey("ad_client_packages.id", ondelete="SET NULL"), nullable=True
+    )
 
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -840,6 +845,7 @@ class AdScheduledPost(Base):
             "order_ref": self.order_ref,
             "moderated_at": self.moderated_at.isoformat() if self.moderated_at else None,
             "moderation_comment": self.moderation_comment,
+            "package_id": self.package_id,
             "error_message": self.error_message,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
@@ -983,6 +989,67 @@ class AdPayment(Base):
             "paid_confirmed_at": (
                 self.paid_confirmed_at.isoformat() if self.paid_confirmed_at else None
             ),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AdClientPackage(Base):
+    """Пакет постов клиента кабинета (заказ владельца 2026-08-26). Миграция 086.
+
+    Три вида (``kind``):
+
+    * ``free_promo`` — акция «бесплатная реклама местным»: N постов бесплатно,
+      бессрочно; ``site_ad`` — малмыжским дополнительно размещение на сайте
+      вМалмыже.рф (руками, SETKA порталом не управляет — отметка о выполнении).
+    * ``prepaid``  — «оплатил N постов»: доступен ТОЛЬКО после галочки владельца
+      (``paid_at``); без периода — размещай хоть год, хоть за день.
+    * ``postpaid`` — месячный пакет с оплатой в конце: доступен сразу, по
+      исчерпании/истечении месяца новые посты БЛОКИРУЮТСЯ, пока владелец не
+      отметит оплату и не продлит (или не продлит в долг). Авто-продления нет —
+      решение владельца 2026-08-26.
+
+    Цена пакета — целиком в ``price``; посты в счёт пакета идут с ``price=0``
+    (реконсилер не создаёт по ним awaiting-платежей — деньги живут на пакете).
+    Отменённый/отклонённый/несостоявшийся пост возвращается в пакет
+    (``posts_used`` уменьшается) — списание только за реальные размещения.
+    """
+
+    __tablename__ = "ad_client_packages"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    client_id = Column(
+        BigInteger, ForeignKey("ad_clients.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind = Column(String(20), nullable=False)  # free_promo|prepaid|postpaid
+    posts_total = Column(SmallInteger, nullable=False)
+    posts_used = Column(SmallInteger, nullable=False, default=0)
+    price = Column(Numeric(10, 2), nullable=False, default=0)  # цена пакета целиком
+    period_start = Column(Date, nullable=True)  # NULL = бессрочный пакет
+    period_end = Column(Date, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    paid_at = Column(DateTime, nullable=True)  # галочка владельца «оплачено»
+    site_ad = Column(Boolean, nullable=False, default=False)  # акция: реклама на сайте
+    site_ad_done_at = Column(DateTime, nullable=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "kind": self.kind,
+            "posts_total": int(self.posts_total or 0),
+            "posts_used": int(self.posts_used or 0),
+            "posts_left": max(0, int(self.posts_total or 0) - int(self.posts_used or 0)),
+            "price": float(self.price) if self.price is not None else 0.0,
+            "period_start": self.period_start.isoformat() if self.period_start else None,
+            "period_end": self.period_end.isoformat() if self.period_end else None,
+            "is_active": bool(self.is_active),
+            "paid": self.paid_at is not None,
+            "paid_at": self.paid_at.isoformat() if self.paid_at else None,
+            "site_ad": bool(self.site_ad),
+            "site_ad_done_at": (self.site_ad_done_at.isoformat() if self.site_ad_done_at else None),
+            "note": self.note,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

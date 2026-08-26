@@ -14,6 +14,7 @@ from database.connection import Base
 from database.models import (
     AdChatMessage,
     AdClient,
+    AdClientPackage,
     AdInteraction,
     AdPayment,
     AdPublication,
@@ -30,6 +31,7 @@ async def db_session():
         Region.__table__,
         RadarUser.__table__,
         AdClient.__table__,
+        AdClientPackage.__table__,
         AdScheduledPost.__table__,
         AdPayment.__table__,
         AdPublication.__table__,

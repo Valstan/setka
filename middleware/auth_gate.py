@@ -277,15 +277,17 @@ def _on_ad_cabinet_host(request: Request) -> bool:
 
 
 def _ad_cabinet_canonical_url(request: Request) -> Optional[str]:
-    """Абсолютный адрес кабинета рекламодателя на его домене — или ``None``.
+    """Абсолютный канонический адрес кабинета рекламодателя — или ``None``.
 
-    Нужен, чтобы advertiser-юзера, забредшего на домен САРАФАНА, отправить
-    домой, а не на витрину рекламы (паттерн ``_radar_canonical_url``).
+    Нужен, чтобы advertiser-юзера, забредшего на витрину, отправить домой.
+    Канон — сарафан…/cabinet (2026-08-26): с корня домена сети advertiser
+    уезжает на путь кабинета того же домена, цикла нет — путь входит в
+    ``ADVERTISER_PREFIXES`` и витринной веткой не перехватывается.
     """
     try:
-        from modules.radar_id.vk_upstream import ad_cabinet_canonical_redirect
+        from modules.radar_id.vk_upstream import ad_cabinet_canonical_url
 
-        return ad_cabinet_canonical_redirect(request.url.hostname)
+        return ad_cabinet_canonical_url()
     except Exception:  # noqa: BLE001 - косметика маршрутизации не роняет гейт
         logger.warning("AuthGate: ad cabinet canonical resolve failed", exc_info=True)
         return None
@@ -497,7 +499,14 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         # Дальше — все, кто НЕ владелец. На домене сети им не видно ничего,
         # кроме витрины: заказ владельца 2026-08-02. Роль radar своей зоной
         # пользуется на своём домене (радар.вмалмыже.рф), туда и отправляем.
-        if on_sarafan and not _is_prefixed(path, SARAFAN_ALLOWED_FOR_GUESTS):
+        # Исключение (решение владельца 2026-08-26): кабинет рекламодателя
+        # канонически живёт на сарафан…/cabinet — его зона и онбординг на
+        # домене сети открыты, дальше их разбирают ветки ролей ниже.
+        if on_sarafan and not (
+            _is_prefixed(path, SARAFAN_ALLOWED_FOR_GUESTS)
+            or _is_prefixed(path, ADVERTISER_PREFIXES)
+            or _is_exact(path, ADVERTISER_ONBOARDING_EXACT)
+        ):
             if request.method == "GET" and _wants_html(request):
                 target = None
                 if user.role == "radar":

@@ -102,7 +102,7 @@ def test_price_split_kopecks_go_first():
 async def test_resolve_targets_negative_owner_ids(db_session):
     ids = await _seed_regions(db_session, 2)
     targets = await client_orders.resolve_targets(db_session, ids)
-    assert [(rid, gid < 0) for rid, gid in targets] == [(ids[0], True), (ids[1], True)]
+    assert [(rid, gid < 0) for rid, gid, _name in targets] == [(ids[0], True), (ids[1], True)]
 
 
 @pytest.mark.asyncio

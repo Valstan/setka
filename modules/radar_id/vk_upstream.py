@@ -206,20 +206,34 @@ def is_radar_host(current_host: Optional[str]) -> bool:
         return False
 
 
-# Канонический публичный хост кабинета рекламодателя (кабинет.вмалмыже.рф,
-# punycode). Кабинет живёт на корне своего поддомена — как Радар.
-AD_CABINET_CANONICAL_HOST_DEFAULT = "xn--80acmlhv0b.xn--80adkdyec4j.xn--p1ai"
+# Канонический адрес кабинета рекламодателя (решение владельца 2026-08-26):
+# ПУТЬ на домене сети — сарафан.вмалмыже.рф/cabinet. Бренд САРАФАН знаком
+# клиентам всех районов, TLS у домена уже есть — отдельный поддомен не нужен.
+# Хост переопределяется env AD_CABINET_CANONICAL_HOST (punycode).
+AD_CABINET_CANONICAL_HOST_DEFAULT = "xn--80aaa6cmey.xn--80adkdyec4j.xn--p1ai"
+AD_CABINET_CANONICAL_PATH = "/cabinet"
+
+# Прежний выделенный поддомен (кабинет.вмалмыже.рф, до TLS не дожил): корень
+# этого хоста уводим на новый канонический адрес — ссылки не должны умирать.
+AD_CABINET_LEGACY_HOST = "xn--80acmlhv0b.xn--80adkdyec4j.xn--p1ai"
+
+
+def _ad_cabinet_canonical_host() -> str:
+    return os.getenv("AD_CABINET_CANONICAL_HOST", AD_CABINET_CANONICAL_HOST_DEFAULT).strip().lower()
+
+
+def ad_cabinet_canonical_url() -> str:
+    """Абсолютный канонический адрес кабинета (для редиректов и ссылок)."""
+    return f"https://{_ad_cabinet_canonical_host()}{AD_CABINET_CANONICAL_PATH}"
 
 
 def ad_cabinet_canonical_redirect(current_host: Optional[str]) -> Optional[str]:
-    """Абсолютный URL кабинета рекламодателя на каноническом хосте — или ``None``.
+    """Абсолютный URL кабинета, если запрос пришёл НЕ на канонический хост.
 
-    Паттерн ``radar_canonical_redirect``: ``None`` (= остаёмся на месте), если
-    уже на каноническом хосте, хост вне куки-зоны или зона/канон не настроены.
+    ``None`` — уже на каноническом хосте (страницу отдаём на месте), хост вне
+    куки-зоны или канон не настроен (паттерн ``radar_canonical_redirect``).
     """
-    canonical = (
-        os.getenv("AD_CABINET_CANONICAL_HOST", AD_CABINET_CANONICAL_HOST_DEFAULT).strip().lower()
-    )
+    canonical = _ad_cabinet_canonical_host()
     if not canonical:
         return None
     host = (current_host or "").strip().lower().rstrip(".")
@@ -230,25 +244,24 @@ def ad_cabinet_canonical_redirect(current_host: Optional[str]) -> Optional[str]:
         return None
     if not host or host == canonical:
         return None
-    if not (_host_shares_session(host) and _host_shares_session(canonical)):
+    if host != AD_CABINET_LEGACY_HOST and not (
+        _host_shares_session(host) and _host_shares_session(canonical)
+    ):
         return None
-    return f"https://{canonical}/"
+    return f"https://{canonical}{AD_CABINET_CANONICAL_PATH}"
 
 
 def is_ad_cabinet_host(current_host: Optional[str]) -> bool:
-    """True, если запрос пришёл на канонический хост кабинета рекламодателя.
+    """True, если запрос пришёл на ПРЕЖНИЙ выделенный хост кабинета.
 
-    На этом хосте интерфейс кабинета отдаётся с корня ``/``. Сравнение — в
-    punycode (кириллица == punycode), паттерн ``is_radar_host``.
+    Раньше кабинет жил на корне своего поддомена; теперь корень такого хоста —
+    только редирект на канонический адрес (``ad_cabinet_canonical_url``).
     """
-    canonical = (
-        os.getenv("AD_CABINET_CANONICAL_HOST", AD_CABINET_CANONICAL_HOST_DEFAULT).strip().lower()
-    )
     host = (current_host or "").strip().lower().rstrip(".")
-    if not canonical or not host:
+    if not host:
         return False
     try:
-        return host.encode("idna").decode("ascii") == canonical.encode("idna").decode("ascii")
+        return host.encode("idna").decode("ascii") == AD_CABINET_LEGACY_HOST
     except (UnicodeError, UnicodeDecodeError):
         return False
 

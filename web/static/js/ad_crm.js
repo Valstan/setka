@@ -1843,7 +1843,9 @@ async function ownerChatOpen(clientId, el) {
             `Оплачено <b>${fmtMoney(bal.paid)}</b> · израсходовано <b>${fmtMoney(bal.spent)}</b>` +
             ` · остаток <b>${fmtMoney(bal.remaining)}</b>` +
             (bal.awaiting ? ` · ожидается <b>${fmtMoney(bal.awaiting)}</b>` : '') +
-            ` — <a href="/ad/client/${clientId}">карточка клиента</a>`;
+            ` — <a href="/ad/client/${clientId}">карточка клиента</a>` +
+            `<span id="chat-client-packages" class="d-block mt-1"></span>`;
+        loadClientPackages(clientId);
     } catch (e) { /* карточка не критична */ }
     if (_ownerChatTimer) clearInterval(_ownerChatTimer);
     _ownerChatTimer = setInterval(() => ownerChatPoll(false), 5000);
@@ -1866,6 +1868,86 @@ async function ownerChatPoll(reset) {
         });
         if ((data.messages || []).length) box.scrollTop = box.scrollHeight;
     } catch (e) { /* сеть мигнула — следующий tick */ }
+}
+
+// ---------------------- Пакеты клиента (заказ владельца 2026-08-26) --------
+
+const PKG_KIND_NAMES = { free_promo: '🎁 акция', prepaid: '💳 предоплата', postpaid: '📆 постоплата' };
+
+async function loadClientPackages(clientId) {
+    const box = document.getElementById('chat-client-packages');
+    if (!box) return;
+    try {
+        const data = await apiClient.request(`/ad-crm/clients/${clientId}/packages`);
+        const rows = (data.packages || []).filter((p) => p.is_active).map((p) => {
+            const kind = PKG_KIND_NAMES[p.kind] || p.kind;
+            const period = p.period_end ? ` до ${p.period_end}` : ' · бессрочно';
+            const paid = p.paid ? '' : ' · <b class="text-danger">не оплачен</b>';
+            const site = p.site_ad ? (p.site_ad_done_at ? ' · сайт ✅' :
+                ` · <a href="#" onclick="pkgSiteDone(${p.id}, ${clientId}); return false;">сайт: отметить</a>`) : '';
+            const actions = [
+                p.paid ? '' : `<a href="#" onclick="pkgPaid(${p.id}, ${clientId}); return false;">оплачен</a>`,
+                p.period_end ? `<a href="#" onclick="pkgExtend(${p.id}, ${clientId}); return false;">продлить</a>` : '',
+                `<a href="#" class="text-danger" onclick="pkgDeactivate(${p.id}, ${clientId}); return false;">закрыть</a>`,
+            ].filter(Boolean).join(' · ');
+            return `<span class="d-block">${kind}: <b>${p.posts_left}/${p.posts_total}</b> постов` +
+                `${p.price ? ' · ' + fmtMoney(p.price) : ''}${period}${paid}${site} — ${actions}</span>`;
+        });
+        const block = data.block_reason
+            ? `<span class="d-block text-danger">⛔ ${escapeHtml(data.block_reason)}</span>` : '';
+        box.innerHTML = block + rows.join('') +
+            `<span class="d-block mt-1">` +
+            `<a href="#" onclick="pkgGivePromo(${clientId}); return false;">🎁 выдать акцию (3 поста бесплатно)</a> · ` +
+            `<a href="#" onclick="pkgCreate(${clientId}); return false;">+ пакет</a></span>`;
+    } catch (e) { box.textContent = ''; }
+}
+
+async function pkgGivePromo(clientId) {
+    const site = confirm('Клиент малмыжский? ОК — с рекламой на сайте вМалмыже.рф, Отмена — только посты.');
+    try {
+        await apiClient.request(`/ad-crm/clients/${clientId}/packages`, {
+            method: 'POST',
+            body: JSON.stringify({ kind: 'free_promo', posts_total: 3, site_ad: site, note: 'акция «бесплатная реклама местным»' }),
+        });
+    } catch (e) { alert(e.message); }
+    loadClientPackages(clientId);
+}
+
+async function pkgCreate(clientId) {
+    const total = parseInt(prompt('Сколько постов в пакете?', '10') || '0', 10);
+    if (!total || total < 1) return;
+    const price = parseFloat(prompt('Цена пакета целиком, ₽ (0 — бесплатно):', '0') || '0');
+    const monthly = confirm('Пакет на ТЕКУЩИЙ месяц? ОК — месячный (сгорает), Отмена — бессрочный.');
+    const postpaid = confirm('Постоплата? ОК — доступен сразу, оплата потом; Отмена — предоплата (откроется после отметки «оплачен»).');
+    try {
+        await apiClient.request(`/ad-crm/clients/${clientId}/packages`, {
+            method: 'POST',
+            body: JSON.stringify({
+                kind: postpaid ? 'postpaid' : 'prepaid',
+                posts_total: total, price, monthly,
+            }),
+        });
+    } catch (e) { alert(e.message); }
+    loadClientPackages(clientId);
+}
+
+async function pkgPaid(id, clientId) {
+    try { await apiClient.request(`/ad-crm/packages/${id}/mark-paid`, { method: 'POST' }); }
+    catch (e) { alert(e.message); }
+    loadClientPackages(clientId);
+}
+
+async function pkgExtend(id, clientId) {
+    try { await apiClient.request(`/ad-crm/packages/${id}/extend`, { method: 'POST' }); }
+    catch (e) { alert(e.message); }
+    loadClientPackages(clientId);
+}
+
+async function pkgDeactivate(id, clientId) {
+    if (!confirm('Закрыть пакет? Остаток постов сгорит.')) return;
+    try { await apiClient.request(`/ad-crm/packages/${id}/deactivate`, { method: 'POST' }); }
+    catch (e) { alert(e.message); }
+    loadClientPackages(clientId);
 }
 
 async function ownerChatSend() {
