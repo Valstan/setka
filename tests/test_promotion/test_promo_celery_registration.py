@@ -26,24 +26,56 @@ def test_members_task_registered():
     assert "tasks.promo_tasks.refresh_promo_community_members" in app.tasks
 
 
+def test_dispatch_and_watchdog_registered():
+    from tasks.celery_app import app
+    from tasks.promo_tasks import check_promo_heartbeat, dispatch_promo  # noqa: F401
+
+    assert "tasks.promo_tasks.dispatch_promo" in app.tasks
+    assert "tasks.promo_tasks.check_promo_heartbeat" in app.tasks
+
+
 def test_beat_entries_point_to_real_tasks():
     from tasks.celery_app import app
 
     schedule = app.conf.beat_schedule
-    assert "promo-sync-enrollments" in schedule
-    assert "promo-members-refresh-weekly" in schedule
+    expected = {
+        "promo-sync-enrollments": "tasks.promo_tasks.sync_promo_enrollments",
+        "promo-members-refresh-weekly": "tasks.promo_tasks.refresh_promo_community_members",
+        "promo-dispatch": "tasks.promo_tasks.dispatch_promo",
+        "promo-watchdog": "tasks.promo_tasks.check_promo_heartbeat",
+    }
+    for key, task_name in expected.items():
+        assert key in schedule, key
+        assert schedule[key]["task"] == task_name
 
-    assert schedule["promo-sync-enrollments"]["task"] == "tasks.promo_tasks.sync_promo_enrollments"
-    assert (
-        schedule["promo-members-refresh-weekly"]["task"]
-        == "tasks.promo_tasks.refresh_promo_community_members"
-    )
+
+def test_dispatch_runs_only_in_daytime_window():
+    """Ночной постинг — сигнал «бот» и для читателя, и для антиспама."""
+    from tasks.celery_app import app
+
+    hours = app.conf.beat_schedule["promo-dispatch"]["schedule"].hour
+    assert min(hours) >= 9
+    assert max(hours) <= 21
+
+
+def test_dispatch_minute_does_not_collide_with_bulletin_slots():
+    """Минута :08 свободна — два поста подряд на стене донора невозможны."""
+    from tasks.celery_app import app
+
+    busy = {0, 5, 7, 10, 12, 15, 16, 17, 20, 22, 25, 30, 35, 37, 40, 45, 47, 50, 55}
+    minute = min(app.conf.beat_schedule["promo-dispatch"]["schedule"].minute)
+    assert minute not in busy
 
 
 def test_beat_entries_expire_and_do_not_catch_up():
     from tasks.celery_app import app
 
-    for key in ("promo-sync-enrollments", "promo-members-refresh-weekly"):
+    for key in (
+        "promo-sync-enrollments",
+        "promo-members-refresh-weekly",
+        "promo-dispatch",
+        "promo-watchdog",
+    ):
         options = app.conf.beat_schedule[key]["options"]
         assert options["expires"] > 0
         assert options["catchup"] is False

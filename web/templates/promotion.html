@@ -39,6 +39,10 @@
                     type="button" role="tab">План</button>
         </li>
         <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-channels"
+                    type="button" role="tab">Каналы</button>
+        </li>
+        <li class="nav-item" role="presentation">
             <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-journal"
                     type="button" role="tab">Журнал</button>
         </li>
@@ -90,7 +94,13 @@
         <div class="tab-pane fade" id="tab-plan" role="tabpanel">
             <div class="card mb-3">
                 <div class="card-body">
-                    <h5 class="card-title">Кто кого представит</h5>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="card-title mb-0">Кто кого представит</h5>
+                        <button class="btn btn-outline-primary btn-sm" id="promo-dispatch">
+                            <i class="bi bi-play"></i> Прогнать план сейчас
+                        </button>
+                    </div>
+                    <div id="promo-dispatch-note" class="small text-muted mb-2"></div>
                     <p class="text-muted small">
                         Пары подбираются по графу соседства: сперва прямой сосед, затем сосед
                         соседа. Донор со своим ключом сообщества идёт первым — такая публикация
@@ -125,6 +135,37 @@
                         их «в работе».
                     </p>
                     <div id="promo-orphans" class="small text-muted">Загрузка…</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-channels" role="tabpanel">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Каналы</h5>
+                    <p class="text-muted small">
+                        Публикацию гасят три уровня, и каждый следующий сильнее предыдущего:
+                        переменная <code>PROMO_DISABLED</code> в окружении, пауза после ответа
+                        ВК (коды 9 и 14), и переключатель канала. Ни одна галочка ниже не
+                        пересиливает первые два — так и задумано.
+                    </p>
+                    <div id="promo-pause" class="alert alert-danger d-none py-2 px-3 small"></div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Канал</th>
+                                    <th>Включён</th>
+                                    <th>Сухой прогон</th>
+                                    <th>Публикует?</th>
+                                    <th>Почему</th>
+                                </tr>
+                            </thead>
+                            <tbody id="promo-channels-body">
+                                <tr><td colspan="5" class="text-muted small">Загрузка…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -210,5 +251,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/js/promotion.js?v=20260828_promo_stage0"></script>
+<script src="/static/js/promotion.js?v=20260828_promo_stage1"></script>
 {% endblock %}

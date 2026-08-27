@@ -1,8 +1,8 @@
 /* Раздел «Раскрутка»: состав районов, план пар, журнал действий, настройки.
  *
- * Этап 0 — только чтение. Единственные записи, доступные отсюда, — пересчёт
- * состава (пишет в свои таблицы и в local_hashtags) и сохранение настроек.
- * Ничего не публикуется в VK.
+ * Записи, доступные отсюда: пересчёт состава, переключатели каналов и прогон
+ * диспетчера. Прогон безопасен по построению — пока канал в сухом режиме, он
+ * только считает пары и кладёт готовый текст в журнал, ничего не отправляя.
  */
 (function () {
     "use strict";
@@ -184,6 +184,77 @@
             : "Все зачисленные районы кем-то представлены.";
     }
 
+    const CHANNEL_TITLES = {
+        setup: "Оформление сообщества",
+        pin: "Закреп-визитка",
+        footer: "Футер в сводках",
+        promo_post: "Промо-пост у донора",
+        oblast_digest: "Областной дайджест",
+        outreach: "Кандидаты для аутрича",
+    };
+
+    async function toggleChannel(name, field, value) {
+        const payload = {};
+        payload[field] = value;
+        await sendJSON("/api/promotion/channels/" + encodeURIComponent(name), "PUT", payload);
+        await loadChannels();
+    }
+
+    async function loadChannels() {
+        const data = await getJSON("/api/promotion/channels");
+        const body = document.getElementById("promo-channels-body");
+        const rows = data.channels || [];
+
+        body.innerHTML = rows
+            .map(function (c) {
+                const title = CHANNEL_TITLES[c.name] || c.name;
+                const publishes = c.publishes
+                    ? '<span class="badge bg-danger">публикует</span>'
+                    : '<span class="badge bg-secondary">молчит</span>';
+                return (
+                    "<tr>" +
+                    "<td>" + escapeHtml(title) +
+                    ' <span class="text-muted small">' + escapeHtml(c.name) + "</span></td>" +
+                    '<td><div class="form-check form-switch mb-0">' +
+                    '<input class="form-check-input js-ch" type="checkbox" data-name="' +
+                    escapeHtml(c.name) + '" data-field="enabled"' +
+                    (c.enabled ? " checked" : "") + "></div></td>" +
+                    '<td><div class="form-check form-switch mb-0">' +
+                    '<input class="form-check-input js-ch" type="checkbox" data-name="' +
+                    escapeHtml(c.name) + '" data-field="dry_run"' +
+                    (c.dry_run ? " checked" : "") + "></div></td>" +
+                    "<td>" + publishes + "</td>" +
+                    '<td class="small text-muted">' + escapeHtml(c.reason) + "</td>" +
+                    "</tr>"
+                );
+            })
+            .join("");
+
+        body.querySelectorAll(".js-ch").forEach(function (input) {
+            input.addEventListener("change", function () {
+                toggleChannel(this.dataset.name, this.dataset.field, this.checked);
+            });
+        });
+
+        const pause = document.getElementById("promo-pause");
+        if (data.paused_until) {
+            pause.classList.remove("d-none");
+            pause.innerHTML =
+                "<strong>Модуль на паузе до " + escapeHtml(data.paused_until) + "</strong><br>" +
+                escapeHtml(data.paused_reason || "") +
+                ' <button class="btn btn-sm btn-outline-danger ms-2" id="promo-resume">Снять паузу</button>';
+            const btn = document.getElementById("promo-resume");
+            if (btn) {
+                btn.addEventListener("click", async function () {
+                    await sendJSON("/api/promotion/resume", "POST");
+                    await refreshAll();
+                });
+            }
+        } else {
+            pause.classList.add("d-none");
+        }
+    }
+
     async function loadJournal() {
         const data = await getJSON("/api/promotion/actions?limit=100");
         const body = document.getElementById("promo-journal-body");
@@ -249,7 +320,7 @@
         try {
             const settings = await loadOverview();
             fillSettings(settings);
-            await Promise.all([loadRegions(), loadPlan(), loadJournal()]);
+            await Promise.all([loadRegions(), loadPlan(), loadJournal(), loadChannels()]);
         } catch (e) {
             const body = document.getElementById("promo-regions-body");
             if (body) {
@@ -264,6 +335,26 @@
         document.getElementById("promo-refresh").addEventListener("click", refreshAll);
         document.getElementById("promo-only-gaps").addEventListener("change", renderRegions);
         document.getElementById("promo-save").addEventListener("click", saveSettings);
+        document.getElementById("promo-dispatch").addEventListener("click", async function () {
+            const note = document.getElementById("promo-dispatch-note");
+            const btn = this;
+            btn.disabled = true;
+            note.textContent = "Считаю план…";
+            try {
+                const res = await sendJSON("/api/promotion/dispatch", "POST");
+                const mode = res.mode === "live" ? "боевой режим" : "сухой прогон";
+                note.textContent =
+                    "Режим: " + mode + ". Запланировано: " + (res.planned || 0) +
+                    ", опубликовано: " + (res.published || 0) +
+                    ", без донора: " + (res.orphans || 0) +
+                    (res.status && res.status !== "ok" ? " (" + res.status + ")" : "");
+                await refreshAll();
+            } catch (e) {
+                note.textContent = "Не получилось: " + e.message;
+            } finally {
+                btn.disabled = false;
+            }
+        });
         document.getElementById("promo-sync").addEventListener("click", async function () {
             const btn = this;
             btn.disabled = true;

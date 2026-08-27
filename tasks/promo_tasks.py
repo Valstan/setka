@@ -47,6 +47,65 @@ def sync_promo_enrollments():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.promo_tasks.dispatch_promo")
+def dispatch_promo():
+    """Тик диспетчера раскрутки (по будним часам, минута :08).
+
+    На этапе 1 все каналы в сухом прогоне: задача подбирает пары, собирает
+    готовый текст и кладёт его в ``promo_actions`` со статусом ``dry_run``,
+    не отправляя ничего. Владелец неделю читает в разделе ровно тот текст,
+    который ушёл бы на стену.
+
+    Публикация возможна, только когда сойдутся три условия: снят
+    ``PROMO_DISABLED``, модуль не на паузе после ответа ВК, и у канала снят
+    ``dry_run``. Любое из трёх держит тишину.
+    """
+    try:
+        from database.connection import AsyncSessionLocal
+        from modules.promotion.dispatcher import run_promo_dispatch
+
+        async def _run():
+            async with AsyncSessionLocal() as session:
+                return await run_promo_dispatch(session)
+
+        result = run_coro(_run())
+        if result.get("planned") or result.get("errors"):
+            logger.info("promo dispatch: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"dispatch_promo failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
+@app.task(name="tasks.promo_tasks.check_promo_heartbeat")
+def check_promo_heartbeat():
+    """Watchdog: алёрт, если боевой модуль давно ничего не публиковал.
+
+    Молчит, пока каналы в сухом прогоне или продвигать некого: сторож, орущий
+    на штатную тишину, обучает себя игнорировать — и промолчит тогда, когда
+    сломается по-настоящему.
+    """
+    try:
+        from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from database.connection import AsyncSessionLocal
+        from modules.promotion.dispatcher import maybe_alert_stale_promo
+
+        token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
+
+        async def _run():
+            async with AsyncSessionLocal() as session:
+                return await maybe_alert_stale_promo(
+                    session, telegram_token=token, chat_id=TELEGRAM_ALERT_CHAT_ID
+                )
+
+        status = run_coro(_run())
+        logger.info("promo watchdog: %s", status)
+        return {"success": True, "status": status, "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        logger.error(f"check_promo_heartbeat failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.promo_tasks.refresh_promo_community_members")
 def refresh_promo_community_members():
     """Обновить размеры донорских сообществ (еженедельно, вторник 05:38 MSK).
