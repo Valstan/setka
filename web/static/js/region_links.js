@@ -324,16 +324,19 @@ function renderByNeighbors(container) {
     `;
 }
 
+// Строка списка: кликабельно САМО ИМЯ сообщества (заказ владельца 2026-08-27) —
+// адрес в строке больше не пишем, он занимал полстроки и ронял длинные названия
+// на второй ряд. В ТЕКСТЕ для копирования (item.line, собран сервером) ссылка
+// остаётся отдельным токеном: VK делает кликабельным только голый URL.
 function rowHtml(item, showOblast) {
     const picked = rlPicked.has(item.code);
     return `
         <li class="${item.kind === 'oblast' ? 'oblast-row' : ''} ${picked ? 'picked' : ''}">
             <input type="checkbox" class="c-check" data-code="${escapeHtml(item.code)}" ${picked ? 'checked' : ''}
                    title="Выбрать для заказа рекламы">
-            <span class="c-name">${escapeHtml(item.name)}</span>
+            <a class="c-name" href="${escapeHtml(item.url)}" target="_blank" rel="noopener"
+               title="Открыть ${escapeHtml(item.name)} во ВКонтакте">${escapeHtml(item.name)}</a>
             ${item.members !== null ? `<span class="c-dash">—</span><span class="c-members">${fmt(item.members)}</span>` : ''}
-            <span class="c-dash">—</span>
-            <a class="c-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.url.replace('https://', ''))}</a>
             ${showOblast && item.oblast ? `<span class="c-oblast">${escapeHtml(item.oblast)}</span>` : ''}
         </li>
     `;

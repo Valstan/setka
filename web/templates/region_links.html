@@ -123,7 +123,7 @@
         .growth-months {
             /* Та же ширина, что у main — полоса стоит над списком и должна
                быть с ним по одной линии. */
-            max-width: 1240px; margin: 26px auto 0; padding: 0 16px;
+            max-width: 1140px; margin: 26px auto 0; padding: 0 16px;
         }
         .gm-card {
             background: linear-gradient(120deg, #fffcef, #fff);
@@ -193,7 +193,7 @@
 
         /* Шире прежних 980px: список сообществ идёт в две колонки (Кировская
            область | Татарстан), и в 980 две колонки со ссылками не помещаются. */
-        main { max-width: 1240px; margin: 0 auto; padding: 34px 16px 70px; }
+        main { max-width: 1140px; margin: 0 auto; padding: 34px 16px 70px; }
 
         /* ── Легенда ───────────────────────────────────────────── */
         .legend {
@@ -208,7 +208,6 @@
         .legend .chip { border-radius: 8px; padding: 2px 10px; font-weight: 600; white-space: nowrap; font-family: 'Segoe UI', sans-serif; }
         .chip.name { background: var(--rose); color: var(--accent-dark); }
         .chip.members { background: var(--mint); color: var(--green); }
-        .chip.link { background: var(--sky); color: var(--blue); }
         .legend .dash { color: var(--ink-soft); }
 
         /* ── Подсказки ─────────────────────────────────────────── */
@@ -299,11 +298,9 @@
             align-items: start;
         }
         #rl-blocks.cols .oblast-card { margin-bottom: 0; }
-        /* В колонке строка вдвое уже — без уплотнения длинные названия
-           («Вятские Поляны ИНФО — 2 980 чел. — vk.com/club…») роняют ссылку на
-           вторую строку и список идёт лесенкой. */
+        /* В колонке строка вдвое уже — держим её компактной, чтобы длинные
+           названия не уезжали на второй ряд. */
         #rl-blocks.cols .community-list li { padding: 8px 14px; gap: 8px; }
-        #rl-blocks.cols .c-link { font-size: .86rem; }
         .oblast-head {
             display: flex; justify-content: space-between; align-items: center;
             gap: 10px; flex-wrap: wrap;
@@ -324,11 +321,23 @@
         .community-list li:nth-child(even) { background: #fffdf4; }
         .community-list li:hover { background: var(--rose); }
         .community-list li.oblast-row { background: linear-gradient(90deg, #fff6dd, #fffdf4); font-weight: 700; }
-        .c-name { color: var(--ink); font-weight: 600; min-width: 0; }
+        /* Кликабельно само имя сообщества (заказ владельца 2026-08-27), адрес в
+           строке не печатаем. Подчёркивание пунктиром — чтобы клик был заметен,
+           но список из 36 строк не превратился в сплошное синее полотно. */
+        .c-name {
+            color: var(--ink); font-weight: 600; min-width: 0;
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-decoration-color: #d3c8b0;
+            text-underline-offset: 3px;
+        }
+        .c-name:hover, .c-name:focus-visible {
+            color: var(--accent);
+            text-decoration-style: solid;
+            text-decoration-color: currentColor;
+        }
         .c-members { color: var(--green); font-weight: 700; font-variant-numeric: tabular-nums; }
         .c-members::after { content: " чел."; font-weight: 400; font-size: .8em; color: var(--ink-soft); }
-        .c-link { color: var(--blue); text-decoration: none; word-break: break-all; font-size: .93rem; }
-        .c-link:hover { text-decoration: underline; color: var(--accent); }
         .c-dash { color: #dcd2bd; }
         .c-oblast { font-size: .8rem; color: var(--ink-soft); font-style: italic; }
 
@@ -574,13 +583,11 @@
             <b>Как читать список</b> — каждая строка устроена так:
             <div class="row">
                 <span class="chip name">Малмыж ИНФО</span><span class="dash">—</span>
-                <span class="chip members">3657</span><span class="dash">—</span>
-                <span class="chip link">vk.com/malmyzh_info</span>
+                <span class="chip members">3657</span>
             </div>
             <div class="row" style="font-size:.85rem; color: var(--ink-soft);">
-                <span><span style="color:var(--accent-dark);">■</span> название сообщества</span>
+                <span><span style="color:var(--accent-dark);">■</span> название — нажмите, чтобы открыть сообщество во ВКонтакте</span>
                 <span><span style="color:var(--green);">■</span> число подписчиков (обновляется каждую ночь)</span>
-                <span><span style="color:var(--blue);">■</span> ссылка — откроется в новой вкладке</span>
             </div>
         </div>
 
