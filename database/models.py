@@ -146,6 +146,12 @@ class Community(Base):
     telegram_channel = Column(String(100), nullable=True)  # "@gonba_life" / chat_id
     telegram_bot = Column(String(50), nullable=True)  # ключ в TELEGRAM_TOKENS, напр. "VALSTANBOT"
 
+    # Размер донорского сообщества (миграция 087) — сырьё ранжирования аутрича и
+    # оценки «сколько людей в районе вообще можно достать». NULL значит «не мерили»,
+    # 0 — «пустая группа»; дефолта 0 нет сознательно (конвенция миграции 080).
+    members_count = Column(Integer, nullable=True)
+    members_checked_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -1480,4 +1486,315 @@ class GatewayRequest(Base):
             "ok": self.ok,
             "error_code": self.error_code,
             "duration_ms": self.duration_ms,
+        }
+
+
+class PromoEnrollment(Base):
+    """Зачисление района в раскрутку. Миграция 087.
+
+    Заполняется pull-моделью: диспетчер сам добирает активные районы запросом на
+    каждом прогоне (``INSERT … ON CONFLICT DO NOTHING``) — скрипт активации
+    регионов не правится, поэтому «забытый шаг» невозможен по построению.
+
+    ``members_at_enroll`` = NULL — легальное состояние, а не ошибка: район,
+    активированный сегодня, суточного снимка ещё не имеет. Отсутствие данных
+    не равно «подписчиков много», поэтому такой район зачисляется.
+
+    Пороги входа и выхода в ``promo_settings`` РАЗНЫЕ (гистерезис): при равных
+    район мигал бы вход/выход на границе каждую ночь.
+    """
+
+    __tablename__ = "promo_enrollments"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    region_id = Column(Integer, ForeignKey("regions.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(20), nullable=False, default="active")  # active|graduated|paused
+    cohort = Column(
+        String(20), nullable=False, default="pending"
+    )  # pending|wave_a|wave_b|wave_c|control
+    members_at_enroll = Column(Integer, nullable=True)
+    members_at_graduate = Column(Integer, nullable=True)
+    reason = Column(Text, nullable=True)
+    enrolled_at = Column(DateTime, default=datetime.utcnow)
+    graduated_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    region = relationship("Region")
+
+    __table_args__ = (
+        Index("uq_promo_enrollment_region", "region_id", unique=True),
+        Index("ix_promo_enrollments_status", "status", "cohort"),
+    )
+
+    def __repr__(self):
+        return f"<PromoEnrollment r={self.region_id} {self.status}/{self.cohort}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "region_id": self.region_id,
+            "status": self.status,
+            "cohort": self.cohort,
+            "members_at_enroll": self.members_at_enroll,
+            "members_at_graduate": self.members_at_graduate,
+            "reason": self.reason,
+            "enrolled_at": self.enrolled_at.isoformat() if self.enrolled_at else None,
+            "graduated_at": self.graduated_at.isoformat() if self.graduated_at else None,
+        }
+
+
+class PromoAction(Base):
+    """План и факт одного действия раскрутки — защёлка идемпотентности. Миграция 087.
+
+    Строка заводится ДО обращения к VK (``INSERT … ON CONFLICT DO NOTHING`` +
+    commit), поэтому под конкурентным беатом действие уходит один раз за слот.
+
+    Два уникума и есть настоящее соблюдение квот. ``uq_promo_action_donor_slot``
+    держит «1 промо в неделю на донора», ``uq_promo_action_target_slot`` — «1 в
+    неделю на цель». Оба нужны: у канала ``setup`` донора нет, а Postgres считает
+    NULL в уникуме различными — там защёлкой работает второй индекс.
+
+    ``dry_run`` по умолчанию TRUE: канал, включённый по недосмотру, запишет в
+    ``body`` текст, который ушёл бы, и остановится, ничего не опубликовав.
+    """
+
+    __tablename__ = "promo_actions"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    channel = Column(String(20), nullable=False)
+    donor_group_id = Column(BigInteger, nullable=True)
+    donor_region_id = Column(Integer, ForeignKey("regions.id", ondelete="SET NULL"), nullable=True)
+    target_region_id = Column(Integer, ForeignKey("regions.id", ondelete="CASCADE"), nullable=False)
+    hop = Column(SmallInteger, nullable=False, default=0)  # 0 нет донора,1 сосед,2 через,3 область
+    slot_key = Column(String(16), nullable=False)  # ISO-неделя '2026-W35' или дата
+    status = Column(
+        String(20), nullable=False, default="pending"
+    )  # pending|published|error|skipped|dry_run
+    dry_run = Column(Boolean, nullable=False, default=True)
+    body = Column(Text, nullable=True)
+    vk_method = Column(String(40), nullable=True)
+    vk_post_id = Column(BigInteger, nullable=True)
+    post_url = Column(String(300), nullable=True)
+    vk_error_code = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    token_name = Column(String(50), nullable=True)
+    api_calls = Column(SmallInteger, nullable=False, default=0)
+    planned_at = Column(DateTime, default=datetime.utcnow)
+    published_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("uq_promo_action_donor_slot", "channel", "donor_group_id", "slot_key", unique=True),
+        Index(
+            "uq_promo_action_target_slot", "channel", "target_region_id", "slot_key", unique=True
+        ),
+        Index("ix_promo_actions_status", "status", "planned_at"),
+        Index("ix_promo_actions_target", "target_region_id", "published_at"),
+    )
+
+    def __repr__(self):
+        return f"<PromoAction {self.channel} →r{self.target_region_id} {self.status}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "channel": self.channel,
+            "donor_group_id": self.donor_group_id,
+            "donor_region_id": self.donor_region_id,
+            "target_region_id": self.target_region_id,
+            "hop": self.hop,
+            "slot_key": self.slot_key,
+            "status": self.status,
+            "dry_run": self.dry_run,
+            "body": self.body,
+            "vk_method": self.vk_method,
+            "vk_post_id": self.vk_post_id,
+            "post_url": self.post_url,
+            "vk_error_code": self.vk_error_code,
+            "error": self.error,
+            "token_name": self.token_name,
+            "api_calls": self.api_calls,
+            "planned_at": self.planned_at.isoformat() if self.planned_at else None,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+        }
+
+
+class PromoSettings(Base):
+    """Настройки раскрутки, которые крутит владелец из UI. Миграция 087.
+
+    Одна строка (``id=1``), а не таблица-справочник — CHECK в схеме это держит.
+    ``channels`` — JSON вида ``{"promo_post": {"enabled": false, "dry_run": true}}``:
+    у каждого канала три независимых состояния (выключен / сухой прогон / боевой),
+    поверх которых стоит глобальный env-килл-свитч ``PROMO_DISABLED``.
+    """
+
+    __tablename__ = "promo_settings"
+
+    id = Column(SmallInteger, primary_key=True, default=1)
+    threshold_members = Column(Integer, nullable=False, default=300)  # вход: меньше порога
+    graduate_members = Column(Integer, nullable=False, default=400)  # выход: не меньше порога
+    donor_min_members = Column(Integer, nullable=False, default=1000)
+    max_per_donor_per_week = Column(SmallInteger, nullable=False, default=1)
+    max_per_target_per_week = Column(SmallInteger, nullable=False, default=1)
+    max_actions_per_day = Column(SmallInteger, nullable=False, default=3)
+    quiet_hours_start = Column(SmallInteger, nullable=False, default=19)  # с этого часа молчим
+    quiet_hours_end = Column(SmallInteger, nullable=False, default=10)  # до этого часа молчим
+    second_hop_enabled = Column(Boolean, nullable=False, default=True)
+    oblast_fallback_enabled = Column(Boolean, nullable=False, default=True)
+    oblast_group_id = Column(BigInteger, nullable=True, default=-168170001)
+    channels = Column(JSON, nullable=False, default=dict)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<PromoSettings threshold={self.threshold_members}>"
+
+    def to_dict(self):
+        return {
+            "threshold_members": self.threshold_members,
+            "graduate_members": self.graduate_members,
+            "donor_min_members": self.donor_min_members,
+            "max_per_donor_per_week": self.max_per_donor_per_week,
+            "max_per_target_per_week": self.max_per_target_per_week,
+            "max_actions_per_day": self.max_actions_per_day,
+            "quiet_hours_start": self.quiet_hours_start,
+            "quiet_hours_end": self.quiet_hours_end,
+            "second_hop_enabled": self.second_hop_enabled,
+            "oblast_fallback_enabled": self.oblast_fallback_enabled,
+            "oblast_group_id": self.oblast_group_id,
+            "channels": self.channels or {},
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class PromoDonorBlacklist(Base):
+    """Донор, которому сейчас нельзя отдавать промо. Миграция 087.
+
+    ``until`` = NULL — бан навсегда (ручной, владельцем). Непустой ``until``
+    ставит автоматика по кодам VK: 214/220 → сутки, 219 («рекламный пост недавно
+    добавлен») → семь суток, потому что 219 — это сигнал «VK читает наш промо как
+    рекламу», то есть повод переписать шаблон, а не повторить через час.
+    """
+
+    __tablename__ = "promo_donor_blacklist"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    donor_group_id = Column(BigInteger, nullable=False)
+    reason = Column(Text, nullable=False)
+    until = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (Index("uq_promo_blacklist_donor", "donor_group_id", unique=True),)
+
+    def __repr__(self):
+        return f"<PromoDonorBlacklist g={self.donor_group_id} until={self.until}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "donor_group_id": self.donor_group_id,
+            "reason": self.reason,
+            "until": self.until.isoformat() if self.until else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class PromoGroupSetup(Base):
+    """Журнал автооформления сообщества со снимком «до». Миграция 087.
+
+    ``before`` обязателен: канал перезаписывает описание, которое владелец мог
+    писать руками, и без снимка откат невозможен.
+
+    ``setup_version`` — версия шаблона оформления. Повтор той же версии no-op по
+    уникуму; правка шаблона = бамп версии = оформление переприменяется ровно один
+    раз, а не на каждом прогоне.
+    """
+
+    __tablename__ = "promo_group_setup"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    region_id = Column(Integer, ForeignKey("regions.id", ondelete="CASCADE"), nullable=False)
+    setup_version = Column(SmallInteger, nullable=False, default=1)
+    before = Column(JSON, nullable=True)
+    after = Column(JSON, nullable=True)
+    applied_fields = Column(JSON, nullable=True)
+    pinned_post_url = Column(String(300), nullable=True)
+    status = Column(
+        String(20), nullable=False, default="dry_run"
+    )  # dry_run|applied|error|rolled_back
+    vk_error_code = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    applied_at = Column(DateTime, default=datetime.utcnow)
+
+    region = relationship("Region")
+
+    __table_args__ = (
+        Index("uq_promo_setup_region_version", "region_id", "setup_version", unique=True),
+    )
+
+    def __repr__(self):
+        return f"<PromoGroupSetup r={self.region_id} v{self.setup_version} {self.status}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "region_id": self.region_id,
+            "setup_version": self.setup_version,
+            "before": self.before,
+            "after": self.after,
+            "applied_fields": self.applied_fields,
+            "pinned_post_url": self.pinned_post_url,
+            "status": self.status,
+            "vk_error_code": self.vk_error_code,
+            "error": self.error,
+            "applied_at": self.applied_at.isoformat() if self.applied_at else None,
+        }
+
+
+class PromoOutreachCandidate(Base):
+    """Местная группа-кандидат для РУЧНОГО аутрича владельца. Миграция 087.
+
+    SETKA такие группы только находит, ранжирует и готовит текст обращения.
+    **Ничего не отправляет** — ни сообщений, ни постов на чужие стены: массовая
+    рассылка рекламы инструментами, для рекламы не предназначенными, и есть то,
+    за что VK удаляет аккаунты. Отправляет владелец сам, из своего профиля.
+
+    ``status`` ведёт владелец: new → contacted → agreed | declined | ignored.
+    Правило «один контакт на группу навсегда» держится уникумом по (район, группа).
+    """
+
+    __tablename__ = "promo_outreach_candidates"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    target_region_id = Column(Integer, ForeignKey("regions.id", ondelete="CASCADE"), nullable=False)
+    vk_group_id = Column(BigInteger, nullable=False)
+    name = Column(String(300), nullable=False, default="")
+    screen_name = Column(String(100), nullable=True)
+    members_count = Column(Integer, nullable=True)
+    score = Column(Float, nullable=True)
+    draft_text = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="new")
+    owner_note = Column(Text, nullable=True)
+    found_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("uq_promo_outreach_group", "target_region_id", "vk_group_id", unique=True),
+        Index("ix_promo_outreach_region_status", "target_region_id", "status"),
+    )
+
+    def __repr__(self):
+        return f"<PromoOutreachCandidate r={self.target_region_id} g={self.vk_group_id}>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "target_region_id": self.target_region_id,
+            "vk_group_id": self.vk_group_id,
+            "name": self.name,
+            "screen_name": self.screen_name,
+            "members_count": self.members_count,
+            "score": self.score,
+            "draft_text": self.draft_text,
+            "status": self.status,
+            "owner_note": self.owner_note,
+            "found_at": self.found_at.isoformat() if self.found_at else None,
         }

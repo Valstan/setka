@@ -48,6 +48,7 @@ from web.api import (  # noqa: E402
     parsing,
     parsing_stats,
     posts,
+    promotion,
     publisher,
     radar,
     radar_id,
@@ -189,6 +190,7 @@ app.include_router(
 app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Discovery"])
 app.include_router(gateway.router, prefix="/api/gateway", tags=["VK Gateway"])
 app.include_router(gateway_stats.router, prefix="/api/gateway-stats", tags=["VK Gateway Stats"])
+app.include_router(promotion.router, prefix="/api/promotion", tags=["Promotion"])
 # Self-serve подключение проектов экосистемы (ADR-0010): своя X-Ecosystem-Key
 # защита, поэтому префикс — публичный в middleware/auth_gate.py.
 app.include_router(ecosystem.router, prefix="/api/ecosystem", tags=["Ecosystem Self-Serve"])
@@ -344,6 +346,12 @@ async def services_catalog(request: Request):
 async def regions_page(request: Request):
     """Regions page"""
     return templates.TemplateResponse("regions.html", {"request": request})
+
+
+@app.get("/promotion")
+async def promotion_page(request: Request):
+    """Раскрутка молодых сообществ сети: состав, план, журнал, настройки."""
+    return templates.TemplateResponse("promotion.html", {"request": request})
 
 
 @app.get("/regions/links")

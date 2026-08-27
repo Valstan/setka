@@ -42,5 +42,6 @@ def test_all_api_routers_importable():
         "web.api.parsing_stats",
         "web.api.filtration",
         "web.api.templates",
+        "web.api.promotion",
     ]:
         importlib.import_module(mod_name)

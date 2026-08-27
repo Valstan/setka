@@ -190,6 +190,7 @@ app = Celery(
         "tasks.discovery_tasks",  # community discovery + weekly recheck
         "tasks.radar_tasks",  # content radar: fan-out source poller (Ф0.2)
         "tasks.broadcast_tasks",  # сетевая рассылка: диспетчер-публикатор (brain 2026-06-14)
+        "tasks.promo_tasks",  # раскрутка молодых сообществ (заказ владельца 2026-08-28)
     ],
 )
 app.config_from_object("config.celery_config")
@@ -1747,6 +1748,25 @@ app.conf.beat_schedule = {
         },
     },
     # Суточный снимок числа подписчиков сообществ (фундамент графика роста) — 04:00 MSK
+    # Раскрутка: состав считается ПОСЛЕ суточного снимка подписчиков (04:00), иначе
+    # зачисление шло бы по вчерашним числам. Минуты 8 и 38 в сетке свободны.
+    "promo-sync-enrollments": {
+        "task": "tasks.promo_tasks.sync_promo_enrollments",
+        "schedule": crontab(minute=8, hour=4),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
+    # Размеры донорских сообществ — 4 вызова groups.getById на всю сеть, раз в неделю.
+    "promo-members-refresh-weekly": {
+        "task": "tasks.promo_tasks.refresh_promo_community_members",
+        "schedule": crontab(minute=38, hour=5, day_of_week=2),
+        "options": {
+            "expires": 6 * 3600,
+            "catchup": False,
+        },
+    },
     "collect-member-snapshots-daily": {
         "task": "tasks.celery_app.collect_member_snapshots",
         "schedule": crontab(minute=0, hour=4),

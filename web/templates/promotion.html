@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+
+{% block title %}Раскрутка - SETKA{% endblock %}
+{% block nav_promotion %}active{% endblock %}
+{% block nav_section_content %}active{% endblock %}
+
+{% block content %}
+<div class="promotion-page mx-auto" style="max-width: 1180px;">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h1><i class="bi bi-megaphone"></i> Раскрутка</h1>
+        <div class="d-flex gap-2 align-items-center">
+            <button class="btn btn-outline-secondary btn-sm" id="promo-sync">
+                <i class="bi bi-arrow-repeat"></i> Пересчитать состав
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" id="promo-refresh">
+                <i class="bi bi-arrow-clockwise"></i> Обновить
+            </button>
+        </div>
+    </div>
+
+    <p class="text-muted">
+        Поднимаем районы, которые сеть завела, но которых никто не находит.
+        Модуль не пишет на чужие стены, не рассылает личных сообщений и не приглашает
+        в сообщества — он чинит находимость собственных лент, готовит текст обращений
+        для отправки вручную и раз в неделю просит сильного соседа представить слабого.
+    </p>
+
+    <div id="promo-kill" class="alert alert-secondary d-none py-2 px-3 small"></div>
+
+    <div class="row g-2 mb-3" id="promo-tiles"></div>
+
+    <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-regions"
+                    type="button" role="tab">Районы</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-plan"
+                    type="button" role="tab">План</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-journal"
+                    type="button" role="tab">Журнал</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-settings"
+                    type="button" role="tab">Настройки</button>
+        </li>
+    </ul>
+
+    <div class="tab-content">
+        <div class="tab-pane fade show active" id="tab-regions" role="tabpanel">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="card-title mb-0">Состав и находимость</h5>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="promo-only-gaps" checked>
+                            <label class="form-check-label small" for="promo-only-gaps">
+                                только с пробелами
+                            </label>
+                        </div>
+                    </div>
+                    <p class="text-muted small">
+                        «Пробелы» — это то, из-за чего район не находит поиск ВК.
+                        Замер 28 августа: локальные хэштеги стояли ровно у той старой дюжины,
+                        которая растёт, а у 23 районов их не было вовсе.
+                    </p>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Район</th>
+                                    <th class="text-end">Подписчиков</th>
+                                    <th class="text-end">+7 дн</th>
+                                    <th class="text-end">+30 дн</th>
+                                    <th>Статус</th>
+                                    <th>Чего не хватает</th>
+                                </tr>
+                            </thead>
+                            <tbody id="promo-regions-body">
+                                <tr><td colspan="6" class="text-muted small">Загрузка…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-plan" role="tabpanel">
+            <div class="card mb-3">
+                <div class="card-body">
+                    <h5 class="card-title">Кто кого представит</h5>
+                    <p class="text-muted small">
+                        Пары подбираются по графу соседства: сперва прямой сосед, затем сосед
+                        соседа. Донор со своим ключом сообщества идёт первым — такая публикация
+                        не расходует аккаунт, которым публикуется вся сеть.
+                    </p>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Донор</th>
+                                    <th class="text-end">Аудитория</th>
+                                    <th>Цель</th>
+                                    <th class="text-end">Подписчиков</th>
+                                    <th>Связь</th>
+                                </tr>
+                            </thead>
+                            <tbody id="promo-plan-body">
+                                <tr><td colspan="5" class="text-muted small">Загрузка…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card border-warning">
+                <div class="card-body">
+                    <h5 class="card-title">Районы без сетевого донора</h5>
+                    <p class="text-muted small mb-2">
+                        Этим районам сеть помочь не может: сильных соседей у них нет ни на первом,
+                        ни на втором хопе, а областная лента мала. Для них работают только
+                        находимость и ручной аутрич — и честнее сказать это прямо, чем показывать
+                        их «в работе».
+                    </p>
+                    <div id="promo-orphans" class="small text-muted">Загрузка…</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-journal" role="tabpanel">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Журнал действий</h5>
+                    <p class="text-muted small">
+                        Каждая строка — одно действие: что сделано, куда, чем закончилось и
+                        ссылка на живой пост. Пока каналы в сухом прогоне, здесь видно, что
+                        модуль <em>сделал бы</em>.
+                    </p>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Когда</th>
+                                    <th>Канал</th>
+                                    <th>Донор → цель</th>
+                                    <th>Статус</th>
+                                    <th>Пост</th>
+                                    <th class="text-end">Вызовов</th>
+                                </tr>
+                            </thead>
+                            <tbody id="promo-journal-body">
+                                <tr><td colspan="6" class="text-muted small">Загрузка…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-settings" role="tabpanel">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Пороги и квоты</h5>
+                    <div class="row g-3" id="promo-settings-form">
+                        <div class="col-md-4">
+                            <label class="form-label small" for="promo-threshold">Порог входа</label>
+                            <input type="number" class="form-control form-control-sm" id="promo-threshold">
+                            <div class="form-text">Меньше этого числа подписчиков — район берём в раскрутку.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small" for="promo-graduate">Порог выхода</label>
+                            <input type="number" class="form-control form-control-sm" id="promo-graduate">
+                            <div class="form-text">Выше порога входа намеренно: иначе район мигает на границе.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small" for="promo-donor-min">Донор от, подписчиков</label>
+                            <input type="number" class="form-control form-control-sm" id="promo-donor-min">
+                            <div class="form-text">Кого считаем достаточно сильным, чтобы представлять соседа.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small" for="promo-per-day">Действий в сутки</label>
+                            <input type="number" class="form-control form-control-sm" id="promo-per-day">
+                            <div class="form-text">Общий потолок. Env-переменная может опустить его ещё ниже.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small" for="promo-per-donor">Промо на донора в неделю</label>
+                            <input type="number" class="form-control form-control-sm" id="promo-per-donor">
+                            <div class="form-text">Держится уникальным индексом в БД, а не только счётчиком.</div>
+                        </div>
+                        <div class="col-md-4 d-flex align-items-end">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="promo-second-hop">
+                                <label class="form-check-label small" for="promo-second-hop">
+                                    искать донора через соседа соседа
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button class="btn btn-primary btn-sm" id="promo-save">Сохранить</button>
+                        <span class="ms-2 small text-muted" id="promo-save-note"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/promotion.js?v=20260828_promo_stage0"></script>
+{% endblock %}

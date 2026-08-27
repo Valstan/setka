@@ -134,6 +134,12 @@ ACCEPTED_NAMES: frozenset = frozenset(
         "KRUGOZOR_TARGET_REGION_CODES",
         "COPY_SETKA_DISABLED",
         "BROADCAST_DISABLED",
+        "PROMO_DISABLED",
+        "PROMO_REGION_CODES",
+        "PROMO_MAX_ACTIONS_PER_DAY",
+        "PROMO_POST_INTERVAL_SECONDS",
+        "PROMO_VALSTAN_CALL_BUDGET",
+        "PROMO_OBLAST_GROUP_ID",
         "RADAR_DELIVERY_DISABLED",
         "PRODUCTION_WORKFLOW_CONFIG",
         # пул соединений (не секреты, но часть восстанавливаемого env)
