@@ -197,6 +197,31 @@ class TestPlanPairs:
         )
         assert len(pairs) == 2
 
+    def test_daily_cap_does_not_hide_remaining_targets(self):
+        # Лимит обрывает выдачу пар, но не осмотр: иначе панель «без донора»
+        # молча укоротилась бы до тех, кого успели посмотреть, и одиннадцать
+        # недосягаемых районов исчезли бы из отчёта.
+        targets = [target("suna", 0), target("kumyony", 1), target("zuevka", 2)]
+        pairs, orphans = plan_pairs(
+            targets,
+            [donor("nolinsk", 2560), donor("nema", 1800), donor("mi", 5307)],
+            GRAPH,
+            max_pairs=1,
+        )
+        assert len(pairs) == 1
+        assert len(pairs) + len(orphans) == len(targets)
+
+    def test_cap_reason_differs_from_no_donor_reason(self):
+        pairs, orphans = plan_pairs(
+            [target("suna", 0), target("kumyony", 1)],
+            [donor("nolinsk", 2560), donor("nema", 1800)],
+            GRAPH,
+            max_pairs=1,
+        )
+        assert len(pairs) == 1
+        assert "дневной лимит" in orphans[0].reason
+        assert "нет сильного соседа" not in orphans[0].reason
+
     def test_result_is_deterministic(self):
         args = (
             [target("suna", 0)],
