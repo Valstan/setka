@@ -5,7 +5,9 @@
 
 let rlData = null;                  // ответ API целиком
 let rlItems = [];                   // плоский список сообществ
-let rlSort = 'alpha';               // alpha | members | neighbors
+// Дефолт — «по подписчикам» (заказ владельца 2026-08-27). Класс active стоит на
+// той же кнопке в region_links.html: JS разметку не читает, синхронность ручная.
+let rlSort = 'members';             // alpha | members | neighbors
 let rlAnchor = null;                // код опорного района для сортировки по соседству
 const rlPicked = new Set();         // коды отмеченных галочками сообществ
 
@@ -56,6 +58,86 @@ function renderStats(data) {
     document.getElementById('stat-groups').textContent = fmt(data.total);
     document.getElementById('stat-members').textContent =
         data.total_members ? fmt(data.total_members) : '—';
+    renderGrowth(data.growth);
+}
+
+// ── Прирост подписчиков ────────────────────────────────────────────────────
+// Считает сервер (modules/network_growth.py): и числа, и подписи окон
+// приезжают готовыми — правило «сколько истории накоплено» не должно жить в
+// двух местах. Клиент только раскладывает их по плиткам и столбикам.
+
+function signed(n) {
+    if (n === null || n === undefined) return '—';
+    return (n < 0 ? '−' : '+') + fmt(Math.abs(n));
+}
+
+function deltaClass(delta) {
+    if (delta === null || delta === undefined) return ' is-empty';
+    if (delta < 0) return ' is-negative';
+    return delta === 0 ? ' is-flat' : '';
+}
+
+function renderGrowth(growth) {
+    // Плитки пересобираются целиком: «⟳ Обновить» зовёт renderStats повторно,
+    // и без очистки они бы копились.
+    document.querySelectorAll('#hero-stats .stat--growth').forEach(el => el.remove());
+    const monthsBox = document.getElementById('growth-months');
+    const staleBox = document.getElementById('stat-stale');
+    staleBox.hidden = true;
+    staleBox.textContent = '';
+    if (!growth) {
+        // Меньше двух дней снимков: показывать «+0» значило бы выдать
+        // отсутствие данных за отсутствие роста.
+        monthsBox.hidden = true;
+        return;
+    }
+
+    const host = document.getElementById('hero-stats');
+    const anchor = host.querySelector('.stat--always');
+    (growth.windows || []).forEach(w => {
+        const tile = document.createElement('div');
+        tile.className = 'stat stat--growth' + deltaClass(w.delta);
+        tile.innerHTML =
+            `<b>${signed(w.delta)}</b><span>${escapeHtml(w.title)}</span>` +
+            (w.note ? `<em class="stat-note">${escapeHtml(w.note)}</em>` : '');
+        host.insertBefore(tile, anchor);
+    });
+
+    if (growth.stale_days > 1) {
+        staleBox.textContent =
+            `⚠️ Числа на ${growth.latest_date_human}: ночной сбор не обновлялся ` +
+            `${growth.stale_days} ${plural(growth.stale_days, 'день', 'дня', 'дней')}.`;
+        staleBox.hidden = false;
+    }
+
+    renderGrowthMonths(growth);
+}
+
+function renderGrowthMonths(growth) {
+    const box = document.getElementById('growth-months');
+    const grid = document.getElementById('gm-grid');
+    const months = (growth.months || []).filter(m => m.delta !== null && m.delta !== undefined);
+    if (!months.length) {
+        box.hidden = true;
+        return;
+    }
+    // Столбик — доля от самого большого месяца по модулю: полоса сравнивает
+    // месяцы между собой, а не с абсолютной шкалой.
+    const maxAbs = Math.max(1, ...months.map(m => Math.abs(m.delta)));
+    grid.innerHTML = (growth.months || []).map(m => {
+        const has = m.delta !== null && m.delta !== undefined;
+        const width = has ? Math.max(2, Math.round(Math.abs(m.delta) / maxAbs * 100)) : 0;
+        return `
+        <div class="gm-month${m.current ? ' is-current' : ''}${deltaClass(m.delta)}">
+            <div class="gm-name">${escapeHtml(m.title)}</div>
+            <div class="gm-value">${has ? signed(m.delta) : '—'}</div>
+            <div class="gm-bar"><i style="width:${width}%"></i></div>
+            <div class="gm-note">${escapeHtml(has ? (m.note || 'подписчиков за месяц') : 'снимков ещё не было')}</div>
+        </div>`;
+    }).join('');
+    document.getElementById('gm-hint').textContent =
+        `наблюдаем с ${growth.first_date_human}, счёт обновляется каждую ночь`;
+    box.hidden = false;
 }
 
 // Выпадашка «мой район» — только районы (области опорной точкой не бывают).
@@ -132,6 +214,11 @@ function render() {
         container.innerHTML = '<div class="error-box">Список пока пуст.</div>';
         return;
     }
+    // Две колонки — только там, где блок = область. «По соседству» рендерит
+    // один плоский список, который читается сверху вниз как «ближе → дальше»:
+    // разложи его по колонкам — и порядок, ради которого режим существует,
+    // сломается.
+    container.classList.toggle('cols', rlSort !== 'neighbors');
     if (rlSort === 'neighbors') {
         renderByNeighbors(container);
     } else {
@@ -141,15 +228,31 @@ function render() {
     updateSelbar();
 }
 
+function blockMembers(block) {
+    return block.items.reduce((sum, i) => sum + (i.members || 0), 0);
+}
+
+// ЕДИНСТВЕННОЕ место, где вычисляется порядок для режимов alpha/members.
+// Раньше тот же компаратор был выписан второй раз в currentFullText, и любое
+// расхождение всплывало не на экране, а уже в тексте, вставленном в VK.
+function orderedBlocks() {
+    const blocks = rlData.blocks.map(b => ({ ...b, items: b.items.slice() }));
+    if (rlSort !== 'members') return blocks;
+    blocks.forEach(b => b.items.sort((x, y) => (y.members || 0) - (x.members || 0)));
+    // Блоки — тоже по убыванию охвата, чтобы Кировская область оказалась в
+    // левой колонке не «по счастливому алфавиту», а по тому же правилу, что и
+    // строки внутри. «Другие» (районы без области) остаются в конце.
+    blocks.sort((a, b) => {
+        if (a.code === '_other') return 1;
+        if (b.code === '_other') return -1;
+        return blockMembers(b) - blockMembers(a);
+    });
+    return blocks;
+}
+
 // Алфавит и подписчики: сохраняем разбивку по областям.
 function renderByBlocks(container) {
-    const blocks = rlData.blocks.map(b => {
-        const items = b.items.slice();
-        if (rlSort === 'members') {
-            items.sort((a, b2) => (b2.members || 0) - (a.members || 0));
-        }
-        return { ...b, items };
-    });
+    const blocks = orderedBlocks();
     container.innerHTML = blocks.map((block, idx) => `
         <div class="oblast-card">
             <div class="oblast-head">
@@ -159,7 +262,7 @@ function renderByBlocks(container) {
                         <input type="checkbox" class="block-check" data-block="${idx}">
                         выбрать все
                     </label>
-                    <span class="count">${block.items.length} сообществ</span>
+                    <span class="count">${block.items.length} ${plural(block.items.length, 'сообщество', 'сообщества', 'сообществ')}</span>
                     <button class="btn btn-ghost rl-copy-block" data-block="${idx}">⎘ Копировать блок</button>
                 </div>
             </div>
@@ -207,7 +310,7 @@ function renderByNeighbors(container) {
         <div class="oblast-card">
             <div class="oblast-head">
                 <h3>От ближних к дальним</h3>
-                <span class="count">${rlItems.length} сообществ · опора: ${escapeHtml(
+                <span class="count">${rlItems.length} ${plural(rlItems.length, 'сообщество', 'сообщества', 'сообществ')} · опора: ${escapeHtml(
                     (rlItems.find(i => i.code === rlAnchor) || {}).name || '—'
                 )}</span>
             </div>
@@ -412,12 +515,8 @@ function flashButton(btn, ok, restoreLabel) {
 // Полный текст в текущем порядке — «копировать весь список» уважает сортировку.
 function currentFullText() {
     if (rlSort !== 'neighbors') {
-        return rlData.blocks
-            .map(b => {
-                const items = b.items.slice();
-                if (rlSort === 'members') items.sort((a, b2) => (b2.members || 0) - (a.members || 0));
-                return [b.title + ':'].concat(items.map(i => i.line)).join('\n');
-            })
+        return orderedBlocks()
+            .map(b => [b.title + ':'].concat(b.items.map(i => i.line)).join('\n'))
             .join('\n\n');
     }
     const depth = neighborRings(rlAnchor);

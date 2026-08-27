@@ -2,7 +2,7 @@
 Regions API endpoints
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -798,6 +798,53 @@ class VkLinkBlock(BaseModel):
     text: str
 
 
+class VkLinksGrowthWindow(BaseModel):
+    """Одно окно прироста: «за сутки» / «за 30 дней» / «за полгода»."""
+
+    key: str
+    title: str
+    delta: int
+    from_date: str
+    to_date: str
+    # Сколько дней реально между границами: при дыре в сборе «сутки» шире суток.
+    days: int
+    # True, если окно не помещается в историю и подпись заменена фактической датой.
+    partial: bool
+    new_communities: int
+    new_members: int
+    note: str
+
+
+class VkLinksGrowthMonth(BaseModel):
+    """Столбик помесячной полосы. ``delta=None`` — месяц раньше первых снимков."""
+
+    key: str
+    title: str
+    current: bool
+    delta: int | None = None
+    partial: bool = False
+    new_communities: int = 0
+    new_members: int = 0
+    note: str = ""
+    from_date: str | None = None
+    to_date: str | None = None
+
+
+class VkLinksGrowth(BaseModel):
+    """Прирост подписчиков сети — плашки шапки и помесячная полоса."""
+
+    latest_date: str
+    first_date: str
+    latest_date_human: str
+    first_date_human: str
+    # 0-1 — норма (снимки в 04:00 MSK), больше — сборщик встал.
+    stale_days: int
+    total_members: int
+    regions_counted: int
+    windows: List[VkLinksGrowthWindow]
+    months: List[VkLinksGrowthMonth]
+
+
 class VkLinksResponse(BaseModel):
     """Готовый к копированию список сообществ сети."""
 
@@ -808,6 +855,9 @@ class VkLinksResponse(BaseModel):
     # Граф соседства {code: [codes]} по ВСЕМ регионам, включая те, что ещё без
     # группы: они транзитные узлы, без них сортировка «по соседству» рвётся.
     neighbors: Dict[str, List[str]]
+    # None, когда снимков меньше двух дней: одна точка — это «сколько сейчас»,
+    # а не «на сколько выросли», и «+0» соврал бы про отсутствие данных.
+    growth: VkLinksGrowth | None = None
 
 
 # ВАЖНО: как и «suggest-neighbors» — объявлено ДО ``@router.get("/{region_code}")``,
@@ -874,7 +924,49 @@ async def get_vk_links(db: AsyncSession = Depends(get_db_session)):
             i["members"] for b in blocks for i in b["items"] if i["members"] is not None
         ),
         "neighbors": build_neighbor_graph(regions),
+        "growth": await _collect_network_growth(db, blocks, regions),
     }
+
+
+async def _collect_network_growth(
+    db: AsyncSession, blocks: List[Dict[str, Any]], regions: List[Region]
+) -> Optional[Dict[str, Any]]:
+    """Прирост подписчиков сети для шапки лендинга (заказ владельца 2026-08-27).
+
+    Считается по **показываемому** составу сети: id берутся из уже собранных
+    блоков, а не из всей таблицы снимков. Деактивированный регион иначе
+    продолжал бы входить в «было» — и его отключение читалось бы как обвал
+    сети. Арифметика (перенос значения вперёд через дыры в сборе, отделение
+    новых сообществ от выросших, деградация окна, которое не помещается в
+    историю) — в ``modules/network_growth.py``, там же и юнит-тесты.
+
+    Окно запроса ограничено сверху самой ранней нужной границей (полгода либо
+    начало самого раннего показываемого месяца): на 35 регионах это несколько
+    тысяч узких строк по индексу ``idx_region_member_snapshot_date``. Кэша
+    здесь сознательно нет — эндпоинт публичный, и @cache в этом проекте строит
+    ключ из ``str(kwargs)``, куда попадает адрес объекта сессии, то есть на
+    зависимости ``db`` промахивается всегда (техдолг записан в PENDING).
+    """
+    from database.models import RegionMemberSnapshot
+    from modules.network_growth import build_growth, growth_query_start, region_ids_from_blocks
+
+    code_to_id = {r.code: r.id for r in regions}
+    shown_ids = region_ids_from_blocks(blocks, code_to_id)
+    if not shown_ids:
+        return None
+
+    today = date.today()
+    rows = await db.execute(
+        select(
+            RegionMemberSnapshot.region_id,
+            RegionMemberSnapshot.snapshot_date,
+            RegionMemberSnapshot.members_count,
+        ).where(
+            RegionMemberSnapshot.region_id.in_(shown_ids),
+            RegionMemberSnapshot.snapshot_date >= growth_query_start(today),
+        )
+    )
+    return build_growth(rows.all(), region_ids=shown_ids, today=today)
 
 
 @router.get("/{region_code}", response_model=RegionResponse)

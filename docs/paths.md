@@ -63,7 +63,7 @@ flowchart LR
 - CRUD: `GET /`, `GET /{region_code}`, `POST /`, `PUT /{region_id}`, `DELETE /{region_id}`
 - Управление активностью: `PATCH /{region_id}/toggle-status`
 - Bulletin template: `GET/PUT /{region_code}/bulletin-template`, `POST /{region_code}/bulletin-template/reset`, `POST /{region_code}/bulletin-template/reset-topic`
-- Список сообществ сети для рассылки людям: `GET /vk-links` (страница `/regions/links`, формат — `modules/region_links.py`)
+- Список сообществ сети для рассылки людям: `GET /vk-links` (страница `/regions/links`, формат — `modules/region_links.py`); в том же ответе поле `growth` — прирост подписчиков сети (окна сутки/30 дней/полгода + помесячная полоса, арифметика в `modules/network_growth.py` по снимкам `region_member_snapshots`)
 
 ### Communities (`/api/communities`)
 
