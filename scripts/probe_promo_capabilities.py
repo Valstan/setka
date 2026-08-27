@@ -113,6 +113,15 @@ def probe_write(tokens: Dict[str, str], link_url: str) -> Optional[str]:
     """
     logger.info("\n=== ЗАПИСЬ в тест-полигон %s ===", TEST_GROUP_ID)
     for name, token in tokens.items():
+        # groups.edit решает судьбу канала автооформления. Правим только
+        # description и только на тест-полигоне; title не трогаем никогда.
+        edited = call(
+            token,
+            "groups.edit",
+            {"group_id": TEST_GROUP_ID, "description": "Тестовая группа проекта. Проба API."},
+        )
+        logger.info("  %-18s groups.edit            %s", name, describe(edited))
+
         added = call(
             token,
             "groups.addLink",
