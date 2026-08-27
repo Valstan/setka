@@ -27,13 +27,15 @@ Env vars:
                                     # каналы, требующие user-токена, пропускаются
   PROMO_OBLAST_GROUP_ID       # донор-фолбэк для районов без сильного соседа;
                               # дефолт — областная группа сети
+  PROMO_NETWORK_LIST_URL      # публичный список сообществ сети для текстов;
+                              # БЕЗ дефолта — адрес витрины не хардкодим
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import List
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,18 @@ def get_valstan_call_budget() -> int:
         return max(0, min(500, int(os.getenv("PROMO_VALSTAN_CALL_BUDGET", "50"))))
     except ValueError:
         return 50
+
+
+def get_network_list_url() -> Optional[str]:
+    """Публичный список сообществ сети (env ``PROMO_NETWORK_LIST_URL``).
+
+    **Без дефолта намеренно.** Адрес витрины — инфра-деталь, и захардкоженная
+    ссылка в отслеживаемом файле нарушает правило «вместо значения — роль».
+    Не задана — тексты просто выходят без строки «все районы сети», а не с
+    подставленным чужим адресом.
+    """
+    value = (os.getenv("PROMO_NETWORK_LIST_URL") or "").strip()
+    return value or None
 
 
 def get_oblast_group_id() -> int:

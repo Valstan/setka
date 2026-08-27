@@ -4,10 +4,13 @@
 ``AuthGateMiddleware`` (secure by default) — ни одна ручка здесь не публичная и
 в PUBLIC-списки гейта ничего не добавляется.
 
-Откуда данные: ``promo_*`` таблицы (миграция 087), ``regions``,
-``region_member_snapshots`` и ``vk_tokens``. Ни один эндпоинт не обращается к VK
-и ничего не публикует — на этапе 0 модуль только показывает, что он видит и что
-предложил бы сделать.
+Откуда данные: ``promo_*`` таблицы (миграции 087/088), ``regions``,
+``region_member_snapshots`` и ``vk_tokens``.
+
+Единственная ручка, способная дойти до ВК, — ``POST /dispatch``, и она уходит туда
+только когда сойдутся три условия: снят ``PROMO_DISABLED``, модуль не на паузе
+после ответа ВК и у канала снят ``dry_run``. Пока хоть одно не выполнено, тик
+считает пары и кладёт готовый текст в журнал, не отправляя ничего.
 """
 
 from __future__ import annotations
@@ -35,11 +38,24 @@ from database.models import (
 )
 from modules.promotion.hashtags import DISTRICT_ADJECTIVES
 from modules.promotion.pairing import DonorCandidate, TargetCandidate, plan_pairs
+from modules.promotion.settings import (
+    DEFAULT_CHANNELS,
+    merge_channels,
+    module_paused,
+    resolve_channel,
+)
 from modules.region_links import build_neighbor_graph, community_url, short_name
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class ChannelPut(BaseModel):
+    """Переключатель одного канала. ``None`` = не трогать."""
+
+    enabled: Optional[bool] = None
+    dry_run: Optional[bool] = None
 
 
 class SettingsPut(BaseModel):
@@ -211,6 +227,9 @@ async def get_overview(db: AsyncSession = Depends(get_db_session)):
         "api_calls_last_7d": int(calls_week),
         "outreach_candidates": outreach_ready,
         "settings": settings.to_dict(),
+        "channels": _channels_state(settings),
+        "paused_until": settings.paused_until.isoformat() if settings.paused_until else None,
+        "paused_reason": settings.paused_reason,
     }
 
 
@@ -377,6 +396,86 @@ async def get_plan(
         "oblast_group_id": get_oblast_group_id(),
         "oblast_fallback_enabled": bool(settings.oblast_fallback_enabled),
     }
+
+
+def _channels_state(settings: PromoSettings) -> List[Dict[str, Any]]:
+    """Итоговое состояние каждого канала после наложения всех трёх уровней."""
+    disabled = promo_disabled()
+    paused = module_paused(settings.paused_until)
+    out = []
+    for name in DEFAULT_CHANNELS:
+        state = resolve_channel(name, settings.channels, module_disabled=disabled, paused=paused)
+        out.append(
+            {
+                "name": name,
+                "enabled": state.enabled,
+                "dry_run": state.dry_run,
+                "publishes": state.publishes,
+                "reason": state.reason,
+            }
+        )
+    return out
+
+
+@router.get("/channels")
+async def list_channels(db: AsyncSession = Depends(get_db_session)):
+    """Состояние каналов и причина, почему канал молчит."""
+    settings = await _settings_row(db)
+    return {
+        "channels": _channels_state(settings),
+        "module_enabled": not promo_disabled(),
+        "paused_until": settings.paused_until.isoformat() if settings.paused_until else None,
+        "paused_reason": settings.paused_reason,
+    }
+
+
+@router.put("/channels/{name}")
+async def put_channel(name: str, payload: ChannelPut, db: AsyncSession = Depends(get_db_session)):
+    """Переключить канал. Неизвестное имя — 404, а не тихое создание призрака."""
+    if name not in DEFAULT_CHANNELS:
+        raise HTTPException(status_code=404, detail="Неизвестный канал")
+
+    settings = await _settings_row(db)
+    channels = merge_channels(settings.channels)
+    if payload.enabled is not None:
+        channels[name]["enabled"] = payload.enabled
+    if payload.dry_run is not None:
+        channels[name]["dry_run"] = payload.dry_run
+
+    settings.channels = channels
+    await db.commit()
+    await db.refresh(settings)
+    return {"channels": _channels_state(settings)}
+
+
+@router.post("/resume")
+async def resume_module(db: AsyncSession = Depends(get_db_session)):
+    """Снять паузу, выставленную после ответа ВК (код 9 или 14).
+
+    Снимает её человек, а не таймер молча: пауза означает, что ВК посчитал наш
+    поток спамом, и возобновлять стоит, разобравшись, а не по истечении срока.
+    """
+    settings = await _settings_row(db)
+    settings.paused_until = None
+    settings.paused_reason = None
+    await db.commit()
+    return {"paused_until": None}
+
+
+@router.post("/dispatch")
+async def dispatch_now(db: AsyncSession = Depends(get_db_session)):
+    """Прогнать тик диспетчера сейчас.
+
+    Безопасно по построению: пока каналы в сухом прогоне (а на этапе 1 они все
+    такие), тик только считает пары и записывает готовый текст в журнал.
+    """
+    from modules.promotion.dispatcher import run_promo_dispatch
+
+    try:
+        return await run_promo_dispatch(db)
+    except Exception as exc:  # noqa: BLE001 - показываем причину оператору
+        logger.error("promo dispatch failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Не удалось прогнать: {exc}")
 
 
 @router.get("/actions")

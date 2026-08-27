@@ -1758,6 +1758,25 @@ app.conf.beat_schedule = {
             "catchup": False,
         },
     },
+    # Диспетчер раскрутки: 10 тиков в дневном окне, публикует ≤ суточного потолка.
+    # Минута :08 в сетке свободна — два поста подряд на стене донора невозможны.
+    "promo-dispatch": {
+        "task": "tasks.promo_tasks.dispatch_promo",
+        "schedule": crontab(minute=8, hour="10-19"),
+        "options": {
+            "expires": 3000,
+            "catchup": False,
+        },
+    },
+    # Сторож: молчит, пока каналы в сухом прогоне или продвигать некого.
+    "promo-watchdog": {
+        "task": "tasks.promo_tasks.check_promo_heartbeat",
+        "schedule": crontab(minute=28),
+        "options": {
+            "expires": 1800,
+            "catchup": False,
+        },
+    },
     # Размеры донорских сообществ — 4 вызова groups.getById на всю сеть, раз в неделю.
     "promo-members-refresh-weekly": {
         "task": "tasks.promo_tasks.refresh_promo_community_members",

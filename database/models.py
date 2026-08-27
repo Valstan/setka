@@ -1642,6 +1642,13 @@ class PromoSettings(Base):
     oblast_fallback_enabled = Column(Boolean, nullable=False, default=True)
     oblast_group_id = Column(BigInteger, nullable=True, default=-168170001)
     channels = Column(JSON, nullable=False, default=dict)
+
+    # Пауза всего модуля после «ВК велел замолчать» (коды 9/14). Миграция 088.
+    # Живёт в БД, а не в Redis, сознательно: Redis-квоты у нас fail-open, и
+    # перезапуск снял бы паузу ровно тогда, когда публиковать нельзя категорически.
+    paused_until = Column(DateTime, nullable=True)
+    paused_reason = Column(Text, nullable=True)
+
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def __repr__(self):
@@ -1661,6 +1668,8 @@ class PromoSettings(Base):
             "oblast_fallback_enabled": self.oblast_fallback_enabled,
             "oblast_group_id": self.oblast_group_id,
             "channels": self.channels or {},
+            "paused_until": self.paused_until.isoformat() if self.paused_until else None,
+            "paused_reason": self.paused_reason,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
