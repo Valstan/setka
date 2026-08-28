@@ -195,6 +195,61 @@ def get_cache() -> RedisCache:
     return _cache_instance
 
 
+def _stable_repr(value: Any) -> Optional[str]:
+    """repr значения, если оно годится в кэш-ключ; None — если не годится.
+
+    Годятся примитивы и коллекции из примитивов. Всё остальное (AsyncSession,
+    Request, ORM-объекты и прочие DI-аргументы) в ключ не попадает: их str()
+    содержит адрес объекта в памяти, разный на каждый запрос, и ключ никогда
+    не повторяется — кэш промахивается всегда (грабля #217: девять @cache-точек
+    проекта не работали с момента появления `db: AsyncSession` в сигнатурах).
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return repr(value)
+    if isinstance(value, (list, tuple)):
+        parts = [_stable_repr(v) for v in value]
+        if any(p is None for p in parts):
+            return None
+        return "[" + ",".join(parts) + "]"  # type: ignore[arg-type]
+    if isinstance(value, (set, frozenset)):
+        parts = [_stable_repr(v) for v in value]
+        if any(p is None for p in parts):
+            return None
+        return "{" + ",".join(sorted(parts)) + "}"  # type: ignore[type-var]
+    if isinstance(value, dict):
+        items = []
+        for k, v in sorted(value.items(), key=lambda kv: repr(kv[0])):
+            rk, rv = _stable_repr(k), _stable_repr(v)
+            if rk is None or rv is None:
+                return None
+            items.append(f"{rk}:{rv}")
+        return "{" + ",".join(items) + "}"
+    return None
+
+
+def build_default_cache_key(func_name: str, key_prefix: str, args: tuple, kwargs: dict) -> str:
+    """Ключ кэша из имени функции и СТАБИЛЬНЫХ аргументов.
+
+    Нестабильные аргументы (сессии БД, request-объекты) молча исключаются из
+    ключа: у всех @cache-эндпоинтов проекта они инжектятся через Depends и на
+    результат не влияют. Имена kwargs входят в ключ, поэтому исключение
+    аргумента не склеивает разные вызовы с одинаковыми примитивами.
+    """
+    stable_args = []
+    for i, a in enumerate(args):
+        r = _stable_repr(a)
+        if r is not None:
+            stable_args.append(f"{i}={r}")
+    stable_kwargs = []
+    for k in sorted(kwargs):
+        r = _stable_repr(kwargs[k])
+        if r is not None:
+            stable_kwargs.append(f"{k}={r}")
+    args_str = ";".join(stable_args) + "|" + ";".join(stable_kwargs)
+    args_hash = hashlib.md5(args_str.encode()).hexdigest()[:8]
+    return f"{key_prefix}:{func_name}:{args_hash}" if key_prefix else f"{func_name}:{args_hash}"
+
+
 def cache(ttl: int = 300, key_prefix: str = "", key_builder: Optional[Callable] = None):
     """
     Decorator for caching function results
@@ -222,18 +277,7 @@ def cache(ttl: int = 300, key_prefix: str = "", key_builder: Optional[Callable] 
             if key_builder:
                 cache_key = key_builder(*args, **kwargs)
             else:
-                # Default key building
-                func_name = func.__name__
-
-                # Create hash of arguments for stable key
-                args_str = str(args) + str(sorted(kwargs.items()))
-                args_hash = hashlib.md5(args_str.encode()).hexdigest()[:8]
-
-                cache_key = (
-                    f"{key_prefix}:{func_name}:{args_hash}"
-                    if key_prefix
-                    else f"{func_name}:{args_hash}"
-                )
+                cache_key = build_default_cache_key(func.__name__, key_prefix, args, kwargs)
 
             # Try to get from cache
             cache_client = get_cache()
