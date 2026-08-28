@@ -35,19 +35,22 @@ def create_media_fingerprint(attachments: List[Dict[str, Any]]) -> List[str]:
 
     Extracts unique IDs of photos and videos for duplicate detection.
 
+    VK media ``id`` is unique only within its ``owner_id``, and modern photo
+    ids of ALL communities cluster in the same narrow band (~456-458M), so a
+    fingerprint without the owner collides across unrelated communities.
+
     Args:
         attachments: List of VK attachment objects
 
     Returns:
-        List of media IDs (photo IDs, video IDs)
+        List of media IDs (photo IDs, video IDs), owner-qualified
 
     Example:
         >>> attachments = [
-        ...     {'type': 'photo', 'photo': {'id': 457239017}},
-        ...     {'type': 'photo', 'photo': {'id': 457239018}}
+        ...     {'type': 'photo', 'photo': {'owner_id': -218991929, 'id': 457239017}},
         ... ]
         >>> create_media_fingerprint(attachments)
-        ['photo_457239017', 'photo_457239018']
+        ['photo_-218991929_457239017']
     """
     if not attachments:
         return []
@@ -58,8 +61,12 @@ def create_media_fingerprint(attachments: List[Dict[str, Any]]) -> List[str]:
         att_type = attachment.get("type")
 
         if att_type == "photo":
-            photo_id = attachment.get("photo", {}).get("id")
-            if photo_id:
+            photo = attachment.get("photo", {})
+            owner_id = photo.get("owner_id")
+            photo_id = photo.get("id")
+            if owner_id and photo_id:
+                media_ids.append(f"photo_{owner_id}_{photo_id}")
+            elif photo_id:
                 media_ids.append(f"photo_{photo_id}")
 
         elif att_type == "video":
@@ -70,8 +77,12 @@ def create_media_fingerprint(attachments: List[Dict[str, Any]]) -> List[str]:
                 media_ids.append(f"video_{owner_id}_{video_id}")
 
         elif att_type == "doc" and attachment.get("doc", {}).get("type") == 3:  # GIF
-            doc_id = attachment.get("doc", {}).get("id")
-            if doc_id:
+            doc = attachment.get("doc", {})
+            owner_id = doc.get("owner_id")
+            doc_id = doc.get("id")
+            if owner_id and doc_id:
+                media_ids.append(f"doc_{owner_id}_{doc_id}")
+            elif doc_id:
                 media_ids.append(f"doc_{doc_id}")
 
     return media_ids
