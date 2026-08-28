@@ -102,7 +102,7 @@ async def test_gonba_mirrors_only_fresh_non_ad(monkeypatch):
         {"id": 4, "owner_id": VK_ID, "date": now - 300, "text": "Свежая новость одна"},
         {"id": 5, "owner_id": VK_ID, "date": now - 50, "text": "Свежая новость два"},
     ]
-    wt = SimpleNamespace(lip=[seen_lip], hash=[])
+    wt = SimpleNamespace(lip=[seen_lip], hash=[], failed_attempts=None)
     sent = []
     _patch_common(monkeypatch, posts, wt, sent)
     session = _FakeSession([_Result(_community()), _Result(wt)])
@@ -130,7 +130,7 @@ async def test_gonba_test_mode_does_not_mutate_cursor(monkeypatch):
         {"id": 4, "owner_id": VK_ID, "date": now - 300, "text": "Свежая новость одна"},
         {"id": 5, "owner_id": VK_ID, "date": now - 50, "text": "Свежая новость два"},
     ]
-    wt = SimpleNamespace(lip=[], hash=[])
+    wt = SimpleNamespace(lip=[], hash=[], failed_attempts=None)
     sent = []
     _patch_common(monkeypatch, posts, wt, sent)
     session = _FakeSession([_Result(_community()), _Result(wt)])
@@ -148,7 +148,7 @@ async def test_gonba_respects_cap(monkeypatch):
     posts = [
         {"id": i, "owner_id": VK_ID, "date": now - i, "text": f"новость {i}"} for i in range(1, 6)
     ]
-    wt = SimpleNamespace(lip=[], hash=[])
+    wt = SimpleNamespace(lip=[], hash=[], failed_attempts=None)
     sent = []
     _patch_common(monkeypatch, posts, wt, sent)
     monkeypatch.setattr(
@@ -190,7 +190,7 @@ def _patch_repost(monkeypatch, result, sent):
 async def test_gonba_partial_delivery_marks_post_seen(monkeypatch):
     now = int(time.time())
     posts = [{"id": 7570, "owner_id": VK_ID, "date": now - 300, "text": "длинный текст поста"}]
-    wt = SimpleNamespace(lip=[], hash=[])
+    wt = SimpleNamespace(lip=[], hash=[], failed_attempts=None)
     sent = []
     _patch_common(monkeypatch, posts, wt, sent)
     _patch_repost(monkeypatch, {"success": False, "delivered": True}, sent)
@@ -211,7 +211,7 @@ async def test_gonba_total_failure_leaves_post_for_retry(monkeypatch):
     """Ничего не доставлено — повтор законен, курсор не двигаем."""
     now = int(time.time())
     posts = [{"id": 7570, "owner_id": VK_ID, "date": now - 300, "text": "длинный текст поста"}]
-    wt = SimpleNamespace(lip=[], hash=[])
+    wt = SimpleNamespace(lip=[], hash=[], failed_attempts=None)
     sent = []
     _patch_common(monkeypatch, posts, wt, sent)
     _patch_repost(monkeypatch, {"success": False, "delivered": False}, sent)
@@ -222,3 +222,96 @@ async def test_gonba_total_failure_leaves_post_for_retry(monkeypatch):
     assert res["stats"]["sent"] == 0
     assert res["stats"]["sent_partial"] == 0
     assert lip_of_post(VK_ID, 7570) not in (wt.lip or [])
+
+
+# --------------------------------------------------------------------------- #
+# Потолок попыток (миграция 089). Полный провал повторять правильно — но не
+# бесконечно: раньше границей был только возраст поста, до ~96 попыток за 48 ч.
+# --------------------------------------------------------------------------- #
+async def test_gonba_failed_attempts_counter_grows(monkeypatch):
+    now = int(time.time())
+    posts = [{"id": 7572, "owner_id": VK_ID, "date": now - 300, "text": "текст"}]
+    lip = lip_of_post(VK_ID, 7572)
+    wt = SimpleNamespace(lip=[], hash=[], failed_attempts={lip: 1})
+    sent = []
+    _patch_common(monkeypatch, posts, wt, sent)
+    _patch_repost(monkeypatch, {"success": False, "delivered": False}, sent)
+    session = _FakeSession([_Result(_community()), _Result(wt)])
+
+    res = await execute_gonba_telegram_mirror(session)
+
+    assert wt.failed_attempts == {lip: 2}  # счётчик вырос
+    assert lip not in (wt.lip or [])  # но пост ещё в работе
+    assert res["stats"]["given_up"] == 0
+    assert any("попытка 2 из 3" in e for e in res["errors"])
+
+
+async def test_gonba_gives_up_after_max_attempts(monkeypatch):
+    now = int(time.time())
+    posts = [{"id": 7572, "owner_id": VK_ID, "date": now - 300, "text": "текст"}]
+    lip = lip_of_post(VK_ID, 7572)
+    wt = SimpleNamespace(lip=[], hash=[], failed_attempts={lip: 2})  # третья будет последней
+    sent = []
+    _patch_common(monkeypatch, posts, wt, sent)
+    _patch_repost(monkeypatch, {"success": False, "delivered": False}, sent)
+    session = _FakeSession([_Result(_community()), _Result(wt)])
+
+    res = await execute_gonba_telegram_mirror(session)
+
+    assert res["stats"]["given_up"] == 1
+    assert lip in wt.lip  # помечен отправленным — больше не пробуем
+    assert not wt.failed_attempts  # счётчик по нему больше не нужен
+    assert any("сдались после 3 попыток" in e for e in res["errors"])
+
+
+async def test_gonba_attempts_reset_on_delivery(monkeypatch):
+    """Доставка обнуляет счётчик — иначе прошлые провалы копились бы вечно."""
+    now = int(time.time())
+    posts = [{"id": 7572, "owner_id": VK_ID, "date": now - 300, "text": "текст"}]
+    lip = lip_of_post(VK_ID, 7572)
+    wt = SimpleNamespace(lip=[], hash=[], failed_attempts={lip: 2})
+    sent = []
+    _patch_common(monkeypatch, posts, wt, sent)
+    session = _FakeSession([_Result(_community()), _Result(wt)])
+
+    res = await execute_gonba_telegram_mirror(session)  # _patch_common шлёт success=True
+
+    assert res["stats"]["sent"] == 1
+    assert lip in wt.lip
+    assert not wt.failed_attempts
+
+
+async def test_gonba_attempts_self_prune_when_post_leaves_wall(monkeypatch):
+    """Пост выпал из окна стены — счётчик по нему выбрасывается, словарь не растёт."""
+    now = int(time.time())
+    gone = lip_of_post(VK_ID, 1000)  # такого поста на стене уже нет
+    posts = [{"id": 7572, "owner_id": VK_ID, "date": now - 300, "text": "текст"}]
+    wt = SimpleNamespace(lip=[], hash=[], failed_attempts={gone: 2})
+    sent = []
+    _patch_common(monkeypatch, posts, wt, sent)
+    session = _FakeSession([_Result(_community()), _Result(wt)])
+
+    await execute_gonba_telegram_mirror(session)
+
+    assert gone not in (wt.failed_attempts or {})
+
+
+async def test_gonba_max_attempts_zero_disables_cap(monkeypatch):
+    """GONBA_MAX_SEND_ATTEMPTS=0 — потолка нет, поведение как до миграции 089."""
+    now = int(time.time())
+    posts = [{"id": 7572, "owner_id": VK_ID, "date": now - 300, "text": "текст"}]
+    lip = lip_of_post(VK_ID, 7572)
+    wt = SimpleNamespace(lip=[], hash=[], failed_attempts={lip: 99})
+    sent = []
+    _patch_common(monkeypatch, posts, wt, sent)
+    _patch_repost(monkeypatch, {"success": False, "delivered": False}, sent)
+    monkeypatch.setattr(
+        "modules.publisher.telegram_repost_config.get_gonba_max_send_attempts", lambda: 0
+    )
+    session = _FakeSession([_Result(_community()), _Result(wt)])
+
+    res = await execute_gonba_telegram_mirror(session)
+
+    assert res["stats"]["given_up"] == 0
+    assert lip not in (wt.lip or [])
+    assert wt.failed_attempts == {lip: 100}

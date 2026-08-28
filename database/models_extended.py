@@ -230,6 +230,11 @@ class WorkTable(Base):
     # Photo/video fingerprint hashes (histogram MD5)
     hash = Column(JSON, nullable=True)  # ["md5hash1", "md5hash2", ...]
 
+    # Счётчик неудачных отправок по посту (миграция 089): {"<lip>": попыток}.
+    # Двигается атомарно с ``lip`` — «сдались после N» и «помечен отправленным»
+    # обязаны попасть в один коммит, иначе они разъедутся при падении между ними.
+    failed_attempts = Column(JSON, nullable=True)  # {"218688001_7572": 2}
+
     # Bezfoto (text-only posts waiting to be published)
     bezfoto = Column(JSON, nullable=True)  # [{"text": "...", "source": "..."}, ...]
 
