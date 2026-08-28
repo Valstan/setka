@@ -5,7 +5,7 @@
 **Status:** ACTIVE
 **Updated:** 2026-08-28
 **Branch:** `main`
-**Last release in prod:** `648ac0d` (#543) — прод и `main` совпадают, миграции 087 и 088
+**Last release in prod:** `28b2a27` (#546) — прод и `main` совпадают, миграции 087, 088 и 089
 применены и записаны в журнал.
 
 ---
