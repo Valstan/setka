@@ -366,3 +366,90 @@ def test_download_to_temp_success(monkeypatch):
 def test_download_to_temp_http_error(monkeypatch):
     monkeypatch.setattr("requests.get", lambda *a, **k: _StreamResp([], status_code=404))
     assert tr._download_to_temp("http://u/v.mp4", max_bytes=1000) is None
+
+
+# --------------------------------------------------------------------------- #
+# delivered != success — инцидент 2026-08-27/28 (спам в @gonba_life)
+# --------------------------------------------------------------------------- #
+_CURL_FAILED_BODY = {
+    "ok": False,
+    "error_code": 400,
+    "description": "Bad Request: failed to send message #2 with the error message "
+    '"WEBPAGE_CURL_FAILED"',
+}
+
+
+async def test_media_group_fails_but_text_delivered_reports_delivered(monkeypatch):
+    """Альбом не ушёл, длинный текст ушёл → success False, но delivered True.
+
+    Ровно этот расклад крутил спам в @gonba_life: зеркало видело success=False
+    и слало пост заново каждые 30 минут, а канал каждый раз получал текст.
+    """
+    monkeypatch.setattr(runtime, "TELEGRAM_TOKENS", {"AFONYA": "tok"})
+
+    async def _no_sleep(_):
+        return None
+
+    monkeypatch.setattr(tr.asyncio, "sleep", _no_sleep)
+
+    def fake_post(url, json=None, timeout=None, **kwargs):
+        method = url.rsplit("/", 1)[-1]
+        if method == "sendMediaGroup":
+            return _FakeResp(400, _CURL_FAILED_BODY)
+        return _FakeResp(200)
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    media = ResolvedMedia(photos=["http://cdn/a.jpg", "http://cdn/b.jpg"])
+    res = await repost_to_telegram("AFONYA", "@c", "x" * (tr.TG_CAPTION_LIMIT + 1), media)
+
+    assert res["success"] is False  # альбом потерян — честно
+    assert res["delivered"] is True  # но текст в канале, повтор дал бы дубль
+
+
+async def test_total_failure_reports_not_delivered(monkeypatch):
+    """Не ушло ничего → delivered False, повтор законен."""
+    monkeypatch.setattr(runtime, "TELEGRAM_TOKENS", {"AFONYA": "tok"})
+
+    async def _no_sleep(_):
+        return None
+
+    monkeypatch.setattr(tr.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr("requests.post", lambda *a, **k: _FakeResp(400, _CURL_FAILED_BODY))
+
+    media = ResolvedMedia(photos=["http://cdn/a.jpg", "http://cdn/b.jpg"])
+    res = await repost_to_telegram("AFONYA", "@c", "x" * (tr.TG_CAPTION_LIMIT + 1), media)
+
+    assert res["success"] is False
+    assert res["delivered"] is False
+
+
+async def test_text_only_success_is_delivered(monkeypatch):
+    monkeypatch.setattr(runtime, "TELEGRAM_TOKENS", {"AFONYA": "tok"})
+    monkeypatch.setattr("requests.post", _RecordingPost())
+    res = await repost_to_telegram("AFONYA", "@c", "привет", ResolvedMedia())
+    assert res["success"] is True and res["delivered"] is True
+
+
+async def test_no_token_is_not_delivered(monkeypatch):
+    monkeypatch.setattr(runtime, "TELEGRAM_TOKENS", {})
+    res = await repost_to_telegram("NOPE", "@c", "t", ResolvedMedia())
+    assert res["success"] is False and res["delivered"] is False
+
+
+async def test_webpage_curl_failed_retried_once(monkeypatch):
+    """WEBPAGE_CURL_FAILED транзиторен — одна повторная попытка спасает альбом."""
+    monkeypatch.setattr(runtime, "TELEGRAM_TOKENS", {"AFONYA": "tok"})
+
+    async def _no_sleep(_):
+        return None
+
+    monkeypatch.setattr(tr.asyncio, "sleep", _no_sleep)
+    seq = [_FakeResp(400, _CURL_FAILED_BODY), _FakeResp(200)]
+    monkeypatch.setattr("requests.post", lambda *a, **k: seq.pop(0))
+
+    media = ResolvedMedia(photos=["http://cdn/a.jpg", "http://cdn/b.jpg"])
+    res = await repost_to_telegram("AFONYA", "@c", "короткая подпись", media)
+
+    assert seq == []  # обе попытки израсходованы
+    assert res["success"] is True and res["delivered"] is True

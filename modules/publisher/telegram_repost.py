@@ -41,6 +41,9 @@ TG_TEXT_LIMIT = 4096
 TG_CAPTION_LIMIT = 1024
 TG_MEDIA_GROUP_MAX = 10
 
+# Telegram не смог сам скачать медиа по URL — транзиторно, повторяется один раз.
+_WEBPAGE_CURL_FAILED = "WEBPAGE_CURL_FAILED"
+
 # Bot API hard cap for uploading a file via multipart (50 MB). Larger videos
 # cannot be delivered by a bot at all and are dropped (degraded).
 MAX_TG_BOT_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -192,6 +195,15 @@ async def _call(token: str, method: str, payload: Dict[str, Any]) -> bool:
             await asyncio.sleep(retry_after + 1)
             continue
 
+        # WEBPAGE_CURL_FAILED — Telegram сам не смог скачать медиа по URL из
+        # VK CDN. Отказ транзиторный (в логах падает то элемент #1, то #6 у
+        # одного и того же поста), и на 400 ничего не доставлено — повтор
+        # безопасен и часто спасает альбом.
+        if resp.status_code == 400 and _WEBPAGE_CURL_FAILED in str(body) and attempt == 0:
+            logger.warning("Telegram %s: %s, одна повторная попытка", method, _WEBPAGE_CURL_FAILED)
+            await asyncio.sleep(1)
+            continue
+
         logger.warning("Telegram %s failed: %s %s", method, resp.status_code, str(body)[:300])
         return False
     return False
@@ -326,20 +338,31 @@ async def repost_to_telegram(
     Send a single repost (text + media) to a Telegram channel using bot
     ``bot_name`` (token resolved from env). Honors ``test_mode`` (no network).
     Degrades media-group → photos → single → text gracefully.
+
+    Возвращает ДВА разных флага, и путать их нельзя:
+
+    - ``success`` — прошло всё, что собирались отправить;
+    - ``delivered`` — в канал ушло **хоть что-то**.
+
+    Один пост рассылается несколькими независимыми вызовами (альбом + текст,
+    когда он длиннее подписи), и они падают независимо. ``success=False`` при
+    ``delivered=True`` означает «часть уже в канале» — повтор такого поста даёт
+    не доставку, а дубль. Вызывающий, который ретраит, обязан смотреть на
+    ``delivered`` (см. ``modules.telegram_gonba_mirror``).
     """
     from config.runtime import TELEGRAM_TOKENS
 
     token = TELEGRAM_TOKENS.get((bot_name or "").upper())
     if not token:
         logger.warning("No Telegram token for bot '%s'; skipping repost to %s", bot_name, channel)
-        return {"success": False, "error": f"no token for bot {bot_name}"}
+        return {"success": False, "delivered": False, "error": f"no token for bot {bot_name}"}
 
     text = text or ""
     if len(text) > TG_TEXT_LIMIT:
         text = truncate_text(text, TG_TEXT_LIMIT)
 
     if not text and not media.has_media():
-        return {"success": True, "skipped": "empty"}
+        return {"success": True, "delivered": False, "skipped": "empty"}
 
     if test_mode:
         logger.info(
@@ -352,9 +375,10 @@ async def repost_to_telegram(
             len(media.docs),
             media.degraded,
         )
-        return {"success": True, "test_mode": True}
+        return {"success": True, "delivered": False, "test_mode": True}
 
     success = True
+    delivered = False
     group = _media_group_items(media)
 
     if len(group) >= 2:
@@ -362,9 +386,11 @@ async def repost_to_telegram(
         items = _media_group_items(media, caption=caption)
         ok = await _call(token, "sendMediaGroup", {"chat_id": channel, "media": items})
         success = success and ok
+        delivered = delivered or ok
         if text and caption is None:
             ok = await _send_text(token, channel, text)
             success = success and ok
+            delivered = delivered or ok
     elif len(group) == 1:
         item = group[0]
         caption = text if (text and len(text) <= TG_CAPTION_LIMIT) else None
@@ -374,32 +400,40 @@ async def repost_to_telegram(
                 payload["caption"] = caption
             ok = await _call(token, "sendPhoto", payload)
             success = success and ok
+            delivered = delivered or ok
             if text and caption is None:
                 ok = await _send_text(token, channel, text)
                 success = success and ok
+                delivered = delivered or ok
         else:  # video — try URL, then file upload (≤50MB); degrade to text if both fail
             ok = await _send_video(token, channel, item["media"], caption)
             if ok:
+                delivered = True
                 if text and caption is None:
                     ok = await _send_text(token, channel, text)
                     success = success and ok
+                    delivered = delivered or ok
             else:
                 # Video unsendable (player-only / >50MB / upload error). Keep the
                 # post: deliver its text so nothing is silently lost; flag degraded.
                 media.degraded = True
                 if text:
-                    success = success and await _send_text(token, channel, text)
+                    ok = await _send_text(token, channel, text)
+                    success = success and ok
+                    delivered = delivered or ok
                 else:
                     success = False
     elif text:
         ok = await _send_text(token, channel, text)
         success = success and ok
+        delivered = delivered or ok
 
     # Documents cannot share a photo/video media group — send separately.
     for doc in media.docs[:TG_MEDIA_GROUP_MAX]:
-        await _call(token, "sendDocument", {"chat_id": channel, "document": doc["url"]})
+        if await _call(token, "sendDocument", {"chat_id": channel, "document": doc["url"]}):
+            delivered = True
 
-    return {"success": success, "degraded": media.degraded}
+    return {"success": success, "delivered": delivered, "degraded": media.degraded}
 
 
 async def mirror_bulletin_to_telegram(

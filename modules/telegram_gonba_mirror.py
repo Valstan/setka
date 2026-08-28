@@ -30,7 +30,14 @@ GONBA_LIP_HISTORY_MAX = 50  # larger than copy_setka (fires often, bursty wall)
 
 
 def _empty_stats() -> Dict[str, int]:
-    return {"scanned": 0, "sent": 0, "skipped_seen": 0, "skipped_old": 0, "skipped_ads": 0}
+    return {
+        "scanned": 0,
+        "sent": 0,
+        "sent_partial": 0,
+        "skipped_seen": 0,
+        "skipped_old": 0,
+        "skipped_ads": 0,
+    }
 
 
 async def execute_gonba_telegram_mirror(
@@ -176,6 +183,20 @@ async def execute_gonba_telegram_mirror(
                 if out.get("success"):
                     sent_lips.append(lip)
                     stats["sent"] += 1
+                elif out.get("delivered"):
+                    # Часть поста уже в канале (типовой случай: альбом не ушёл,
+                    # а длинный текст ушёл отдельным сообщением). Повтор такого
+                    # поста даёт не доставку, а ДУБЛЬ — и так каждые 30 минут,
+                    # пока пост не состарится. Считаем отправленным, потерю
+                    # медиа фиксируем в логе и в errors, а не молча.
+                    sent_lips.append(lip)
+                    stats["sent_partial"] += 1
+                    logger.warning(
+                        "Гоньба-зеркало: пост %s доставлен частично — помечен отправленным, "
+                        "чтобы не дублировать его в канале; часть содержимого потеряна",
+                        lip,
+                    )
+                    errors.append(f"{lip}: доставлено частично (детали — в логе Telegram-вызовов)")
                 else:
                     errors.append(f"{lip}: {out.get('error', 'send failed')}")
             except Exception as e:
