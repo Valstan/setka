@@ -172,3 +172,53 @@ async def test_gonba_disabled(monkeypatch):
     session = _FakeSession([])  # short-circuits before any query
     res = await execute_gonba_telegram_mirror(session)
     assert res.get("skipped") == "disabled"
+
+
+# --------------------------------------------------------------------------- #
+# Частичная доставка — инцидент 2026-08-27/28: одно и то же сообщение уходило
+# в @gonba_life каждые 30 минут, потому что «отправлено» считалось только по
+# полному успеху, а текст при этом каждый раз доезжал.
+# --------------------------------------------------------------------------- #
+def _patch_repost(monkeypatch, result, sent):
+    async def _fake(bot, channel, text, media, *, test_mode=False):
+        sent.append({"bot": bot, "channel": channel, "text": text})
+        return dict(result)
+
+    monkeypatch.setattr("modules.publisher.telegram_repost.repost_to_telegram", _fake)
+
+
+async def test_gonba_partial_delivery_marks_post_seen(monkeypatch):
+    now = int(time.time())
+    posts = [{"id": 7570, "owner_id": VK_ID, "date": now - 300, "text": "длинный текст поста"}]
+    wt = SimpleNamespace(lip=[], hash=[])
+    sent = []
+    _patch_common(monkeypatch, posts, wt, sent)
+    _patch_repost(monkeypatch, {"success": False, "delivered": True}, sent)
+    session = _FakeSession([_Result(_community()), _Result(wt)])
+
+    res = await execute_gonba_telegram_mirror(session)
+
+    assert res["stats"]["sent_partial"] == 1
+    assert res["stats"]["sent"] == 0
+    # Главное: пост записан как отправленный — следующая волна его не продублирует.
+    assert lip_of_post(VK_ID, 7570) in wt.lip
+    # И потеря не молчит: прогон красный, причина в errors.
+    assert res["success"] is False
+    assert any("частично" in e for e in res["errors"])
+
+
+async def test_gonba_total_failure_leaves_post_for_retry(monkeypatch):
+    """Ничего не доставлено — повтор законен, курсор не двигаем."""
+    now = int(time.time())
+    posts = [{"id": 7570, "owner_id": VK_ID, "date": now - 300, "text": "длинный текст поста"}]
+    wt = SimpleNamespace(lip=[], hash=[])
+    sent = []
+    _patch_common(monkeypatch, posts, wt, sent)
+    _patch_repost(monkeypatch, {"success": False, "delivered": False}, sent)
+    session = _FakeSession([_Result(_community()), _Result(wt)])
+
+    res = await execute_gonba_telegram_mirror(session)
+
+    assert res["stats"]["sent"] == 0
+    assert res["stats"]["sent_partial"] == 0
+    assert lip_of_post(VK_ID, 7570) not in (wt.lip or [])
