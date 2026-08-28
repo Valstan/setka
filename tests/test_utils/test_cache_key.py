@@ -43,13 +43,21 @@ class TestStableRepr:
 class TestBuildDefaultCacheKey:
     def test_same_key_across_different_sessions(self):
         """Суть бага: разные экземпляры сессии не должны менять ключ."""
-        k1 = build_default_cache_key("get_posts", "posts", (), {"region_id": 5, "db": _FakeSession()})
-        k2 = build_default_cache_key("get_posts", "posts", (), {"region_id": 5, "db": _FakeSession()})
+        k1 = build_default_cache_key(
+            "get_posts", "posts", (), {"region_id": 5, "db": _FakeSession()}
+        )
+        k2 = build_default_cache_key(
+            "get_posts", "posts", (), {"region_id": 5, "db": _FakeSession()}
+        )
         assert k1 == k2
 
     def test_primitive_change_changes_key(self):
-        k1 = build_default_cache_key("get_posts", "posts", (), {"region_id": 5, "db": _FakeSession()})
-        k2 = build_default_cache_key("get_posts", "posts", (), {"region_id": 6, "db": _FakeSession()})
+        k1 = build_default_cache_key(
+            "get_posts", "posts", (), {"region_id": 5, "db": _FakeSession()}
+        )
+        k2 = build_default_cache_key(
+            "get_posts", "posts", (), {"region_id": 6, "db": _FakeSession()}
+        )
         assert k1 != k2
 
     def test_kwarg_name_matters(self):
