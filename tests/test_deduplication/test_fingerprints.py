@@ -118,6 +118,27 @@ class TestMediaFingerprint:
         fp2 = create_media_fingerprint(attachments)
         assert fp1 == fp2
 
+    def test_same_photo_id_different_owners_no_collision(self):
+        """VK photo id is unique only per owner: same id under different owners
+        must NOT produce the same fingerprint (Kalinino incident 2026-08:
+        photo_<id> without owner collided across communities and silently ate
+        every photo post of a low-volume donor)."""
+        kalinino = [{"type": "photo", "photo": {"owner_id": -218991929, "id": 457241726}}]
+        other = [{"type": "photo", "photo": {"owner_id": -158787639, "id": 457241726}}]
+        assert set(create_media_fingerprint(kalinino)).isdisjoint(create_media_fingerprint(other))
+
+    def test_same_gif_id_different_owners_no_collision(self):
+        """Same collision class for GIF docs: owner must be part of the id."""
+        a = [{"type": "doc", "doc": {"type": 3, "owner_id": -1, "id": 55}}]
+        b = [{"type": "doc", "doc": {"type": 3, "owner_id": -2, "id": 55}}]
+        assert set(create_media_fingerprint(a)).isdisjoint(create_media_fingerprint(b))
+
+    def test_photo_without_owner_falls_back_to_bare_id(self):
+        """Defensive fallback: a photo object without owner_id still yields a
+        fingerprint (degraded, legacy format) rather than nothing."""
+        attachments = [{"type": "photo", "photo": {"id": 456}}]
+        assert create_media_fingerprint(attachments) == ["photo_456"]
+
 
 class TestTextFingerprint:
     """Tests for create_text_fingerprint."""
