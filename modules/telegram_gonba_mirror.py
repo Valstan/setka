@@ -10,6 +10,16 @@ cooldown-aware token selection and WorkTable lip-dedup, but the target is a
 Telegram channel (``modules.publisher.telegram_repost``) instead of VK walls.
 Dedup lives in Postgres (WorkTable region_code="gonba", theme="telegram") — not
 Redis — so a cache flush can never re-spam the whole wall into a live channel.
+
+Повтор ограничен с двух сторон, и обе границы нужны:
+
+- **частичная доставка не повторяется вовсе** — если в канал ушло хоть что-то
+  (``delivered``), пост считается отправленным: повтор дал бы дубль, а не
+  доставку (инцидент 27-28.08 в @gonba_life, PR #545);
+- **полный провал повторяется, но не бесконечно** — ``GONBA_MAX_SEND_ATTEMPTS``
+  (по умолчанию 3) поверх возрастного потолка. Счётчик попыток лежит в
+  ``WorkTable.failed_attempts`` той же строки (миграция 089), чтобы двигаться
+  одним коммитом с курсором.
 """
 
 from __future__ import annotations
@@ -34,6 +44,7 @@ def _empty_stats() -> Dict[str, int]:
         "scanned": 0,
         "sent": 0,
         "sent_partial": 0,
+        "given_up": 0,
         "skipped_seen": 0,
         "skipped_old": 0,
         "skipped_ads": 0,
@@ -56,6 +67,7 @@ async def execute_gonba_telegram_mirror(
         get_gonba_community_id,
         get_gonba_max_post_age_hours,
         get_gonba_max_posts_per_run,
+        get_gonba_max_send_attempts,
         get_telegram_extra_hashtags,
         telegram_repost_disabled,
     )
@@ -122,9 +134,29 @@ async def execute_gonba_telegram_mirror(
         await session.refresh(wt)
 
     known: Set[str] = set(wt.lip or [])
+    # Счётчик полных провалов по посту (миграция 089): {lip: попыток}.
+    attempts: Dict[str, int] = {str(k): int(v) for k, v in (wt.failed_attempts or {}).items()}
+    prev_attempts = dict(attempts)
+    max_attempts = get_gonba_max_send_attempts()
     max_age = int(get_gonba_max_post_age_hours() * 3600)
     now_ts = int(time.time())
     cap = get_gonba_max_posts_per_run()
+
+    # Все lip текущего окна стены — по ним чистится счётчик (см. _prune_attempts).
+    wall_lips: Set[str] = {
+        lip_of_post(int(p.get("owner_id", source_owner_id)), int(p["id"]))
+        for p in posts
+        if p.get("id") is not None
+    }
+
+    def _prune_attempts() -> Dict[str, int]:
+        """Оставить счётчик только по постам, которые ещё имеет смысл пробовать.
+
+        Пост, выпавший из окна стены или уже помеченный отправленным, повторяться
+        не будет — держать по нему счётчик незачем. Благодаря этому словарь
+        самоочищается и не растёт, отдельной чистки не нужно.
+        """
+        return {k: v for k, v in attempts.items() if k in wall_lips and k not in known}
 
     # Oldest-first so the channel timeline reads chronologically; skip
     # pinned/duplicate/old/ads. Cap per run to avoid floods.
@@ -154,14 +186,41 @@ async def execute_gonba_telegram_mirror(
             break
 
     if not fresh:
-        if not test_mode and known != set(wt.lip or []):
+        pruned = _prune_attempts()
+        if not test_mode and (known != set(wt.lip or []) or pruned != prev_attempts):
             wt.lip = list(known)[-GONBA_LIP_HISTORY_MAX:]
+            wt.failed_attempts = pruned or None
             await session.commit()
         return {"success": True, "message": "nothing new to mirror", "stats": stats}
 
     extra_tags = get_telegram_extra_hashtags(community.telegram_channel)
     sent_lips: List[str] = []
     errors: List[str] = []
+
+    def _note_failure(lip: str, reason: str) -> None:
+        """Полный провал (в канал не ушло ничего) — считаем попытку и, если их
+        стало ``max_attempts``, перестаём пробовать этот пост навсегда.
+
+        Повторять то, что не доставлено, правильно — но не бесконечно: раньше
+        потолком был только возраст поста, до ~96 попыток за 48 часов.
+        """
+        tries = attempts.get(lip, 0) + 1
+        attempts[lip] = tries
+        if 0 < max_attempts <= tries:
+            known.add(lip)  # сдались — помечаем отправленным, чтобы не крутить дальше
+            attempts.pop(lip, None)
+            stats["given_up"] += 1
+            logger.error(
+                "Гоньба-зеркало: пост %s не доставлен за %d попыток (%s) — "
+                "перестаём пробовать, в канал он не попадёт",
+                lip,
+                tries,
+                reason,
+            )
+            errors.append(f"{lip}: сдались после {tries} попыток ({reason})")
+        else:
+            limit = f" из {max_attempts}" if max_attempts > 0 else ""
+            errors.append(f"{lip}: {reason} (попытка {tries}{limit})")
 
     async with VKClientAsync(parse_token) as tg_vk:
         for p in fresh:
@@ -183,6 +242,7 @@ async def execute_gonba_telegram_mirror(
                 if out.get("success"):
                     sent_lips.append(lip)
                     stats["sent"] += 1
+                    attempts.pop(lip, None)
                 elif out.get("delivered"):
                     # Часть поста уже в канале (типовой случай: альбом не ушёл,
                     # а длинный текст ушёл отдельным сообщением). Повтор такого
@@ -191,6 +251,7 @@ async def execute_gonba_telegram_mirror(
                     # медиа фиксируем в логе и в errors, а не молча.
                     sent_lips.append(lip)
                     stats["sent_partial"] += 1
+                    attempts.pop(lip, None)
                     logger.warning(
                         "Гоньба-зеркало: пост %s доставлен частично — помечен отправленным, "
                         "чтобы не дублировать его в канале; часть содержимого потеряна",
@@ -198,21 +259,25 @@ async def execute_gonba_telegram_mirror(
                     )
                     errors.append(f"{lip}: доставлено частично (детали — в логе Telegram-вызовов)")
                 else:
-                    errors.append(f"{lip}: {out.get('error', 'send failed')}")
+                    _note_failure(lip, str(out.get("error") or "send failed"))
             except Exception as e:
                 logger.exception("Гоньба-зеркало: ошибка на посте %s", lip)
-                errors.append(f"{lip}: {e}")
+                _note_failure(lip, str(e))
 
-    # Persist progress: ad-skips (added to `known`) + successfully sent posts.
+    # Persist progress: ad-skips + give-ups (added to `known`), successfully sent
+    # posts, and the failure counter — всё одним коммитом: «сдались после N» и
+    # «помечен отправленным» не должны разъехаться при падении между записями.
     # test_mode is a side-effect-free dry-run: never touch the persistent cursor
     # (otherwise a dry-run on prod would mark posts as seen and the live beat run
     # would skip them).
-    if not test_mode and (sent_lips or known != set(wt.lip or [])):
+    for lip in sent_lips:
+        known.add(lip)
+    pruned = _prune_attempts()
+    if not test_mode and (sent_lips or known != set(wt.lip or []) or pruned != prev_attempts):
         prev = list(wt.lip or [])
-        for lip in sent_lips:
-            known.add(lip)
         merged = [lip for lip in prev if lip in known] + [lip for lip in known if lip not in prev]
         wt.lip = merged[-GONBA_LIP_HISTORY_MAX:]
+        wt.failed_attempts = pruned or None
         await session.commit()
 
     return {

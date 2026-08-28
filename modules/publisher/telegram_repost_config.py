@@ -38,6 +38,21 @@ def get_gonba_max_posts_per_run() -> int:
         return 3
 
 
+def get_gonba_max_send_attempts() -> int:
+    """Сколько раз пробовать пост, у которого не доставлено НИЧЕГО, прежде чем сдаться.
+
+    Ограничителем раньше был только возраст поста — до ~96 попыток за 48 часов.
+    Отказ, при котором в канал ничего не ушло, повторять правильно, но не вечно:
+    ``read-timeout`` означает «ответ потерян», а не «сообщение не дошло», и без
+    потолка такой отказ снова превращается в спам. Ноль/отрицательное значение
+    отключает потолок (поведение до миграции 089).
+    """
+    try:
+        return int(_getenv("GONBA_MAX_SEND_ATTEMPTS", "3"))
+    except ValueError:
+        return 3
+
+
 def get_gonba_max_post_age_hours() -> float:
     """Skip wall posts older than this (avoids back-fill spam on cold start)."""
     try:
