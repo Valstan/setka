@@ -360,11 +360,157 @@ def interval() -> float:
     return get_post_interval_seconds()
 
 
+def repair_region(
+    target: dict,
+    *,
+    user_api,
+    community_api,
+    retries: int = 2,
+) -> Tuple[str, int]:
+    """Дозалить только недостающие аватар/обложку по живому снимку.
+
+    Нужен после перемежающегося ``error 129 Invalid photo`` первой порции:
+    повторный full-прогон сделал бы дубль визитки, а repair смотрит на снимок
+    (нет фото → аватар, нет обложки → обложка) и больше ничего не трогает.
+    Каждый шаг ретраится: 129 у ВК транзиторный (у одного региона проходил
+    аватар и падала обложка, у соседнего — наоборот).
+
+    Возвращает (summary, потраченные user-вызовы).
+    """
+    from modules.promotion.group_setup_vk import get_current, upload_avatar, upload_cover
+
+    gid = target["vk_group_id"]
+    snap = get_current(community_api or user_api, gid)
+    if not snap.ok:
+        return f"снимок не взялся: {snap.detail}", 0
+    cur = snap.payload or {}
+    texts = build_texts(target)
+    done, errors = [], []
+    user_calls = 0
+
+    if not cur.get("has_photo"):
+        for attempt in range(retries + 1):
+            res = upload_avatar(user_api, gid, texts["avatar"])
+            user_calls += 4
+            if res.ok:
+                done.append("avatar")
+                break
+            errors.append(f"avatar#{attempt}: [{res.vk_error_code}] {res.detail}")
+            time.sleep(interval())
+        time.sleep(interval())
+
+    if not cur.get("has_cover") and community_api is not None:
+        for attempt in range(retries + 1):
+            res = upload_cover(community_api, gid, texts["cover"])
+            if res.ok:
+                done.append("cover")
+                break
+            errors.append(f"cover#{attempt}: [{res.vk_error_code}] {res.detail}")
+            time.sleep(interval())
+
+    if not done and not errors:
+        return "всё на месте", user_calls
+    summary = f"дозалито: {', '.join(done) or 'ничего'}"
+    if errors:
+        summary += f"; ошибки: {'; '.join(errors[-2:])}"
+    return summary, user_calls
+
+
+async def mark_repaired(region_id: int, version: int, summary: str, ok: bool) -> None:
+    """Обновить существующую error-запись после repair."""
+    from sqlalchemy import select
+
+    from database.connection import AsyncSessionLocal
+    from database.models import PromoGroupSetup
+
+    async with AsyncSessionLocal() as session:
+        row = (
+            (
+                await session.execute(
+                    select(PromoGroupSetup).where(
+                        PromoGroupSetup.region_id == region_id,
+                        PromoGroupSetup.setup_version == version,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if row is None:
+            return
+        row.status = "applied" if ok else "error"
+        row.error = None if ok else f"repair: {summary}"[:500]
+        await session.commit()
+
+
+async def run_repair(codes: Optional[List[str]]) -> int:
+    """--repair: пройти регионы с записью status='error' и дозалить поля."""
+    import vk_api
+    from sqlalchemy import select
+
+    from config.promo import get_valstan_call_budget
+    from database.connection import AsyncSessionLocal
+    from database.models import PromoGroupSetup
+    from modules.promotion.branding import TEMPLATE_VERSION
+
+    async with AsyncSessionLocal() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(PromoGroupSetup.region_id).where(
+                        PromoGroupSetup.setup_version == TEMPLATE_VERSION,
+                        PromoGroupSetup.status == "error",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    broken_ids = set(rows)
+    if not broken_ids:
+        logger.info("Записей со статусом error нет — чинить нечего")
+        return 0
+
+    targets = [t for t in await load_targets(codes) if t["region_id"] in broken_ids]
+    all_targets = await load_targets(None)
+    nb_index = neighbor_index(all_targets)
+    for t in targets:
+        t["_neighbor_index"] = nb_index
+
+    user_token, community_tokens = await load_tokens()
+    user_api = vk_api.VkApi(token=user_token).get_api() if user_token else None
+    if user_api is None:
+        logger.error("Нет user-токена")
+        return 2
+
+    budget = get_valstan_call_budget()
+    spent = 0
+    logger.info("REPAIR: регионов с ошибками %d, бюджет %d user-вызовов", len(targets), budget)
+    for target in targets:
+        if spent >= budget:
+            logger.info("  %-14s ⏸ бюджет исчерпан", target["code"])
+            continue
+        gid = abs(int(target["vk_group_id"]))
+        comm_token = community_tokens.get(gid)
+        community_api = vk_api.VkApi(token=comm_token).get_api() if comm_token else None
+        summary, calls = await asyncio.to_thread(
+            repair_region, target, user_api=user_api, community_api=community_api
+        )
+        spent += calls
+        ok = "ошибки" not in summary and "не взялся" not in summary
+        await mark_repaired(target["region_id"], TEMPLATE_VERSION, summary, ok)
+        logger.info("  %-14s %s %s", target["code"], "🔧" if ok else "⛔", summary)
+    return 0
+
+
 async def amain() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="выполнить правки (гейт #025)")
     parser.add_argument("--regions", default=None, help="коды через запятую")
     parser.add_argument("--rollback", default=None, metavar="CODE", help="откат описания")
+    parser.add_argument(
+        "--repair", action="store_true", help="дозалить упавшие аватары/обложки (status=error)"
+    )
     parser.add_argument("--out", default=None, help="куда сложить превью картинок")
     args = parser.parse_args()
 
@@ -374,6 +520,9 @@ async def amain() -> int:
 
     if args.rollback:
         return await rollback(args.rollback)
+    if args.repair:
+        codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
+        return await run_repair(codes)
 
     import vk_api
 
