@@ -215,6 +215,7 @@ async def run_cascaded_bulletin(
     source_mode: str = "children",
     require_hashtag: Optional[str] = None,
     dry_run: bool = False,
+    footer: str = "",
 ) -> Dict[str, Any]:
     """Собрать и опубликовать каскадная сводка для региона.
 
@@ -552,6 +553,7 @@ async def run_cascaded_bulletin(
             max_text_length=region_config.text_post_maxsize_simbols or 4096,
             repost_mode=region_config.setka_regim_repost,
             max_posts_per_bulletin=pipeline_eff.get("max_posts_per_bulletin"),
+            footer=footer,
         )
         bulletin = builder.build_bulletin(regular_posts, group_names=group_names)
         if bulletin.post_count == 0 or not bulletin.text.strip():
@@ -696,7 +698,13 @@ async def run_cascaded_bulletin(
     }
 
 
-DEFAULT_NEIGHBOR_HASHTAG = "#Новости"
+# Гейт #Новости снят 2026-08-29 (этап 4 ребрендинга): замер прод-логов показал
+# posts_published=0 у ВСЕХ соседских прогонов — стена соседа-ИНФО состоит из
+# сводок (их режет фильтр neighbor_bulletin, и это правильно), а гейт добивал
+# остальное (18 из 25 постов). С появлением хедлайнеров (этап 3) на стенах
+# соседей есть что перепечатывать нативно — без гейта. Region.config
+# ['neighbor_hashtag'] оставлен как персональный гейт, если понадобится.
+DEFAULT_NEIGHBOR_HASHTAG = None
 
 
 async def run_neighbor_bulletin(
@@ -713,19 +721,33 @@ async def run_neighbor_bulletin(
     Это единственный модуль соседского обмена (бывший ``neighbor_sharing.py`` удалён).
 
     ``require_hashtag`` по умолчанию берётся из ``region.config['neighbor_hashtag']``
-    (если задан), иначе :data:`DEFAULT_NEIGHBOR_HASHTAG` (``#Новости``).
+    (если задан), иначе :data:`DEFAULT_NEIGHBOR_HASHTAG` (с 2026-08-29 — ``None``,
+    гейт снят: см. комментарий у константы).
     """
+    from database.models import Region
+
+    res = await session.execute(select(Region).where(Region.code == region_code))
+    region = res.scalars().first()
+
     gate = require_hashtag
     if gate is None:
-        from database.models import Region
-
-        res = await session.execute(select(Region).where(Region.code == region_code))
-        region = res.scalars().first()
         cfg = getattr(region, "config", None) if region else None
         if isinstance(cfg, dict):
             gate = cfg.get("neighbor_hashtag")
         if not gate:
             gate = DEFAULT_NEIGHBOR_HASHTAG
+
+    # CTA-футер витрины соседа: «Ленты соседей: Имя url · …» — прямые ссылки
+    # на группы, из которых собрана сводка (заказ владельца 2026-08-29:
+    # «хотите узнать больше — идите в группу соседа»).
+    footer = ""
+    try:
+        from tasks.parsing_scheduler_tasks import _build_neighbor_footer
+
+        if region is not None:
+            footer = await _build_neighbor_footer(session, region)
+    except Exception:  # pragma: no cover - CTA не имеет права ронять канал
+        logger.warning("neighbor CTA footer build failed", exc_info=True)
 
     return await run_cascaded_bulletin(
         session,
@@ -734,4 +756,5 @@ async def run_neighbor_bulletin(
         test_mode=test_mode,
         source_mode="neighbors",
         require_hashtag=gate,
+        footer=footer,
     )

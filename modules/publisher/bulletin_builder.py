@@ -72,6 +72,7 @@ class BulletinBuilder:
         max_text_length: int = MAX_TEXT_LENGTH,
         repost_mode: bool = False,
         max_posts_per_bulletin: Optional[int] = None,
+        footer: str = "",
     ):
         """
         Args:
@@ -81,6 +82,9 @@ class BulletinBuilder:
             max_text_length: Maximum text length
             repost_mode: True = VK repost, False = copy with attribution
             max_posts_per_bulletin: Сколько новостей максимум в одном сводке (из настроек региона)
+            footer: Строка-футер между постами и хэштегами (например «Ленты
+                соседей: …» — этап 4 ребрендинга); пустая = без футера.
+                Участвует в бюджете длины наравне с хэштегами.
         """
         # Пустая строка = без заголовка (например траурная сводка); None = дефолтный заголовок
         if header is None:
@@ -89,6 +93,7 @@ class BulletinBuilder:
             self.header = header
         self.hashtags = hashtags or []
         self.local_hashtag = local_hashtag
+        self.footer = (footer or "").strip()
         self.max_text_length = max_text_length
         self.repost_mode = repost_mode
         self.max_posts_per_bulletin = (
@@ -148,6 +153,8 @@ class BulletinBuilder:
         # Calculate static content that must always fit
         hashtag_text = self._build_hashtag_text()
         hashtag_overhead = len(hashtag_text) + 2 if hashtag_text else 2  # +2 for newlines
+        if self.footer:
+            hashtag_overhead += len(self.footer) + 2
 
         for post_data in sorted_posts:
             # Stop if we've reached max posts
@@ -220,6 +227,11 @@ class BulletinBuilder:
                 max_length_exceeded=False,
                 max_attachments_exceeded=False,
             )
+
+        # Футер (ссылки на соседей) — между постами и хэштегами.
+        if self.footer:
+            bulletin_parts.append(self.footer)
+            bulletin_parts.append("")
 
         # Add hashtags at the end
         if hashtag_text:

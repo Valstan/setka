@@ -49,6 +49,56 @@ def _use_cascade_bulletin(region_kind: str | None, region_config: Any) -> bool:
     return mode != "communities"
 
 
+async def _build_neighbor_footer(session, region) -> str:
+    """Футер сводки: «Ленты соседей: Имя url · Имя url» (этап 4 ребрендинга).
+
+    Соседи ротируются по дню (``toordinal``): каждый день сводки региона
+    показывают следующую пару — за неделю прокручивается весь список, а футер
+    остаётся коротким (лимиты — в ``render_footer_line``). Откат per-region:
+    ``regions.config['neighbor_footer'] = false``. Ошибка сборки не должна
+    ронять публикацию — снаружи вызов обёрнут try/except.
+    """
+    from datetime import date as _date
+
+    from sqlalchemy import select as _select
+
+    from database.models import Region as _R
+    from modules.promotion.copy import render_footer_line
+    from modules.region_links import base_title, community_url, parse_neighbors
+
+    cfg = getattr(region, "config", None)
+    if isinstance(cfg, dict) and not cfg.get("neighbor_footer", True):
+        return ""
+    codes = parse_neighbors(getattr(region, "neighbors", None))
+    if not codes:
+        return ""
+    rows = (
+        await session.execute(
+            _select(_R.code, _R.name, _R.vk_group_id, _R.config).where(
+                _R.code.in_(codes),
+                _R.is_active.is_(True),
+                _R.vk_group_id.isnot(None),
+            )
+        )
+    ).fetchall()
+    items = []
+    for row in sorted(rows, key=lambda r: r.code):
+        screen = None
+        if isinstance(row.config, dict):
+            screen = row.config.get("screen_name")
+        items.append(
+            {
+                "name": f"{base_title(row.name, None)} ИНФО",
+                "url": community_url(row.vk_group_id, screen),
+            }
+        )
+    if not items:
+        return ""
+    start = _date.today().toordinal() % len(items)
+    rotated = items[start:] + items[:start]
+    return render_footer_line(rotated)
+
+
 @shared_task(bind=True, max_retries=3)
 def parse_and_publish_theme(
     self,
@@ -398,6 +448,14 @@ def parse_and_publish_theme(
                 if headliner_post is not None:
                     regular_posts = [p for p in regular_posts if p is not headliner_post]
 
+            # Футер со ссылками на соседей (этап 4): перекрёстная видимость
+            # сети в каждой сводке; сборка не имеет права ронять публикацию.
+            neighbor_footer = ""
+            try:
+                neighbor_footer = await _build_neighbor_footer(session, region)
+            except Exception:  # pragma: no cover - footer никогда не валит волну
+                logger.warning("neighbor footer build failed", exc_info=True)
+
             # Regular bulletin
             if regular_posts:
                 builder = BulletinBuilder(
@@ -407,6 +465,7 @@ def parse_and_publish_theme(
                     max_text_length=region_config.text_post_maxsize_simbols or 4096,
                     repost_mode=region_config.setka_regim_repost,
                     max_posts_per_bulletin=pipeline_eff.get("max_posts_per_bulletin"),
+                    footer=neighbor_footer,
                 )
                 bulletin = builder.build_bulletin(regular_posts, group_names=group_names)
                 if bulletin.post_count == 0 or not bulletin.text.strip():

@@ -258,14 +258,16 @@ async def test_resolve_neighbor_regions_only_self_no_db():
 
 
 @pytest.mark.asyncio
-async def test_run_neighbor_bulletin_defaults_to_novosti_hashtag(monkeypatch):
-    """Без config-override гейт = #Новости, theme/source_mode = neighbors."""
+async def test_run_neighbor_bulletin_defaults_to_no_gate(monkeypatch):
+    """Без config-override гейта НЕТ (снят 2026-08-29 — этап 4 ребрендинга:
+    стена соседа состоит из сводок, гейт добивал остальное, канал публиковал
+    ноль по всей сети), theme/source_mode = neighbors."""
     from modules.cascaded_bulletin import DEFAULT_NEIGHBOR_HASHTAG, run_neighbor_bulletin
 
     captured = {}
 
     async def fake_cascaded(
-        session, *, region_code, theme, test_mode, source_mode, require_hashtag
+        session, *, region_code, theme, test_mode, source_mode, require_hashtag, footer=""
     ):
         captured.update(
             region_code=region_code,
@@ -286,7 +288,8 @@ async def test_run_neighbor_bulletin_defaults_to_novosti_hashtag(monkeypatch):
     assert out == {"success": True}
     assert captured["theme"] == "neighbors"
     assert captured["source_mode"] == "neighbors"
-    assert captured["require_hashtag"] == DEFAULT_NEIGHBOR_HASHTAG == "#Новости"
+    assert captured["require_hashtag"] is None
+    assert DEFAULT_NEIGHBOR_HASHTAG is None
 
 
 @pytest.mark.asyncio
@@ -297,7 +300,7 @@ async def test_run_neighbor_bulletin_respects_config_hashtag(monkeypatch):
     captured = {}
 
     async def fake_cascaded(
-        session, *, region_code, theme, test_mode, source_mode, require_hashtag
+        session, *, region_code, theme, test_mode, source_mode, require_hashtag, footer=""
     ):
         captured["require_hashtag"] = require_hashtag
         return {"success": True}
