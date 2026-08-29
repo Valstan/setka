@@ -381,6 +381,23 @@ def parse_and_publish_theme(
                     "text_preview": txt[:1500],
                 }
 
+            # 7.5 Хедлайнер: сильнейший пост волны — отдельной короткой
+            # публикацией (этап 3 ребрендинга). Замер Кирса 26.08: тот же
+            # контент одиночным постом — 437 тыс. показов через рекомендации,
+            # внутри сводки — 167. Сводка при этом остаётся (гибрид, решение
+            # владельца 2026-08-29); откат — regions.config['headliner']=false.
+            from modules.publisher.headliner import (
+                build_headliner,
+                headliner_enabled,
+                pick_headliner,
+            )
+
+            headliner_post = None
+            if regular_posts and headliner_enabled(getattr(region, "config", None)):
+                headliner_post = pick_headliner(regular_posts)
+                if headliner_post is not None:
+                    regular_posts = [p for p in regular_posts if p is not headliner_post]
+
             # Regular bulletin
             if regular_posts:
                 builder = BulletinBuilder(
@@ -442,6 +459,62 @@ def parse_and_publish_theme(
                             # WARNING (не debug): прод LOG_LEVEL=INFO глушил debug,
                             # из-за чего сбой heartbeat #018 был невидим (2026-06-05).
                             logger.warning("track_digest_published failed", exc_info=True)
+
+            # 7.6 Публикация хедлайнера — ПОСЛЕ сводки, чтобы на стене стоял
+            # выше неё. Без шапки-заголовка: он должен выглядеть обычным
+            # постом, а не сводкой (это и есть формат, который берут
+            # рекомендации). Лип уходит в selected_by_lip тем же путём.
+            if headliner_post is not None:
+                hl_owner = headliner_post.get("owner_id", headliner_post.get("from_id", 0))
+                hl_gid = headliner_post.get("community_vk_id", hl_owner)
+                try:
+                    hl_aid = abs(int(hl_gid if hl_gid is not None else hl_owner))
+                except (TypeError, ValueError):
+                    hl_aid = abs(int(hl_owner)) if hl_owner else 0
+                hl_text, hl_attachments = build_headliner(
+                    headliner_post,
+                    group_name=group_names.get(str(hl_aid), "") if hl_aid else "",
+                    local_hashtag=local_hashtag,
+                )
+                hl_lip = lip_of_post(hl_owner, headliner_post.get("id", 0))
+                selected_by_lip[hl_lip] = headliner_post
+                # Для work table / Telegram-зеркала / курации хедлайнер ходит
+                # тем же интерфейсом, что сводка: posts_included + post_count.
+                hl_bulletin = SimpleNamespace(
+                    posts_included=[hl_lip],
+                    post_count=1,
+                    text=hl_text,
+                    attachments_list=hl_attachments,
+                )
+                if dry_run:
+                    dry_previews.append(
+                        {
+                            "kind": "headliner",
+                            "post_count": 1,
+                            "char_count": len(hl_text),
+                            "attachments_count": len(hl_attachments),
+                            "text_preview": hl_text[:1500],
+                        }
+                    )
+                else:
+                    hl_publisher = await VKPublisher.create_with_policy(
+                        session,
+                        target_group_id=region.vk_group_id,
+                        test_polygon_mode=test_mode,
+                    )
+                    hl_result = await hl_publisher.publish_bulletin(
+                        group_id=region.vk_group_id,
+                        text=hl_text,
+                        attachments=hl_attachments,
+                    )
+                    results.append(("headliner", hl_bulletin, hl_result))
+                    logger.info(
+                        "Headliner published (region=%s theme=%s chars=%d atts=%d)",
+                        region.code,
+                        theme,
+                        len(hl_text),
+                        len(hl_attachments),
+                    )
 
             # Mourning bulletin
             if mourning_posts:
