@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+from modules.promotion.branding import COVER_H, COVER_W
 from modules.promotion.group_setup_vk import (
     edit_description,
     get_current,
@@ -122,7 +123,13 @@ def test_upload_cover_full_cycle():
         up.return_value.json.return_value = {"hash": "h", "photo": "p"}
         assert upload_cover(api, 123, b"jpeg").ok
     kwargs = api.photos.getOwnerCoverPhotoUploadServer.call_args.kwargs
-    assert kwargs["crop_x2"] == 1590 and kwargs["crop_y2"] == 400
+    # Раньше здесь стояли литералы 1590×400 — канон обложки ВК. Они и закрепляли
+    # баг: картинка рисуется 2560×644, ВК вырезал из неё прямоугольник 1590×400
+    # и отрезал 38% ширины, а тест это подтверждал (инцидент 2026-08-31, у десяти
+    # сообществ заголовок обрывался на 71%). Сверяем с размером ХОЛСТА, а не с
+    # числом: кроп обязан покрывать всё, что нарисовано.
+    assert kwargs["crop_x2"] == COVER_W and kwargs["crop_y2"] == COVER_H
+    assert kwargs["crop_x"] == 0 and kwargs["crop_y"] == 0
 
 
 def test_post_welcome_returns_post_id():
