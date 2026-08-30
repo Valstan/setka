@@ -33,18 +33,66 @@ from config.deepseek import get_api_key, get_base_url, get_max_tokens, get_model
 logger = logging.getLogger(__name__)
 
 
+def log_cache_usage(label: str, response: Dict[str, Any]) -> None:
+    """Записать долю префикс-кэша одной строкой (мандат brain 2026-08-30, R29).
+
+    DeepSeek кэширует СОВПАВШЕЕ НАЧАЛО запроса и считает его по сниженной цене.
+    Включать нечего — кэш работает сам; но работает он только пока префикс
+    байт-в-байт стабилен, а сломать эту стабильность может правка, которая
+    выглядит безобидно: переставленный ключ словаря, новая строка с датой,
+    сортировка без вторичного ключа.
+
+    **Отказ здесь бесшумный.** Ответы модели остаются правильными, вызовы
+    проходят, в логах ни одной ошибки — меняется только счёт. Поэтому доля
+    кэша логируется на каждом вызове: это единственный сигнал, по которому
+    видно, что префикс поехал.
+
+    ``hit=- miss=-`` означает, что провайдер полей НЕ ВЕРНУЛ, и это не то же
+    самое, что ``hit=0``. Первое — «померить нечем», второе — «кэш не сработал».
+    Сложить их в один ноль значит получить приёмку, которая врёт.
+    """
+    usage = response.get("usage")
+    if not isinstance(usage, dict):
+        return
+
+    hit = usage.get("prompt_cache_hit_tokens")
+    miss = usage.get("prompt_cache_miss_tokens")
+    prompt = usage.get("prompt_tokens")
+
+    if isinstance(hit, int) and isinstance(miss, int) and (hit + miss) > 0:
+        share = f"{100.0 * hit / (hit + miss):.1f}"
+    else:
+        share = "-"
+
+    logger.info(
+        "deepseek-usage label=%s model=%s prompt=%s hit=%s miss=%s hit_pct=%s completion=%s",
+        label,
+        response.get("model") or "-",
+        prompt if prompt is not None else "-",
+        hit if hit is not None else "-",
+        miss if miss is not None else "-",
+        share,
+        usage.get("completion_tokens") if usage.get("completion_tokens") is not None else "-",
+    )
+
+
 def call_api(
     body: Dict[str, Any],
     *,
     api_key: str,
     base_url: str,
     timeout: float,
+    label: str = "deepseek",
 ) -> Tuple[int, Dict[str, Any]]:
     """Один вызов ``/chat/completions``. Сетевой сбой → ``(0, {"error": ...})``.
 
     HTTP-код возвращается сырым, чтобы вызывающий мог различить 401 (ключ) и
     429 (квота) — для рутины это разные решения: первое чинит человек, второе
     проходит само.
+
+    ``label`` попадает в строку учёта префикс-кэша: потребителей несколько, и
+    доля кэша у массового конвейера и у разовой кнопки в UI — разные величины,
+    которые нельзя складывать в одно среднее.
     """
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
@@ -59,7 +107,16 @@ def call_api(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", "replace")
-            return int(resp.status), json.loads(raw) if raw.strip() else {}
+            parsed = json.loads(raw) if raw.strip() else {}
+            if isinstance(parsed, dict):
+                # Учёт не должен ронять уже оплаченный вызов: тело ответа
+                # разобрано, деньги потрачены, вердикт вызывающему нужен даже
+                # если метрика почему-то не сложилась.
+                try:
+                    log_cache_usage(label, parsed)
+                except Exception:  # pragma: no cover — учёт не важнее ответа
+                    logger.debug("deepseek-usage: не удалось записать метрику", exc_info=True)
+            return int(resp.status), parsed
     except urllib.error.HTTPError as e:
         detail = ""
         try:
@@ -84,6 +141,7 @@ def chat(
     api_key: Optional[str] = None,
     model: Optional[str] = None,
     timeout: Optional[float] = None,
+    label: str = "deepseek",
 ) -> Dict[str, Any]:
     """Один диалоговый вызов. Возвращает ``{ok, content, model, usage}`` либо
     ``{ok: False, reason, detail?}``.
@@ -122,6 +180,7 @@ def chat(
         api_key=key,
         base_url=get_base_url(),
         timeout=timeout if timeout is not None else get_timeout(),
+        label=label,
     )
     if status == 0:
         return {"ok": False, "reason": "network", "detail": response.get("error")}

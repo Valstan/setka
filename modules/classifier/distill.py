@@ -218,6 +218,7 @@ def distill(
         max_tokens=_MAX_TOKENS,
         json_object=True,
         model=model,
+        label="distill",
     )
     usage = result.get("usage") or {}
     tokens = int(usage.get("total_tokens") or 0)

@@ -195,7 +195,13 @@ def classify(
         "response_format": {"type": "json_object"},
     }
 
-    status, response = _call_api(body, api_key=key, base_url=get_base_url(), timeout=get_timeout())
+    status, response = _call_api(
+        body,
+        api_key=key,
+        base_url=get_base_url(),
+        timeout=get_timeout(),
+        label="conveyor",
+    )
     if status == 0:
         return {"ok": False, "reason": "network", "detail": response.get("error")}
     if not (200 <= status < 300):

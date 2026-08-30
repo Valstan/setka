@@ -101,6 +101,7 @@ async def draft_comment_reply(
         user=prompt,
         temperature=_TEMPERATURE,
         max_tokens=_MAX_TOKENS,
+        label="ai_drafter",
     )
     if not result.get("ok"):
         reason = str(result.get("reason") or "unknown")

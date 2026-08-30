@@ -19,9 +19,14 @@ def _key(monkeypatch):
 
 
 def _api(status, payload):
-    def fake(body, *, api_key, base_url, timeout):
+    # `label` появился вместе с учётом префикс-кэша (мандат brain 2026-08-30):
+    # chat() прокидывает его в call_api, чтобы расход разных потребителей не
+    # сливался в одно среднее. Заглушка обязана повторять реальную сигнатуру —
+    # иначе она проверяет вызов, которого в проде не существует.
+    def fake(body, *, api_key, base_url, timeout, label="deepseek"):
         fake.body = body
         fake.api_key = api_key
+        fake.label = label
         return status, payload
 
     return fake

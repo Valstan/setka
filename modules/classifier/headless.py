@@ -225,6 +225,7 @@ def classify_chunk(
         max_tokens=_MAX_TOKENS_PER_POST * len(posts),
         json_object=True,
         model=model,
+        label="headless",
     )
     if not result.get("ok"):
         return {

@@ -25,8 +25,11 @@ POST = {
 def _api(status, payload):
     """Подмена HTTP-вызова фиксированным ответом."""
 
-    def _fake(body, *, api_key, base_url, timeout):
+    # `label` появился вместе с учётом префикс-кэша (мандат brain 2026-08-30):
+    # конвейер помечает свои вызовы, чтобы его доля кэша не смешивалась с чужой.
+    def _fake(body, *, api_key, base_url, timeout, label="deepseek"):
         _fake.body = body
+        _fake.label = label
         return status, payload
 
     return _fake
