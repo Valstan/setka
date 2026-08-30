@@ -20,7 +20,6 @@ bootstrap_secrets()  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse  # noqa: E402
-from fastapi.staticfiles import StaticFiles  # noqa: E402
 from fastapi.templating import Jinja2Templates  # noqa: E402
 
 from _version import __version__ as APP_VERSION  # noqa: E402
@@ -62,6 +61,7 @@ from web.api import (  # noqa: E402
 )
 from web.api import templates as templates_api  # noqa: E402
 from web.api import test_workflow, theme_quotas, token_management, vk_monitoring  # noqa: E402
+from web.static_files import RevalidatingStaticFiles  # noqa: E402
 
 # Setup logging
 #
@@ -153,7 +153,15 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "web" / "templates"))
 # не отдаётся: учёт версий в проекте не ведётся, и подвал их не показывает
 # (решение владельца 2026-07-26). Глобал убран, чтобы не воскрешать «1.5.0»,
 # которое давно ничего не значит.
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), name="static")
+
+# RevalidatingStaticFiles, а не StaticFiles: без Cache-Control браузер вправе
+# показать копию из кэша не спрашивая сервер, и после деплоя выдаёт новый HTML
+# со старым CSS. Замер 31.08 поймал ровно это. Подробности — в web/static_files.py.
+app.mount(
+    "/static",
+    RevalidatingStaticFiles(directory=str(BASE_DIR / "web" / "static")),
+    name="static",
+)
 
 # Include routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
