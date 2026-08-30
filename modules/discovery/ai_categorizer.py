@@ -188,6 +188,7 @@ async def categorize_candidate(
         temperature=_TEMPERATURE,
         max_tokens=_MAX_TOKENS,
         json_object=True,
+        label="discovery",
     )
     if not result.get("ok"):
         reason = str(result.get("reason") or "unknown")
