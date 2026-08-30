@@ -29,7 +29,7 @@
 </head>
 <body>
     <!-- Navigation -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top">
         <div class="container-fluid">
             <a class="navbar-brand" href="/">SETKA</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
@@ -197,6 +197,42 @@
 
     <!-- Bootstrap 5 JS -->
     <script src="/static/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+
+    <!-- Место под закреплённый navbar: меряем, а не угадываем.
+         Высота навбара зависит от ширины окна, подставленного шрифта и того,
+         раскрыт ли гамбургер, — константа в CSS этого знать не может. Раньше
+         там стояло 76px при фактических ~62px, и в полосе 768-992px раскрытое
+         меню (454px) накрывало контент на 378px: гамбургер включается ниже
+         992px, а компенсирующий отступ включался ниже 768px.
+         Идёт ПОСЛЕ бандла Bootstrap — слушает его события collapse. -->
+    <script>
+        (function () {
+            var nav = document.querySelector('.navbar.fixed-top');
+            if (!nav) return;
+
+            function apply() {
+                document.documentElement.style.setProperty('--navbar-h', nav.offsetHeight + 'px');
+            }
+
+            apply();
+            window.addEventListener('resize', apply);
+            window.addEventListener('orientationchange', apply);
+
+            // Раскрытие/схлопывание гамбургера меняет высоту в разы. Bootstrap
+            // шлёт события на самом сворачиваемом блоке; анимация идёт ~350 мс,
+            // поэтому меряем по `shown`/`hidden`, а не по `show`/`hide`.
+            var collapse = document.getElementById('navbarNav');
+            if (collapse) {
+                collapse.addEventListener('shown.bs.collapse', apply);
+                collapse.addEventListener('hidden.bs.collapse', apply);
+            }
+
+            // Шрифт может доехать позже первой отрисовки и изменить высоту.
+            if (document.fonts && document.fonts.ready) {
+                document.fonts.ready.then(apply).catch(function () { /* не критично */ });
+            }
+        })();
+    </script>
     <!-- API Client -->
     <script src="/static/js/api.js?v=20260808_copytext"></script>
     <!-- Универсальный tiered-поиск (pool #035) — общий для всех полей поиска -->
