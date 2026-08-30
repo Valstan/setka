@@ -443,6 +443,82 @@ async def mark_repaired(region_id: int, version: int, summary: str, ok: bool) ->
         await session.commit()
 
 
+async def run_force_cover(codes: Optional[List[str]]) -> int:
+    """``--force-cover``: перезалить обложку там, где её ставили МЫ.
+
+    Зачем отдельный режим. Обычный прогон решает ``full``/``spot`` по тому,
+    «голое» ли сообщество (нет аватара ∧ нет обложки ∧ короткое описание). Это
+    правильная защита для одиннадцати старых сообществ с авторским оформлением —
+    но она же не даёт переставить **нашу собственную** обложку, если та уехала:
+    сообщество с кривой обложкой выглядит оформленным и попадает в ``spot``.
+
+    Ровно это случилось 31.08: у десяти сообществ порции 1 обложка была залита с
+    кропом 1590×400 из холста 2560×644, ВК отрезал 38% ширины, и заголовок
+    обрывался на 71%. Бамп ``TEMPLATE_VERSION`` тут не помогает — версия решает,
+    писать ли запись в журнал, а режим считается раньше и по живому снимку.
+
+    **Чужое оформление не трогается никогда:** цели берутся из
+    ``promo_group_setup`` со статусом ``applied``, то есть только те сообщества,
+    которые оформил этот скрипт. Сообщество без такой записи не попадёт сюда,
+    даже если назвать его в ``--regions``.
+
+    Расход user-бюджета VALSTAN — **ноль**: обложка ставится community-ключом.
+    """
+    import vk_api
+    from sqlalchemy import select
+
+    from database.connection import AsyncSessionLocal
+    from database.models import PromoGroupSetup
+    from modules.promotion.group_setup_vk import upload_cover
+
+    async with AsyncSessionLocal() as session:
+        ours = set(
+            (
+                await session.execute(
+                    select(PromoGroupSetup.region_id).where(PromoGroupSetup.status == "applied")
+                )
+            )
+            .scalars()
+            .all()
+        )
+    if not ours:
+        logger.info("Нет сообществ, оформленных этим скриптом — переливать нечего")
+        return 0
+
+    targets = [t for t in await load_targets(codes) if t["region_id"] in ours]
+    if not targets:
+        logger.info("Под фильтр не попало ни одного нашего сообщества")
+        return 0
+
+    # Обложка собирается тем же build_texts, что и в штатном прогоне: перелитая
+    # обязана быть побайтно той же, иначе «починка» подменит оформление.
+    all_targets = await load_targets(None)
+    nb_index = neighbor_index(all_targets)
+    for t in targets:
+        t["_neighbor_index"] = nb_index
+
+    _, community_tokens = await load_tokens()
+
+    logger.info("FORCE-COVER: сообществ %d (user-бюджет не расходуется)", len(targets))
+    ok_count = 0
+    for target in targets:
+        gid = abs(int(target["vk_group_id"]))
+        comm_token = community_tokens.get(gid)
+        if not comm_token:
+            logger.info("  %-14s ⛔ нет community-ключа", target["code"])
+            continue
+        community_api = vk_api.VkApi(token=comm_token).get_api()
+        cover = build_texts(target)["cover"]
+        res = await asyncio.to_thread(upload_cover, community_api, gid, cover)
+        if res.ok:
+            ok_count += 1
+            logger.info("  %-14s 🖼 обложка перезалита (%d байт)", target["code"], len(cover))
+        else:
+            logger.info("  %-14s ⛔ %s", target["code"], res.detail)
+    logger.info("\nГотово: перезалито %d из %d", ok_count, len(targets))
+    return 0
+
+
 async def run_repair(codes: Optional[List[str]]) -> int:
     """--repair: пройти регионы с записью status='error' и дозалить поля."""
     import vk_api
@@ -512,6 +588,11 @@ async def amain() -> int:
         "--repair", action="store_true", help="дозалить упавшие аватары/обложки (status=error)"
     )
     parser.add_argument("--out", default=None, help="куда сложить превью картинок")
+    parser.add_argument(
+        "--force-cover",
+        action="store_true",
+        help="перезалить обложку там, где её ставили мы (авторские не трогает)",
+    )
     args = parser.parse_args()
 
     from modules.secrets_bootstrap import bootstrap_secrets
@@ -520,6 +601,9 @@ async def amain() -> int:
 
     if args.rollback:
         return await rollback(args.rollback)
+    if args.force_cover:
+        codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
+        return await run_force_cover(codes)
     if args.repair:
         codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
         return await run_repair(codes)
