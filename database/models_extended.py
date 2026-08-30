@@ -1131,3 +1131,42 @@ class PublishedPost(Base):
 
     def __repr__(self):
         return f"<PublishedPost {self.region_code}/{self.wave_theme} {self.lip}>"
+
+
+class SkippedDuplicate(Base):
+    """Отсеянные дубли: посты, у которых нашёлся более ранний близнец (миграция 093).
+
+    Заказ владельца 2026-08-30. Внутриволновой дедуп жалобу «одна новость выходит
+    дважды» не лечил: проигравший нигде не запоминался, и следующая волна брала его
+    как свежий пост — конкурента рядом уже нет, текст переписан, фото перезалито.
+    Дубль не устранялся, а сдвигался во времени.
+
+    **Почему не в work_tables.lip.** Тот курсор означает «опубликовано» и питает
+    статистику; складывать туда неопубликованное значило бы ей врать (прямое
+    возражение владельца). Плюс его потолок 1000 записей вытеснял бы историю
+    публикаций.
+
+    **Чего здесь нет.** Пост, который просто не влез в тройку сводки, сюда НЕ
+    попадает: он не дубль, и у него должен остаться шанс выйти следующей волной,
+    пока не кончилось окно свежести.
+    """
+
+    __tablename__ = "skipped_duplicates"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    lip = Column(String(50), nullable=False)
+    region_code = Column(String(50), nullable=False)
+    # Кого признали первоисточником. NULL — близнец найден в истории волн, а не в
+    # этой волне: там первоисточник уже опубликован и его lip лежит в work_tables.
+    original_lip = Column(String(50), nullable=True)
+    reason = Column(String(32), nullable=False, default="duplicate")
+    wave_theme = Column(String(50), nullable=True)
+    detected_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("uq_skipped_duplicates_region_lip", "region_code", "lip", unique=True),
+        Index("ix_skipped_duplicates_detected", "detected_at"),
+    )
+
+    def __repr__(self):
+        return f"<SkippedDuplicate {self.region_code}/{self.lip} ← {self.original_lip}>"

@@ -323,6 +323,14 @@ def parse_and_publish_theme(
                 select(WorkTable).where(WorkTable.region_code == region_code)
             )
             region_lips, region_hashes = build_region_dedup_sets(all_wt_result.scalars().all())
+
+            # Отсеянные дубли (миграция 093, заказ владельца 2026-08-30) — тот же
+            # курсор для парсера, что и опубликованное, но хранится отдельно:
+            # складывать неопубликованное в work_tables.lip значило бы врать
+            # статистике публикаций (прямое возражение владельца).
+            from modules.deduplication.skipped import fetch_skipped_lips, merge_dedup_lips
+
+            skipped_lips = await fetch_skipped_lips(session, region_code)
             try:
                 target_group_posts = await asyncio.to_thread(
                     vk_client.get_wall_posts,
@@ -348,13 +356,26 @@ def parse_and_publish_theme(
                 community_ids=community_ids,
                 theme=theme,
                 region_config=region_config,
-                work_table_lip=list(region_lips),
+                work_table_lip=merge_dedup_lips(region_lips, skipped_lips),
                 work_table_hash=list(region_hashes),
                 count_per_community=20,
                 pipeline_settings=pipeline_eff,
                 blocked_lips=blocked_lips,
             )
             parser_stats = parser.get_stats()
+
+            # Дубли этой волны — в журнал, чтобы проигравший не вернулся свежим
+            # кандидатом через пару часов. Best-effort: журнал не важнее волны.
+            wave_skipped = list(getattr(parser, "_skipped_duplicates", []) or [])
+            if wave_skipped and not dry_run:
+                from modules.deduplication.skipped import record_skipped
+
+                await record_skipped(
+                    session,
+                    region_code=region_code,
+                    wave_theme=theme,
+                    entries=wave_skipped,
+                )
 
             # 5b. Нейро-фильтр ВНУТРИ волны (заказ владельца 2026-08-19).
             #     `blocked_lips` выше применяет вердикты, вынесенные РАНЬШЕ, а по

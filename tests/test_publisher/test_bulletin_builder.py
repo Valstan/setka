@@ -154,3 +154,68 @@ def test_post_without_views_goes_to_tail_not_top(monkeypatch):
     }
     out = b._sort_by_popularity([no_views, _p(1, 1000, 5)])
     assert [p["id"] for p in out] == [1, 3]
+
+
+# ───────── свежее впереди устаревшего (заказ владельца 2026-08-30) ─────────
+
+
+def _aged(pid, hours, views):
+    import time
+
+    return {
+        "owner_id": -100,
+        "id": pid,
+        "text": f"post {pid}",
+        "date": int(time.time() - hours * 3600),
+        "views": {"count": views},
+        "likes": {"count": views},
+        "comments": {"count": 0},
+        "reposts": {"count": 0},
+    }
+
+
+def test_fresh_post_outranks_an_older_hit(monkeypatch):
+    """«Свежак должен первым выходить» — дословное требование владельца.
+
+    Раньше порядок задавал только рейтинг, и вчерашний хит с тысячей лайков
+    обгонял сегодняшнюю новость. Теперь возраст — старший ключ сортировки.
+    """
+    monkeypatch.setenv("BULLETIN_FRESH_HOURS", "24")
+    from modules.publisher.bulletin_builder import BulletinBuilder
+
+    builder = BulletinBuilder()
+    out = builder._sort_by_popularity([_aged(1, 40, 1000), _aged(2, 2, 5)])
+    assert [p["id"] for p in out] == [2, 1]
+
+
+def test_within_the_same_freshness_group_rating_still_decides(monkeypatch):
+    # Для волны без устаревших постов поведение не меняется вовсе.
+    monkeypatch.setenv("BULLETIN_FRESH_HOURS", "24")
+    from modules.publisher.bulletin_builder import BulletinBuilder
+
+    builder = BulletinBuilder()
+    out = builder._sort_by_popularity([_aged(1, 2, 5), _aged(2, 3, 500)])
+    assert [p["id"] for p in out] == [2, 1]
+
+
+def test_zero_threshold_disables_the_freshness_split(monkeypatch):
+    monkeypatch.setenv("BULLETIN_FRESH_HOURS", "0")
+    from modules.publisher.bulletin_builder import BulletinBuilder
+
+    builder = BulletinBuilder()
+    out = builder._sort_by_popularity([_aged(1, 40, 1000), _aged(2, 2, 5)])
+    assert [p["id"] for p in out] == [1, 2]
+
+
+def test_post_without_date_is_treated_as_fresh(monkeypatch):
+    # До сборщика такой пост доходит только в обход возрастного фильтра — это
+    # дефект данных, и наказывать за него местом в сводке незачем.
+    monkeypatch.setenv("BULLETIN_FRESH_HOURS", "24")
+    from modules.publisher.bulletin_builder import BulletinBuilder
+
+    stale = _aged(1, 40, 1000)
+    undated = _aged(2, 2, 5)
+    undated.pop("date")
+    builder = BulletinBuilder()
+    out = builder._sort_by_popularity([stale, undated])
+    assert [p["id"] for p in out] == [2, 1]

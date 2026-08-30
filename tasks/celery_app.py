@@ -1488,6 +1488,40 @@ def prune_collected_post_audit():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.prune_skipped_duplicates")
+def prune_skipped_duplicates_task():
+    """Ретеншн журнала отсеянных дублей: удалить записи старше N дней.
+
+    Раз в сутки (03:48 MSK). Порог — env ``SKIPPED_DUPLICATES_RETENTION_DAYS``
+    (дефолт 7). Запись нужна ровно столько, сколько пост может ещё оказаться
+    кандидатом (``max_post_age_hours``, дефолт 72 ч), поэтому неделя — это тот же
+    срок с запасом. Побочный смысл ретеншена: ложное срабатывание текстового
+    дедупа само рассасывается через неделю, а не запирает пост навсегда.
+    """
+    logger.info("Pruning old skipped_duplicates...")
+    try:
+        import os
+
+        from database.connection import AsyncSessionLocal
+        from modules.deduplication.skipped import prune_skipped
+
+        try:
+            keep_days = max(1, int(os.getenv("SKIPPED_DUPLICATES_RETENTION_DAYS", "7")))
+        except ValueError:
+            keep_days = 7
+
+        async def prune():
+            async with AsyncSessionLocal() as session:
+                return await prune_skipped(session, keep_days=keep_days)
+
+        deleted = run_coro(prune())
+        logger.info("skipped_duplicates prune done: deleted %s rows", deleted)
+        return {"success": True, "timestamp": datetime.now().isoformat(), "deleted_count": deleted}
+    except Exception as e:
+        logger.error(f"prune_skipped_duplicates failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.prune_published_posts")
 def prune_published_posts_task():
     """Ретеншн журнала публикаций: удалить ``published_posts`` старше N дней.
@@ -1888,6 +1922,15 @@ app.conf.beat_schedule = {
     "prune-collected-post-audit-daily": {
         "task": "tasks.celery_app.prune_collected_post_audit",
         "schedule": crontab(minute=45, hour=3),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
+    # Ретеншн журнала отсеянных дублей: старше N дней (env, дефолт 7) — 03:48 MSK
+    "prune-skipped-duplicates-daily": {
+        "task": "tasks.celery_app.prune_skipped_duplicates",
+        "schedule": crontab(minute=48, hour=3),
         "options": {
             "expires": 3600,
             "catchup": False,
