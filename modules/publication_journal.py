@@ -165,9 +165,7 @@ async def prune_published_posts(session, *, keep_days: int = 400) -> int:
 
     cutoff = datetime.utcnow() - timedelta(days=max(1, int(keep_days)))
     doomed: List[int] = list(
-        (
-            await session.execute(select(PublishedPost.id).where(PublishedPost.published_at < cutoff))
-        )
+        (await session.execute(select(PublishedPost.id).where(PublishedPost.published_at < cutoff)))
         .scalars()
         .all()
     )

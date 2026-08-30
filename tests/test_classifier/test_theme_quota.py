@@ -239,9 +239,7 @@ async def test_service_themes_get_no_cap(db_session, monkeypatch):
     from database.models_extended import ClassifierTheme
     from modules.classifier import selection
 
-    db_session.add(
-        ClassifierTheme(name="соседи", position=1, share_percent=0, is_service=True)
-    )
+    db_session.add(ClassifierTheme(name="соседи", position=1, share_percent=0, is_service=True))
     await db_session.commit()
 
     shares = await selection._fetch_theme_shares(db_session)
