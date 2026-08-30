@@ -80,7 +80,7 @@ UPDATE content_classifications
 
 UPDATE content_classifications
    SET verdict = jsonb_set(verdict, '{theme}', '"культура"')
- WHERE verdict->>'theme' IN ('Праздники', 'праздники');
+ WHERE verdict->>'theme' IN ('Праздники', 'праздники', 'мероприятия');
 
 UPDATE content_classifications
    SET verdict = jsonb_set(verdict, '{theme}', '"дети и образование"')
@@ -114,7 +114,7 @@ UPDATE classification_corrections
 UPDATE classification_corrections
    SET operator_value = '"культура"'::jsonb
  WHERE verdict_type = 'theme'
-   AND operator_value #>> '{}' IN ('Праздники', 'праздники');
+   AND operator_value #>> '{}' IN ('Праздники', 'праздники', 'мероприятия');
 
 UPDATE classification_corrections
    SET operator_value = '"дети и образование"'::jsonb
@@ -146,6 +146,7 @@ INSERT INTO classifier_theme_aliases (alias, canon) VALUES
     ('рекламаслуг',                      'объявления'),
     ('жалоба',                           'объявления'),
     ('праздники',                        'культура'),
+    ('мероприятия',                      'культура'),
     ('образование',                      'дети и образование'),
     ('детский сад',                      'дети и образование'),
     ('дошкольное образование',           'дети и образование'),
@@ -189,6 +190,21 @@ UPDATE classifier_theme_aliases SET canon = 'мусор'
 -- Синоним, ставший одноимённым своему канону, бесполезен и только мешает
 -- читать редактор («образование → образование» после переименования).
 DELETE FROM classifier_theme_aliases WHERE alias = lower(canon);
+
+-- 5c. Ретро-применение защиты «действие в поле темы» ---------------------
+-- Движок кладёт в theme название действия — у action словарь закрытый, а у темы
+-- его нет вовсе. Защита появилась на сериализации (schema.normalized_theme) уже
+-- после того, как шесть таких вердиктов доехали до Корпуса (все 2026-07-22).
+--
+-- Ставим пустую строку — ровно то, что вернула бы защита, будь она тогда. Не
+-- «мусор»: у этих постов темы нет вообще, а «мусор» — содержательное суждение
+-- «публиковать нечего», которого движок не выносил. Пустую тему весь код уже
+-- умеет показывать («?» в ленте, «—» в пачке) и не считает в статистике, так что
+-- перечень не-канона после миграции становится действительно пустым.
+
+UPDATE content_classifications
+   SET verdict = jsonb_set(verdict, '{theme}', '""')
+ WHERE lower(verdict->>'theme') IN ('publish', 'delete', 'hold');
 
 -- 6. Удаление отработавших тем -------------------------------------------
 
