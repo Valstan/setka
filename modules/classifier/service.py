@@ -911,6 +911,28 @@ async def delete_theme(session, name: str, reassign_to: str) -> Dict[str, Any]:
     row = (
         await session.execute(select(ClassifierTheme).where(ClassifierTheme.name == name))
     ).scalar_one_or_none()
+    # Синонимы удаляемой темы переезжают на получателя вместе с постами. Иначе
+    # они остаются висячими, и ломается это молча в худшем месте: канон-карта
+    # применяется на КАЖДОЙ записи вердикта, так что «proisshestviya» и дальше
+    # приводился бы к «происшествия» — теме, которой в словаре уже нет. То есть
+    # уборка не-канона сама начала бы не-канон производить. Синоним, совпавший с
+    # именем получателя, выбрасывается: он стал бы записью «х → х», а такие
+    # add_alias и не принимает.
+    alias_rows = (
+        (
+            await session.execute(
+                select(ClassifierThemeAlias).where(ClassifierThemeAlias.canon == name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for alias_row in alias_rows:
+        if alias_row.alias == reassign_to.lower():
+            await session.delete(alias_row)
+        else:
+            alias_row.canon = reassign_to
+
     if row is not None:
         # Доля наполнения переезжает вместе с постами, но только в пустое место.
         # Иначе удаление темы молча снимало бы потолок: посты продолжают идти под
@@ -920,7 +942,7 @@ async def delete_theme(session, name: str, reassign_to: str) -> Dict[str, Any]:
         if target.share_percent is None and row.share_percent is not None:
             target.share_percent = row.share_percent
         await session.delete(row)
-        await session.commit()
+    await session.commit()
     return {"ok": True, "deleted": name, "reassign_to": reassign_to, "moved": moved}
 
 

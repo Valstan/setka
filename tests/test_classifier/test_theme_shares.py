@@ -7,15 +7,16 @@
 ``description`` закрывает эту дыру, ``share_percent`` даёт владельцу потолок на
 долю темы в ленте, ``is_service`` отделяет темы, которым процент бессмысленен.
 
-Тесты держат три вещи: описание доезжает до промпта, тема без описания ничего
-не ломает, и доля не теряется молча при слиянии тем.
+Тесты держат четыре вещи: описание доезжает до промпта, тема без описания
+ничего не ломает, доля не теряется молча при слиянии тем, а синонимы удаляемой
+темы не остаются висячими.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from database.models_extended import ClassifierTheme
+from database.models_extended import ClassifierTheme, ClassifierThemeAlias
 from modules.classifier import rules, service
 
 
@@ -140,3 +141,51 @@ async def test_delete_theme_keeps_target_own_share(db_session):
     rows = await service.themes_list(db_session)
     target = next(r for r in rows if r["theme"] == "дети и образование")
     assert target["share_percent"] == 12.0
+
+
+# ───────── синонимы не остаются висячими ─────────
+
+
+@pytest.mark.asyncio
+async def test_delete_theme_repoints_its_aliases(db_session):
+    # Канон-карта применяется на КАЖДОЙ записи вердикта. Висячий синоним не просто
+    # мусорит в редакторе — он приводит тему к имени, которого в словаре уже нет,
+    # то есть уборка не-канона сама начинает не-канон производить.
+    await _seed(
+        db_session,
+        [
+            ("детский сад", 1, None, None, False),
+            ("дети и образование", 2, None, None, False),
+        ],
+    )
+    db_session.add(ClassifierThemeAlias(alias="detsad", canon="детский сад"))
+    db_session.add(ClassifierThemeAlias(alias="детсад", canon="детский сад"))
+    await db_session.commit()
+
+    await service.delete_theme(db_session, "детский сад", "дети и образование")
+
+    rows = await service.aliases_list(db_session)
+    by_alias = {r["alias"]: r for r in rows}
+    assert by_alias["detsad"]["canon"] == "дети и образование"
+    assert by_alias["детсад"]["canon"] == "дети и образование"
+    assert all(r["canon_known"] for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_delete_theme_drops_alias_equal_to_target(db_session):
+    # Синоним, совпавший с именем получателя, стал бы записью «х → х»: канон и так
+    # отображается сам на себя, а add_alias такую запись прямо отвергает.
+    await _seed(
+        db_session,
+        [
+            ("научпоп", 1, None, None, False),
+            ("кругозор", 2, None, None, False),
+        ],
+    )
+    db_session.add(ClassifierThemeAlias(alias="кругозор", canon="научпоп"))
+    await db_session.commit()
+
+    await service.delete_theme(db_session, "научпоп", "кругозор")
+
+    rows = await service.aliases_list(db_session)
+    assert all(r["alias"] != "кругозор" for r in rows)
