@@ -1089,3 +1089,45 @@ class ConveyorDelivery(Base):
 
     def __repr__(self):
         return f"<ConveyorDelivery {self.site}/{self.lip} {self.status}>"
+
+
+class PublishedPost(Base):
+    """Журнал публикаций: что и когда реально вышло на стену (миграция 091).
+
+    Появился под квоты тем: владелец задаёт долю темы в ленте, а доля считается
+    от чего-то. Ни один существующий журнал на этот вопрос не отвечает —
+    ``work_tables.lip`` это курсор дедупа без времени и с потолком 1000,
+    ``bulletin_curation_runs`` и ``collected_post_audit`` гейтованы и покрывают
+    один район, ``parsing_stats`` знает только счётчик кандидатов ДО отбора.
+
+    **Без env-гейта, в отличие от соседних журналов.** Доля темы, посчитанная по
+    одному району из двадцати девяти, описывает не сеть, а этот район; квота —
+    механизм принятия решений, её вход обязан быть полным.
+
+    Две темы в строке — про разное. ``wave_theme`` (novost, kultura…) отвечает
+    «откуда собирали и под какой шапкой публиковали» и известна всегда;
+    ``verdict_theme`` (новости, спорт, кругозор…) — «что в посте по содержанию»,
+    именно ею управляет владелец на странице долей, и она ``NULL``, если вердикта
+    не было (режим algorithmic-fallback или пост без текста).
+    """
+
+    __tablename__ = "published_posts"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    lip = Column(String(50), nullable=False)
+    region_code = Column(String(50), nullable=False)
+    wave_theme = Column(String(50), nullable=False)
+    verdict_theme = Column(String(100), nullable=True)
+    kind = Column(String(20), nullable=False, default="regular")
+    # Чей пост перепечатали (витрина соседа); NULL для собственных публикаций.
+    source_region_code = Column(String(50), nullable=True)
+    published_url = Column(String(500), nullable=True)
+    published_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_published_posts_region_theme_time", "region_code", "verdict_theme"),
+        Index("ix_published_posts_region_time", "region_code", "published_at"),
+    )
+
+    def __repr__(self):
+        return f"<PublishedPost {self.region_code}/{self.wave_theme} {self.lip}>"

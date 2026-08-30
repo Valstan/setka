@@ -87,6 +87,33 @@ def post_rating(
     return engagement / ((int(views) + 1) ** alpha)
 
 
+def post_rating_of(post: Dict[str, Any], *, alpha: float) -> Optional[float]:
+    """Рейтинг готового поста ВК: достаёт метрики из словаря и зовёт ``post_rating``.
+
+    ВК отдаёт счётчики то вложенным словарём (``{"views": {"count": 12}}``), то
+    голым числом — в зависимости от метода и версии API. Разбор один на проект
+    сознательно: хедлайнер и квота тем обязаны ранжировать ОДНИМ ключом, иначе
+    квота срежет один набор, а сборщик сводки выберет другой, и числа на странице
+    долей разойдутся с тем, что видно на стене.
+
+    ``alpha`` — keyword, как у ``post_rating``: модуль на ``config/`` не завязан.
+    """
+
+    def _count(field: str):
+        value = post.get(field)
+        if isinstance(value, dict):
+            return value.get("count")
+        return value
+
+    return post_rating(
+        views=_count("views"),
+        likes=_count("likes"),
+        comments=_count("comments"),
+        reposts=_count("reposts"),
+        alpha=alpha,
+    )
+
+
 def vk_post_datetime(ts: Any) -> Optional[datetime]:
     """Unix-время поста ВК (поле ``date``) → наивный UTC, как времена в БД.
 

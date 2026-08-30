@@ -46,22 +46,12 @@ def headliner_enabled(region_config_json: Optional[dict]) -> bool:
 
 
 def _rating(post: Dict[str, Any]) -> Optional[float]:
+    # Разбор счётчиков переехал в utils.post_utils.post_rating_of: тем же ключом
+    # ранжирует квота тем, а две копии одного ранжирования разошлись бы молча.
     from config.classifier import get_rating_views_alpha
-    from utils.post_utils import post_rating
+    from utils.post_utils import post_rating_of
 
-    def _count(field: str):
-        value = post.get(field)
-        if isinstance(value, dict):
-            return value.get("count")
-        return value
-
-    return post_rating(
-        views=_count("views"),
-        likes=_count("likes"),
-        comments=_count("comments"),
-        reposts=_count("reposts"),
-        alpha=get_rating_views_alpha(),
-    )
+    return post_rating_of(post, alpha=get_rating_views_alpha())
 
 
 def pick_headliner(posts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

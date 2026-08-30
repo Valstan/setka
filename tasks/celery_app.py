@@ -1488,6 +1488,41 @@ def prune_collected_post_audit():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.prune_published_posts")
+def prune_published_posts_task():
+    """Ретеншн журнала публикаций: удалить ``published_posts`` старше N дней.
+
+    Раз в сутки (03:47 MSK, между аудитом сбора 03:45 и снапшотом правил 03:50).
+    Порог — env ``PUBLISHED_POSTS_RETENTION_DAYS`` (дефолт 400). Журнал пишется на
+    каждый опубликованный пост (~1200 строк в сутки по сети) и, в отличие от
+    соседних, живёт без гейта — значит и расти будет всегда. Окно квоты всё равно
+    сутки, так что удерживать больше года незачем; год с запасом оставлен, чтобы
+    сравнивать сезоны.
+    """
+    logger.info("Pruning old published_posts (theme quota journal retention)...")
+    try:
+        import os
+
+        from database.connection import AsyncSessionLocal
+        from modules.publication_journal import prune_published_posts
+
+        try:
+            keep_days = max(1, int(os.getenv("PUBLISHED_POSTS_RETENTION_DAYS", "400")))
+        except ValueError:
+            keep_days = 400
+
+        async def prune():
+            async with AsyncSessionLocal() as session:
+                return await prune_published_posts(session, keep_days=keep_days)
+
+        deleted = run_coro(prune())
+        logger.info("published_posts prune done: deleted %s rows", deleted)
+        return {"success": True, "timestamp": datetime.now().isoformat(), "deleted_count": deleted}
+    except Exception as e:
+        logger.error(f"prune_published_posts failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.snapshot_learned_rules")
 def snapshot_learned_rules():
     """Ежедневный снапшот выученных правил (overlay ADR-0005) в файл на диске.
@@ -1853,6 +1888,15 @@ app.conf.beat_schedule = {
     "prune-collected-post-audit-daily": {
         "task": "tasks.celery_app.prune_collected_post_audit",
         "schedule": crontab(minute=45, hour=3),
+        "options": {
+            "expires": 3600,
+            "catchup": False,
+        },
+    },
+    # Ретеншн журнала публикаций (квоты тем): строки старше N дней (env, дефолт 400) — 03:47 MSK
+    "prune-published-posts-daily": {
+        "task": "tasks.celery_app.prune_published_posts",
+        "schedule": crontab(minute=47, hour=3),
         "options": {
             "expires": 3600,
             "catchup": False,

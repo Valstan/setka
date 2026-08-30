@@ -207,3 +207,48 @@ def get_rating_views_alpha() -> float:
         )
         return RATING_VIEWS_ALPHA_DEFAULT
     return value
+
+
+# ─────────────────────────── Квоты тем (заказ владельца 2026-08-30) ───────────
+
+
+def theme_quota_enabled() -> bool:
+    """Применять ли потолки долей тем (env ``CLASSIFIER_THEME_QUOTA_ENABLED``).
+
+    Дефолт — выкл: журнал публикаций должен сутки поработать вхолостую, иначе
+    первая же волна посчитает доли по пустому знаменателю. Запрет темы
+    (``share_percent = 0``) от этого гейта НЕ зависит — он работает всегда, иначе
+    выключение квот молча вернуло бы в ленту то, что владелец запретил.
+    """
+    return os.getenv("CLASSIFIER_THEME_QUOTA_ENABLED", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def get_theme_quota_window_hours() -> int:
+    """Окно, за которое считаются доли (env ``CLASSIFIER_THEME_QUOTA_WINDOW_HOURS``).
+
+    Дефолт 24 — решение владельца: форма ленты держится каждый день. Окно
+    **скользящее**, а не календарные сутки: календарный день даёт обрыв в
+    полночь, и утренняя волна стартовала бы с пустым счётчиком, не ограниченная
+    ничем, а вечерние душились бы. Границы 1..720 (месяц).
+    """
+    try:
+        return max(1, min(720, int(os.getenv("CLASSIFIER_THEME_QUOTA_WINDOW_HOURS", "24"))))
+    except ValueError:
+        return 24
+
+
+def get_theme_quota_min_posts() -> int:
+    """Сколько постов вернуть, если квота вычистила волну целиком.
+
+    Env ``CLASSIFIER_THEME_QUOTA_MIN_POSTS``, дефолт 1: молчащая районная лента
+    хуже небольшого перебора по доле. Ноль отключает правило. Границы 0..5.
+    """
+    try:
+        return max(0, min(5, int(os.getenv("CLASSIFIER_THEME_QUOTA_MIN_POSTS", "1"))))
+    except ValueError:
+        return 1
