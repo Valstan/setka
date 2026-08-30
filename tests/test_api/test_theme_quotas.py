@@ -332,3 +332,30 @@ def test_template_renders_with_the_real_engine():
     assert "themes-body" in html
     # Обещание страницы: потолок не создаёт посты, и об этом сказано явно.
     assert "не умеет создать" in html
+
+
+# ───────── сторож диалекта ─────────
+
+
+def test_candidates_query_groups_by_a_plain_column_on_postgres():
+    """Регресс на прод-ошибку 2026-08-30 (найдена при выкатке PR #570).
+
+    Прямая группировка по ``verdict['theme']`` работает на SQLite и падает на
+    Postgres: SQLAlchemy подставляет РАЗНЫЕ bind-параметры под один литерал
+    'theme' в SELECT и в GROUP BY, Postgres сравнивает выражения синтаксически и
+    не признаёт их одним — «column verdict must appear in the GROUP BY clause».
+
+    Интеграционный тест выше это не ловит: он гоняет живую базу, но SQLite, а
+    там правило мягче. Поэтому сторож смотрит на СКОМПИЛИРОВАННЫЙ под Postgres
+    SQL и требует, чтобы в GROUP BY стояла простая колонка, а не JSON-выражение.
+    """
+    from sqlalchemy.dialects import postgresql
+
+    from web.api.theme_quotas import candidate_counts_stmt
+
+    sql = str(candidate_counts_stmt(days=7).compile(dialect=postgresql.dialect()))
+    group_by = sql.split("GROUP BY", 1)[1]
+    assert "->>" not in group_by, (
+        "в GROUP BY попало JSON-выражение — Postgres отвергнет запрос: " + group_by
+    )
+    assert "verdict" not in group_by, "GROUP BY обязан ссылаться на колонку подзапроса"

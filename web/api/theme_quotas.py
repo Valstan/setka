@@ -64,8 +64,17 @@ class SharesPut(BaseModel):
         return value
 
 
-async def _candidate_counts(db: AsyncSession, *, days: int) -> Dict[str, int]:
-    """Сколько постов каждой темы нейросеть предложила публиковать за N дней.
+def candidate_counts_stmt(*, days: int):
+    """Запрос «сколько постов каждой темы нейросеть предложила публиковать».
+
+    Извлечение темы из JSON вынесено в ПОДЗАПРОС, а группировка идёт по его
+    колонке. Прямая группировка по `verdict['theme']` выглядит короче и работает
+    на SQLite — но Postgres её отвергает: SQLAlchemy подставляет РАЗНЫЕ bind-
+    параметры под один литерал `'theme'` в SELECT и в GROUP BY, а Postgres
+    сравнивает выражения синтаксически и не признаёт их одним. Ошибка вылезает
+    только на проде («column verdict must appear in the GROUP BY clause»), и
+    тесты на SQLite о ней молчат — поэтому запрос собирается отдельной функцией,
+    а сторож в тестах компилирует её ИМЕННО под диалект Postgres.
 
     Читаем сырой вердикт, без наложения правок оператора: правки живут в другой
     таблице и на этой колонке сказались бы единицами из тысяч, а запрос стал бы
@@ -73,19 +82,19 @@ async def _candidate_counts(db: AsyncSession, *, days: int) -> Dict[str, int]:
     него такой точности достаточно.
     """
     cutoff = datetime.utcnow() - timedelta(days=days)
-    rows = (
-        await db.execute(
-            select(
-                ContentClassification.verdict["theme"].as_string(),
-                func.count(),
-            )
-            .where(
-                ContentClassification.created_at >= cutoff,
-                ContentClassification.verdict["action"].as_string() == "publish",
-            )
-            .group_by(ContentClassification.verdict["theme"].as_string())
+    inner = (
+        select(ContentClassification.verdict["theme"].as_string().label("theme"))
+        .where(
+            ContentClassification.created_at >= cutoff,
+            ContentClassification.verdict["action"].as_string() == "publish",
         )
-    ).all()
+        .subquery()
+    )
+    return select(inner.c.theme, func.count()).group_by(inner.c.theme)
+
+
+async def _candidate_counts(db: AsyncSession, *, days: int) -> Dict[str, int]:
+    rows = (await db.execute(candidate_counts_stmt(days=days))).all()
     return {str(theme): int(count) for theme, count in rows if theme}
 
 
