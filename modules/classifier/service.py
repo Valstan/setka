@@ -727,7 +727,20 @@ async def themes_list(session) -> List[Dict[str, Any]]:
         .all()
     )
     counts = await _theme_usage_counts(session)
-    out = [{"theme": t.name, "count": counts.pop(t.name, 0), "canon": True} for t in canon_rows]
+    out = [
+        {
+            "theme": t.name,
+            "count": counts.pop(t.name, 0),
+            "canon": True,
+            "position": t.position,
+            "description": t.description,
+            "is_service": bool(t.is_service),
+            # NUMERIC приезжает Decimal — JSON его не сериализует, а float здесь
+            # безопасен: доли задаются человеком с шагом в процент.
+            "share_percent": (None if t.share_percent is None else float(t.share_percent)),
+        }
+        for t in canon_rows
+    ]
     leftovers = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     out.extend({"theme": t, "count": n, "canon": False} for t, n in leftovers)
     return out
@@ -898,9 +911,38 @@ async def delete_theme(session, name: str, reassign_to: str) -> Dict[str, Any]:
     row = (
         await session.execute(select(ClassifierTheme).where(ClassifierTheme.name == name))
     ).scalar_one_or_none()
+    # Синонимы удаляемой темы переезжают на получателя вместе с постами. Иначе
+    # они остаются висячими, и ломается это молча в худшем месте: канон-карта
+    # применяется на КАЖДОЙ записи вердикта, так что «proisshestviya» и дальше
+    # приводился бы к «происшествия» — теме, которой в словаре уже нет. То есть
+    # уборка не-канона сама начала бы не-канон производить. Синоним, совпавший с
+    # именем получателя, выбрасывается: он стал бы записью «х → х», а такие
+    # add_alias и не принимает.
+    alias_rows = (
+        (
+            await session.execute(
+                select(ClassifierThemeAlias).where(ClassifierThemeAlias.canon == name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for alias_row in alias_rows:
+        if alias_row.alias == reassign_to.lower():
+            await session.delete(alias_row)
+        else:
+            alias_row.canon = reassign_to
+
     if row is not None:
+        # Доля наполнения переезжает вместе с постами, но только в пустое место.
+        # Иначе удаление темы молча снимало бы потолок: посты продолжают идти под
+        # именем получателя, а ограничения на них больше нет. Если у получателя
+        # доля уже задана — она и остаётся: это явный выбор оператора, а
+        # складывать два потолка бессмысленно.
+        if target.share_percent is None and row.share_percent is not None:
+            target.share_percent = row.share_percent
         await session.delete(row)
-        await session.commit()
+    await session.commit()
     return {"ok": True, "deleted": name, "reassign_to": reassign_to, "moved": moved}
 
 

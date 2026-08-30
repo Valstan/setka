@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
 )
@@ -758,6 +759,19 @@ class ClassifierTheme(Base):
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     name = Column(String(100), nullable=False, unique=True)
     position = Column(Integer, nullable=False, default=0)  # порядок в списках UI/постулатах
+    # Доля темы в наполнении ленты (миграция 090): NULL = не ограничивать,
+    # 0 = запрещена, >0 = потолок в процентах. Доли НЕ нормируются на свою
+    # сумму — каждая независимый потолок, поэтому сумма ≠ 100 ничего не ломает,
+    # а «задал только православие=0» безопасно само по себе.
+    share_percent = Column(Numeric(5, 2), nullable=True)
+    # Что входит в тему. Уходит в промпт рядом с именем (rules.py): единственное
+    # место, где движку можно объяснить границу темы. Пока объяснять было негде,
+    # он сочинял темы мимо словаря — вплоть до названия сообщества в роли темы.
+    description = Column(Text, nullable=True)
+    # Служебная тема процентов не получает: «мусор» не публикуется вовсе, а
+    # «соседи» идут отдельным каналом со своим расписанием. Ползунок для них на
+    # странице долей был бы ручкой, которая ни к чему не подключена.
+    is_service = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self):
