@@ -142,6 +142,7 @@ def parse_and_publish_theme(
         create_text_simhash,
         text_to_rafinad,
     )
+    from modules.publication_journal import record_publication
     from modules.publisher.bulletin_builder import BulletinBuilder
     from modules.publisher.bulletin_splitter import BulletinSplitter
     from modules.publisher.postopus_bulletin_headers import (
@@ -762,6 +763,20 @@ def parse_and_publish_theme(
                     theme=theme,
                     kind=kind,
                     selected_by_lip=selected_by_lip,
+                    posts_included=d.posts_included,
+                    publish_result=pub,
+                )
+
+            # Журнал публикаций (миграция 091): что и когда реально вышло на
+            # стену. Врезан в тот же цикл, что и курация, — одна строка покрывает
+            # районную волну, каскад, соседский канал, траур и хедлайнер. Без
+            # env-гейта, в отличие от курации: доли тем, посчитанные по одному
+            # району из двадцати девяти, описывали бы не сеть, а этот район.
+            for kind, d, pub in results:
+                await record_publication(
+                    region_code=region.code,
+                    wave_theme=theme,
+                    kind=kind,
                     posts_included=d.posts_included,
                     publish_result=pub,
                 )

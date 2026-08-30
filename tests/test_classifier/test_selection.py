@@ -205,9 +205,9 @@ async def test_verdicts_mode_keeps_only_publish_lips(monkeypatch):
     monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
 
     async def fake_fetch(session, region_code):
-        return {"100_1"}
+        return {"100_1": "новости"}
 
-    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "fetch_publish_map", fake_fetch)
     monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_VERDICTS, False))
     posts = [_post(-100, 1), _post(-100, 2), _post(-100, 3)]
     out, mode, removed = await selection.apply_wave_selection(
@@ -223,10 +223,10 @@ async def test_skip_wave_returns_empty_and_alerts(monkeypatch):
     monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
 
     async def fake_fetch(session, region_code):
-        return set()
+        return {}
 
     alerts = []
-    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "fetch_publish_map", fake_fetch)
     monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_SKIP_WAVE, True))
     monkeypatch.setattr(selection, "maybe_alert", lambda **kw: alerts.append(kw) or "alert-sent")
     posts = [_post(-100, 1)]
@@ -244,9 +244,9 @@ async def test_fallback_mode_publishes_by_algorithms(monkeypatch):
     monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
 
     async def fake_fetch(session, region_code):
-        return set()
+        return {}
 
-    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "fetch_publish_map", fake_fetch)
     monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_FALLBACK, True))
     monkeypatch.setattr(selection, "maybe_alert", lambda **kw: "alert-sent")
     posts = [_post(-100, 1), _post(-100, 2)]
@@ -265,7 +265,7 @@ async def test_internal_crash_is_fail_open_and_loud(monkeypatch, caplog):
     async def broken_fetch(session, region_code):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(selection, "fetch_publish_lips", broken_fetch)
+    monkeypatch.setattr(selection, "fetch_publish_map", broken_fetch)
     posts = [_post(-100, 1)]
     with caplog.at_level("ERROR", logger="modules.classifier.selection"):
         out, mode, removed = await selection.apply_wave_selection(
@@ -282,12 +282,12 @@ async def test_alert_failure_does_not_break_the_wave(monkeypatch):
     monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
 
     async def fake_fetch(session, region_code):
-        return {"100_1"}
+        return {"100_1": "новости"}
 
     def broken_alert(**kw):
         raise RuntimeError("telegram down")
 
-    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "fetch_publish_map", fake_fetch)
     monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_VERDICTS, True))
     monkeypatch.setattr(selection, "maybe_alert", broken_alert)
     posts = [_post(-100, 1), _post(-100, 2)]
@@ -318,9 +318,9 @@ async def test_log_separates_no_text_from_rejected(monkeypatch, caplog):
     monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
 
     async def fake_fetch(session, region_code):
-        return {"100_1"}
+        return {"100_1": "новости"}
 
-    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "fetch_publish_map", fake_fetch)
     monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_VERDICTS, False))
 
     # 1 — publish, 2 — судим и отбракован, 3 и 4 — судить было нечем.
@@ -347,9 +347,9 @@ async def test_no_text_counts_only_the_removed(monkeypatch, caplog):
     monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
 
     async def fake_fetch(session, region_code):
-        return {"100_3"}
+        return {"100_3": "новости"}
 
-    monkeypatch.setattr(selection, "fetch_publish_lips", fake_fetch)
+    monkeypatch.setattr(selection, "fetch_publish_map", fake_fetch)
     monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_VERDICTS, False))
 
     posts = [_post(-100, 1), _post_no_text(-100, 3)]

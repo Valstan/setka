@@ -35,7 +35,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +51,8 @@ MODE_SKIP_WAVE = "skip-wave"  # вердиктов нет, первая волн
 MODE_FALLBACK = "algorithmic-fallback"  # вердиктов нет вторую волну — алгоритмы
 
 
-async def fetch_publish_lips(session, region_code: str) -> Set[str]:
-    """lip'ы, которые нейро-вердикт РАЗРЕШАЕТ в сводку региона.
+async def fetch_publish_map(session, region_code: str) -> Dict[str, Optional[str]]:
+    """lip → канон-тема для постов, которые нейро-вердикт РАЗРЕШАЕТ в сводку.
 
     Зеркало ``enforce.fetch_blocked_lips`` с той же семантикой правки оператора
     (``verdict_type='action'``, ``outcome='correct'``) — правка человека главнее
@@ -71,6 +71,7 @@ async def fetch_publish_lips(session, region_code: str) -> Set[str]:
     try:
         from config.classifier import get_source_days
         from database.models_extended import ClassificationCorrection, ContentClassification
+        from modules.classifier.service import _theme_canon_map, canonicalize_theme
 
         cutoff = datetime.utcnow() - timedelta(days=get_source_days())
         rows = (
@@ -92,29 +93,50 @@ async def fetch_publish_lips(session, region_code: str) -> Set[str]:
             await session.execute(
                 select(
                     ClassificationCorrection.classification_id,
+                    ClassificationCorrection.verdict_type,
                     ClassificationCorrection.operator_value,
                 ).where(
                     ClassificationCorrection.classification_id.in_([r[0] for r in rows]),
-                    ClassificationCorrection.verdict_type == "action",
+                    ClassificationCorrection.verdict_type.in_(("action", "theme")),
                     ClassificationCorrection.outcome == "correct",
                 )
             )
         ).all()
-        operator_action = {cid: val for cid, val in corr_rows}
+        operator_action = {cid: val for cid, vtype, val in corr_rows if vtype == "action"}
+        operator_theme = {cid: val for cid, vtype, val in corr_rows if vtype == "theme"}
 
-        allowed: Set[str] = set()
+        canon = await _theme_canon_map(session)
+        allowed: Dict[str, Optional[str]] = {}
         for cid, lip, verdict in rows:
             action = operator_action.get(cid)
             if action is None:
                 action = ((verdict or {}).get("action") or "").strip().lower()
             else:
                 action = str(action or "").strip().lower()
-            if action == "publish":
-                allowed.add(lip)
+            if action != "publish":
+                continue
+            # Тема — тем же правилом, что и действие: правка человека главнее
+            # решения ИИ. Раньше здесь читалось только `action`, поэтому тема
+            # вердикта на отбор не влияла вовсе — и запрещённая рубрика ехала в
+            # ленту, если у поста стоял publish.
+            raw_theme = operator_theme.get(cid)
+            if raw_theme is None:
+                raw_theme = (verdict or {}).get("theme")
+            allowed[lip] = canonicalize_theme(raw_theme, canon)
         return allowed
     except Exception as e:  # noqa: BLE001 — наблюдаемость не роняет публикацию
         logger.warning("classifier selection: чтение вердиктов не удалось: %s", e)
-        return set()
+        return {}
+
+
+async def fetch_publish_lips(session, region_code: str) -> Set[str]:
+    """Только lip'ы, разрешённые вердиктом. Тонкая обёртка над ``fetch_publish_map``.
+
+    Осталась отдельной функцией, потому что у неё есть свой потребитель
+    (``modules.classifier.rating.top_by_rating``), которому тема не нужна, и
+    десяток тестов, подменяющих её монкейпатчем.
+    """
+    return set(await fetch_publish_map(session, region_code))
 
 
 def _skip_key(region_code: str, theme: str) -> str:
@@ -277,6 +299,100 @@ def selection_enabled() -> bool:
     )
 
 
+async def _fetch_theme_shares(session) -> Dict[str, Optional[float]]:
+    """Доли тем из словаря: ``{тема: процент}``. Служебные темы пропускаем.
+
+    «Мусор» не публикуется вовсе, «соседи» идут отдельным каналом со своим
+    расписанием — потолок для них был бы ручкой, ни к чему не подключённой.
+    """
+    from sqlalchemy import select
+
+    from database.models_extended import ClassifierTheme
+
+    rows = (
+        await session.execute(
+            select(
+                ClassifierTheme.name,
+                ClassifierTheme.share_percent,
+                ClassifierTheme.is_service,
+            )
+        )
+    ).all()
+    return {
+        str(name): (None if share is None else float(share))
+        for name, share, is_service in rows
+        if not is_service
+    }
+
+
+async def _apply_quota(
+    session,
+    selected,
+    *,
+    region_code: str,
+    theme_of,
+) -> Tuple[list, Dict[str, int]]:
+    """Применить потолки долей тем. Fail-open: любой отказ → вход без изменений.
+
+    Запрет темы (доля 0) работает ВСЕГДА, а потолки — только под гейтом
+    ``CLASSIFIER_THEME_QUOTA_ENABLED``. Разделение нарочное: гейт нужен, чтобы
+    журнал публикаций сутки поработал вхолостую и знаменатель перестал быть
+    пустым, но запрет владельца ждать сутки не должен.
+    """
+    # Без сессии читать нечего: так зовут отбор юнит-тесты политики деградации,
+    # и ERROR-лог в этом случае был бы ложной тревогой ровно того класса, который
+    # приучает не читать логи.
+    if not selected or session is None:
+        return selected, {}
+    try:
+        from config.classifier import (
+            get_theme_quota_min_posts,
+            get_theme_quota_window_hours,
+            theme_quota_enabled,
+        )
+        from modules.classifier.quota import HEADLINER_SLOTS, apply_theme_quota
+        from modules.publication_journal import fetch_published_counts
+
+        shares = await _fetch_theme_shares(session)
+        if not theme_quota_enabled():
+            shares = {t: v for t, v in shares.items() if v is not None and float(v) <= 0}
+        shares = {t: v for t, v in shares.items() if v is not None}
+        if not shares:
+            return selected, {}
+
+        published: Dict[str, int] = {}
+        slots = HEADLINER_SLOTS
+        if theme_quota_enabled():
+            published = await fetch_published_counts(
+                session, region_code, window_hours=get_theme_quota_window_hours()
+            )
+            # Мест в ленте, которые добавляет эта волна: сводка плюс хедлайнер.
+            # Берём сетевой дефолт, а не эффективное значение региона: конфиг
+            # региона сюда не приезжает, а расхождение стоит долей процента в
+            # знаменателе — меньше, чем цена лишнего параметра в сигнатуре,
+            # которую пришлось бы протащить через обе точки вызова.
+            from modules.bulletin_pipeline_settings import DEFAULT_PIPELINE
+
+            slots = int(DEFAULT_PIPELINE.get("max_posts_per_bulletin", 3)) + HEADLINER_SLOTS
+
+        from config.classifier import get_rating_views_alpha
+        from utils.post_utils import post_rating_of
+
+        alpha = get_rating_views_alpha()
+        return apply_theme_quota(
+            selected,
+            theme_of=theme_of,
+            rating_of=lambda p: post_rating_of(p, alpha=alpha),
+            shares=shares,
+            published=published,
+            slots=slots,
+            min_posts=get_theme_quota_min_posts(),
+        )
+    except Exception as e:  # noqa: BLE001 — квота не важнее волны
+        logger.error("theme quota failed — fail-open: %s", e, exc_info=True)
+        return selected, {}
+
+
 async def apply_wave_selection(
     session,
     posts,
@@ -303,7 +419,8 @@ async def apply_wave_selection(
     try:
         from modules.classifier.prepublish import post_lip
 
-        publish_lips = await fetch_publish_lips(session, region_code)
+        publish_map = await fetch_publish_map(session, region_code)
+        publish_lips = set(publish_map)
 
         redis_client = None
         try:
@@ -357,6 +474,20 @@ async def apply_wave_selection(
 
         selected = [p for p in posts if post_lip(p) in publish_lips]
         removed = len(posts) - len(selected)
+
+        # Квота тем (заказ владельца 2026-08-30). Врезана здесь, а не выше или
+        # ниже по волне, по трём причинам: сигнатура apply_wave_selection не
+        # меняется, поэтому обе точки вызова — районная волна и каскад — получают
+        # квоту без правок; только здесь на руках одновременно посты и их темы
+        # (ниже, в BulletinBuilder, темы уже нет и сессии БД тоже); и это уже
+        # слой редакционных решений, а не алгоритмических фильтров.
+        selected, quota_dropped = await _apply_quota(
+            session,
+            selected,
+            region_code=region_code,
+            theme_of=lambda p: publish_map.get(post_lip(p)),
+        )
+        removed += sum(quota_dropped.values())
         # Сколько из убранных движок не судил вовсе. Пост без текста headless
         # пропускает намеренно (`has_text`, headless.py:85), вердикта у него не
         # появляется — а отбор берёт ТОЛЬКО publish, и «нет вердикта» молча
@@ -370,13 +501,17 @@ async def apply_wave_selection(
         no_text = sum(1 for p in posts if post_lip(p) not in publish_lips and not has_text(p))
         logger.info(
             "classifier selection: регион=%s тема=%s кандидатов=%d отобрано=%d"
-            " убрано=%d безтекста=%d",
+            " убрано=%d безтекста=%d квота=%s",
             region_code,
             theme,
             len(posts),
             len(selected),
             removed,
             no_text,
+            # Пишем в ту же строку, что и режим отбора: квота живёт под гейтом
+            # CLASSIFIER_SELECTION_ENABLED, и её молчаливое отключение иначе
+            # выглядело бы точно так же, как «квота ничего не срезала».
+            quota_dropped or "не применялась",
         )
         return selected, mode, removed
     except Exception as e:  # noqa: BLE001 — усилитель, не точка отказа

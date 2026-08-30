@@ -62,6 +62,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.curation.recorder import record_curation_run
+from modules.publication_journal import record_publication
 
 logger = logging.getLogger(__name__)
 
@@ -678,6 +679,20 @@ async def run_cascaded_bulletin(
             theme=theme,
             kind=kind,
             selected_by_lip=selected_by_lip,
+            posts_included=d.posts_included,
+            publish_result=pub,
+        )
+
+    # Журнал публикаций (миграция 091): что и когда реально вышло на
+    # стену. Врезан в тот же цикл, что и курация, — одна строка покрывает
+    # районную волну, каскад, соседский канал, траур и хедлайнер. Без
+    # env-гейта, в отличие от курации: доли тем, посчитанные по одному
+    # району из двадцати девяти, описывали бы не сеть, а этот район.
+    for kind, d, pub in results:
+        await record_publication(
+            region_code=region.code,
+            wave_theme=theme,
+            kind=kind,
             posts_included=d.posts_included,
             publish_result=pub,
         )
