@@ -116,11 +116,16 @@ async def record_publication(
 
 async def fetch_published_counts(
     session,
-    region_code: str,
+    region_code: Optional[str] = None,
     *,
     window_hours: int,
 ) -> Dict[str, int]:
-    """Сколько постов каждой темы регион опубликовал за скользящее окно.
+    """Сколько постов каждой темы опубликовано за скользящее окно.
+
+    ``region_code=None`` — по всей сети: доли задаются сетевыми, и страница долей
+    показывает факт в том же разрезе, в каком владелец выставляет план. Волне же
+    нужен свой район, иначе двадцать девять параллельных волн считали бы чужую
+    ленту своей.
 
     Окно скользящее, а не календарные сутки, сознательно: календарный день даёт
     обрыв в полночь — утренняя волна стартует с пустым счётчиком и не ограничена
@@ -136,17 +141,17 @@ async def fetch_published_counts(
 
     try:
         cutoff = datetime.utcnow() - timedelta(hours=max(1, int(window_hours)))
-        rows = (
-            await session.execute(
-                select(PublishedPost.verdict_theme, func.count())
-                .where(
-                    PublishedPost.region_code == region_code,
-                    PublishedPost.published_at >= cutoff,
-                    PublishedPost.verdict_theme.is_not(None),
-                )
-                .group_by(PublishedPost.verdict_theme)
+        stmt = (
+            select(PublishedPost.verdict_theme, func.count())
+            .where(
+                PublishedPost.published_at >= cutoff,
+                PublishedPost.verdict_theme.is_not(None),
             )
-        ).all()
+            .group_by(PublishedPost.verdict_theme)
+        )
+        if region_code is not None:
+            stmt = stmt.where(PublishedPost.region_code == region_code)
+        rows = (await session.execute(stmt)).all()
         return {str(theme): int(count) for theme, count in rows if theme}
     except Exception as e:  # noqa: BLE001 — счётчик не важнее волны
         logger.warning("publication journal: чтение счётчиков не удалось: %s", e)

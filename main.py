@@ -61,7 +61,7 @@ from web.api import (  # noqa: E402
     task_monitoring,
 )
 from web.api import templates as templates_api  # noqa: E402
-from web.api import test_workflow, token_management, vk_monitoring  # noqa: E402
+from web.api import test_workflow, theme_quotas, token_management, vk_monitoring  # noqa: E402
 
 # Setup logging
 #
@@ -191,6 +191,9 @@ app.include_router(discovery.router, prefix="/api/discovery", tags=["Region Disc
 app.include_router(gateway.router, prefix="/api/gateway", tags=["VK Gateway"])
 app.include_router(gateway_stats.router, prefix="/api/gateway-stats", tags=["VK Gateway Stats"])
 app.include_router(promotion.router, prefix="/api/promotion", tags=["Promotion"])
+# Доли наполнения ленты по темам (страница /themes). Операторская зона:
+# префикс НЕ добавляется в PUBLIC_PREFIXES, гейт закрывает его сам.
+app.include_router(theme_quotas.router, prefix="/api/theme-quotas", tags=["Theme Quotas"])
 # Self-serve подключение проектов экосистемы (ADR-0010): своя X-Ecosystem-Key
 # защита, поэтому префикс — публичный в middleware/auth_gate.py.
 app.include_router(ecosystem.router, prefix="/api/ecosystem", tags=["Ecosystem Self-Serve"])
@@ -352,6 +355,12 @@ async def regions_page(request: Request):
 async def promotion_page(request: Request):
     """Раскрутка молодых сообществ сети: состав, план, журнал, настройки."""
     return templates.TemplateResponse("promotion.html", {"request": request})
+
+
+@app.get("/themes")
+async def themes_page(request: Request):
+    """Доли наполнения ленты по темам: план, кандидаты, факт."""
+    return templates.TemplateResponse("themes.html", {"request": request})
 
 
 @app.get("/regions/links")
