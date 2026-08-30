@@ -85,6 +85,11 @@ class AdvancedVKParser:
             vk_client: VK API client instance
         """
         self.vk_client = vk_client
+        # Отсеянные дубли волны и карта «ключ дедупа → lip первоисточника».
+        # Здесь, а не только при старте волны: тесты и диагностика зовут
+        # _filter_post напрямую, минуя parse_posts_from_communities.
+        self._skipped_duplicates: List[Dict[str, Any]] = []
+        self._batch_lip_by_key: Dict[str, str] = {}
         self._max_post_age_hours = float(BULLETIN_MAX_POST_AGE_HOURS)
         self._min_rafinad_core = int(_MIN_RAFINAD_LEN_FOR_CORE_DEDUP)
         self._min_rafinad_similarity = int(_MIN_RAFINAD_LEN_FOR_SIMILARITY_DEDUP)
@@ -184,6 +189,11 @@ class AdvancedVKParser:
 
         # Дедупликация внутри одного вызова parse_posts_from_communities
         self._batch_lips: Set[str] = set()
+        # Отсеянные дубли волны и карта «ключ дедупа → lip первоисточника».
+        # Инициализируются здесь тоже, а не только при старте волны: get_stats и
+        # тесты трогают парсер до первого прогона.
+        self._skipped_duplicates: List[Dict[str, Any]] = []
+        self._batch_lip_by_key: Dict[str, str] = {}
         self._batch_text_fps: Set[str] = set()
         self._batch_core_fps: Set[str] = set()
         self._batch_media_sigs: Set[str] = set()
@@ -221,7 +231,9 @@ class AdvancedVKParser:
         )
         self._historical_text_simhashes = self._extract_text_simhashes(work_hash_set)
 
-        # Shuffle communities (randomize fetch order)
+        # Порядок чтения стен больше не влияет на исход дубля: посты волны
+        # сортируются по времени публикации ДО фильтрации (см. ниже). Shuffle
+        # оставлен как есть — он распределяет нагрузку на ВК, а не решает споры.
         if shuffle_communities:
             random.shuffle(community_ids)
 
@@ -238,7 +250,9 @@ class AdvancedVKParser:
         _audit_on = should_audit(getattr(region_config, "region_code", "") or "")
         _audit_collected: List[Dict[str, Any]] = []
 
-        # Fetch posts from all communities
+        # Сбор со всех стен ДО фильтрации: чтобы решить спор двух похожих постов
+        # по времени выхода, надо видеть обоих сразу.
+        collected: List[Dict[str, Any]] = []
         for community_id in community_ids:
             self.stats["total_groups_checked"] += 1
 
@@ -252,27 +266,37 @@ class AdvancedVKParser:
                 self.stats["groups_with_posts"] += 1
                 if _audit_on:
                     _audit_collected.extend(posts)
-
-                # Process each post
-                for post_data in posts:
-                    self.stats["total_posts_scanned"] += 1
-
-                    # Apply full filtering pipeline
-                    filtered = await self._filter_post(
-                        post_data,
-                        theme=theme,
-                        region_config=region_config,
-                        work_table_lip=work_table_lip,
-                        work_hash_set=work_hash_set,
-                        recent_text_fingerprints=recent_text_set,
-                    )
-
-                    if filtered:
-                        all_posts.append(filtered)
+                collected.extend(posts)
 
             except Exception as e:
                 logger.error(f"❌ Failed to parse community {community_id}: {e}")
                 continue
+
+        # ПЕРВОИСТОЧНИК — ТОТ, КТО ВЫШЕЛ РАНЬШЕ (решение владельца 2026-08-30).
+        # Дедуп в _filter_post устроен потоково: побеждает тот, кого просмотрели
+        # первым, а второй отбрасывается. Раньше «первым» оказывался случайный —
+        # порядок задавал random.shuffle по сообществам. Теперь вход упорядочен по
+        # дате публикации, и «первый увиденный» означает «вышел раньше», то есть
+        # сеть публикует первоисточник, а не того, кто переписал его быстрее.
+        # Пост без даты уезжает в начало и отваливается на шаге 2 (возраст).
+        collected.sort(key=lambda p: int(p.get("date") or 0))
+
+        for post_data in collected:
+            self.stats["total_posts_scanned"] += 1
+            try:
+                filtered = await self._filter_post(
+                    post_data,
+                    theme=theme,
+                    region_config=region_config,
+                    work_table_lip=work_table_lip,
+                    work_hash_set=work_hash_set,
+                    recent_text_fingerprints=recent_text_set,
+                )
+            except Exception as e:
+                logger.error(f"❌ Failed to filter post: {e}")
+                continue
+            if filtered:
+                all_posts.append(filtered)
 
         if _audit_on:
             await record_collection_audit(
@@ -362,9 +386,13 @@ class AdvancedVKParser:
             self._text_similarity_threshold
         )
         self._historical_text_simhashes = self._extract_text_simhashes(work_hash_set)
+        self._skipped_duplicates = []
+        self._batch_lip_by_key = {}
 
         all_posts: List[Dict[str, Any]] = []
-        for post_data in posts:
+        # Тот же порядок, что и в районном пути: спор двух похожих постов решает
+        # время выхода, а не порядок, в котором их принёс вызывающий.
+        for post_data in sorted(posts, key=lambda p: int(p.get("date") or 0)):
             self.stats["total_posts_scanned"] += 1
             filtered = await self._filter_post(
                 post_data,
@@ -620,9 +648,11 @@ class AdvancedVKParser:
         if media_ids:
             if any(mid in work_hash_set for mid in media_ids):
                 self.stats["posts_filtered_duplicate_foto"] += 1
+                self._note_duplicate(lip, None, "media-history")
                 return None
             if media_sig in self._batch_media_sigs:
                 self.stats["posts_filtered_duplicate_foto"] += 1
+                self._note_duplicate(lip, self._batch_lip_by_key.get(f"media:{media_sig}"), "media")
                 return None
 
         # 11. Дедуп по тексту (полный hash и «ядро» для похожих формулировок)
@@ -635,18 +665,26 @@ class AdvancedVKParser:
                     or f"txtfp:{fp}" in work_hash_set
                 ):
                     self.stats["posts_filtered_duplicate_text"] += 1
+                    self._note_duplicate(lip, self._batch_lip_by_key.get(f"txt:{fp}"), "text")
                     return None
                 rlen = len(text_to_rafinad(text))
                 if rlen >= self._min_rafinad_core:
                     cfp = create_text_core_fingerprint(text)
                     if cfp and (cfp in self._batch_core_fps or f"txtcore:{cfp}" in work_hash_set):
                         self.stats["posts_filtered_duplicate_text"] += 1
+                        self._note_duplicate(
+                            lip, self._batch_lip_by_key.get(f"core:{cfp}"), "text-core"
+                        )
                         return None
                 if rlen >= self._min_rafinad_similarity:
                     simhash = create_text_simhash(text)
                     if simhash and self._is_near_duplicate_text(simhash, rlen):
                         self.stats["near_dup_simhash"] += 1
                         self.stats["posts_filtered_duplicate_text"] += 1
+                        # Первоисточник здесь не назвать: помощник отвечает «похож
+                        # хоть на что-то», не говоря на что. Для журнала это не
+                        # потеря — сам факт отсева важнее его виновника.
+                        self._note_duplicate(lip, None, "text-simhash")
                         return None
                     # Второй сигнал: intra-batch Jaccard (переставленные/переписанные)
                     if getattr(self, "_jaccard_enabled", False):
@@ -657,20 +695,24 @@ class AdvancedVKParser:
                             self.stats["near_dup_jaccard"] += 1
                             self.stats["posts_filtered_duplicate_text"] += 1
                             logger.info("near-dup (jaccard) drop: %s", text[:80].replace("\n", " "))
+                            self._note_duplicate(lip, None, "text-jaccard")
                             return None
 
         # Регистрируем отобранный пост в батч-дедупе
         self._batch_lips.add(lip)
         if media_sig:
             self._batch_media_sigs.add(media_sig)
+            self._batch_lip_by_key.setdefault(f"media:{media_sig}", lip)
         if text:
             fp = create_text_fingerprint(text)
             if fp:
                 self._batch_text_fps.add(fp)
+                self._batch_lip_by_key.setdefault(f"txt:{fp}", lip)
                 if len(text_to_rafinad(text)) >= self._min_rafinad_core:
                     cfp = create_text_core_fingerprint(text)
                     if cfp:
                         self._batch_core_fps.add(cfp)
+                        self._batch_lip_by_key.setdefault(f"core:{cfp}", lip)
                 rlen_reg = len(text_to_rafinad(text))
                 if rlen_reg >= self._min_rafinad_similarity:
                     simhash = create_text_simhash(text)
@@ -684,6 +726,24 @@ class AdvancedVKParser:
                             )
 
         return post_data
+
+    def _note_duplicate(self, lip: str, original_lip: Optional[str], reason: str) -> None:
+        """Запомнить отсеянный дубль на время волны (заказ владельца 2026-08-30).
+
+        Вызывающий сохранит список в ``skipped_duplicates``, и этот lip больше не
+        станет кандидатом. Без такой записи дубль не устранялся, а сдвигался: через
+        пару часов следующая волна брала проигравшего как свежий пост — конкурента
+        рядом уже нет, текст переписан, фото перезалито — и он выходил в ленту.
+
+        Здесь только накопление в памяти: парсер не ходит в БД, и запись остаётся
+        делом волны. Список живёт ровно один прогон и сбрасывается вместе с
+        батч-множествами.
+        """
+        if not lip:
+            return
+        self._skipped_duplicates.append(
+            {"lip": lip, "original_lip": original_lip, "reason": reason}
+        )
 
     @staticmethod
     def _extract_text_simhashes(work_hash_set: Set[str]) -> List[tuple[int, str]]:

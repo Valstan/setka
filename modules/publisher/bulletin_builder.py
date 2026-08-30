@@ -311,10 +311,15 @@ class BulletinBuilder:
         прежний дефолт 0 схлопывал делитель в единицу, и пост без единого
         просмотра мог обогнать районный хит.
         """
+        import time
+
         from config.classifier import get_rating_views_alpha
+        from config.runtime import get_bulletin_fresh_hours
         from utils.post_utils import post_rating
 
         alpha = get_rating_views_alpha()
+        fresh_hours = get_bulletin_fresh_hours()
+        now_ts = time.time()
 
         def get_score(post_data):
             views = post_data.get("views")
@@ -328,9 +333,32 @@ class BulletinBuilder:
                 alpha=alpha,
             )
 
+        def is_fresh(post_data) -> bool:
+            """Пост моложе порога свежести. Без даты — считаем свежим.
+
+            «Без даты → свежий» намеренно: пост без ``date`` до сборщика доходит
+            только в обход возрастного фильтра (шаг 2 отбрасывает такие), то есть
+            это редкий случай, и задвигать его в хвост значило бы наказывать за
+            дефект данных, а не за возраст.
+            """
+            if fresh_hours <= 0:
+                return True
+            ts = post_data.get("date")
+            if not ts:
+                return True
+            try:
+                return (now_ts - float(ts)) <= fresh_hours * 3600
+            except (TypeError, ValueError):
+                return True
+
+        # СВЕЖЕЕ ВПЕРЕДИ (заказ владельца 2026-08-30): «свежак должен первым
+        # выходить, а если свежака нету — берутся слегка устаревшие». Раньше
+        # порядок задавал только рейтинг, и вчерашний хит обгонял сегодняшнюю
+        # новость. Внутри каждой группы порядок прежний — по рейтингу, поэтому
+        # для волны без устаревших постов поведение не меняется вовсе.
         return sorted(
             posts,
-            key=lambda p: ((s := get_score(p)) is not None, s or 0.0),
+            key=lambda p: (is_fresh(p), (s := get_score(p)) is not None, s or 0.0),
             reverse=True,
         )
 

@@ -18,12 +18,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from modules.vk_token_router import TokenCandidate
 
 
-def _res(first=None, sfirst=None, sall=None, fall=None):
+def _res(first=None, sfirst=None, sall=None, fall=None, rall=None):
     r = MagicMock()
     r.first.return_value = first
     r.scalars.return_value.first.return_value = sfirst
     r.scalars.return_value.all.return_value = sall or []
     r.fetchall.return_value = fall or []
+    # Result.all() — без явной подстановки MagicMock вернул бы мок, а обход его
+    # строк упал бы TypeError внутри чужого fail-open, и запрос оказался бы
+    # «проверен» тестом, ни разу не выполнившись.
+    r.all.return_value = rall or []
     return r
 
 
@@ -63,7 +67,11 @@ def test_dry_run_builds_preview_without_publish_or_commit():
     )
     # Порядок session.execute() в регулярном пути _execute (до return dry_run):
     # 1 kind, 2 RegionConfig, 3 WorkTable(theme), 4 WorkTable(global),
-    # 5 Region, 6 communities(theme), 7 comm_meta, 8 all_wt.
+    # 5 Region, 6 communities(theme), 7 comm_meta, 8 all_wt,
+    # 9 skipped_duplicates (журнал отсеянных дублей, миграция 093).
+    # Список обязан совпадать по длине с числом запросов: лишний запрос вычерпает
+    # его до конца, IndexError утонет в fail-open вызывающего, и тест позеленеет,
+    # не проверив новый код.
     results = [
         _res(first=("raion", {})),
         _res(sfirst=None),
@@ -73,6 +81,7 @@ def test_dry_run_builds_preview_without_publish_or_commit():
         _res(fall=[(123,)]),
         _res(fall=[(123, "Группа")]),
         _res(sall=[]),
+        _res(rall=[]),
     ]
     cm = _FakeSessionCM(results)
 
@@ -134,6 +143,12 @@ def test_dry_run_builds_preview_without_publish_or_commit():
     assert preview["kind"] == "regular"
     assert preview["post_count"] == 2
     assert preview["text_preview"].startswith("BULLETIN TEXT")
+
+    # Все заготовленные ответы обязаны быть выбраны ровно один раз. Иначе список
+    # молча расходится с числом запросов, и лишний запрос тонет в fail-open
+    # вызывающего: тест зеленеет, не проверив новый код (ровно так новый запрос
+    # за журналом дублей прошёл мимо теста 2026-08-30).
+    assert cm.session._results == [], "остались невыбранные ответы"
     # Главное: ничего не опубликовано и не закоммичено.
     publisher_cls.create_with_policy.assert_not_called()
     cm.session.commit.assert_not_called()
