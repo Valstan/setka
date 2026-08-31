@@ -17,8 +17,23 @@
 
     function $(id) { return document.getElementById(id); }
 
+    /* Кабинет клиента, открытый владельцем (?as_client=<id>).
+     * Параметр прокидывается во ВСЕ запросы кабинета — иначе страница
+     * показывала бы чужие данные вперемешку со своими: /me ушёл бы с
+     * as_client, а /posts без него. Сервер решает, кто имеет право; здесь
+     * только перенос. */
+    var AS_CLIENT = '';
+    try {
+        AS_CLIENT = new URLSearchParams(location.search).get('as_client') || '';
+    } catch (e) { /* старый браузер — работаем как обычный клиент */ }
+
+    function withAsClient(url) {
+        if (!AS_CLIENT) return url;
+        return url + (url.indexOf('?') === -1 ? '?' : '&') + 'as_client=' + encodeURIComponent(AS_CLIENT);
+    }
+
     async function api(path, opts) {
-        var res = await fetch('/api/advertiser' + path, Object.assign({
+        var res = await fetch(withAsClient('/api/advertiser' + path), Object.assign({
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
         }, opts || {}));
@@ -67,7 +82,17 @@
         try { me = await api('/me'); } catch (e) { return; }
         state.me = me;
         $('me-badge').textContent = me.display_name || '';
+
+        if (me.impersonating) {
+            $('owner-banner-name').textContent =
+                (me.impersonating.name || '') + ' #' + me.impersonating.client_id;
+            $('owner-banner').classList.remove('d-none');
+        }
+
         if (!me.is_advertiser) {
+            // Владельцу онбординг не предлагаем: своей карточки у него нет и
+            // заводить её не надо — он входит в чужие кабинеты.
+            if (me.is_owner) { showOwnerPicker(); return; }
             $('onboarding').classList.remove('d-none');
             return;
         }
@@ -75,6 +100,28 @@
         loadPosts();
         refreshSummary();
     }
+
+    async function showOwnerPicker() {
+        var sel = $('owner-client-select');
+        try {
+            var data = await api('/clients');
+            (data.clients || []).forEach(function (c) {
+                var o = document.createElement('option');
+                o.value = c.id;
+                o.textContent = '#' + c.id + ' · ' + (c.name || 'без имени') +
+                    (c.has_account ? '' : ' (без аккаунта)');
+                sel.appendChild(o);
+            });
+        } catch (e) {
+            sel.innerHTML = '<option value="">не удалось загрузить список</option>';
+        }
+        $('owner-picker').classList.remove('d-none');
+    }
+
+    $('owner-enter-btn').addEventListener('click', function () {
+        var id = $('owner-client-select').value;
+        if (id) location.href = '/cabinet?as_client=' + encodeURIComponent(id);
+    });
 
     $('onb-submit').addEventListener('click', async function () {
         try {

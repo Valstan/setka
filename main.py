@@ -305,6 +305,13 @@ async def advertiser_cabinet_page(request: Request):
 
     canonical = vk_upstream.ad_cabinet_canonical_redirect(request.url.hostname)
     if canonical:
+        # Query переносим явно: без этого редирект глотал параметры, и
+        # `?as_client=<id>` (вход владельца в кабинет клиента) терялся при
+        # заходе с неканонического хоста — страница молча открывала свой
+        # кабинет вместо чужого. Операторский `_operator_canonical_redirect`
+        # query сохраняет давно; здесь это просто не было сделано.
+        if request.url.query:
+            canonical += f"?{request.url.query}"
         return RedirectResponse(canonical, status_code=302)
     return templates.TemplateResponse("advertiser_cabinet.html", {"request": request})
 

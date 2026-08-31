@@ -52,6 +52,30 @@
     </nav>
 
     <div class="container py-3" style="max-width: 860px;">
+        <!-- Плашка режима владельца: видна ТОЛЬКО когда открыт чужой кабинет.
+             Заметная намеренно — владелец здесь действует от имени клиента
+             (полный доступ), и перепутать свой кабинет с чужим нельзя. -->
+        <div id="owner-banner" class="alert alert-warning d-flex flex-wrap align-items-center gap-2 d-none" role="alert">
+            <i class="bi bi-eye-fill"></i>
+            <span>Вы в кабинете клиента <strong id="owner-banner-name"></strong>. Действия уходят от его имени и пишутся в журнал.</span>
+            <a class="btn btn-sm btn-outline-dark ms-auto" href="/cabinet">Выйти из кабинета</a>
+        </div>
+
+        <!-- Выбор кабинета: только владельцу, вместо онбординга -->
+        <div id="owner-picker" class="card mb-3 d-none">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-box-arrow-in-right"></i> Войти в кабинет клиента</h5>
+                <p class="text-body-secondary mb-2">
+                    Своей карточки рекламодателя у вас нет и не нужно — выберите кабинет,
+                    чтобы посмотреть его глазами клиента.
+                </p>
+                <div class="input-group">
+                    <select class="form-select" id="owner-client-select"></select>
+                    <button class="btn btn-success" id="owner-enter-btn" type="button">Войти</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Онбординг: показывается, пока юзер не рекламодатель -->
         <div id="onboarding" class="d-none">
             <div class="card">

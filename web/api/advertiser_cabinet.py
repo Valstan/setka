@@ -30,8 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.ad_landing import PAYMENTS, build_price_table, quote_price
 from database.connection import get_db_session
-from database.models import AdPayment, AdPublication, AdScheduledPost, Region
-from modules.ad_cabinet import advertiser_link, chat, client_orders
+from database.models import AdClient, AdPayment, AdPublication, AdScheduledPost, Region
+from modules.ad_cabinet import advertiser_link, chat, client_orders, impersonation
 from modules.ad_cabinet.balance import compute_balance
 from modules.ad_cabinet.interaction_log import log_interaction
 
@@ -53,8 +53,23 @@ def _current_user(request: Request):
 
 
 async def _current_client(request: Request, db: AsyncSession):
-    """Карточка клиента текущей сессии. 403 — юзер ещё не рекламодатель."""
+    """Карточка клиента текущей сессии. 403 — юзер ещё не рекламодатель.
+
+    **Единственная дверь для входа владельца в чужой кабинет.** Если в запросе
+    есть ``?as_client=<id>`` и запрашивающий — владелец, отдаём ЕГО карточку и
+    пишем запись в журнал (``modules/ad_cabinet/impersonation``). Инвариант
+    модуля при этом не ослаблен: ``client_id`` по-прежнему не читается ни в
+    одном из 16 хендлеров — читает его только impersonation, и только он же
+    проверяет владельца. Не-владельцу параметр отвечает 403, а не игнорируется:
+    молчаливое игнорирование выглядит как «работает» и прячет дыру изоляции.
+    """
     user = _current_user(request)
+
+    target, impersonated = await impersonation.resolve(db, user, request)
+    if impersonated:
+        await db.commit()  # журнал входа не должен зависеть от исхода хендлера
+        return user, target
+
     client = await advertiser_link.resolve_client(db, user)
     if client is None:
         raise HTTPException(status_code=403, detail="Не рекламодатель — пройдите онбординг")
@@ -77,14 +92,67 @@ async def me(request: Request, db: AsyncSession = Depends(get_db_session)):
     (гейт: ``ADVERTISER_ONBOARDING_EXACT``) — не-рекламодателю отвечает
     ``is_advertiser=False``, страница показывает онбординг."""
     user = _current_user(request)
+    owner = impersonation.is_owner(user)
+
+    target, impersonated = await impersonation.resolve(db, user, request)
+    if impersonated:
+        await db.commit()  # запись входа в журнал не зависит от исхода страницы
+        return {
+            "is_advertiser": True,
+            "role": getattr(user, "role", None),
+            "display_name": getattr(user, "display_name", None) or getattr(user, "login", None),
+            "client": target.to_dict(),
+            "is_owner": True,
+            "impersonating": {"client_id": target.id, "name": target.name},
+        }
+
     client = await advertiser_link.resolve_client(db, user)
     if client is not None:
         await db.commit()  # fallback-линковка могла записать FK (self-healing)
     return {
+        # Владелец «рекламодателем» не становится: своей карточки у него нет и
+        # заводить её не надо — он входит в чужие через ?as_client. Страница
+        # покажет ему не онбординг, а выбор кабинета (см. is_owner ниже).
         "is_advertiser": client is not None,
         "role": getattr(user, "role", None),
         "display_name": getattr(user, "display_name", None) or getattr(user, "login", None),
         "client": client.to_dict() if client is not None else None,
+        "is_owner": owner,
+        "impersonating": None,
+    }
+
+
+@router.get("/clients")
+async def owner_client_list(request: Request, db: AsyncSession = Depends(get_db_session)):
+    """Список кабинетов для переключателя владельца. **Только владельцу.**
+
+    Отдаёт минимум, нужный для выбора (id, имя, есть ли привязанный аккаунт), а
+    не карточку целиком: операторский взгляд на данные клиента живёт в
+    ``/api/ad-crm/clients/{id}``, дублировать его здесь незачем.
+    """
+    user = _current_user(request)
+    if not impersonation.is_owner(user):
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+    rows = (
+        (
+            await db.execute(
+                select(AdClient).order_by(AdClient.radar_user_id.is_(None), AdClient.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "clients": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "stage": c.stage,
+                "has_account": c.radar_user_id is not None,
+            }
+            for c in rows
+        ]
     }
 
 

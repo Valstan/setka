@@ -373,7 +373,7 @@ class TestReviewFixes:
         res = await _submit(db_session, c, region_ids=ids)
         post = res["posts"][0]
         await db_session.commit()
-        req = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id=1)))
+        req = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id=1)), query_params={})
         with patch("modules.ad_cabinet.advertiser_link.resolve_client", return_value=c):
             out = await cancel_post(post.id, req, db_session)
         assert out["status"] == "cancelled"
@@ -400,7 +400,7 @@ class TestReviewFixes:
         await db_session.commit()
         await db_session.refresh(pkg)
         assert pkg.posts_used == 0  # уже возвращён при сбое
-        req = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id=1)))
+        req = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id=1)), query_params={})
         with patch("modules.ad_cabinet.advertiser_link.resolve_client", return_value=c):
             out = await cancel_post(post.id, req, db_session)
         assert out["status"] == "failed"  # терминален, отменять нечего
@@ -486,7 +486,7 @@ class TestReviewFixes:
         pkg = _pkg(c.id, total=1)
         db_session.add(pkg)
         await db_session.flush()
-        req = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id=1)))
+        req = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id=1)), query_params={})
         with patch("modules.ad_cabinet.advertiser_link.resolve_client", return_value=c):
             q = await quote(QuoteIn(region_ids=ids), req, db_session)
         assert q["price"] == 0 and q["over_limit"] is True
@@ -515,7 +515,7 @@ class TestReviewFixes:
         c = await _seed_client(db_session)
         db_session.add(_pkg(c.id, total=3))
         await db_session.flush()
-        req = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id=1)))
+        req = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id=1)), query_params={})
         with patch("modules.ad_cabinet.advertiser_link.resolve_client", return_value=c):
             s = await summary(req, db_session)
         assert s["package"]["kind"] == "free_promo" and s["package_block"] is None
