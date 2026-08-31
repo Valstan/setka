@@ -21,7 +21,7 @@ from web.api.advertiser_cabinet import OnboardingIn, TelemetryIn, onboarding, te
 
 
 def _req(user):
-    return SimpleNamespace(state=SimpleNamespace(user=user))
+    return SimpleNamespace(state=SimpleNamespace(user=user), query_params={})
 
 
 async def _mk_user(db, login="client1", role="radar"):
