@@ -80,9 +80,16 @@ async def render_effective_postulates(session) -> str:
     rules = (
         (
             await session.execute(
-                select(ClassificationRule)
-                .where(ClassificationRule.status == "approved")
-                .order_by(ClassificationRule.created_at)
+                select(ClassificationRule).where(ClassificationRule.status == "approved")
+                # Вторичный ключ обязателен. ``created_at`` — питоновский
+                # ``default=datetime.utcnow`` (не server_default), поэтому пачка
+                # правил, утверждённая дистилляцией одним заходом, может лечь с
+                # одинаковой меткой, и порядок при ничьей не определён. Правила
+                # нумеруются в промпте (1./2./3.), значит перенумерация между
+                # прогонами меняет промпт, не меняя содержания — спящий дефект
+                # того же семейства, что LIMIT без ORDER BY.
+                # Соседняя ``render_learned_snapshot`` делает так с самого начала.
+                .order_by(ClassificationRule.created_at, ClassificationRule.id)
             )
         )
         .scalars()
