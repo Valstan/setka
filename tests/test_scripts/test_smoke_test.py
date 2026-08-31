@@ -242,3 +242,29 @@ def test_main_passes_args_through(monkeypatch):
     assert captured["region"] == "vp"
     assert captured["theme"] == "sport"
     assert captured["min_posts"] == 2
+
+
+def test_success_line_names_the_counter_it_measured():
+    """Отчёт обязан печатать величину, ПО КОТОРОЙ принято решение.
+
+    Живой прогон 2026-09-01 прошёл гейт и напечатал «OK: posts_parsed=0» — то
+    есть отчёт называл счётчик, который гейт уже не смотрит. Читателю остаётся
+    заново разгадывать, почему ноль, но OK. Та же болезнь, от которой лечили
+    сам порог, только в строке вывода.
+    """
+    lines: List[str] = []
+    poll = _FakePoll(
+        [
+            {
+                "task_id": "abc",
+                "state": "SUCCESS",
+                "ready": True,
+                "result": _ok_result(posts=0, scanned=260),
+            }
+        ]
+    )
+    assert _run(poll, log=lines.append) == 0
+    ok = [ln for ln in lines if "OK:" in ln]
+    assert ok, "успешный прогон ничего не напечатал"
+    assert "принесено из ВК=260" in ok[0]
+    assert "после отбора=0" in ok[0]
