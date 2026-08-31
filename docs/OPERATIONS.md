@@ -64,7 +64,7 @@ cd /home/valstan/SETKA
 - `VK_TOKEN_<NAME>`
 - `TELEGRAM_TOKEN_<NAME>`
 - `TELEGRAM_ALERT_CHAT_ID`
-- `GROQ_API_KEY` (опционально)
+- `DEEPSEEK_API_KEY` (нейро-движок экосистемы, MANDATE brain 2026-08-10)
 - `SERVER_HOST`, `SERVER_PORT`
 - `LOG_LEVEL` (по умолчанию `WARNING`)
 

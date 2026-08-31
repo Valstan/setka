@@ -107,7 +107,7 @@ DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/setka
 REDIS_URL=redis://localhost:6379/0
 VK_TOKEN_VALSTAN=vk1.a....
 VK_TOKEN_VITA=vk1.a....
-GROQ_API_KEY=gsk_...
+DEEPSEEK_API_KEY=sk-...
 TELEGRAM_TOKEN_VALSTANBOT=...
 TELEGRAM_ALERT_CHAT_ID=-100...
 VK_TEST_GROUP_ID=-137760500
@@ -116,7 +116,9 @@ VK_TEST_GROUP_ID=-137760500
 ### Загрузка из env
 
 ```python
-from config.runtime import VK_TOKENS, TELEGRAM_TOKENS, GROQ_API_KEY
+from config.runtime import VK_TOKENS, TELEGRAM_TOKENS
+from config.deepseek import get_api_key  # ключ читается при КАЖДОМ вызове,
+                                         # чтобы ротация в КАРМАНе не требовала рестарта
 # Всё уже распаршено из env vars, НИЧЕГО не хардкодить!
 ```
 

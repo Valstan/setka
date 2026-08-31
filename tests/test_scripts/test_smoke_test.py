@@ -28,7 +28,13 @@ _spec.loader.exec_module(smoke)
 # --------------------------------------------------------------------------- #
 
 
-def _ok_result(posts: int = 3) -> Dict[str, Any]:
+def _ok_result(posts: int = 3, scanned: int | None = None) -> Dict[str, Any]:
+    """Dry-run словарь пайплайна.
+
+    ``posts`` — сколько ОСТАЛОСЬ после отбора (``posts_parsed``);
+    ``scanned`` — сколько ПРИНЕСЕНО из ВК (``stats.total_posts_scanned``).
+    По умолчанию совпадают: «отбор ничего не выкинул».
+    """
     return {
         "success": True,
         "dry_run": True,
@@ -37,11 +43,42 @@ def _ok_result(posts: int = 3) -> Dict[str, Any]:
         "communities_count": 10,
         "posts_parsed": posts,
         "bulletins_count": 1,
+        "stats": {"total_posts_scanned": posts if scanned is None else scanned},
     }
 
 
 def test_evaluate_passes_on_success_and_enough_posts():
     assert smoke.evaluate_result(_ok_result(posts=5), min_posts=1) == []
+
+
+def test_evaluate_passes_when_selection_dropped_everything():
+    """Живой парсинг + пустой отбор — это ЗЕЛЁНЫЙ гейт.
+
+    Первый из двух источников ложного нуля: редакционные фильтры/чёрный список
+    отсеяли всё принесённое. Пайплайн при этом полностью здоров.
+    Ложный красный 25.08.
+    """
+    assert smoke.evaluate_result(_ok_result(posts=0, scanned=42), min_posts=1) == []
+
+
+def test_evaluate_passes_when_dedup_cursor_ate_the_wave():
+    """Второй источник ложного нуля — курсор дедупа.
+
+    Волна той же темы отработала недавно, посты помечены виденными, до отбора
+    доходит ноль. PENDING знал только первый источник, поэтому вариант
+    ``posts_final_count`` этот случай бы не закрыл: он тоже считается после
+    отбора. Порог меряет до-отборный счётчик — и оба случая зелёные.
+    """
+    res = _ok_result(posts=0, scanned=17)
+    res["bulletins_count"] = 0
+    assert smoke.evaluate_result(res, min_posts=1) == []
+
+
+def test_evaluate_fails_when_parsing_is_actually_dead():
+    """А вот это гейт обязан красить: из ВК не принесено НИЧЕГО."""
+    failures = smoke.evaluate_result(_ok_result(posts=0, scanned=0), min_posts=1)
+    assert len(failures) == 1
+    assert "принесено из ВК постов: 0" in failures[0]
 
 
 def test_evaluate_fails_on_none_result():
@@ -61,7 +98,7 @@ def test_evaluate_fails_on_unsuccessful_pipeline():
 def test_evaluate_fails_when_posts_below_minimum():
     failures = smoke.evaluate_result(_ok_result(posts=0), min_posts=1)
     assert len(failures) == 1
-    assert "спарсилось постов: 0" in failures[0]
+    assert "принесено из ВК постов: 0" in failures[0]
 
 
 def test_evaluate_fails_when_no_dry_run_data_and_min_positive():

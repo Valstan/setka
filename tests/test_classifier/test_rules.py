@@ -224,3 +224,57 @@ async def test_fetch_corrections_only_correct_within_window(db_session):
     assert lips == {"1_10"}
     assert out[0]["ai_value"] == "publish" and out[0]["operator_value"] == "delete"
     assert out[0]["post_text"] == "пост про X"
+
+
+# ───────── детерминированный порядок выученных правил ─────────
+
+
+@pytest.mark.asyncio
+async def test_effective_and_snapshot_agree_on_order(db_session):
+    """Эффективный промпт и снапшот перечисляют правила ОДИНАКОВО.
+
+    ``created_at`` — питоновский ``default=datetime.utcnow`` (не server_default),
+    поэтому пачка правил, утверждённая дистилляцией одним заходом, может лечь с
+    совпадающей меткой. Правила нумеруются в промпте (1./2./3.), и перенумерация
+    между прогонами меняет промпт, не меняя содержания.
+
+    ⚠️ Честно про силу этой проверки: на SQLite ничью ``created_at`` движок
+    обычно разрешает по rowid, то есть по тому же порядку, что и вторичный ключ
+    ``id`` — поэтому сама по себе она на сломанном коде может остаться зелёной.
+    Разрешающая проверка — ``test_effective_query_has_secondary_sort_key`` ниже;
+    эта фиксирует наблюдаемое поведение, ту его часть, ради которой всё делалось.
+    """
+    stamp = datetime.utcnow()
+    for text in ("правило А", "правило Б", "правило В"):
+        r = ClassificationRule(rule_text=text, status="approved", source="routine", norm_key=text)
+        r.created_at = stamp  # одна метка на всю пачку — ничья
+        db_session.add(r)
+    await db_session.commit()
+
+    effective = await rules.render_effective_postulates(db_session)
+    snapshot = await rules.render_learned_snapshot(db_session)
+
+    names = ("правило А", "правило Б", "правило В")
+
+    def _order(text: str) -> list:
+        """Имена правил в порядке их появления в тексте."""
+        assert all(n in text for n in names), "не все правила попали в вывод"
+        return sorted(names, key=text.index)
+
+    assert _order(effective) == _order(snapshot)
+
+
+def test_effective_query_has_secondary_sort_key():
+    """Разрешающая проверка: в ORDER BY обязаны быть ОБА ключа.
+
+    Спящий дефект поведением на SQLite не ловится (см. тест выше), поэтому
+    сторожем служит сам запрос — здесь он и есть контракт. Тест краснеет, если
+    вторичный ключ уберут: ровно тот откат, который надо поймать.
+    """
+    import inspect
+
+    src = inspect.getsource(rules.render_effective_postulates)
+    assert "ClassificationRule.created_at, ClassificationRule.id" in src, (
+        "render_effective_postulates потеряла вторичный ключ сортировки — "
+        "нумерация выученных правил снова станет недетерминированной"
+    )

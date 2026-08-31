@@ -256,3 +256,47 @@ def test_numeric_arg_survives_percent_d(restore_factory, caplog):
     with caplog.at_level(logging.INFO, logger="test.numeric"):
         logging.getLogger("test.numeric").info("posts=%d rate=%.2f", 200, 0.5)
     assert "posts=200 rate=0.50" in "\n".join(_capture(caplog, logging.INFO))
+
+
+def test_object_as_msg_carrying_secret_is_redacted(restore_factory, caplog):
+    """Дыра-близнец args: секрет приезжает объектом в ``msg``, а не в аргументах.
+
+    ``logger.error(exc)`` / ``logger.info(obj)`` кладут объект прямо в
+    ``record.msg``; строкой он становится позже, в форматтере — то есть уже
+    мимо маскирования. Фабрика раньше трогала ``msg`` только под
+    ``isinstance(record.msg, str)``, поэтому такой секрет уходил в лог целиком,
+    хотя ровно для этого случая рядом уже был написан ``_redact_arg``.
+    """
+    install_log_redaction()
+    url = _UrlLike(f"https://api.vk.com/method/wall.post?access_token={FAKE_VK_TOKEN}")
+
+    with caplog.at_level(logging.INFO, logger="test.msgobj"):
+        logging.getLogger("test.msgobj").info(url)
+
+    joined = "\n".join(_capture(caplog, logging.INFO))
+    assert joined, "лог пуст — тест не проверил ничего"
+    assert "placeholderplaceholder" not in joined
+    assert REDACTED in joined
+    assert "api.vk.com" in joined  # полезное не съедено
+
+
+def test_exception_as_msg_is_redacted(restore_factory, caplog):
+    """``logger.error(exc)`` — самая частая форма этой дыры."""
+    install_log_redaction()
+    exc = ConnectionError(f"failed to reach https://api.vk.com/?access_token={FAKE_VK_TOKEN}")
+
+    with caplog.at_level(logging.ERROR, logger="test.excmsg"):
+        logging.getLogger("test.excmsg").error(exc)
+
+    joined = "\n".join(_capture(caplog, logging.ERROR))
+    assert joined, "лог пуст — тест не проверил ничего"
+    assert "placeholderplaceholder" not in joined
+    assert REDACTED in joined
+
+
+def test_non_string_msg_without_secret_is_left_alone(restore_factory, caplog):
+    """Объект без секрета остаётся собой — маскирование не должно ничего менять."""
+    install_log_redaction()
+    with caplog.at_level(logging.INFO, logger="test.plainmsg"):
+        logging.getLogger("test.plainmsg").info(42)
+    assert "42" in "\n".join(_capture(caplog, logging.INFO))

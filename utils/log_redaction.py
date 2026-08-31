@@ -239,8 +239,16 @@ def install_log_redaction(env: Any = None) -> bool:
 
     def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
         record = current(*args, **kwargs)
+        # ``msg`` не обязан быть строкой: ``logger.error(exc)`` и
+        # ``logger.info(obj)`` кладут сюда объект, а строкой он становится
+        # позже, в форматтере — то есть уже мимо маскирования. Ровно та дыра,
+        # ради которой писался ``_redact_arg``: он умеет не-строки и возвращает
+        # объект как есть, если маскирование ничего не изменило (важно —
+        # иначе ``%d`` получил бы ``str`` и сломал формат).
         if isinstance(record.msg, str):
             record.msg = redact(record.msg, secret_values)
+        else:
+            record.msg = _redact_arg(record.msg, secret_values)
         if record.args:
             if isinstance(record.args, dict):
                 record.args = {k: _redact_arg(v, secret_values) for k, v in record.args.items()}
