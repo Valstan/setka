@@ -374,9 +374,18 @@ async def _download_videos(
     os.makedirs(attachments_dir, exist_ok=True)
     # Фильтр disabled-токенов через TokenPolicy (миграция 014 / 2026-05-27):
     # если Valstan/Vita сейчас в cooldown, не подсовываем их в rotator.
-    from modules.vk_token_router import get_active_parse_tokens_sync
+    #
+    # Зовём async-функцию роутера напрямую: мы внутри ``async def``, а
+    # sync-мост ``get_active_parse_tokens_sync`` на крутящейся петле падает и
+    # молча откатывается на env (тот же дефект, что чинится в
+    # ``tasks/discovery_tasks._pick_parse_token``). Здесь он в отчёт `/tokens`
+    # не попадал только потому, что ``VKTokenRotatorAsync`` расход вообще не
+    # считает, — но источник токенов подменялся ровно так же.
+    from database.connection import AsyncSessionLocal
+    from modules.vk_token_router import get_active_parse_tokens
 
-    tokens = [t for t in get_active_parse_tokens_sync().values() if t]
+    async with AsyncSessionLocal() as _session:
+        tokens = [t for t in (await get_active_parse_tokens(_session)).values() if t]
     if not tokens:
         return
     rotator = VKTokenRotatorAsync(tokens)

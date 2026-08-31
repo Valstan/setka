@@ -38,18 +38,30 @@ from modules.vk_monitor.vk_client import VKClient
 logger = logging.getLogger(__name__)
 
 
-def _pick_parse_token() -> Optional[str]:
+async def _pick_parse_token() -> Optional[str]:
     """Return a VK token suitable for parse-side calls (groups.search etc.).
 
     Учитывает ``vk_tokens.disabled_until`` через TokenPolicy (миграция 014).
-    Если Valstan в cooldown — берётся следующий по env-порядку (обычно Vita).
-    """
-    from modules.vk_token_router import get_active_parse_tokens_sync
+    Если Valstan в cooldown — берётся следующий.
 
-    for name, tok in get_active_parse_tokens_sync().items():
-        if tok:
-            logger.debug("discovery: using token %s", name)
-            return tok
+    **Асинхронна намеренно, и это не косметика.** Раньше здесь звался
+    sync-мост ``get_active_parse_tokens_sync``, а все три вызова этой функции
+    живут внутри ``async def``. Мост падал на уже крутящейся петле, роутер
+    глотал исключение своим ``except Exception`` и возвращал токены из env
+    **мимо реестра имён** — то есть источник истины подменялся (env вместо
+    БД, ровно тот рассинхрон, против которого писался роутер после инцидента
+    VALSTAN 2026-05-28), а расход уезжал в отчёт `/tokens` строкой
+    ``UNKNOWN:<fp>``. Найдено 2026-08-31: 1475 вызовов ``wall.get``
+    еженедельного health-recheck'а. Прямой вызов async-функции роутера
+    возвращает и правильный источник, и объявляет имя учёту.
+    """
+    from modules.vk_token_router import get_active_parse_tokens
+
+    async with AsyncSessionLocal() as session:
+        for name, tok in (await get_active_parse_tokens(session)).items():
+            if tok:
+                logger.debug("discovery: using token %s", name)
+                return tok
     return None
 
 
@@ -308,7 +320,7 @@ async def run_discovery_for_region_async(
         exclude_ids = await _existing_vk_ids(session, region_id)
         localities, keywords = _read_region_discovery_config(region)
 
-    token = _pick_parse_token()
+    token = await _pick_parse_token()
     if not token:
         return {
             "success": False,
@@ -419,7 +431,7 @@ async def recheck_communities_for_region_async(
     dormant, dead, changed_category, errors}``. ``errors`` — счётчик
     transient ошибок (VK rate-limit, network), не сменивших health_status.
     """
-    token = _pick_parse_token()
+    token = await _pick_parse_token()
     if not token:
         return {
             "success": False,
@@ -969,7 +981,7 @@ async def dormant_recheck_disabled_async(
 
     Цена — по одному `wall.get` на строку, ~48 вызовов в месяц.
     """
-    token = _pick_parse_token()
+    token = await _pick_parse_token()
     if not token:
         logger.warning("dormant-recheck: нет VK parse-токена, пропуск")
         return {"success": False, "error": "no_token"}

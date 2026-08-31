@@ -35,12 +35,22 @@ def run_coro(coro: Coroutine[Any, Any, T]) -> T:
     global _loop
 
     # If we're already inside an event loop, we cannot "sync-wait" safely.
+    #
+    # ⚠️ `raise` обязан жить в `else`, а не в теле `try`. Раньше он стоял внутри
+    # `try` и попадал в собственный `except RuntimeError` строкой ниже — то есть
+    # сторож глушил сам себя и никогда не срабатывал. Отказ всё равно наступал,
+    # но ниже и с чужим текстом («This event loop is already running» из
+    # `run_until_complete`), поэтому вызывающий код ловил его как «непонятную
+    # ошибку БД» и уходил в свой fallback. Именно так discovery годами брал
+    # VK-токены из env мимо маршрутизатора (расход уезжал в отчёт `/tokens`
+    # строкой `UNKNOWN:<fp>`, найдено 2026-08-31).
     try:
         asyncio.get_running_loop()
-        raise RuntimeError("run_coro() cannot be called from within a running event loop")
     except RuntimeError:
         # No running loop in this thread => OK.
         pass
+    else:
+        raise RuntimeError("run_coro() cannot be called from within a running event loop")
 
     if _loop is None or _loop.is_closed():
         _loop = asyncio.new_event_loop()

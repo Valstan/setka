@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from calendar import timegm
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -61,7 +61,7 @@ async def _run(community, resp, *, revive=True):
         return resp
 
     with (
-        patch.object(dt, "_pick_parse_token", return_value="tok"),
+        patch.object(dt, "_pick_parse_token", new_callable=AsyncMock, return_value="tok"),
         patch.object(dt, "AsyncSessionLocal", return_value=session),
         patch.object(dt, "VKClient", MagicMock()),
         patch.object(do, "wall_get", side_effect=fake_wall_get),
@@ -178,7 +178,7 @@ async def test_pinned_older_post_does_not_hide_revival():
 async def test_no_disabled_rows_is_silent():
     session = _FakeSession([{"kind": "scalars_all", "value": []}])
     with (
-        patch.object(dt, "_pick_parse_token", return_value="tok"),
+        patch.object(dt, "_pick_parse_token", new_callable=AsyncMock, return_value="tok"),
         patch.object(dt, "AsyncSessionLocal", return_value=session),
         patch.object(dt, "VKClient", MagicMock()),
     ):
@@ -190,7 +190,7 @@ async def test_no_disabled_rows_is_silent():
 
 @pytest.mark.asyncio
 async def test_missing_token_does_not_crash():
-    with patch.object(dt, "_pick_parse_token", return_value=None):
+    with patch.object(dt, "_pick_parse_token", new_callable=AsyncMock, return_value=None):
         res = await dt.dormant_recheck_disabled_async(send_telegram=False)
 
     assert res["success"] is False

@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -77,7 +77,7 @@ async def _run_recheck(communities, results_by_id):
         return results_by_id[community.id]
 
     with (
-        patch.object(dt, "_pick_parse_token", return_value="tok"),
+        patch.object(dt, "_pick_parse_token", new_callable=AsyncMock, return_value="tok"),
         patch.object(dt, "AsyncSessionLocal", return_value=session),
         patch.object(dt, "VKClient", MagicMock()),
         patch.object(dt, "check_community_health", side_effect=fake_check),
