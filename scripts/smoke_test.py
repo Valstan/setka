@@ -190,9 +190,15 @@ def run_smoke(
         return 1
 
     result = last.get("result") or {}
+    # Первым печатаем счётчик, ПО КОТОРОМУ гейт принял решение. Иначе успешный
+    # прогон выглядит как «OK: posts_parsed=0» — отчёт называет не ту величину,
+    # которую мерил, и читатель заново решает загадку «почему ноль, но OK».
+    # Ровно та болезнь, от которой лечили сам порог.
+    scanned = (result.get("stats") or {}).get("total_posts_scanned")
     log(
         "[smoke] OK: "
-        f"posts_parsed={result.get('posts_parsed')}, "
+        f"принесено из ВК={scanned}, "
+        f"после отбора={result.get('posts_parsed')}, "
         f"would_publish={result.get('bulletins_count')}, "
         f"communities={result.get('communities_count')}"
     )
