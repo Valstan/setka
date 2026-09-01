@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Радар</title>
     <meta name="theme-color" content="#0d6efd">
-    <link rel="manifest" href="/static/radar/manifest.webmanifest">
+    <link rel="manifest" href="{{ manifest_url | default('/radar/manifest.webmanifest') }}">
     <link rel="icon" href="/static/radar/icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/static/radar/icon-192.png">
     <script>
@@ -25,7 +25,7 @@
         @media (max-width: 576px) { .container { padding-left: .5rem; padding-right: .5rem; } }
     </style>
 </head>
-<body>
+<body data-login-url="{{ login_url | default('/login?next=/radar') }}">
     <nav class="navbar navbar-expand navbar-dark bg-primary sticky-top">
         <div class="container" style="max-width: 720px;">
             <a class="navbar-brand" href="{{ home | default('/radar') }}"><i class="bi bi-broadcast"></i> Радар</a>

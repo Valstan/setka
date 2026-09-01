@@ -97,6 +97,12 @@ PUBLIC_EXACT = (
     # гейтом он отдавал 403, из-за чего PWA не ставилось, офлайна не было, а
     # web-push молча подвисал на `navigator.serviceWorker.ready`.
     "/sw.js",
+    # Манифест PWA — тот же класс, что SW: браузер запрашивает его БЕЗ cookie
+    # (`<link rel=manifest>` без crossorigin=use-credentials), поэтому под
+    # гейтом он получал редирект/403, и «Установить приложение» не появлялось.
+    # Отдаётся маршрутом по хосту (main.radar_manifest), приватных данных нет.
+    "/manifest.webmanifest",
+    "/radar/manifest.webmanifest",
 )
 
 # Публичный домен сети (сарафан.вмалмыже.рф) и единственная публичная ссылка

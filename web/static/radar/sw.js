@@ -11,7 +11,7 @@
  * никогда). До 2026-08-02 это было не видно вовсе: на голом http SW не
  * регистрируется, а включение https дефект расконсервировало. */
 const SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/$/, '') || '/';
-const CACHE = 'radar-shell-v6';
+const CACHE = 'radar-shell-v7';
 const SHELL = [SCOPE_PATH];
 
 self.addEventListener('install', (event) => {
@@ -27,7 +27,7 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('push', (event) => {
-    let data = { title: 'Радар', body: 'Новые элементы в ленте', url: '/radar' };
+    let data = { title: 'Радар', body: 'Новые элементы в ленте', url: SCOPE_PATH };
     try {
         if (event.data) data = Object.assign(data, event.data.json());
     } catch (e) { /* не-JSON payload — показываем дефолт */ }
@@ -44,11 +44,13 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
     event.notification.close();
-    const url = (event.notification.data && event.notification.data.url) || '/radar';
+    let url = (event.notification.data && event.notification.data.url) || SCOPE_PATH;
+    // Сервер шлёт '/radar' (modules/radar/push.py); на корневом scope это редирект — открываем корень сразу.
+    if (url === '/radar' && SCOPE_PATH === '/') url = '/';
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
             for (const w of wins) {
-                if (w.url.includes('/radar') && 'focus' in w) return w.focus();
+                if (new URL(w.url).pathname.startsWith(SCOPE_PATH) && 'focus' in w) return w.focus();
             }
             return clients.openWindow(url);
         })

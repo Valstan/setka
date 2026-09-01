@@ -18,9 +18,13 @@
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
 
+    // Адрес входа приходит из шаблона: на радар.вмалмыже.рф это ЕСА с next на
+    // корень хоста, а не локальный /login (тот вернул бы в /radar → 302 → /).
+    const LOGIN_URL = document.body.dataset.loginUrl || '/login?next=/radar';
+
     async function api(path, options) {
         const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, options));
-        if (r.status === 401) { location.href = '/login?next=/radar'; throw new Error('401'); }
+        if (r.status === 401) { location.href = LOGIN_URL; throw new Error('401'); }
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
         return data;
@@ -520,7 +524,7 @@
 
     $('logout-btn').addEventListener('click', async () => {
         await fetch('/api/auth/logout', { method: 'POST' });
-        location.href = '/login';
+        location.href = LOGIN_URL;
     });
 
     // ───────────── Старт ─────────────

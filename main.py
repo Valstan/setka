@@ -19,7 +19,12 @@ bootstrap_secrets()  # noqa: E402
 
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse  # noqa: E402
+from fastapi.responses import (  # noqa: E402
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+)
 from fastapi.templating import Jinja2Templates  # noqa: E402
 
 from _version import __version__ as APP_VERSION  # noqa: E402
@@ -214,16 +219,84 @@ app.include_router(
 
 
 def _radar_template_ctx(request: Request) -> dict:
-    """Контекст radar.html: home-ссылка и адрес каталога сервисов."""
+    """Контекст radar.html: home-ссылка, манифест PWA, адрес входа и каталога.
+
+    ``login_url`` ведёт на ЕСА (issuer), а не на локальный ``/login`` того
+    хоста, где открыт Радар: на радар.вмалмыже.рф локальный ``/login`` — та же
+    страница, но без ``next`` на корень хоста человек после входа приземлялся
+    в ``/radar`` и ловил лишний редирект; на техдомене вход вообще должен идти
+    через единый вход, иначе кука ставится не на зону.
+    """
+    from urllib.parse import quote
+
     from config.radar_id import get_issuer
     from modules.radar_id import vk_upstream
 
     at_root = vk_upstream.is_radar_host(request.url.hostname)
+    own = f"https://{request.url.hostname}/" if at_root else "/radar"
     return {
         "request": request,
         "home": "/" if at_root else "/radar",
+        "manifest_url": "/manifest.webmanifest" if at_root else "/radar/manifest.webmanifest",
+        "login_url": f"{get_issuer()}/login?next={quote(own, safe='')}",
         "services_url": f"{get_issuer()}/services",
     }
+
+
+# Иконки PWA — статика, одна на оба манифеста.
+_RADAR_MANIFEST_ICONS = [
+    {
+        "src": "/static/radar/icon-192.png",
+        "sizes": "192x192",
+        "type": "image/png",
+        "purpose": "any maskable",
+    },
+    {
+        "src": "/static/radar/icon-512.png",
+        "sizes": "512x512",
+        "type": "image/png",
+        "purpose": "any maskable",
+    },
+    {
+        "src": "/static/radar/icon.svg",
+        "sizes": "any",
+        "type": "image/svg+xml",
+        "purpose": "any maskable",
+    },
+]
+
+
+def radar_manifest(at_root: bool) -> dict:
+    """Манифест PWA Радара — маршрутом по хосту, а не статическим файлом.
+
+    Раньше манифест лежал в ``/static/radar/manifest.webmanifest`` с жёстким
+    ``start_url``/``scope`` = ``/radar``. На радар.вмалмыже.рф Радар живёт на
+    корне, ``/radar`` там — редирект 302 на ``/``; установленное PWA стартовало
+    через редирект, а scope ``/radar`` не покрывал реальный корень — SW со scope
+    ``/`` и манифест друг о друге не знали. Поэтому ``start_url``/``scope``
+    считаются по хосту.
+
+    ``id`` — ВСЕГДА ``/radar``: это идентичность приложения для браузера.
+    Chrome сравнивает установленные PWA по ``id`` (по умолчанию = start_url), и
+    смени мы его вместе со start_url, уже установленные Радары считались бы
+    другим приложением — не обновились бы, а встали бы вторым значком.
+    """
+    base = "/" if at_root else "/radar"
+    return {
+        "id": "/radar",
+        "name": "Радар",
+        "short_name": "Радар",
+        "description": "Личная лента источников: VK, RSS, Telegram",
+        "start_url": base,
+        "scope": base,
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#0d6efd",
+        "icons": _RADAR_MANIFEST_ICONS,
+    }
+
+
+_MANIFEST_MEDIA_TYPE = "application/manifest+json"
 
 
 @app.get("/")
@@ -314,6 +387,25 @@ async def advertiser_cabinet_page(request: Request):
             canonical += f"?{request.url.query}"
         return RedirectResponse(canonical, status_code=302)
     return templates.TemplateResponse("advertiser_cabinet.html", {"request": request})
+
+
+@app.get("/radar/manifest.webmanifest")
+async def radar_manifest_route():
+    """Манифест PWA для хостов, где Радар живёт на /radar (техдомен, локалка).
+    Публичен (PUBLIC_EXACT): браузер тянет манифест без cookie."""
+    return JSONResponse(radar_manifest(at_root=False), media_type=_MANIFEST_MEDIA_TYPE)
+
+
+@app.get("/manifest.webmanifest")
+async def radar_root_manifest_route(request: Request):
+    """Манифест PWA для корневого scope — только на радар.вмалмыже.рф, как /sw.js."""
+    from fastapi import HTTPException
+
+    from modules.radar_id import vk_upstream
+
+    if not vk_upstream.is_radar_host(request.url.hostname):
+        raise HTTPException(status_code=404)
+    return JSONResponse(radar_manifest(at_root=True), media_type=_MANIFEST_MEDIA_TYPE)
 
 
 @app.get("/radar/sw.js")
