@@ -366,7 +366,7 @@ def repair_region(
     user_api,
     community_api,
     retries: int = 2,
-) -> Tuple[str, int]:
+) -> Tuple[str, int, bool]:
     """Дозалить только недостающие аватар/обложку по живому снимку.
 
     Нужен после перемежающегося ``error 129 Invalid photo`` первой порции:
@@ -375,20 +375,35 @@ def repair_region(
     Каждый шаг ретраится: 129 у ВК транзиторный (у одного региона проходил
     аватар и падала обложка, у соседнего — наоборот).
 
-    Возвращает (summary, потраченные user-вызовы).
+    Возвращает ``(summary, потраченные user-вызовы, ok)``.
+
+    ``ok`` считается по **недостающему**, а не по тексту отчёта: ретрай для
+    того и написан, чтобы падение попытки не было падением работы. Успех, до
+    которого дошли со второго-третьего захода, обязан записаться в журнал
+    успехом — иначе `--repair` докладывает провалом ровно то, ради чего
+    существует. Так и вышло 01.09: у `oparino` и `sanchursk` аватары встали,
+    а строки остались `error`, потому что вызывающий искал слово «ошибки» в
+    сводке. Тот же класс, что и гейт, называвший не тот счётчик (PR #588).
     """
     from modules.promotion.group_setup_vk import get_current, upload_avatar, upload_cover
 
     gid = target["vk_group_id"]
     snap = get_current(community_api or user_api, gid)
     if not snap.ok:
-        return f"снимок не взялся: {snap.detail}", 0
+        # Снимка нет — судить не о чем; «не смогли посмотреть» это не «всё
+        # починили», поэтому запись остаётся error и регион вернётся сюда.
+        return f"снимок не взялся: {snap.detail}", 0, False
     cur = snap.payload or {}
     texts = build_texts(target)
+    missing = set()
+    if not cur.get("has_photo"):
+        missing.add("avatar")
+    if not cur.get("has_cover"):
+        missing.add("cover")
     done, errors = [], []
     user_calls = 0
 
-    if not cur.get("has_photo"):
+    if "avatar" in missing:
         for attempt in range(retries + 1):
             res = upload_avatar(user_api, gid, texts["avatar"])
             user_calls += 4
@@ -399,25 +414,38 @@ def repair_region(
             time.sleep(interval())
         time.sleep(interval())
 
-    if not cur.get("has_cover") and community_api is not None:
-        for attempt in range(retries + 1):
-            res = upload_cover(community_api, gid, texts["cover"])
-            if res.ok:
-                done.append("cover")
-                break
-            errors.append(f"cover#{attempt}: [{res.vk_error_code}] {res.detail}")
-            time.sleep(interval())
+    if "cover" in missing:
+        if community_api is None:
+            # Молчаливый пропуск выглядел бы как «чинить было нечего»: обложки
+            # нет, и она не появится, — это незакрытая цель, а не no-op.
+            errors.append("cover: нет community-ключа")
+        else:
+            for attempt in range(retries + 1):
+                res = upload_cover(community_api, gid, texts["cover"])
+                if res.ok:
+                    done.append("cover")
+                    break
+                errors.append(f"cover#{attempt}: [{res.vk_error_code}] {res.detail}")
+                time.sleep(interval())
 
-    if not done and not errors:
-        return "всё на месте", user_calls
+    # Мерило — что осталось недостающим, а не сколько попыток по дороге упало.
+    ok = not (missing - set(done))
+    if not missing:
+        return "всё на месте", user_calls, True
     summary = f"дозалито: {', '.join(done) or 'ничего'}"
     if errors:
         summary += f"; ошибки: {'; '.join(errors[-2:])}"
-    return summary, user_calls
+    return summary, user_calls, ok
 
 
 async def mark_repaired(region_id: int, version: int, summary: str, ok: bool) -> None:
-    """Обновить существующую error-запись после repair."""
+    """Обновить существующую error-запись после repair.
+
+    Сводка пишется в ``after`` всегда, даже при успехе: колонка ``error`` при
+    ``ok`` обязана обнулиться (иначе строка `applied` тащит текст ошибки), но
+    след «взялось с третьей попытки» терять не за чем — по нему видно, как
+    часто у ВК шалит 129.
+    """
     from sqlalchemy import select
 
     from database.connection import AsyncSessionLocal
@@ -440,6 +468,9 @@ async def mark_repaired(region_id: int, version: int, summary: str, ok: bool) ->
             return
         row.status = "applied" if ok else "error"
         row.error = None if ok else f"repair: {summary}"[:500]
+        after = dict(row.after or {})
+        after["repair"] = summary[:500]
+        row.after = after
         await session.commit()
 
 
@@ -580,11 +611,10 @@ async def run_repair(codes: Optional[List[str]]) -> int:
         gid = abs(int(target["vk_group_id"]))
         comm_token = community_tokens.get(gid)
         community_api = vk_api.VkApi(token=comm_token).get_api() if comm_token else None
-        summary, calls = await asyncio.to_thread(
+        summary, calls, ok = await asyncio.to_thread(
             repair_region, target, user_api=user_api, community_api=community_api
         )
         spent += calls
-        ok = "ошибки" not in summary and "не взялся" not in summary
         await mark_repaired(target["region_id"], TEMPLATE_VERSION, summary, ok)
         logger.info("  %-14s %s %s", target["code"], "🔧" if ok else "⛔", summary)
     return 0
