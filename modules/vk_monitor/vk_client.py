@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 # VK API error codes that indicate expected, recoverable conditions
 # (closed wall, banned/deleted user, private community).
 # https://dev.vk.com/reference/errors
+# ⚠️ Этот frozenset выбирает УРОВЕНЬ ЛОГА для read-методов, а не политику
+# проекта по кодам. Техдолг «коды 9/14/214/219 не обрабатывает никто» указывал
+# сюда — и указывал неверно: эти коды приходят на wall.post и логируются как
+# ERROR, то есть уже громко. Добавить их сюда значило бы понизить их до
+# WARNING — ровно наоборот тому, что нужно.
+# Политика записи живёт в modules/publisher (VKPublishError, _WALL_SCOPED_CODES).
 _VK_EXPECTED_ERROR_CODES = frozenset({15, 18, 203, 212, 220})
 
 
