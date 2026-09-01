@@ -29,6 +29,21 @@ logger = logging.getLogger(__name__)
 # и транзиентным серверным сбоем VK, cooldown здорового токена не ставим).
 _PUBLISH_ROTATE_CODES = frozenset({5, 10, 17, 29})
 
+# Коды, которые говорят про СТЕНУ, а не про токен: 214 «access to adding post
+# denied», 219 «advertisement post was recently added», 220 «wall access denied».
+# Пробовать их следующим токеном ЗАПРЕЩЕНО, и это не осторожность, а арифметика:
+# каскад community → МАМА → VALSTAN сделал бы три записи подряд в стену, которую
+# ВК только что закрыл, а 219 — счётчик рекламных постов ИМЕННО на этой стене,
+# и повтор с другого аккаунта его же и добивает, эскалируя до ограничения
+# сообщества.
+#
+# Сегодня это соблюдается САМО СОБОЙ — просто потому, что этих кодов нет в
+# наборах ротации. Константа и явная проверка нужны затем, чтобы свойство
+# перестало быть случайным: первый же человек, который добавит 214 в
+# ``_COMMUNITY_FALLBACK_CODES`` «чтобы попробовать другим токеном», получит
+# ровно тот отказ, что описан выше. Инвариант закреплён тестом.
+_WALL_SCOPED_CODES = frozenset({214, 219, 220})
+
 
 class VKPublisher:
     """
@@ -342,6 +357,10 @@ class VKPublisher:
                 "success": False,
                 "error": str(e),
                 "group_id": target_group_id,
+                # Числовой код ВК рядом со строкой, а не вместо неё: строку
+                # читают и пишут в БД двенадцать call-site'ов, её формат менять
+                # нельзя. Ключ добавочный и обратно совместимый.
+                "vk_error_code": _vk_error_code_of(e),
             }
 
     async def publish_repost(
@@ -432,6 +451,7 @@ class VKPublisher:
             return {
                 "success": False,
                 "error": str(e),
+                "vk_error_code": _vk_error_code_of(e),
             }
 
     async def set_post_comments(
@@ -605,7 +625,7 @@ class VKPublisher:
                 return await self._try_publish_candidates(
                     method, params, via_prefix="publish-token"
                 )
-            raise Exception(f"VK API error: {e.message}") from e
+            raise VKPublishError(e.code, e.message) from e
 
     async def _try_community_candidates(
         self,
@@ -632,8 +652,10 @@ class VKPublisher:
                         logger.exception("policy.report_success failed")
                 return response, f"community-token:{name}"
             except _VKApiCallError as e:
-                if e.code not in rotate_codes:
-                    raise Exception(f"VK API error: {e.message}") from e
+                # Явная проверка ДО ротации: «стенные» коды не пробуем другим
+                # токеном никогда, даже если кто-то добавит их в rotate_codes.
+                if e.code in _WALL_SCOPED_CODES or e.code not in rotate_codes:
+                    raise VKPublishError(e.code, e.message) from e
                 logger.warning(
                     "community-token %s failed with code %s on %s — rotating",
                     name,
@@ -711,7 +733,7 @@ class VKPublisher:
                         logger.exception("policy.report_success failed")
                 return response, f"{via_prefix}:{name}"
             except _VKApiCallError as e:
-                last_error = Exception(f"VK API error: {e.message}")
+                last_error = VKPublishError(e.code, e.message)
                 if e.code in _PUBLISH_ROTATE_CODES:
                     logger.warning(
                         "publish-token %s failed with code %s on %s — rotating",
@@ -923,3 +945,42 @@ class _VKApiCallError(Exception):
         super().__init__(f"[{code}] {message}")
         self.code = code
         self.message = message
+
+
+class VKPublishError(Exception):
+    """Ошибка записи в ВК с СОХРАНЁННЫМ числовым кодом.
+
+    Зачем. Внутри публикатора код известен точно (``_VKApiCallError.code``), но
+    наружу до сих пор поднималось голое ``Exception(f"VK API error: {msg}")`` —
+    и целое число терялось на границе. Единственный, кто добывал его обратно, —
+    модуль раскрутки, регуляркой по тексту; остальные шесть публикующих путей
+    видели строку и писали её в лог. Пока код не доезжает до вызывающего, любая
+    реакция на 9/14/214/219 невозможна в принципе: это корень техдолга
+    «коды VK не обрабатывает никто», а не сами реакции.
+
+    ⚠️ ``str(...)`` обязан остаться байт-в-байт прежним — ``VK API error:
+    [<код>] <текст>``. На этот формат завязаны двое: ``web/api/ad_cabinet``
+    пишет строку в ``error_message`` карточки, а ``modules/promotion/vk_errors``
+    вынимает из неё код регуляркой ``^\\[(\\d+)\\]``. Смена формата сломала бы
+    раскрутку молча, поэтому здесь не «улучшаем сообщение», а только добавляем
+    рядом атрибут.
+    """
+
+    def __init__(self, code: int, message: str):
+        super().__init__(f"VK API error: {message}")
+        self.code = int(code or 0)
+        self.message = message
+
+
+def _vk_error_code_of(exc: BaseException) -> Optional[int]:
+    """Числовой код ВК из исключения. ``None`` — код неизвестен.
+
+    Ноль наружу не отдаём намеренно: ``_invoke`` ставит ``code=0``, когда ВК
+    прислал ошибку без ``error_code`` (так приходит, например, капча), и
+    сетевые сбои кода не имеют вовсе. «Код 0» в отчёте выглядел бы как реальный
+    ответ ВК — а это отсутствие ответа.
+    """
+    code = getattr(exc, "code", None)
+    if isinstance(code, int) and code > 0:
+        return code
+    return None
