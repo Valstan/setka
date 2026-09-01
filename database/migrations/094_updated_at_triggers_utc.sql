@@ -40,8 +40,37 @@
 -- получат новую метку, порядок снова верен. Данные НЕ переписываем сознательно —
 -- переписывание молча испортило бы историю, а цена вопроса тут ниже риска.
 --
--- Идемпотентна: CREATE OR REPLACE переустанавливает то же тело; сами триггеры
--- не трогаем — они ссылаются на функцию по имени и подхватят новую версию.
+-- ЗАЧЕМ ЭТО СИЛЬНЕЕ, ЧЕМ «неверное число». До правки одна и та же колонка
+-- `updated_at` означала MSK в семи таблицах с триггером и UTC примерно в
+-- пятнадцати без него (regions, communities, posts, filters, message_templates,
+-- broadcast_campaigns, promo_settings, region_configs, work_tables,
+-- oauth_clients, conveyor_deliveries и др., где пишет только ORM). Это была
+-- межтабличная рассогласованность одного и того же поля, а не просто сдвиг.
+--
+-- Идемпотентна: CREATE OR REPLACE переустанавливает то же тело.
+--
+-- ⚠️ ТРИГГЕРЫ ДЕРЖАТ ФУНКЦИЮ ПО OID, А НЕ ПО ИМЕНИ (`pg_trigger.tgfoid`).
+-- Пересоздавать их не нужно именно поэтому: CREATE OR REPLACE сохраняет OID и
+-- подменяет только тело. Обратная сторона — ПЕРЕИМЕНОВАТЬ такую функцию нельзя:
+-- это оборвёт все семь триггеров разом. (Прежняя редакция этой шапки
+-- утверждала «ссылаются по имени» — вывод был верен, обоснование ложно, и оно
+-- подсказывало будущему автору ровно неверный ход.)
+--
+-- РЕСТАРТ СЕРВИСОВ НЕ НУЖЕН. plpgsql кеширует скомпилированное тело в рамках
+-- сессии, но привязывает кеш к версии кортежа `pg_proc` и перекомпилирует при
+-- её смене — живые соединения пулов FastAPI и Celery подхватят новое тело сами.
+--
+-- ПРИЁМКА — детерминированная, не зависящая от трафика:
+--   SELECT p.proname, pg_get_functiondef(p.oid)
+--   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+--   WHERE n.nspname='public'
+--     AND p.proname IN ('update_updated_at_column','update_vk_tokens_updated_at');
+--   -- обе должны содержать now() AT TIME ZONE 'utc'
+--   SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal;  -- по-прежнему 7
+-- Считать «строки с updated_at в будущем» для приёмки НЕЛЬЗЯ: такой запрос
+-- видит только тронутые за последние три часа, и пустая выдача не доказывает
+-- ничего.
+--
 -- Без собственных BEGIN/COMMIT — их даёт scripts/migrate.py (см. шапку 090).
 
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -60,7 +89,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Откат (вернёт московское время в updated_at семи таблиц):
+-- ОТКАТ (вернёт московское время в updated_at семи таблиц). Расписан дословно
+-- и целиком сознательно: аварийный откат делают ночью, и дописывать вторую
+-- функцию по фразе «и то же для…» в такой момент — лишний шанс ошибиться.
+--
 --   CREATE OR REPLACE FUNCTION update_updated_at_column()
 --   RETURNS TRIGGER AS $$
 --   BEGIN
@@ -68,4 +100,16 @@ $$ LANGUAGE plpgsql;
 --       RETURN NEW;
 --   END;
 --   $$ LANGUAGE plpgsql;
---   (и то же для update_vk_tokens_updated_at)
+--
+--   CREATE OR REPLACE FUNCTION update_vk_tokens_updated_at()
+--   RETURNS TRIGGER AS $$
+--   BEGIN
+--       NEW.updated_at = CURRENT_TIMESTAMP;
+--       RETURN NEW;
+--   END;
+--   $$ LANGUAGE plpgsql;
+--
+-- ПРИМЕЧАНИЕ. Файл правился ПОСЛЕ применения на проде (2026-09-01) — правки
+-- только в комментариях, SQL не менялся. Журнал `applied_migrations` намеренно
+-- не переписан: `applied_at` должен показывать, когда миграция реально
+-- применилась, а не когда поправили её шапку.

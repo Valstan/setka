@@ -154,7 +154,14 @@ def clear_copy_history(post_data: Dict[str, Any]) -> Dict[str, Any]:
     copy_history = post_data.get("copy_history", [])
 
     if copy_history and len(copy_history) > 0:
-        # Get the deepest (original) post
+        # ⚠️ Это БЛИЖАЙШИЙ хоп, а не «самый глубокий оригинал», как утверждал
+        # прежний комментарий. В цепочке A → B → C (C — стена, с которой мы
+        # читаем) `copy_history[0]` даёт пост B, а не исходный A. ВК кладёт в
+        # `copy_history` цепочку, и её середина после разворачивания теряется:
+        # ни одна проверка проекта её не видит.
+        # Поведение НЕ меняем — на нём стоит вся атрибуция сводок; исправляем
+        # только описание, потому что неверный комментарий здесь дороже
+        # отсутствующего: читатель делает по нему выводы о том, что проверено.
         original = copy_history[0]
 
         # Merge with current post metadata

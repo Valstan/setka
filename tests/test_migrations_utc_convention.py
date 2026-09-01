@@ -103,3 +103,60 @@ def test_pattern_catches_the_defect_it_was_written_for():
     assert not _NAKED_TIME.search(
         "published_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')"
     ), "регулярка ложно срабатывает на форме из миграции 092"
+
+
+# ───────── последнее определение функции побеждает ─────────
+
+_FUNC_DEF = re.compile(
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(\w+)\s*\(\s*\)(.*?)\$\$\s*LANGUAGE",
+    re.IGNORECASE | re.DOTALL,
+)
+
+#: Функции, чьё тело обязано писать UTC. Список не «на всякий случай», а по
+#: факту: это все триггерные функции проекта (проверено запросом к pg_trigger на
+#: живой базе 2026-09-01 — ровно 7 триггеров и ровно эти две функции).
+_TRIGGER_FUNCS = ("update_updated_at_column", "update_vk_tokens_updated_at")
+
+
+def _last_definition(func: str) -> tuple[str, str] | None:
+    """(имя файла, тело) последнего по порядку применения определения функции.
+
+    Порядок применения — лексикографический по имени файла: ровно так работает
+    ``discover_migrations`` в ``scripts/migrate.py``.
+    """
+    found = None
+    for path in sorted(MIGRATIONS.glob("*.sql")):
+        body = _strip_sql_comments(path.read_text(encoding="utf-8"))
+        for name, definition in _FUNC_DEF.findall(body):
+            if name.lower() == func.lower():
+                found = (path.name, definition)
+    return found
+
+
+@pytest.mark.parametrize("func", _TRIGGER_FUNCS)
+def test_last_definition_of_trigger_function_writes_utc(func: str):
+    """Последнее определение каждой триггерной функции обязано писать UTC.
+
+    Зачем отдельно от проверки «новые миграции чистые». Та смотрит только файлы
+    с номера 94, а голый `CURRENT_TIMESTAMP` остаётся в 003/011/021/025/027 —
+    и одиночный `psql -f 011_*.sql`, операция, прямо разрешённая
+    `database/migrations/README.md`, молча вернул бы дефект на прод. Старые
+    файлы трогать нельзя (переписывание применённой миграции — своя болезнь),
+    поэтому инвариант формулируется иначе: неважно, сколько раз функция
+    переопределена, важно, что ПОСЛЕДНЕЕ определение — правильное.
+
+    До миграции 094 этот тест был бы красным: последним определением
+    `update_updated_at_column` было 027 (`CURRENT_TIMESTAMP`), а
+    `update_vk_tokens_updated_at` — 003. То есть проверка не тавтологична.
+    """
+    found = _last_definition(func)
+    assert found is not None, f"определение функции {func} не найдено ни в одной миграции"
+    filename, body = found
+    assert "at time zone" in body.lower(), (
+        f"последнее определение {func} — в {filename}, и оно пишет время сервера. "
+        "На проде timezone=Host, значит триггер будет затирать UTC приложения "
+        "московским временем. Ожидается (now() AT TIME ZONE 'utc')."
+    )
+    assert not _NAKED_TIME.search(
+        body
+    ), f"последнее определение {func} ({filename}) содержит голое время сервера"
