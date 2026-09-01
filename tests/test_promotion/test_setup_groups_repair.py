@@ -34,19 +34,23 @@ def _run(mod, *, snapshot, avatar_results=(), cover_results=(), community_api=Ma
     avatar_iter = iter(avatar_results)
     cover_iter = iter(cover_results)
 
-    with patch.object(mod, "build_texts", return_value={"avatar": b"a", "cover": b"c"}), patch(
-        "modules.promotion.group_setup_vk.get_current",
-        return_value=SetupResult(ok=True, payload=snapshot),
-    ), patch(
-        "modules.promotion.group_setup_vk.upload_avatar", side_effect=lambda *a, **k: next(avatar_iter)
-    ), patch(
-        "modules.promotion.group_setup_vk.upload_cover", side_effect=lambda *a, **k: next(cover_iter)
-    ), patch.object(
-        mod, "interval", return_value=0
+    with (
+        patch.object(mod, "build_texts", return_value={"avatar": b"a", "cover": b"c"}),
+        patch(
+            "modules.promotion.group_setup_vk.get_current",
+            return_value=SetupResult(ok=True, payload=snapshot),
+        ),
+        patch(
+            "modules.promotion.group_setup_vk.upload_avatar",
+            side_effect=lambda *a, **k: next(avatar_iter),
+        ),
+        patch(
+            "modules.promotion.group_setup_vk.upload_cover",
+            side_effect=lambda *a, **k: next(cover_iter),
+        ),
+        patch.object(mod, "interval", return_value=0),
     ):
-        return mod.repair_region(
-            TARGET, user_api=MagicMock(), community_api=community_api
-        )
+        return mod.repair_region(TARGET, user_api=MagicMock(), community_api=community_api)
 
 
 OK = SetupResult(ok=True)
