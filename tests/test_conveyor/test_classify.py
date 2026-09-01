@@ -65,6 +65,37 @@ class TestPrompt:
         body = out.split("Текст поста:\n", 1)[1]  # хвост, а не вся строка: в шапке своя кириллица
         assert len(body) == 100
 
+    # ── префикс-кэш (R29, мандат brain 2026-08-30) ──
+    # Сторож на порядок частей: перестановка строк не меняет ни ответов модели,
+    # ни логов — только счёт. Без теста единственный сигнал — упавшая доля кэша
+    # на проде через сутки.
+
+    RULES = "Не берём соболезнования.\nАфишу — только с датой.\n" * 20
+
+    def test_site_stable_prefix_is_identical_across_posts(self):
+        """Два поста одного сайта с разной темой и вложениями → один префикс."""
+        a = classify.build_user_prompt(
+            {**POST, "theme": "novost", "media": [{"type": "photo"}]},
+            sections=SECTIONS,
+            rules=self.RULES,
+        )
+        b = classify.build_user_prompt(
+            {**POST, "theme": "afisha", "media": [{"type": "video"}], "text": "другой текст"},
+            sections=SECTIONS,
+            rules=self.RULES,
+        )
+        assert classify.stable_prefix(a) == classify.stable_prefix(b)
+        # Префикс — это не пустая шапка: правила сайта внутри него, а не после.
+        assert "Не берём соболезнования." in classify.stable_prefix(a)
+
+    def test_variable_parts_come_after_rules(self):
+        """Тема, вложения и текст стоят ПОСЛЕ правил — иначе правила платятся заново."""
+        out = classify.build_user_prompt(POST, sections=SECTIONS, rules=self.RULES)
+        rules_at = out.index("Правила этого сайта:")
+        assert rules_at < out.index("Тема сводки района:")
+        assert rules_at < out.index("Вложения поста:")
+        assert rules_at < out.index("Текст поста:")
+
 
 # ───────── разбор ответа ─────────
 
