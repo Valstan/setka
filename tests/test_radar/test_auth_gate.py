@@ -691,6 +691,25 @@ def test_service_worker_is_public_on_radar_host():
         assert client.get("/sw.js").status_code == 200, host
 
 
+def test_pwa_manifest_is_public_on_every_host():
+    """Манифест PWA браузер тянет без cookie — под гейтом «Установить» не появлялось."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.add_middleware(AuthGateMiddleware, user_loader=_loader)
+
+    @app.get("/manifest.webmanifest")
+    @app.get("/radar/manifest.webmanifest")
+    async def manifest():
+        return {"id": "/radar"}
+
+    for host in (_RADAR_HOST, _SARAFAN_HOST, _TECH_HOST):
+        client = TestClient(app, base_url=f"https://{host}")
+        assert client.get("/manifest.webmanifest").status_code == 200, host
+        assert client.get("/radar/manifest.webmanifest").status_code == 200, host
+
+
 def test_radar_data_reachable_from_old_sarafan_address(monkeypatch):
     """Лента Радара — зона гостя, а не содержимое САРАФАНА.
 
