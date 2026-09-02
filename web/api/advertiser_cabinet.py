@@ -585,9 +585,9 @@ async def create_order(
     await db.commit()
 
     if result["moderation"]:
-        import asyncio
+        from modules.ad_cabinet.vk_bot import notify as vk_notify
 
-        await asyncio.to_thread(_notify_owner_pending, client, result)
+        await vk_notify.notify_owner(_pending_text(client, result))
 
     return {
         "order_ref": result["order_ref"],
@@ -598,13 +598,11 @@ async def create_order(
     }
 
 
-def _notify_owner_pending(client, result) -> None:
-    """Telegram владельцу: новый заказ ждёт модерации (без дедупа — каждый
-    заказ важен). Механика отправки — общая (``modules/ad_cabinet/owner_ping``)."""
-    from modules.ad_cabinet.owner_ping import notify_owner
-
-    notify_owner(
-        f"🛎 Кабинет: клиент «{client.name or client.id}» создал заказ на "
+def _pending_text(client, result) -> str:
+    """Текст пинга владельцу: новый заказ ждёт модерации (без дедупа — каждый
+    заказ важен). Уходит в Telegram и ВК (``vk_bot.notify.notify_owner``)."""
+    return (
+        f"🛎 Кабинет №{client.id}: клиент «{client.name or client.id}» создал заказ на "
         f"{len(result['posts'])} районов ({result['price_total']:.0f} ₽) — "
         "ждёт одобрения в /ad"
     )
@@ -741,15 +739,14 @@ async def send_chat(payload: ChatIn, request: Request, db: AsyncSession = Depend
         raise HTTPException(status_code=400, detail=str(e))
     await db.commit()
     await db.refresh(row)
-    import asyncio
-
-    from modules.ad_cabinet import owner_ping
+    from modules.ad_cabinet.vk_bot import notify as vk_notify
 
     # Пинг о новом сообщении — не чаще раза в час на клиента: владелец узнаёт,
-    # что клиент написал, не входя в /ad; переписка спамом в Telegram не льётся.
-    await asyncio.to_thread(
-        owner_ping.notify_owner,
-        f"💬 Кабинет: сообщение от «{client.name or client.id}» — ответить в /ad → Кабинеты",
+    # что клиент написал, не входя в /ad; переписка спамом не льётся. Уходит в
+    # оба канала владельца — Telegram и личка ВК (бот САРАФАНа).
+    await vk_notify.notify_owner(
+        f"💬 Кабинет №{client.id}: сообщение от «{client.name or client.id}» — "
+        "ответить в /ad → Кабинеты",
         dedup_key=f"chat:{client.id}",
     )
     return row.to_dict()

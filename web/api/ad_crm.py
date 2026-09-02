@@ -2428,6 +2428,15 @@ async def moderation_approve(post_id: int, db: AsyncSession = Depends(get_db_ses
                 else f"Одобрение не дошло до VK: {row.error_message}"
             ),
         )
+        if row.status == "scheduled" and row.client_id:
+            from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+            when = row.publish_date.strftime("%d.%m %H:%M") if row.publish_date else "—"
+            await vk_notify.notify_client(
+                db,
+                row.client_id,
+                f"✅ Ваш пост одобрен и выйдет {when} МСК.",
+            )
     await db.commit()
     await db.refresh(row)
     return row.to_dict()
@@ -2453,6 +2462,17 @@ async def moderation_reject(
             scheduled_post_id=row.id,
             summary=f"Пост клиента отклонён: {payload.comment or 'без причины'}",
         )
+        if row.client_id:
+            from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+            reason = (payload.comment or "").strip()
+            await vk_notify.notify_client(
+                db,
+                row.client_id,
+                "🚫 Ваш пост не принят"
+                + (f": {reason}" if reason else ".")
+                + " Поправьте и отправьте снова.",
+            )
     await db.commit()
     await db.refresh(row)
     return row.to_dict()
@@ -2589,6 +2609,12 @@ async def chat_reply(
         client_id=client_id,
         summary="Ответ клиенту в чате кабинета",
     )
+    # Ответ уходит и в личку ВК клиента (бот САРАФАНа) — клиент, который в
+    # кабинет не заходит, иначе ответа не увидит. В журнал не пишем: сам
+    # chat_reply уже записан строкой выше.
+    from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+    await vk_notify.notify_client(db, client_id, f"💬 САРАФАН: {payload.body}", log=False)
     await db.commit()
     await db.refresh(row)
     return row.to_dict()

@@ -160,6 +160,15 @@ async def run_reconcile(
                 summary=f"Пост опубликован VK (сообщество {row.community_vk_id})",
                 actor="system",
             )
+            if row.client_id and pub.vk_post_id:
+                from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+                await vk_notify.notify_client(
+                    session,
+                    row.client_id,
+                    "📣 Ваш пост вышел: "
+                    f"https://vk.com/wall{row.community_vk_id}_{pub.vk_post_id}",
+                )
             reconciled += 1
 
         await session.commit()

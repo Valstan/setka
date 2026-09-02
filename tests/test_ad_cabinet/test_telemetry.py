@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -322,10 +322,14 @@ class TestChatPing:
         client = AdClient(radar_user_id=user.id, name="Болтун")
         db_session.add(client)
         await db_session.commit()
-        with patch("modules.ad_cabinet.owner_ping.notify_owner") as ping:
+        # Пинг идёт через vk_bot.notify.notify_owner (Telegram + ВК, один дедуп).
+        with patch(
+            "modules.ad_cabinet.vk_bot.notify.notify_owner", new=AsyncMock(return_value={})
+        ) as ping:
             await send_chat(ChatIn(body="привет"), _req(user), db_session)
         ping.assert_called_once()
         assert ping.call_args.kwargs["dedup_key"] == f"chat:{client.id}"
+        assert f"№{client.id}" in ping.call_args.args[0]
 
 
 # --------------------------------------------------------- сводная лента /ad
