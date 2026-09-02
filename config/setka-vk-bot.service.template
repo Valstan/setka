@@ -1,0 +1,24 @@
+# Шаблон systemd-юнита демона ВК-бота кабинета (scripts/vk_bot_daemon.py).
+# Пути подставляет scripts/install_vk_bot_service.sh (__SETKA_ROOT__, __USER__,
+# __ENV_FILE__, __SECRETS_FILE__) — в репозитории инфра-деталей нет (D-038).
+[Unit]
+Description=SETKA VK bot (Bots Long Poll, community SARAFAN)
+After=network.target redis.service postgresql.service
+
+[Service]
+EnvironmentFile=-__ENV_FILE__
+EnvironmentFile=-__SECRETS_FILE__
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__SETKA_ROOT__
+Environment="PATH=__SETKA_ROOT__/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=__SETKA_ROOT__"
+ExecStart=__SETKA_ROOT__/venv/bin/python scripts/vk_bot_daemon.py
+StandardOutput=append:__SETKA_ROOT__/logs/vk-bot.log
+StandardError=append:__SETKA_ROOT__/logs/vk-bot.log
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

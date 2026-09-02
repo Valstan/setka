@@ -1,8 +1,9 @@
-"""Celery-задача ВК-бота кабинета: тик Long Poll сообщества САРАФАН (этап 2).
+"""Celery-задача ВК-бота кабинета: один ручной тик Long Poll (диагностика).
 
-No-op, пока владелец не задал ``SARAFAN_VK_COMMUNITY_ID`` и не положил
-community-токен в ``/tokens`` (см. PENDING «ВК-бот-дублёр»). Образец —
-``tasks.radar_tasks.poll_radar_vk_intake``.
+В расписании beat её нет: постоянный опрос ведёт демон ``setka-vk-bot``
+(``scripts/vk_bot_daemon.py``), два читателя одного Long Poll делили бы
+события. Задача — для ручной проверки: ``celery call tasks.vk_bot_tasks.poll_sarafan_vk_bot``.
+No-op без ``SARAFAN_VK_COMMUNITY_ID`` и community-токена.
 """
 
 from __future__ import annotations

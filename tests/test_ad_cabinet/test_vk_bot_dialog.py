@@ -197,7 +197,7 @@ async def test_order_flow_reaches_submit_with_chosen_regions(db_session):
     replies, state, _ = await dialog.handle(
         db_session, _msg("Продам дрова"), state, submit=s, now_msk=NOW
     )
-    assert state["step"] == "order_regions" and "1. Арбаж" in replies[0][0]
+    assert state["step"] == "order_regions" and "Арбаж" in replies[0][1]  # кнопка района
     _r, state, _ = await dialog.handle(db_session, _msg("1, 3"), state, submit=s, now_msk=NOW)
     assert state["step"] == "order_when" and state["draft"]["region_ids"] == [r1.id, r2.id]
     replies, state, _ = await dialog.handle(
@@ -362,6 +362,54 @@ def test_task_registered():
     from tasks.celery_app import app
 
     assert "tasks.vk_bot_tasks.poll_sarafan_vk_bot" in app.tasks
-    assert (
-        app.conf.beat_schedule["sarafan-vk-bot"]["task"] == "tasks.vk_bot_tasks.poll_sarafan_vk_bot"
+    # Long Poll крутит демон setka-vk-bot; в beat тика быть не должно —
+    # два читателя одного Long Poll делят события между собой.
+    assert "sarafan-vk-bot" not in app.conf.beat_schedule
+
+
+def test_region_label_and_keyboard_pages():
+    assert dialog.region_label("КИРОВО-ЧЕПЕЦК - ИНФО") == "Кирово-че"
+    assert dialog.region_label("Уни - ИНФО") == "Уни"
+    regions = [(i, f"Район{i:02d} - ИНФО") for i in range(1, 44)]  # 43, как на проде
+    kb0 = json.loads(dialog.regions_keyboard(regions, [2], 0))
+    kb1 = json.loads(dialog.regions_keyboard(regions, [2], 1))
+    for kb in (kb0, kb1):
+        assert len(kb["buttons"]) <= 10 and all(len(r) <= 5 for r in kb["buttons"])
+        assert sum(len(r) for r in kb["buttons"]) <= 40
+    labels0 = [b["action"]["label"] for r in kb0["buttons"] for b in r]
+    assert "✅ Район02" in labels0 and any(x.startswith("Ещё ▶") for x in labels0)
+    labels1 = [b["action"]["label"] for r in kb1["buttons"] for b in r]
+    assert any(x.startswith("◀ Ещё") for x in labels1) and "✅ Готово" in labels1
+
+
+@pytest.mark.asyncio
+async def test_regions_by_buttons_toggle_page_done(db_session):
+    r1 = await _region(db_session, "Арбаж", -1)
+    r2 = await _region(db_session, "Уржум", -2)
+    s = _Submit()
+    _r, state, _ = await dialog.handle(db_session, _btn("order"), None, submit=s, now_msk=NOW)
+    replies, state, _ = await dialog.handle(db_session, _msg("текст"), state, submit=s, now_msk=NOW)
+    assert state["step"] == "order_regions" and replies[0][1] is not None
+    tap = lambda rid: dialog.Incoming(peer_id=500, payload={"cmd": "rg", "id": rid})  # noqa: E731
+    replies, state, _ = await dialog.handle(db_session, tap(r1.id), state, submit=s, now_msk=NOW)
+    assert state["draft"]["region_ids"] == [r1.id] and "Выбрано 1" in replies[0][0]
+    replies, state, _ = await dialog.handle(db_session, tap(r2.id), state, submit=s, now_msk=NOW)
+    assert state["draft"]["region_ids"] == [r1.id, r2.id]
+    replies, state, _ = await dialog.handle(db_session, tap(r1.id), state, submit=s, now_msk=NOW)
+    assert state["draft"]["region_ids"] == [r2.id]  # повторное нажатие снимает
+    replies, state, _ = await dialog.handle(
+        db_session, _btn("rgdone"), state, submit=s, now_msk=NOW
     )
+    assert state["step"] == "order_when" and state["draft"]["region_ids"] == [r2.id]
+
+
+@pytest.mark.asyncio
+async def test_regions_done_with_nothing_chosen_stays(db_session):
+    await _region(db_session, "А", -1)
+    s = _Submit()
+    _r, state, _ = await dialog.handle(db_session, _btn("order"), None, submit=s, now_msk=NOW)
+    _r, state, _ = await dialog.handle(db_session, _msg("текст"), state, submit=s, now_msk=NOW)
+    replies, state, _ = await dialog.handle(
+        db_session, _btn("rgdone"), state, submit=s, now_msk=NOW
+    )
+    assert state["step"] == "order_regions" and "ни один район" in replies[0][0]
