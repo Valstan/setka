@@ -86,7 +86,9 @@ def _btn(label: str, cmd: str, color: str = "secondary") -> Dict[str, Any]:
 
 
 def keyboard(rows: Sequence[Sequence[Dict[str, Any]]], *, one_time: bool = False) -> str:
-    return json.dumps({"one_time": one_time, "buttons": [list(r) for r in rows]}, ensure_ascii=False)
+    return json.dumps(
+        {"one_time": one_time, "buttons": [list(r) for r in rows]}, ensure_ascii=False
+    )
 
 
 MAIN_KEYBOARD = keyboard(
@@ -98,7 +100,10 @@ MAIN_KEYBOARD = keyboard(
 )
 CANCEL_KEYBOARD = keyboard([[_btn("❌ Отмена", CMD_CANCEL, "negative")]])
 REGIONS_KEYBOARD = keyboard(
-    [[_btn("🌐 Все районы", CMD_ALL_REGIONS, "primary")], [_btn("❌ Отмена", CMD_CANCEL, "negative")]]
+    [
+        [_btn("🌐 Все районы", CMD_ALL_REGIONS, "primary")],
+        [_btn("❌ Отмена", CMD_CANCEL, "negative")],
+    ]
 )
 WHEN_KEYBOARD = keyboard(
     [[_btn("⚡ Сейчас", CMD_NOW, "primary")], [_btn("❌ Отмена", CMD_CANCEL, "negative")]]
@@ -168,12 +173,16 @@ async def find_client(session, vk_id: int) -> Optional[AdClient]:
     if row is not None:
         return row
     return (
-        await session.execute(
-            select(AdClient)
-            .where(AdClient.author_vk_id == int(vk_id))
-            .order_by(AdClient.id.asc())
+        (
+            await session.execute(
+                select(AdClient)
+                .where(AdClient.author_vk_id == int(vk_id))
+                .order_by(AdClient.id.asc())
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
 
 
 async def ensure_client(
@@ -241,11 +250,7 @@ async def balance_text(session, client: AdClient) -> str:
         .all()
     )
     pubs = (
-        (
-            await session.execute(
-                select(AdPublication).where(AdPublication.client_id == client.id)
-            )
-        )
+        (await session.execute(select(AdPublication).where(AdPublication.client_id == client.id)))
         .scalars()
         .all()
     )
@@ -404,25 +409,35 @@ async def handle(
     if cmd == CMD_PAY:
         return [(payments_text(), MAIN_KEYBOARD)], None, events
     if cmd == CMD_CABINET:
-        return [
-            (
-                f"Ваш кабинет №{client.id}: {CABINET_URL}\n"
-                "Вход — через ВКонтакте, той же кнопкой, что здесь.",
-                MAIN_KEYBOARD,
-            )
-        ], None, events
+        return (
+            [
+                (
+                    f"Ваш кабинет №{client.id}: {CABINET_URL}\n"
+                    "Вход — через ВКонтакте, той же кнопкой, что здесь.",
+                    MAIN_KEYBOARD,
+                )
+            ],
+            None,
+            events,
+        )
     if cmd == CMD_CHAT:
-        return [
-            ("Напишите сообщение владельцу — он ответит сюда же.", CANCEL_KEYBOARD)
-        ], {"step": STEP_CHAT, "draft": {}}, events
+        return (
+            [("Напишите сообщение владельцу — он ответит сюда же.", CANCEL_KEYBOARD)],
+            {"step": STEP_CHAT, "draft": {}},
+            events,
+        )
     if cmd == CMD_ORDER:
-        return [
-            (
-                "Пришлите текст поста одним сообщением. Фото можно будет добавить в кабинете "
-                "(в боте — скоро).",
-                CANCEL_KEYBOARD,
-            )
-        ], {"step": STEP_ORDER_TEXT, "draft": {}}, events
+        return (
+            [
+                (
+                    "Пришлите текст поста одним сообщением. Фото можно будет добавить в кабинете "
+                    "(в боте — скоро).",
+                    CANCEL_KEYBOARD,
+                )
+            ],
+            {"step": STEP_ORDER_TEXT, "draft": {}},
+            events,
+        )
 
     # ---- шаги
     if step == STEP_CHAT:
@@ -451,17 +466,28 @@ async def handle(
         else:
             chosen = parse_region_choice(incoming.text, regions)
         if not chosen:
-            return [
-                ("Не понял районы. Напишите номера через запятую или нажмите «Все районы».", REGIONS_KEYBOARD)
-            ], state, events
-        draft["region_ids"] = chosen
-        return [
-            (
-                f"Выбрано районов: {len(chosen)}. Когда выпустить? Нажмите «Сейчас» или напишите "
-                "дату и время по МСК: 25.09 14:30 (можно «завтра 10:00»).",
-                WHEN_KEYBOARD,
+            return (
+                [
+                    (
+                        "Не понял районы. Напишите номера через запятую или нажмите «Все районы».",
+                        REGIONS_KEYBOARD,
+                    )
+                ],
+                state,
+                events,
             )
-        ], {"step": STEP_ORDER_WHEN, "draft": draft}, events
+        draft["region_ids"] = chosen
+        return (
+            [
+                (
+                    f"Выбрано районов: {len(chosen)}. Когда выпустить? Нажмите «Сейчас» или напишите "
+                    "дату и время по МСК: 25.09 14:30 (можно «завтра 10:00»).",
+                    WHEN_KEYBOARD,
+                )
+            ],
+            {"step": STEP_ORDER_WHEN, "draft": draft},
+            events,
+        )
 
     if step == STEP_ORDER_WHEN:
         if cmd == CMD_NOW:
@@ -470,9 +496,16 @@ async def handle(
         else:
             when = parse_when(incoming.text, now_msk=now_msk)
             if when is None:
-                return [
-                    ("Не понял дату. Формат: 25.09 14:30 (МСК) — или нажмите «Сейчас».", WHEN_KEYBOARD)
-                ], state, events
+                return (
+                    [
+                        (
+                            "Не понял дату. Формат: 25.09 14:30 (МСК) — или нажмите «Сейчас».",
+                            WHEN_KEYBOARD,
+                        )
+                    ],
+                    state,
+                    events,
+                )
             draft["publish_now"] = False
             draft["publish_at"] = when.isoformat()
         from config.ad_landing import quote_price
@@ -481,14 +514,18 @@ async def handle(
         q = quote_price(n)
         when_txt = "сейчас" if draft.get("publish_now") else draft["publish_at"].replace("T", " ")
         preview = draft["text"][:300] + ("…" if len(draft["text"]) > 300 else "")
-        return [
-            (
-                f"Проверьте заказ:\n— районов: {n}\n— выход: {when_txt}\n— цена: {_money(q['price'])}"
-                + (" (или в счёт вашего пакета)" if q["price"] else "")
-                + f"\n\nТекст:\n{preview}",
-                CONFIRM_KEYBOARD,
-            )
-        ], {"step": STEP_ORDER_CONFIRM, "draft": draft}, events
+        return (
+            [
+                (
+                    f"Проверьте заказ:\n— районов: {n}\n— выход: {when_txt}\n— цена: {_money(q['price'])}"
+                    + (" (или в счёт вашего пакета)" if q["price"] else "")
+                    + f"\n\nТекст:\n{preview}",
+                    CONFIRM_KEYBOARD,
+                )
+            ],
+            {"step": STEP_ORDER_CONFIRM, "draft": draft},
+            events,
+        )
 
     if step == STEP_ORDER_CONFIRM:
         if cmd != CMD_CONFIRM:

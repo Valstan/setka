@@ -33,7 +33,12 @@ async def _region(session, name, gid):
 class _Submit:
     def __init__(self, result=None, error=None):
         self.calls = []
-        self.result = result or {"order_ref": "r1", "price_total": 700.0, "posts": [1, 2], "moderation": True}
+        self.result = result or {
+            "order_ref": "r1",
+            "price_total": 700.0,
+            "posts": [1, 2],
+            "moderation": True,
+        }
         self.error = error
 
     async def __call__(self, session, client, draft):
@@ -91,7 +96,10 @@ def test_keyboard_is_valid_vk_json():
 
 def test_extract_incoming_filters_non_messages():
     assert intake.extract_incoming({"type": "message_reply"}) is None
-    assert intake.extract_incoming({"type": "message_new", "object": {"message": {"from_id": -5}}}) is None
+    assert (
+        intake.extract_incoming({"type": "message_new", "object": {"message": {"from_id": -5}}})
+        is None
+    )
     inc = intake.extract_incoming(
         {
             "type": "message_new",
@@ -128,7 +136,9 @@ async def test_known_vk_account_is_found_not_duplicated(db_session):
     db_session.add(AdClient(name="Свой", radar_user_id=u.id))
     await db_session.flush()
 
-    _r, _s, events = await dialog.handle(db_session, _msg("hi"), None, submit=_Submit(), now_msk=NOW)
+    _r, _s, events = await dialog.handle(
+        db_session, _msg("hi"), None, submit=_Submit(), now_msk=NOW
+    )
     assert events == []
     assert len((await db_session.execute(select(AdClient))).scalars().all()) == 1
 
@@ -139,12 +149,20 @@ async def test_known_vk_account_is_found_not_duplicated(db_session):
 @pytest.mark.asyncio
 async def test_menu_buttons_work_from_any_step(db_session):
     replies, state, _ = await dialog.handle(
-        db_session, _btn("prices"), {"step": "order_text", "draft": {}}, submit=_Submit(), now_msk=NOW
+        db_session,
+        _btn("prices"),
+        {"step": "order_text", "draft": {}},
+        submit=_Submit(),
+        now_msk=NOW,
     )
     assert state is None and "Цены" in replies[0][0]
-    replies, state, _ = await dialog.handle(db_session, _btn("pay"), None, submit=_Submit(), now_msk=NOW)
+    replies, state, _ = await dialog.handle(
+        db_session, _btn("pay"), None, submit=_Submit(), now_msk=NOW
+    )
     assert "Альфа" in replies[0][0]
-    replies, state, _ = await dialog.handle(db_session, _btn("balance"), None, submit=_Submit(), now_msk=NOW)
+    replies, state, _ = await dialog.handle(
+        db_session, _btn("balance"), None, submit=_Submit(), now_msk=NOW
+    )
     assert "Оплачено" in replies[0][0]
 
 
@@ -152,7 +170,9 @@ async def test_menu_buttons_work_from_any_step(db_session):
 async def test_chat_flow(db_session):
     from database.models import AdChatMessage
 
-    _r, state, _ = await dialog.handle(db_session, _btn("chat"), None, submit=_Submit(), now_msk=NOW)
+    _r, state, _ = await dialog.handle(
+        db_session, _btn("chat"), None, submit=_Submit(), now_msk=NOW
+    )
     assert state["step"] == "chat"
     replies, state, events = await dialog.handle(
         db_session, _msg("Хочу пост про магазин"), state, submit=_Submit(), now_msk=NOW
@@ -174,17 +194,26 @@ async def test_order_flow_reaches_submit_with_chosen_regions(db_session):
 
     _r, state, _ = await dialog.handle(db_session, _btn("order"), None, submit=s, now_msk=NOW)
     assert state["step"] == "order_text"
-    replies, state, _ = await dialog.handle(db_session, _msg("Продам дрова"), state, submit=s, now_msk=NOW)
+    replies, state, _ = await dialog.handle(
+        db_session, _msg("Продам дрова"), state, submit=s, now_msk=NOW
+    )
     assert state["step"] == "order_regions" and "1. Арбаж" in replies[0][0]
     _r, state, _ = await dialog.handle(db_session, _msg("1, 3"), state, submit=s, now_msk=NOW)
     assert state["step"] == "order_when" and state["draft"]["region_ids"] == [r1.id, r2.id]
-    replies, state, _ = await dialog.handle(db_session, _msg("25.09 14:30"), state, submit=s, now_msk=NOW)
+    replies, state, _ = await dialog.handle(
+        db_session, _msg("25.09 14:30"), state, submit=s, now_msk=NOW
+    )
     assert state["step"] == "order_confirm" and "районов: 2" in replies[0][0]
-    replies, state, events = await dialog.handle(db_session, _btn("confirm"), state, submit=s, now_msk=NOW)
+    replies, state, events = await dialog.handle(
+        db_session, _btn("confirm"), state, submit=s, now_msk=NOW
+    )
 
     assert state is None and "order" in events
     assert s.calls and s.calls[0][1]["text"] == "Продам дрова"
-    assert s.calls[0][1]["publish_at"] == "2026-09-25T14:30:00" and s.calls[0][1]["publish_now"] is False
+    assert (
+        s.calls[0][1]["publish_at"] == "2026-09-25T14:30:00"
+        and s.calls[0][1]["publish_now"] is False
+    )
     assert "Владелец проверит" in replies[0][0]
     kinds = [r.kind for r in (await db_session.execute(select(AdInteraction))).scalars().all()]
     assert "client_order" in kinds
@@ -197,7 +226,9 @@ async def test_order_all_regions_and_now(db_session):
     s = _Submit()
     _r, state, _ = await dialog.handle(db_session, _btn("order"), None, submit=s, now_msk=NOW)
     _r, state, _ = await dialog.handle(db_session, _msg("текст"), state, submit=s, now_msk=NOW)
-    _r, state, _ = await dialog.handle(db_session, _btn("all_regions"), state, submit=s, now_msk=NOW)
+    _r, state, _ = await dialog.handle(
+        db_session, _btn("all_regions"), state, submit=s, now_msk=NOW
+    )
     assert len(state["draft"]["region_ids"]) == 2
     _r, state, _ = await dialog.handle(db_session, _btn("now"), state, submit=s, now_msk=NOW)
     assert state["draft"]["publish_now"] is True
@@ -209,8 +240,13 @@ async def test_order_all_regions_and_now(db_session):
 async def test_order_error_is_reported_and_state_reset(db_session):
     await _region(db_session, "А", -1)
     s = _Submit(error=client_orders.OrderError("Пакет исчерпан"))
-    state = {"step": "order_confirm", "draft": {"text": "t", "region_ids": [1], "publish_now": True}}
-    replies, state, events = await dialog.handle(db_session, _btn("confirm"), state, submit=s, now_msk=NOW)
+    state = {
+        "step": "order_confirm",
+        "draft": {"text": "t", "region_ids": [1], "publish_now": True},
+    }
+    replies, state, events = await dialog.handle(
+        db_session, _btn("confirm"), state, submit=s, now_msk=NOW
+    )
     assert state is None and "Пакет исчерпан" in replies[0][0] and "order" not in events
     kinds = [r.kind for r in (await db_session.execute(select(AdInteraction))).scalars().all()]
     assert "cabinet_order_refused" in kinds
@@ -219,7 +255,11 @@ async def test_order_error_is_reported_and_state_reset(db_session):
 @pytest.mark.asyncio
 async def test_cancel_resets_from_any_step(db_session):
     replies, state, _ = await dialog.handle(
-        db_session, _msg("отмена"), {"step": "order_when", "draft": {"x": 1}}, submit=_Submit(), now_msk=NOW
+        db_session,
+        _msg("отмена"),
+        {"step": "order_when", "draft": {"x": 1}},
+        submit=_Submit(),
+        now_msk=NOW,
     )
     assert state is None and replies[0][1] == dialog.MAIN_KEYBOARD
 
@@ -243,7 +283,12 @@ async def test_poll_once_runs_dialog_and_persists_state(db_session, monkeypatch)
         return {
             "ts": "2",
             "updates": [
-                {"type": "message_new", "object": {"message": {"from_id": 900, "text": "", "payload": '{"cmd":"chat"}'}}},
+                {
+                    "type": "message_new",
+                    "object": {
+                        "message": {"from_id": 900, "text": "", "payload": '{"cmd":"chat"}'}
+                    },
+                },
                 {"type": "message_reply", "object": {}},
             ],
         }
@@ -313,8 +358,10 @@ def test_redis_state_store_roundtrip():
 
 
 def test_task_registered():
-    from tasks.celery_app import app
     import tasks.vk_bot_tasks  # noqa: F401
+    from tasks.celery_app import app
 
     assert "tasks.vk_bot_tasks.poll_sarafan_vk_bot" in app.tasks
-    assert app.conf.beat_schedule["sarafan-vk-bot"]["task"] == "tasks.vk_bot_tasks.poll_sarafan_vk_bot"
+    assert (
+        app.conf.beat_schedule["sarafan-vk-bot"]["task"] == "tasks.vk_bot_tasks.poll_sarafan_vk_bot"
+    )
