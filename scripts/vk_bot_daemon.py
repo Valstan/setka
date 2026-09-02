@@ -147,4 +147,9 @@ if __name__ == "__main__":
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # httpx на INFO печатает URL запроса целиком — с access_token в query.
+    # Секрет в логе недопустим (инцидент 2026-09-02: ключ сообщества уехал в
+    # vk-bot.log при первом же запуске). Только WARNING и выше.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     asyncio.run(main())
