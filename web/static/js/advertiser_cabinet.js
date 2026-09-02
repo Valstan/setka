@@ -81,7 +81,9 @@
         var me;
         try { me = await api('/me'); } catch (e) { return; }
         state.me = me;
-        $('me-badge').textContent = me.display_name || '';
+        // Номер кабинета показываем всегда: по нему владелец в разговоре
+        // понимает, в какой из кабинетов-дублей зашёл клиент (заказ 2026-09-02).
+        $('me-badge').textContent = (me.client ? 'Кабинет №' + me.client.id + ' · ' : '') + (me.display_name || '');
 
         if (me.impersonating) {
             $('owner-banner-name').textContent =

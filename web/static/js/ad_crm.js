@@ -1726,9 +1726,66 @@ async function refreshCabinetsBadge() {
 }
 
 function initCabinets() {
+    loadCabinetList();
     loadModerationQueue();
     loadCabinetActivity();
     loadChatThreads();
+}
+
+// ---------------------- Список кабинетов (заказ владельца 2026-09-02) --------
+// Одна строка — один кабинет: № (уникальный, = ad_clients.id — тот же номер клиент
+// видит у себя в шапке), имя, аккаунт, последнее движение, счётчики. Клик по
+// строке открывает кабинет глазами клиента (?as_client=, полный доступ, журнал).
+
+const CABINET_LAST_KIND = { chat: '💬 чат', action: '🛎 действие', payment: '💳 оплата', created: '🆕 заведён' };
+
+function fmtAgo(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+    const mins = Math.round((Date.now() - d.getTime()) / 60000);
+    if (mins < 1) return 'только что';
+    if (mins < 60) return mins + ' мин назад';
+    const h = Math.round(mins / 60);
+    if (h < 48) return h + ' ч назад';
+    return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) + ' ' +
+        d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadCabinetList() {
+    const box = document.getElementById('cabinet-list');
+    if (!box) return;
+    const allBox = document.getElementById('cabinets-all');
+    const all = allBox && allBox.checked ? 1 : 0;
+    try {
+        const data = await apiClient.request('/ad-crm/cabinets?all=' + all);
+        const rows = (data.cabinets || []).map((c) => {
+            let acct;
+            if (c.vk_user_id) {
+                acct = '<a href="https://vk.com/id' + c.vk_user_id + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">ВК</a>';
+            } else if (c.login) {
+                acct = 'логин ' + escapeHtml(c.login);
+            } else {
+                acct = c.has_account ? 'аккаунт' : '<span class="text-muted">без кабинета</span>';
+            }
+            const unread = c.unread ? '<span class="badge text-bg-danger">' + c.unread + '</span>' : '';
+            const last = (CABINET_LAST_KIND[c.last_activity_kind] || '') + ' · ' + fmtAgo(c.last_activity_at);
+            return '<a class="d-flex flex-wrap align-items-center gap-2 border-bottom py-1 text-decoration-none text-body"' +
+                ' href="/cabinet?as_client=' + c.id + '" target="_blank" rel="noopener"' +
+                ' title="Открыть кабинет №' + c.id + ' глазами клиента">' +
+                '<b class="text-nowrap font-monospace">№' + c.id + '</b>' +
+                '<b class="text-truncate" style="max-width: 16rem;">' + escapeHtml(c.name) + '</b>' +
+                unread +
+                '<span class="text-muted text-nowrap">' + acct + '</span>' +
+                '<span class="text-muted text-nowrap ms-auto" title="' + escapeHtml(c.last_activity_at || '') + '">' + last + '</span>' +
+                '<span class="text-nowrap">заказано <b>' + c.posts_ordered + '</b> · вышло <b>' + c.posts_published + '</b> · оплачено <b>' + fmtMoney(c.paid_total) + '</b></span>' +
+                '<a class="text-nowrap" href="/ad/client/' + c.id + '" onclick="event.stopPropagation()" title="Карточка клиента в CRM"><i class="bi bi-person-lines-fill"></i></a>' +
+                '</a>';
+        });
+        box.innerHTML = rows.length ? rows.join('')
+            : '<div class="text-muted">Кабинетов пока нет — никто не входил.</div>';
+    } catch (e) {
+        box.innerHTML = '<div class="text-danger">' + escapeHtml(e.message) + '</div>';
+    }
 }
 
 // Иконки событий ленты активности; ошибки красным (is_error с сервера).

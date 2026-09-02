@@ -388,6 +388,18 @@
                 env <code>AD_TRUST_AFTER_POSTS</code>).
             </p>
 
+            <h6 class="d-flex align-items-center gap-2">
+                <i class="bi bi-door-open"></i> Кабинеты
+                <small class="text-muted fw-normal">— свежие движения сверху; строка открывает кабинет его глазами</small>
+                <label class="form-check form-check-inline ms-auto small fw-normal mb-0">
+                    <input class="form-check-input" type="checkbox" id="cabinets-all"
+                           onchange="loadCabinetList()"> и клиенты без кабинета
+                </label>
+            </h6>
+            <div id="cabinet-list" class="mb-4 small" style="max-height: 40vh; overflow-y: auto;">
+                <div class="text-muted">Загрузка…</div>
+            </div>
+
             <h6><i class="bi bi-patch-check"></i> На одобрении</h6>
             <div id="moderation-list" class="vstack gap-2 mb-4">
                 <div class="text-muted small">Загрузка…</div>
@@ -628,7 +640,7 @@
 {% block extra_scripts %}
 <script src="/static/vendor/chartjs/chart.umd.min.js"></script>
 <script src="/static/js/ad_cabinet.js?v=20260629_i5"></script>
-<script src="/static/js/ad_crm.js?v=20260826_cabinets"></script>
+<script src="/static/js/ad_crm.js?v=20260902_cabinet_list"></script>
 <script>
 // Единый рекламный кабинет: логика вкладок (С1).
 document.addEventListener('DOMContentLoaded', () => {

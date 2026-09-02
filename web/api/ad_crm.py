@@ -2526,6 +2526,20 @@ class OwnerChatIn(BaseModel):
     body: str
 
 
+@router.get("/cabinets")
+async def cabinets_list(all: int = 0, db: AsyncSession = Depends(get_db_session)):
+    """Список кабинетов клиентов: номер, имя, последнее движение, счётчики.
+
+    Заказ владельца 2026-09-02: одна строка — один кабинет, кликабельная,
+    с уникальным номером (чтобы в разговоре с клиентом понимать, в какой из
+    кабинетов-дублей он зашёл), свежие движения сверху. ``all=1`` добавляет
+    CRM-клиентов без аккаунта. Логика — ``modules.ad_cabinet.cabinet_list``.
+    """
+    from modules.ad_cabinet.cabinet_list import list_cabinets
+
+    return {"cabinets": await list_cabinets(db, include_unlinked=bool(all))}
+
+
 @router.get("/chat/overview")
 async def chat_overview(db: AsyncSession = Depends(get_db_session)):
     """Список тредов: клиент, последнее сообщение, unread-счётчик владельца."""
