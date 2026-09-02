@@ -1769,16 +1769,16 @@ async function loadCabinetList() {
             }
             const unread = c.unread ? '<span class="badge text-bg-danger">' + c.unread + '</span>' : '';
             const last = (CABINET_LAST_KIND[c.last_activity_kind] || '') + ' · ' + fmtAgo(c.last_activity_at);
-            return '<a class="d-flex flex-wrap align-items-center gap-2 border-bottom py-1 text-decoration-none text-body"' +
+            return '<a class="d-flex align-items-center gap-2 border-bottom py-1 text-decoration-none text-body" style="min-width: 0;"' +
                 ' href="/cabinet?as_client=' + c.id + '" target="_blank" rel="noopener"' +
                 ' title="Открыть кабинет №' + c.id + ' глазами клиента">' +
                 '<b class="text-nowrap font-monospace">№' + c.id + '</b>' +
                 '<b class="text-truncate" style="max-width: 16rem;">' + escapeHtml(c.name) + '</b>' +
+                '<a class="text-nowrap" href="/ad/client/' + c.id + '" onclick="event.stopPropagation()" title="Карточка клиента в CRM"><i class="bi bi-person-lines-fill"></i></a>' +
                 unread +
                 '<span class="text-muted text-nowrap">' + acct + '</span>' +
                 '<span class="text-muted text-nowrap ms-auto" title="' + escapeHtml(c.last_activity_at || '') + '">' + last + '</span>' +
                 '<span class="text-nowrap">заказано <b>' + c.posts_ordered + '</b> · вышло <b>' + c.posts_published + '</b> · оплачено <b>' + fmtMoney(c.paid_total) + '</b></span>' +
-                '<a class="text-nowrap" href="/ad/client/' + c.id + '" onclick="event.stopPropagation()" title="Карточка клиента в CRM"><i class="bi bi-person-lines-fill"></i></a>' +
                 '</a>';
         });
         box.innerHTML = rows.length ? rows.join('')
