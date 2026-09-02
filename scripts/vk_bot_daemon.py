@@ -152,4 +152,9 @@ if __name__ == "__main__":
     # vk-bot.log при первом же запуске). Только WARNING и выше.
     for noisy in ("httpx", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    # Второй слой: process-wide маскирование секретов (utils/log_redaction) —
+    # на случай, если что-то ещё выведет ключ текстом исключения.
+    from utils.log_redaction import install_log_redaction
+
+    install_log_redaction()
     asyncio.run(main())
