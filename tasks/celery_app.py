@@ -220,6 +220,23 @@ def _setka_mark_prom_process_dead(**_kwargs) -> None:
 # через свой ``setup_logging`` / ``--loglevel``), затирая форматтер, выставленный
 # на import-е модуля. Переустанавливаем JSON-форматтер уже после готовности
 # worker'а, чтобы LOG_FORMAT=json реально действовал на его выводе.
+@signals.worker_process_init.connect  # type: ignore[has-type]
+def _setka_redact_logs_in_child(**_kwargs) -> None:
+    """Маскирование секретов — в КАЖДОМ дочернем процессе prefork-пула.
+
+    Инцидент 2026-09-02: в celery-worker.log нашлось 2834 строки httpx
+    «HTTP Request: GET …access_token=<ключ сообщества>…» из ForkPoolWorker-N,
+    хотя фабрика ставится на импорте и на worker_ready. В свежем процессе тот
+    же код маскирует (проверено на боксе), то есть в детях пула фабрика не
+    доживает до задач. worker_process_init срабатывает уже в ребёнке —
+    ставим заново (идемпотентно).
+    """
+    try:
+        install_log_redaction()
+    except Exception:
+        logger.debug("install_log_redaction (child) failed", exc_info=True)
+
+
 @signals.worker_ready.connect  # type: ignore[has-type]
 def _setka_apply_json_logging(**_kwargs) -> None:
     try:

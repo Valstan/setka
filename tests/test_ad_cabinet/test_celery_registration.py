@@ -88,3 +88,22 @@ def test_prune_gateway_requests_task_registered():
     assert "prune-gateway-requests-daily" in app.conf.beat_schedule
     entry = app.conf.beat_schedule["prune-gateway-requests-daily"]
     assert entry["task"] == "tasks.celery_app.prune_gateway_requests"
+
+
+def test_log_redaction_reinstalled_in_forked_worker_children():
+    """Инцидент 2026-09-02: ключ сообщества в celery-worker.log из ForkPoolWorker.
+
+    Фабрика LogRecord с маскированием обязана ставиться в worker_process_init —
+    сигнале, который срабатывает уже внутри дочернего процесса пула.
+    """
+    from celery import signals
+
+    import tasks.celery_app as mod
+
+    receivers = [r for r in signals.worker_process_init.receivers]
+    names = []
+    for _key, ref in receivers:
+        fn = ref() if callable(ref) and not hasattr(ref, "__name__") else ref
+        names.append(getattr(fn, "__name__", str(fn)))
+    assert "_setka_redact_logs_in_child" in names, names
+    assert callable(mod._setka_redact_logs_in_child)
