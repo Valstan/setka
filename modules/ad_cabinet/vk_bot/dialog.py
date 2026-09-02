@@ -326,7 +326,10 @@ async def regions_list(session) -> List[Tuple[int, str]]:
 
 def regions_prompt(regions: Sequence[Tuple[int, str]]) -> List[str]:
     """Нумерованный список районов, разбитый под лимит ВК."""
-    head = "В какие районы? Напишите номера через запятую (например: 1, 4, 7) или нажмите «Все районы».\n"
+    head = (
+        "В какие районы? Напишите номера через запятую (например: 1, 4, 7) "
+        "или нажмите «Все районы».\n"
+    )
     chunks: List[str] = []
     cur = head
     for i, (_rid, name) in enumerate(regions, 1):
@@ -518,7 +521,8 @@ async def handle(
         return (
             [
                 (
-                    f"Проверьте заказ:\n— районов: {n}\n— выход: {when_txt}\n— цена: {_money(q['price'])}"
+                    f"Проверьте заказ:\n— районов: {n}\n— выход: {when_txt}\n"
+                    f"— цена: {_money(q['price'])}"
                     + (" (или в счёт вашего пакета)" if q["price"] else "")
                     + f"\n\nТекст:\n{preview}",
                     CONFIRM_KEYBOARD,
