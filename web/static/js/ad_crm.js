@@ -1761,7 +1761,7 @@ async function loadCabinetList() {
         const rows = (data.cabinets || []).map((c) => {
             let acct;
             if (c.vk_user_id) {
-                acct = '<a href="https://vk.com/id' + c.vk_user_id + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">ВК</a>';
+                acct = '<span title="vk.com/id' + c.vk_user_id + '">ВК id' + c.vk_user_id + '</span>';
             } else if (c.login) {
                 acct = 'логин ' + escapeHtml(c.login);
             } else {
@@ -1769,17 +1769,21 @@ async function loadCabinetList() {
             }
             const unread = c.unread ? '<span class="badge text-bg-danger">' + c.unread + '</span>' : '';
             const last = (CABINET_LAST_KIND[c.last_activity_kind] || '') + ' · ' + fmtAgo(c.last_activity_at);
-            return '<a class="d-flex align-items-center gap-2 border-bottom py-1 text-decoration-none text-body" style="min-width: 0;"' +
+            // Две соседние ссылки, не вложенные: <a> внутри <a> браузер разрывает,
+            // и строка распадалась на две (приёмка 02.09).
+            return '<div class="d-flex align-items-center gap-2 border-bottom py-1" style="min-width: 0;">' +
+                '<a class="d-flex align-items-center gap-2 flex-grow-1 text-decoration-none text-body" style="min-width: 0;"' +
                 ' href="/cabinet?as_client=' + c.id + '" target="_blank" rel="noopener"' +
                 ' title="Открыть кабинет №' + c.id + ' глазами клиента">' +
                 '<b class="text-nowrap font-monospace">№' + c.id + '</b>' +
                 '<b class="text-truncate" style="max-width: 16rem;">' + escapeHtml(c.name) + '</b>' +
-                '<a class="text-nowrap" href="/ad/client/' + c.id + '" onclick="event.stopPropagation()" title="Карточка клиента в CRM"><i class="bi bi-person-lines-fill"></i></a>' +
                 unread +
                 '<span class="text-muted text-nowrap">' + acct + '</span>' +
                 '<span class="text-muted text-nowrap ms-auto" title="' + escapeHtml(c.last_activity_at || '') + '">' + last + '</span>' +
                 '<span class="text-nowrap">заказано <b>' + c.posts_ordered + '</b> · вышло <b>' + c.posts_published + '</b> · оплачено <b>' + fmtMoney(c.paid_total) + '</b></span>' +
-                '</a>';
+                '</a>' +
+                '<a class="text-nowrap flex-shrink-0" href="/ad/client/' + c.id + '" title="Карточка клиента в CRM"><i class="bi bi-person-lines-fill"></i></a>' +
+                '</div>';
         });
         box.innerHTML = rows.length ? rows.join('')
             : '<div class="text-muted">Кабинетов пока нет — никто не входил.</div>';
