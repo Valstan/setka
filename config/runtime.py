@@ -581,6 +581,22 @@ def get_radar_bot_name() -> str:
     return (_getenv("RADAR_BOT_NAME", "") or "").strip().upper()
 
 
+def get_sarafan_vk_community_id() -> Optional[int]:
+    """ID VK-сообщества «САРАФАН» — лицо ВК-бота кабинета рекламодателя. Пусто = выкл.
+
+    Решение владельца 2026-09-02: бот живёт в сообществе САРАФАН, не в точке
+    Радара. Владелец включает в админке сообщества Сообщения + Long Poll API
+    (message_new), кладёт community-токен в ``/tokens`` и задаёт env
+    ``SARAFAN_VK_COMMUNITY_ID=<id>`` (положительный). Пока не задано —
+    уведомления в ВК и Long Poll бота молчат."""
+    raw = (_getenv("SARAFAN_VK_COMMUNITY_ID", "") or "").strip()
+    try:
+        gid = abs(int(raw))
+        return gid or None
+    except (TypeError, ValueError):
+        return None
+
+
 def get_radar_vk_community_id() -> Optional[int]:
     """ID VK-сообщества «точки радара» для лички (Bots Long Poll). 0/пусто = выкл (#008).
 
