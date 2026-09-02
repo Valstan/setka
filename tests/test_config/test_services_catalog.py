@@ -68,6 +68,12 @@ class TestCatalogEntries:
         titles = [e["title"] for e in SERVICES]
         assert len(titles) == len(set(titles))
 
+    def test_pozvoni_is_in_catalog(self):
+        """D-065 (владелец 2026-09-02): ПОЗВОНИ — в каталоге с момента go-live."""
+        by_title = {e["title"]: e for e in SERVICES}
+        assert "ПОЗВОНИ" in by_title
+        assert by_title["ПОЗВОНИ"]["url"] == "https://позвони.вмалмыже.рф"
+
 
 class TestGetServices:
     def test_returns_all_entries(self):
