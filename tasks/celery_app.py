@@ -2403,14 +2403,10 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute="*"),
         "options": {"expires": 55, "catchup": False},
     },
-    # ВК-бот кабинета рекламодателя (заказ владельца 2026-09-02): Bots Long Poll
-    # сообщества САРАФАН, каждую минуту. No-op, пока не задан
-    # SARAFAN_VK_COMMUNITY_ID + community-токен в /tokens.
-    "sarafan-vk-bot": {
-        "task": "tasks.vk_bot_tasks.poll_sarafan_vk_bot",
-        "schedule": crontab(minute="*"),
-        "options": {"expires": 55, "catchup": False},
-    },
+    # ВК-бот кабинета: Long Poll крутит отдельный демон setka-vk-bot
+    # (scripts/vk_bot_daemon.py) — в beat его нет намеренно: воркер на проде
+    # однопроцессный, минутный тик давал клиенту минуту ожидания на каждый шаг.
+    # Задача tasks.vk_bot_tasks.poll_sarafan_vk_bot оставлена для ручного тика.
     # Ретенция ленты радара: элементы старше 30 дней (RADAR_ITEMS_RETENTION_DAYS)
     # удаляются ночью в 03:20 (после cleanup-daily в 03:00). Сохранёнки —
     # снимки, не страдают (FK SET NULL).

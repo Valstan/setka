@@ -51,6 +51,9 @@ CMD_CANCEL = "cancel"
 CMD_NOW = "now"
 CMD_ALL_REGIONS = "all_regions"
 CMD_CONFIRM = "confirm"
+CMD_REGION = "rg"  # payload {"cmd":"rg","id":<region_id>} — переключить район
+CMD_REGION_PAGE = "rgpage"  # payload {"cmd":"rgpage","p":<n>} — страница списка
+CMD_REGIONS_DONE = "rgdone"  # выбор районов закончен
 
 #: Текст кнопки → команда. Нужен, потому что ВК шлёт ``payload`` не всегда
 #: (старые клиенты, ручной ввод) — текст кнопки распознаём тоже.
@@ -65,6 +68,7 @@ BUTTON_TEXT: Dict[str, str] = {
     "⚡ Сейчас": CMD_NOW,
     "🌐 Все районы": CMD_ALL_REGIONS,
     "✅ Подтвердить": CMD_CONFIRM,
+    "✅ Готово": CMD_REGIONS_DONE,
 }
 
 CABINET_URL = "https://сарафан.вмалмыже.рф/cabinet"
@@ -324,6 +328,91 @@ async def regions_list(session) -> List[Tuple[int, str]]:
     return [(int(rid), name or f"район {rid}") for rid, name in rows]
 
 
+# ---- районы кнопками (заказ владельца 2026-09-02: «щёлкать мышкой, а не цифры»)
+
+REGION_COLS = 4  # кнопок в ряду
+REGION_ROWS = 8  # рядов с районами на странице; ещё 2 ряда — листание и управление
+REGION_PAGE = REGION_COLS * REGION_ROWS  # 32 района на страницу (лимит ВК — 40 кнопок)
+REGION_LABEL_MAX = 9
+
+
+def region_label(name: str) -> str:
+    """«КИРОВО-ЧЕПЕЦК - ИНФО» → «Кирово-че». По первым буквам район узнаваем."""
+    base = re.split(r"\s+[-—–]\s+", name or "", maxsplit=1)[0].strip() or (name or "")
+    base = base[:1].upper() + base[1:].lower()
+    return base[:REGION_LABEL_MAX]
+
+
+def regions_keyboard(
+    regions: Sequence[Tuple[int, str]], chosen: Sequence[int], page: int = 0
+) -> str:
+    """Страница районов: выбранные с ✅, листание, «Готово» / «Все районы» / «Отмена»."""
+    regions = list(regions)
+    pages = max(1, (len(regions) + REGION_PAGE - 1) // REGION_PAGE)
+    page = max(0, min(int(page), pages - 1))
+    chosen_set = set(int(x) for x in chosen)
+    rows: List[List[Dict[str, Any]]] = []
+    chunk = regions[page * REGION_PAGE : (page + 1) * REGION_PAGE]
+    for i in range(0, len(chunk), REGION_COLS):
+        row = []
+        for rid, name in chunk[i : i + REGION_COLS]:
+            on = rid in chosen_set
+            row.append(
+                {
+                    "action": {
+                        "type": "text",
+                        "label": ("✅ " if on else "") + region_label(name),
+                        "payload": json.dumps({"cmd": CMD_REGION, "id": int(rid)}),
+                    },
+                    "color": "positive" if on else "secondary",
+                }
+            )
+        rows.append(row)
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(
+                {
+                    "action": {
+                        "type": "text",
+                        "label": f"◀ Ещё ({page})",
+                        "payload": json.dumps({"cmd": CMD_REGION_PAGE, "p": page - 1}),
+                    },
+                    "color": "secondary",
+                }
+            )
+        if page < pages - 1:
+            nav.append(
+                {
+                    "action": {
+                        "type": "text",
+                        "label": f"Ещё ▶ ({pages - page - 1})",
+                        "payload": json.dumps({"cmd": CMD_REGION_PAGE, "p": page + 1}),
+                    },
+                    "color": "secondary",
+                }
+            )
+        rows.append(nav)
+    rows.append(
+        [
+            _btn("✅ Готово", CMD_REGIONS_DONE, "positive"),
+            _btn("🌐 Все районы", CMD_ALL_REGIONS, "primary"),
+            _btn("❌ Отмена", CMD_CANCEL, "negative"),
+        ]
+    )
+    return keyboard(rows)
+
+
+def regions_status(regions: Sequence[Tuple[int, str]], chosen: Sequence[int]) -> str:
+    names = {rid: name for rid, name in regions}
+    picked = [region_label(names[r]) for r in chosen if r in names]
+    if not picked:
+        return "Выберите районы кнопками (можно несколько), затем «Готово»."
+    return (
+        f"Выбрано {len(picked)}: " + ", ".join(picked) + ". Ещё районы — кнопками, потом «Готово»."
+    )
+
+
 def regions_prompt(regions: Sequence[Tuple[int, str]]) -> List[str]:
     """Нумерованный список районов, разбитый под лимит ВК."""
     head = (
@@ -458,22 +547,63 @@ async def handle(
         draft["text"] = text
         regions = await regions_list(session)
         draft["regions"] = regions
-        replies: List[Reply] = [(chunk, None) for chunk in regions_prompt(regions)]
-        replies[-1] = (replies[-1][0], REGIONS_KEYBOARD)
-        return replies, {"step": STEP_ORDER_REGIONS, "draft": draft}, events
+        draft["region_ids"] = []
+        draft["page"] = 0
+        return (
+            [
+                (
+                    "В какие районы? Нажимайте районы кнопками (можно несколько), потом «Готово». "
+                    "Или сразу «Все районы».",
+                    regions_keyboard(regions, [], 0),
+                )
+            ],
+            {"step": STEP_ORDER_REGIONS, "draft": draft},
+            events,
+        )
 
     if step == STEP_ORDER_REGIONS:
         regions = [tuple(r) for r in draft.get("regions") or await regions_list(session)]
+        chosen = [int(x) for x in draft.get("region_ids") or []]
+        page = int(draft.get("page") or 0)
+        payload = incoming.payload or {}
+        if cmd == CMD_REGION:
+            try:
+                rid = int(payload.get("id"))
+            except (TypeError, ValueError):
+                rid = None
+            if rid is not None and rid in {r for r, _ in regions}:
+                chosen = [r for r in chosen if r != rid] if rid in chosen else chosen + [rid]
+            draft["region_ids"] = chosen
+            return (
+                [(regions_status(regions, chosen), regions_keyboard(regions, chosen, page))],
+                {"step": STEP_ORDER_REGIONS, "draft": draft},
+                events,
+            )
+        if cmd == CMD_REGION_PAGE:
+            try:
+                page = int(payload.get("p") or 0)
+            except (TypeError, ValueError):
+                page = 0
+            draft["page"] = page
+            return (
+                [(regions_status(regions, chosen), regions_keyboard(regions, chosen, page))],
+                {"step": STEP_ORDER_REGIONS, "draft": draft},
+                events,
+            )
         if cmd == CMD_ALL_REGIONS:
             chosen = [rid for rid, _ in regions]
+        elif cmd == CMD_REGIONS_DONE:
+            pass
         else:
-            chosen = parse_region_choice(incoming.text, regions)
+            typed = parse_region_choice(incoming.text, regions)
+            if typed:
+                chosen = typed
         if not chosen:
             return (
                 [
                     (
-                        "Не понял районы. Напишите номера через запятую или нажмите «Все районы».",
-                        REGIONS_KEYBOARD,
+                        "Пока ни один район не выбран — нажмите районы кнопками или «Все районы».",
+                        regions_keyboard(regions, chosen, page),
                     )
                 ],
                 state,
@@ -582,4 +712,6 @@ __all__ = [
     "regions_prompt",
     "MAIN_KEYBOARD",
     "BUTTON_TEXT",
+    "regions_keyboard",
+    "region_label",
 ]
