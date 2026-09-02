@@ -189,6 +189,7 @@ app = Celery(
         "tasks.parsing_scheduler_tasks",  # Postopus migration
         "tasks.discovery_tasks",  # community discovery + weekly recheck
         "tasks.radar_tasks",  # content radar: fan-out source poller (Ф0.2)
+        "tasks.vk_bot_tasks",  # ВК-бот кабинета: Long Poll сообщества САРАФАН
         "tasks.broadcast_tasks",  # сетевая рассылка: диспетчер-публикатор (brain 2026-06-14)
         "tasks.promo_tasks",  # раскрутка молодых сообществ (заказ владельца 2026-08-28)
     ],
@@ -2399,6 +2400,14 @@ app.conf.beat_schedule = {
     # (#008). Юзер пишет код сообществу-точке → ловим vk_id → vk_dm-вывод в личку.
     "radar-vk-intake": {
         "task": "tasks.radar_tasks.poll_radar_vk_intake",
+        "schedule": crontab(minute="*"),
+        "options": {"expires": 55, "catchup": False},
+    },
+    # ВК-бот кабинета рекламодателя (заказ владельца 2026-09-02): Bots Long Poll
+    # сообщества САРАФАН, каждую минуту. No-op, пока не задан
+    # SARAFAN_VK_COMMUNITY_ID + community-токен в /tokens.
+    "sarafan-vk-bot": {
+        "task": "tasks.vk_bot_tasks.poll_sarafan_vk_bot",
         "schedule": crontab(minute="*"),
         "options": {"expires": 55, "catchup": False},
     },
