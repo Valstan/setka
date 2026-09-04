@@ -12,6 +12,7 @@ const STATUS_BADGE = {
     published: '<span class="badge bg-success">Опубликовано</span>',
     skipped: '<span class="badge bg-secondary">Пропущено</span>',
     deleted: '<span class="badge bg-danger">Удалено</span>',
+    vanished: '<span class="badge bg-dark" title="Поста больше нет в предложке VK — автор удалил или VK снял">Исчез из предложки</span>',
 };
 
 const ORIGIN_BADGE = {

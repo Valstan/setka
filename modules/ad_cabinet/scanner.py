@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database.models import AdRequest
@@ -114,6 +114,29 @@ async def scan_region_group(
     posts = checker.fetch_suggested_posts(region["vk_group_id"])
     ad_count = 0
     new_count = 0
+    vanished = 0
+    # Заявки, чьих постов в предложке больше нет (автор удалил / VK снял),
+    # раньше висели «new» вечно и ловили [15] при планировании (случай Анны
+    # Валиевой 05.09). Помечаем vanished ТОЛЬКО когда VK ответил (а не упал) и
+    # список полный (count=100 — иначе «нет в выдаче» ≠ «нет в предложке»).
+    fetch_ok = getattr(checker, "last_fetch_error", None) is None
+    if fetch_ok and len(posts) < 100:
+        seen_ids = {int(p["vk_post_id"]) for p in posts if p.get("vk_post_id")}
+        gid = -abs(int(region["vk_group_id"]))
+        stale = (
+            await session.execute(
+                select(AdRequest).where(
+                    AdRequest.community_vk_id == gid,
+                    AdRequest.origin == "suggested",
+                    AdRequest.status == "new",
+                    AdRequest.vk_post_id.isnot(None),
+                )
+            )
+        ).scalars()
+        for ar in stale:
+            if int(ar.vk_post_id) not in seen_ids:
+                ar.status = "vanished"
+                vanished += 1
     for post in posts:
         is_ad, score, reasons = await classify_fn(post)
         if not is_ad:
@@ -137,6 +160,7 @@ async def scan_region_group(
         "scanned": len(posts),
         "ads": ad_count,
         "new": new_count,
+        "vanished": vanished,
     }
 
 

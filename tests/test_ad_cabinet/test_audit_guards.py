@@ -99,7 +99,7 @@ async def test_moderation_queue_shows_orphan_pending():
     orphan.id = 9
     db = AsyncMock()
     r = MagicMock()
-    r.all.return_value = [(orphan, None)]
+    r.all.return_value = [(orphan, None, None)]
     db.execute = AsyncMock(return_value=r)
     out = await ad_crm.moderation_queue(db=db)
     assert out["pending"][0]["id"] == 9 and out["pending"][0]["client"] is None

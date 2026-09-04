@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
 from database.models import (
+    AdChatMessage,
     AdClient,
     AdClientPackage,
     AdInteraction,
@@ -37,6 +38,7 @@ from database.models import (
     AdPublication,
     AdRequest,
     AdScheduledPost,
+    Region,
 )
 from modules.ad_cabinet.auto_greeting import get_network_stats, resolve_greeting_text
 from modules.ad_cabinet.balance import compute_balance, summarize
@@ -2434,20 +2436,183 @@ async def moderation_queue(db: AsyncSession = Depends(get_db_session)):
     """Клиентские посты, ждущие одобрения владельца (``status='pending'``)."""
     # OUTER JOIN (аудит 2026-09-05): pending-пост без карточки клиента (сирота
     # после старого DELETE) раньше исчезал из очереди навсегда — теперь виден.
+    # Название района и ссылки на фото клиента — чтобы владелец не одобрял вслепую.
     rows = (
         await db.execute(
-            select(AdScheduledPost, AdClient)
+            select(AdScheduledPost, AdClient, Region.name)
             .outerjoin(AdClient, AdClient.id == AdScheduledPost.client_id)
+            .outerjoin(Region, Region.id == AdScheduledPost.region_id)
             .where(AdScheduledPost.status == "pending")
             .order_by(AdScheduledPost.publish_date.asc(), AdScheduledPost.id.asc())
         )
     ).all()
+    out = []
+    for post, client, region_name in rows:
+        d = post.to_dict()
+        d["client"] = client.to_dict() if client is not None else None
+        d["region_name"] = region_name
+        d["photo_urls"] = (
+            [
+                f"/api/ad-crm/clients/{int(post.client_id)}/photos/{n}"
+                for n in (post.image_names or [])
+            ]
+            if post.client_id
+            else []
+        )
+        out.append(d)
+    return {"pending": out}
+
+
+@router.get("/moderation/count")
+async def moderation_count(db: AsyncSession = Depends(get_db_session)):
+    """Счётчики для бейджа «Кабинеты»: ждут одобрения · непрочитанные · заявили оплату."""
+    pending = (
+        await db.execute(
+            select(func.count(AdScheduledPost.id)).where(AdScheduledPost.status == "pending")
+        )
+    ).scalar_one()
+    unread = (
+        await db.execute(
+            select(func.count(AdChatMessage.id)).where(
+                AdChatMessage.sender == "client", AdChatMessage.read_at.is_(None)
+            )
+        )
+    ).scalar_one()
+    return {"pending": int(pending or 0), "unread": int(unread or 0)}
+
+
+@router.get("/clients/{client_id}/photos/{name}")
+async def owner_client_photo(client_id: int, name: str):
+    """Фото клиента для очереди модерации (владелец). Файлы вне /static — отдаём сами."""
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+
+    from web.api.advertiser_cabinet import _client_photo_dir
+
+    base = Path(str(name or "")).name  # отсечь path-traversal
+    p = _client_photo_dir(int(client_id)) / base
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="Фото не найдено")
+    return FileResponse(p)
+
+
+@router.post("/moderation/order/{order_ref}/approve")
+async def moderation_order_approve(order_ref: str, db: AsyncSession = Depends(get_db_session)):
+    """Одобрить ВЕСЬ заказ (все pending-строки с этим order_ref) — один клик вместо N.
+
+    Прошедшие даты не переносим: такие строки остаются pending, ответ несёт
+    ``past_date`` — их владелец одобряет по одной с новой датой.
+    """
+    from modules.ad_cabinet import client_orders
+    from modules.vk_token_router import load_vk_routing
+    from web.api.advertiser_cabinet import _msk_to_unix, _real_attachment_builder
+
+    rows = (
+        (
+            await db.execute(
+                select(AdScheduledPost).where(
+                    AdScheduledPost.order_ref == str(order_ref)[:36],
+                    AdScheduledPost.status == "pending",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="В заказе нет постов на одобрении")
+    user_token, _community_tokens = await load_vk_routing()
+    ok = failed = past = 0
+    errors: List[str] = []
+    for row in rows:
+        try:
+            await client_orders.approve_post(
+                db,
+                row,
+                publisher_factory=_cabinet_publisher_factory(db),
+                attachment_builder=_real_attachment_builder(row.client_id, user_token),
+                msk_to_unix=_msk_to_unix,
+            )
+        except client_orders.OrderError:
+            past += 1
+            continue
+        if row.status == "scheduled":
+            ok += 1
+        else:
+            failed += 1
+            if row.error_message:
+                errors.append(row.error_message[:120])
+        log_interaction(
+            db,
+            kind="moderation_approved" if row.status == "scheduled" else "moderation_failed",
+            client_id=row.client_id,
+            scheduled_post_id=row.id,
+            summary=(
+                "Пост клиента одобрен (весь заказ)"
+                if row.status == "scheduled"
+                else f"Одобрение не дошло до VK: {row.error_message}"
+            ),
+        )
+    client_id = rows[0].client_id
+    if ok and client_id:
+        from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+        await vk_notify.notify_client(
+            db, client_id, f"✅ Ваш заказ одобрен: {ok} размещений поставлены в очередь."
+        )
+    await db.commit()
     return {
-        "pending": [
-            {**post.to_dict(), "client": (client.to_dict() if client is not None else None)}
-            for post, client in rows
-        ]
+        "total": len(rows),
+        "approved": ok,
+        "failed": failed,
+        "past_date": past,
+        "errors": errors,
     }
+
+
+@router.post("/moderation/order/{order_ref}/reject")
+async def moderation_order_reject(
+    order_ref: str, payload: RejectIn, db: AsyncSession = Depends(get_db_session)
+):
+    """Отклонить ВЕСЬ заказ с одной причиной (обязательна — клиент должен понять, что править)."""
+    from modules.ad_cabinet import client_orders
+
+    comment = (payload.comment or "").strip()
+    if not comment:
+        raise HTTPException(status_code=400, detail="Укажите причину отказа — она видна клиенту")
+    rows = (
+        (
+            await db.execute(
+                select(AdScheduledPost).where(
+                    AdScheduledPost.order_ref == str(order_ref)[:36],
+                    AdScheduledPost.status == "pending",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="В заказе нет постов на одобрении")
+    for row in rows:
+        await client_orders.reject_post(db, row, comment=comment)
+        log_interaction(
+            db,
+            kind="moderation_rejected",
+            client_id=row.client_id,
+            scheduled_post_id=row.id,
+            summary=f"Пост клиента отклонён (весь заказ): {comment}",
+        )
+    client_id = rows[0].client_id
+    if client_id:
+        from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+        await vk_notify.notify_client(
+            db, client_id, f"🚫 Ваш заказ не принят: {comment} Поправьте и отправьте снова."
+        )
+    await db.commit()
+    return {"total": len(rows), "rejected": len(rows)}
 
 
 @router.post("/moderation/{post_id}/approve")
@@ -2521,9 +2686,12 @@ async def moderation_approve(
 async def moderation_reject(
     post_id: int, payload: RejectIn, db: AsyncSession = Depends(get_db_session)
 ):
-    """Отклонить pending-пост; причина видна клиенту в кабинете."""
+    """Отклонить pending-пост; причина видна клиенту в кабинете и обязательна
+    (аудит 2026-09-05: Escape в prompt отклонял безвозвратно и без объяснения)."""
     from modules.ad_cabinet import client_orders
 
+    if not (payload.comment or "").strip():
+        raise HTTPException(status_code=400, detail="Укажите причину отказа — она видна клиенту")
     row = await db.get(AdScheduledPost, post_id)
     if not row:
         raise HTTPException(status_code=404, detail="post not found")
