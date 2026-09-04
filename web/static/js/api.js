@@ -176,6 +176,26 @@ const apiClient = {
         });
     },
 
+    // Ad cabinet — планировщик предложки (Этап 0): оригинал с подписью + репосты
+    async getSuggestedPlanOptions(communityVkId) {
+        return this.request(`/ad-cabinet/suggested-plan/options?community_vk_id=${encodeURIComponent(communityVkId)}`);
+    },
+
+    async createSuggestedPlan(payload) {
+        return this.request('/ad-cabinet/suggested-plan', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async getSuggestedPlan(params = {}) {
+        const q = new URLSearchParams();
+        if (params.community_vk_id) q.set('community_vk_id', params.community_vk_id);
+        if (params.days) q.set('days', params.days);
+        const qs = q.toString();
+        return this.request(`/ad-cabinet/suggested-plan${qs ? '?' + qs : ''}`);
+    },
+
     // Ad cabinet — CRM (блок C): клиенты / оплаты / публикации
     async getCrmFunnel() {
         return this.request('/ad-crm/funnel');

@@ -228,6 +228,53 @@
         <!-- ================= Вкладка 3: Планировщик и публикации ================= -->
         <div class="tab-pane fade" id="tab-scheduler" role="tabpanel" aria-labelledby="tab-scheduler-btn">
             <div id="scheduler-body">
+                <!-- Планировщик предложки (Этап 0, план 2026-09-05): сам предложенный
+                     пост с подписью автора по расписанию + репост в сообщества-дублёры
+                     в момент выхода оригинала. -->
+                <div class="card border-primary mb-4" id="sp-card">
+                    <div class="card-header bg-primary bg-opacity-10 d-flex flex-wrap align-items-center gap-2">
+                        <strong><i class="bi bi-inbox-fill"></i> Предложка → размещение</strong>
+                        <span class="small text-muted">сам предложенный пост с подписью «Предложил(а): …»
+                            по расписанию + репост в дублёры в то же время</span>
+                        <span class="badge bg-secondary ms-auto" id="sp-mode-badge" title="Режим публикации оригинала (env AD_SUGGESTED_VK_POSTPONE)"></span>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label mb-1">Сообщество-источник</label>
+                                <select class="form-select" id="sp-community" onchange="spLoadOptions()">
+                                    <option value="">— выберите сообщество —</option>
+                                </select>
+                            </div>
+                            <div class="col-md-8">
+                                <label class="form-label mb-1">Дублировать репостом в
+                                    <span class="text-muted small">(соседи отмечены по умолчанию)</span>
+                                    <a href="#" class="small ms-2" onclick="spDupsSet('neighbors');return false;">соседи</a>
+                                    <a href="#" class="small ms-2" onclick="spDupsSet('all');return false;">все</a>
+                                    <a href="#" class="small ms-2" onclick="spDupsSet('none');return false;">никого</a>
+                                </label>
+                                <div id="sp-dups" class="d-flex flex-wrap gap-1 small">
+                                    <span class="text-muted">Сначала выберите сообщество.</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-3" id="sp-list">
+                            <span class="text-muted small">Предложенные посты появятся здесь: отметьте нужные,
+                                поставьте дату и цену.</span>
+                        </div>
+                        <div class="mt-2 d-flex flex-wrap align-items-center gap-2">
+                            <button type="button" class="btn btn-primary" id="sp-submit" onclick="spSubmit()">
+                                <i class="bi bi-calendar-check"></i> Запланировать отмеченные
+                            </button>
+                            <span id="sp-res" class="small"></span>
+                        </div>
+                        <div class="form-text" id="sp-hint">
+                            Цена — за весь заказ (оригинал + дублёры); пусто = минимум за каждое размещение.
+                            Репост уходит только после того, как оригинал реально вышел (±5 мин).
+                        </div>
+                    </div>
+                </div>
+
                 <p class="text-muted small">
                     Соберите пост (текст + картинки) и набейте даты публикации —
                     программа разложит их в «Отложенные записи» VK выбранного сообщества,
@@ -352,6 +399,16 @@
                     </button>
                 </div>
                 <div id="sch-list" class="small"></div>
+
+                <hr>
+
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <strong><i class="bi bi-grid-3x3-gap"></i> Предложка: пост × дата × дублёры</strong>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="spLoadMatrix()">
+                        <i class="bi bi-arrow-clockwise"></i> Обновить
+                    </button>
+                </div>
+                <div id="sp-matrix" class="small"><span class="text-muted">Загрузка…</span></div>
             </div>
         </div>
 

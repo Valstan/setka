@@ -312,6 +312,10 @@ function renderCard(ar) {
                                title="Оформить одной кнопкой: клиент + размещение (цена/срок) + ответ">
                            <i class="bi bi-check2-all"></i> Оформить
                        </button>
+                       <button class="btn btn-sm btn-outline-success" onclick="spOpenFromRequest(${ar.id})"
+                               title="Опубликовать САМ предложенный пост с подписью автора по расписанию + репост в соседей">
+                           <i class="bi bi-people"></i> В планировщик предложки
+                       </button>
                        <button class="btn btn-sm btn-outline-primary" onclick="scheduleFromRequest(${ar.id})">
                            <i class="bi bi-calendar-plus"></i> Запланировать
                        </button>
@@ -741,6 +745,306 @@ async function initScheduler() {
     await loadTargetCommunities();
     if (!document.querySelector('#sch-dates .sch-date-row')) addDateRow();
     await loadSchedule();
+    spInit();
+    spLoadMatrix();
+}
+
+// ─── Планировщик предложки (Этап 0, план 2026-09-05) ────────────────────
+// Оригинал = сам предложенный пост с подписью автора (VK wall.post post_id,
+// signed=1) по расписанию; дублёры = wall.repost оригинала от имени их
+// сообщества в момент его выхода (диспетчер раз в минуту). Цену считает
+// сервер: пол за КАЖДОЕ размещение, пусто = пол × число размещений.
+
+let _spOptions = null;   // ответ /suggested-plan/options для выбранного сообщества
+const _spMode = { vk_postpone: 'VK-отложка', queue: 'очередь SETKA' };
+
+function _spName(gid) {
+    const g = parseInt(gid, 10);
+    return _schCommunityNames[g] || _schCommunityNames[-g] || _schCommunityNames[Math.abs(g)] || String(gid);
+}
+
+function spInit() {
+    const sel = document.getElementById('sp-community');
+    if (!sel) return;
+    const src = document.getElementById('sch-community');
+    // Тот же список сообществ, что у обычного планировщика (регионы с группой).
+    const opts = src ? Array.from(src.options).filter(o => o.value) : [];
+    sel.innerHTML = '<option value="">— выберите сообщество —</option>' +
+        opts.map(o => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.textContent)}</option>`).join('');
+}
+
+function _spSetRes(html, cls) {
+    const el = document.getElementById('sp-res');
+    if (el) el.innerHTML = `<span class="text-${cls || 'muted'}">${html}</span>`;
+}
+
+async function spLoadOptions() {
+    const sel = document.getElementById('sp-community');
+    const list = document.getElementById('sp-list');
+    const dups = document.getElementById('sp-dups');
+    const gid = sel ? parseInt(sel.value, 10) : NaN;
+    if (!gid) {
+        _spOptions = null;
+        if (list) list.innerHTML = '<span class="text-muted small">Сначала выберите сообщество.</span>';
+        if (dups) dups.innerHTML = '';
+        return;
+    }
+    if (list) list.innerHTML = '<span class="text-muted small">Загрузка предложки…</span>';
+    try {
+        _spOptions = await apiClient.getSuggestedPlanOptions(gid);
+    } catch (e) {
+        _spOptions = null;
+        if (list) list.innerHTML = `<span class="text-danger small">Ошибка: ${escapeHtml(e.message)}</span>`;
+        return;
+    }
+    const badge = document.getElementById('sp-mode-badge');
+    if (badge) badge.textContent = _spMode[_spOptions.mode] || _spOptions.mode || '';
+    spRenderDups();
+    spRenderCards();
+}
+
+function spRenderDups() {
+    const box = document.getElementById('sp-dups');
+    if (!box || !_spOptions) return;
+    const cands = _spOptions.dup_candidates || [];
+    if (!cands.length) {
+        box.innerHTML = '<span class="text-muted">Дублировать некуда: других сообществ с группой нет.</span>';
+        return;
+    }
+    box.innerHTML = cands.map(c =>
+        `<label class="form-check form-check-inline border rounded px-2 py-1 m-0 ${c.default ? 'bg-primary bg-opacity-10' : ''}"
+                title="${escapeHtml(c.code)}${c.default ? ' · сосед' : ''}">
+            <input class="form-check-input sp-dup" type="checkbox" value="${c.community_vk_id}"
+                   data-default="${c.default ? 1 : 0}" ${c.default ? 'checked' : ''} onchange="spUpdatePriceHints()">
+            <span class="form-check-label">${escapeHtml(c.name)}</span>
+        </label>`
+    ).join('');
+}
+
+function spDupsSet(mode) {
+    document.querySelectorAll('#sp-dups .sp-dup').forEach(cb => {
+        cb.checked = mode === 'all' ? true : mode === 'none' ? false : cb.dataset.default === '1';
+    });
+    spUpdatePriceHints();
+}
+
+function _spSelectedDups() {
+    return Array.from(document.querySelectorAll('#sp-dups .sp-dup:checked')).map(cb => parseInt(cb.value, 10));
+}
+
+function _spDefaultWhen() {
+    // Завтра 10:00 по МСК как стартовая подсказка; оператор правит руками.
+    const d = new Date(Date.now() + 24 * 3600 * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T10:00`;
+}
+
+function spUpdatePriceHints() {
+    if (!_spOptions) return;
+    const n = 1 + _spSelectedDups().length;
+    const floor = _spOptions.floor_rub || 200;
+    document.querySelectorAll('#sp-list .sp-price').forEach(inp => {
+        inp.placeholder = `мин. ${n}×${floor} = ${n * floor} ₽`;
+    });
+    const hint = document.getElementById('sp-hint');
+    if (hint) hint.innerHTML =
+        `Размещений на пост: <b>${n}</b> (оригинал + ${n - 1} дублёров). ` +
+        `Цена — за весь заказ, пусто = минимум ${n * floor} ₽. ` +
+        'Репост уходит только после того, как оригинал реально вышел (±5 мин).';
+}
+
+function spRenderCards() {
+    const list = document.getElementById('sp-list');
+    if (!list || !_spOptions) return;
+    const reqs = _spOptions.requests || [];
+    if (!reqs.length) {
+        list.innerHTML = '<span class="text-muted small">В предложке этого сообщества нет новых постов ' +
+            '(или они уже обработаны во «Входящих»).</span>';
+        return;
+    }
+    const when = _spDefaultWhen();
+    list.innerHTML = reqs.map(ar => {
+        const photos = (ar.photo_urls_json || []).slice(0, 8).map(u =>
+            `<a href="${escapeHtml(u)}" target="_blank"><img src="${escapeHtml(u)}" style="height:64px;border-radius:6px;margin:2px;" loading="lazy"></a>`
+        ).join('');
+        const author = ar.author_url
+            ? `<a href="${escapeHtml(ar.author_url)}" target="_blank">${escapeHtml(ar.author_name || 'без имени')}</a>`
+            : escapeHtml(ar.author_name || 'без имени');
+        return `
+        <div class="border rounded p-2 mb-2" id="sp-item-${ar.id}">
+            <div class="d-flex flex-wrap align-items-start gap-2">
+                <input type="checkbox" class="form-check-input mt-1 sp-check" id="sp-check-${ar.id}" value="${ar.id}">
+                <div class="flex-grow-1" style="min-width:260px;">
+                    <div><i class="bi bi-person"></i> ${author}
+                        <span class="text-muted small">· <a href="${escapeHtml(ar.vk_post_url || '#')}" target="_blank">пост в предложке</a>
+                        · подпись «Предложил(а): ${escapeHtml(ar.author_name || '')}» сохранится</span></div>
+                    <div class="border rounded p-2 mt-1 bg-light small" style="white-space:pre-wrap;max-height:200px;overflow:auto;">${escapeHtml(ar.text_snapshot || '')}</div>
+                    ${photos ? `<div class="mt-1">${photos}</div>` : ''}
+                </div>
+                <div style="min-width:220px;">
+                    <label class="form-label small mb-0">Выход (МСК)</label>
+                    <input type="datetime-local" class="form-control form-control-sm sp-when" id="sp-when-${ar.id}" value="${when}">
+                    <label class="form-label small mb-0 mt-1">Цена заказа, ₽</label>
+                    <input type="number" min="0" step="1" class="form-control form-control-sm sp-price" id="sp-price-${ar.id}" placeholder="">
+                    <div class="small mt-1" id="sp-res-${ar.id}"></div>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+    spUpdatePriceHints();
+}
+
+async function spOpenFromRequest(id) {
+    const ar = _adRequestsById[id];
+    if (!ar) return;
+    await initScheduler();
+    const tabBtn = document.getElementById('tab-scheduler-btn');
+    if (tabBtn && window.bootstrap) bootstrap.Tab.getOrCreateInstance(tabBtn).show();
+    const sel = document.getElementById('sp-community');
+    if (sel) {
+        const val = String(ar.community_vk_id);
+        const abs = String(Math.abs(ar.community_vk_id));
+        const opt = Array.from(sel.options).find(o => o.value === val || o.value === abs || o.value === '-' + abs);
+        if (opt) sel.value = opt.value;
+        else {
+            const o = document.createElement('option');
+            o.value = val; o.textContent = ar.community_name || val;
+            sel.appendChild(o); sel.value = val;
+        }
+    }
+    await spLoadOptions();
+    const cb = document.getElementById(`sp-check-${id}`);
+    if (cb) cb.checked = true;
+    const card = document.getElementById(`sp-item-${id}`) || document.getElementById('sp-card');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function spSubmit() {
+    if (!_spOptions) { _spSetRes('Сначала выберите сообщество.', 'danger'); return; }
+    const checked = Array.from(document.querySelectorAll('#sp-list .sp-check:checked')).map(cb => parseInt(cb.value, 10));
+    if (!checked.length) { _spSetRes('Отметьте хотя бы один предложенный пост.', 'danger'); return; }
+    const dups = _spSelectedDups();
+    const items = [];
+    for (const id of checked) {
+        const when = (document.getElementById(`sp-when-${id}`) || {}).value;
+        if (!when) { _spSetRes(`Укажите дату выхода для поста #${id}.`, 'danger'); return; }
+        const priceRaw = (document.getElementById(`sp-price-${id}`) || {}).value;
+        items.push({
+            request_id: id,
+            publish_at: when,
+            price: priceRaw ? parseFloat(priceRaw) : null,
+            dup_community_ids: dups,
+        });
+    }
+    const n = 1 + dups.length;
+    if (!confirm(`Запланировать ${items.length} пост(ов) × ${n} размещений?\n` +
+        (_spOptions.mode === 'vk_postpone'
+            ? 'Оригинал уйдёт в VK-отложку с подписью автора; репосты выйдут вслед за ним.'
+            : 'Оригинал опубликует SETKA в назначенное время; репосты — вслед за ним.'))) return;
+    const btn = document.getElementById('sp-submit');
+    if (btn) btn.disabled = true;
+    _spSetRes('Планирую…', 'muted');
+    try {
+        const res = await apiClient.createSuggestedPlan({ community_vk_id: _spOptions.region.community_vk_id, items });
+        let ok = 0;
+        (res.items || []).forEach(it => {
+            const el = document.getElementById(`sp-res-${it.request_id}`);
+            if (it.ok && !it.already) {
+                ok += 1;
+                const reposts = (it.reposts || []).length;
+                if (el) el.innerHTML = `<span class="text-success"><i class="bi bi-check2"></i> запланировано: оригинал + ${reposts} репост(ов), ${it.price_total ? it.price_total + ' ₽' : ''}</span>`;
+                const cb = document.getElementById(`sp-check-${it.request_id}`);
+                if (cb) { cb.checked = false; cb.disabled = true; }
+            } else if (it.already) {
+                if (el) el.innerHTML = '<span class="text-muted">уже запланировано ранее</span>';
+            } else if (el) {
+                el.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle"></i> ${escapeHtml(it.error || 'ошибка')}</span>`;
+            }
+        });
+        _spSetRes(`Готово: ${ok} из ${items.length}.`, ok ? 'success' : 'danger');
+        await spLoadMatrix();
+        await loadSchedule();
+        if (typeof loadAdRequests === 'function') loadAdRequests();
+    } catch (e) {
+        _spSetRes('Ошибка: ' + escapeHtml(e.message), 'danger');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+const SP_REPOST_BADGE = {
+    scheduled: '<span class="badge bg-warning text-dark">ждёт выхода оригинала</span>',
+    published: '<span class="badge bg-success">вышел</span>',
+    failed: '<span class="badge bg-danger">ошибка</span>',
+    cancelled: '<span class="badge bg-dark">отменён</span>',
+};
+
+function _spRepostChip(r) {
+    const name = escapeHtml(_spName(r.community_vk_id));
+    const badge = SP_REPOST_BADGE[r.status] || escapeHtml(r.status);
+    const link = r.vk_post_url && r.status === 'published'
+        ? `<a href="${escapeHtml(r.vk_post_url)}" target="_blank" title="открыть репост"><i class="bi bi-box-arrow-up-right"></i></a>` : '';
+    const attempts = r.attempts ? `<span class="text-muted">· попытка ${r.attempts}</span>` : '';
+    const err = r.error_message ? ` title="${escapeHtml(r.error_message)}"` : '';
+    const cancel = r.status === 'scheduled'
+        ? `<button class="btn btn-link btn-sm p-0 ms-1 text-danger" onclick="spCancel(${r.id}, 'repost')" title="Отменить репост"><i class="bi bi-x"></i></button>` : '';
+    return `<div class="border rounded px-2 py-1"${err}>${name} ${badge} ${link} ${attempts} ${cancel}</div>`;
+}
+
+async function spLoadMatrix() {
+    const box = document.getElementById('sp-matrix');
+    if (!box) return;
+    try {
+        const data = await apiClient.getSuggestedPlan({});
+        const plans = data.plans || [];
+        if (!plans.length) {
+            box.innerHTML = '<span class="text-muted">Планов из предложки пока нет.</span>';
+            return;
+        }
+        box.innerHTML = plans.map(p => {
+            const o = p.original;
+            const name = escapeHtml(_spName(o.community_vk_id));
+            const link = o.vk_post_url
+                ? `<a href="${escapeHtml(o.vk_post_url)}" target="_blank">${name}</a>` : name;
+            const text = (o.text || '').slice(0, 90);
+            const st = SCH_STATUS_BADGE[o.status] || escapeHtml(o.status);
+            const queue = o.status === 'scheduled' && o.next_attempt_at
+                ? '<span class="badge bg-info text-dark">очередь SETKA</span>' : '';
+            const err = o.error_message ? `<div class="text-danger" style="font-size:.85em;">${escapeHtml(o.error_message)}</div>` : '';
+            const cancel = (o.status === 'scheduled' || o.status === 'draft')
+                ? `<button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="spCancel(${o.id}, 'suggested')" title="Отменить оригинал и невышедшие репосты"><i class="bi bi-x"></i></button>` : '';
+            const reposts = (p.reposts || []).map(_spRepostChip).join('');
+            const price = (o.price != null ? Number(o.price) : 0) + (p.reposts || []).reduce((s, r) => s + (r.price != null ? Number(r.price) : 0), 0);
+            return `<div class="border rounded p-2 mb-2">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <span class="text-nowrap"><i class="bi bi-calendar-event"></i> ${_fmtSchedDate(o.publish_date)}</span>
+                    <span><b>${link}</b> ${st} ${queue}</span>
+                    <span class="text-muted">${escapeHtml(text)}${(o.text || '').length > 90 ? '…' : ''}</span>
+                    <span class="ms-auto text-nowrap">${price ? price.toFixed(0) + ' ₽' : ''} ${cancel}</span>
+                </div>
+                ${err}
+                <div class="d-flex flex-wrap gap-1 mt-1">${reposts || '<span class="text-muted">без дублёров</span>'}</div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        box.innerHTML = `<span class="text-danger">Ошибка: ${escapeHtml(e.message)}</span>`;
+    }
+}
+
+async function spCancel(id, kind) {
+    const msg = kind === 'suggested'
+        ? 'Отменить оригинал? В режиме VK-отложки пост уйдёт из «Отложенных» и предложка НЕ восстановится; ' +
+          'все ещё не вышедшие репосты будут отменены.'
+        : 'Отменить этот репост?';
+    if (!confirm(msg)) return;
+    try {
+        const res = await apiClient.cancelScheduledPost(id);
+        if (res.cancel_error) alert('Не отменено: ' + res.cancel_error);
+        await spLoadMatrix();
+        await loadSchedule();
+    } catch (e) {
+        alert('Ошибка отмены: ' + e.message);
+    }
 }
 
 async function loadTargetCommunities() {
@@ -902,6 +1206,12 @@ function renderScheduledRow(r) {
     const cancelBtn = canCancel
         ? `<button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="cancelSchedule(${r.id})" title="Отменить"><i class="bi bi-x"></i></button>`
         : '';
+    // Планировщик предложки: вид строки — оригинал с подписью или репост-дублёр.
+    const kindBadge = r.kind === 'suggested'
+        ? ' <span class="badge bg-info text-dark" title="сам предложенный пост с подписью автора">предложка</span>'
+        : r.kind === 'repost'
+            ? ' <span class="badge bg-light text-dark border" title="репост оригинала после его выхода">репост</span>'
+            : '';
     const err = r.error_message
         ? `<div class="text-danger" style="font-size:.8em;">${escapeHtml(r.error_message)}</div>` : '';
     const expiry = r.expires_at
@@ -909,7 +1219,7 @@ function renderScheduledRow(r) {
         : '';
     return `<tr>
         <td class="text-nowrap">${_fmtSchedDate(r.publish_date)}${expiry}</td>
-        <td>${community}</td>
+        <td>${community}${kindBadge}</td>
         <td>${preview}${err}</td>
         <td>${SCH_STATUS_BADGE[r.status] || escapeHtml(r.status)}</td>
         <td>${cancelBtn}</td>
