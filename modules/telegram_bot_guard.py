@@ -105,9 +105,9 @@ class GuardResult:
 
 def _call(token: str, method: str) -> dict:
     """Вызов Bot API. Сетевую ошибку и ответ API различаем — это разные исходы."""
-    import requests
+    from modules import telegram_http as tg_http
 
-    resp = requests.get(_API.format(token=token, method=method), timeout=_TIMEOUT)
+    resp = tg_http.get(_API.format(token=token, method=method), timeout=_TIMEOUT)
     try:
         payload = resp.json()
     except ValueError:
@@ -275,9 +275,9 @@ def maybe_alert(
             pass
 
     try:
-        import requests
+        from modules import telegram_http as tg_http
 
-        resp = requests.post(
+        resp = tg_http.post(
             _API.format(token=telegram_token, method="sendMessage"),
             json={
                 "chat_id": chat_id,

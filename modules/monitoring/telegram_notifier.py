@@ -6,8 +6,6 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-import httpx
-
 logger = logging.getLogger(__name__)
 
 
@@ -47,18 +45,17 @@ class TelegramNotifier:
             return False
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    f"{self.api_url}/sendMessage",
-                    json={"chat_id": target_chat, "text": text, "parse_mode": parse_mode},
-                )
+            from modules import telegram_http as tg_http
 
-                if response.status_code == 200:
-                    logger.info(f"Message sent to Telegram: {text[:50]}...")
-                    return True
-                else:
-                    logger.error(f"Telegram API error: {response.status_code} - {response.text}")
-                    return False
+            response = await tg_http.apost(
+                f"{self.api_url}/sendMessage",
+                json={"chat_id": target_chat, "text": text, "parse_mode": parse_mode},
+            )
+            if response.status_code == 200:
+                logger.info(f"Message sent to Telegram: {text[:50]}...")
+                return True
+            logger.error(f"Telegram API error: {response.status_code} - {response.text}")
+            return False
 
         except Exception as e:
             logger.error(f"Error sending Telegram message: {e}")

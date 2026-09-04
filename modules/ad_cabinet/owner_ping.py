@@ -160,9 +160,8 @@ def notify_owner(text: str, *, dedup_key: str | None = None, dedup_ttl: int = 36
 
 
 def _send_telegram(text: str) -> bool:
-    import requests
-
     from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+    from modules import telegram_http as tg_http
 
     bot_token: Optional[str] = None
     for key in _BOT_KEYS:
@@ -174,14 +173,13 @@ def _send_telegram(text: str) -> bool:
     if not bot_token or not TELEGRAM_ALERT_CHAT_ID:
         logger.info("owner ping skipped: telegram not configured")
         return False
-    resp = requests.post(
+    resp = tg_http.post(
         f"https://api.telegram.org/bot{bot_token}/sendMessage",
         json={
             "chat_id": TELEGRAM_ALERT_CHAT_ID,
             "text": text,
             "disable_web_page_preview": True,
         },
-        timeout=_SEND_TIMEOUT,
     )
     if not resp.ok:
         logger.warning("owner ping: telegram answered %s", resp.status_code)

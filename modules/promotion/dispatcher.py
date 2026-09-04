@@ -762,9 +762,9 @@ async def maybe_alert_stale_promo(
         message += f"\n🔗 <a href='{dashboard_url}'>Открыть раскрутку</a>"
 
     try:
-        import requests
+        from modules import telegram_http as tg_http
 
-        resp = requests.post(
+        resp = tg_http.post(
             f"https://api.telegram.org/bot{telegram_token}/sendMessage",
             json={
                 "chat_id": chat_id,
@@ -772,7 +772,6 @@ async def maybe_alert_stale_promo(
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
-            timeout=15,
         )
         if resp.status_code != 200:
             logger.warning("stale-promo alert failed: %s %s", resp.status_code, resp.text[:200])

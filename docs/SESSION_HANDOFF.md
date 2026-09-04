@@ -36,24 +36,25 @@ allowlist (`scripts/accept_secret_grants.py`). Мозгу ушло одно пи
    владельцем: кнопка «Выйти из всех сервисов» на `/login` ЕСА. Хук `session_start.sh`
    проверить на второй машине (должен напечатать handoff при старте) → потом укоротить `/start`.
 4. **`/distill`** — 13 коррекций за 14 дней (порог 10), последняя дистилляция 20.08.
-5. Хвосты прошлого handoff: семь аватаров `--repair` первым прогоном суток; замер
-   префикс-кэша конвейера (константа `hit`, база 2048); отчёт мозгу 06.09 по
-   техобслуживанию бокса (`apt-daily.timer` включён 31.08, 167/103).
+5. Хвосты прошлого handoff: семь аватаров `--repair` первым прогоном суток (единственный
+   открытый). ~~Замер префикс-кэша~~ и ~~отчёт по боксу 06.09~~ — закрыты 04.09 (#617, письмо
+   `…box-maintenance-done…`). **Через неделю (~11.09):** доля `ConnectTimeout` Telegram по
+   логам воркера после G307 — ожидание ~1–2% вместо ~25%; строкой мозгу.
 6. ~~Письма-рекомендации мозга 29.08 / 01.09~~ — закрыты 04.09: `ci.yml` без `vars`/`journalctl`
    (молчание честное); ре-аудит D-038 нашёл README и миграции — вычищено (#616), письмо мозгу.
 
 ## Контекст
 
 - **План:** нет активного файла-плана.
-- **Коммиты сессии 04.09:** #613 конвейер Казанской + accept grant'ов + удаление `/obriv`; #614 RP-initiated logout ЕСА + уведомление о передаче имени; #615 аудит инструкций Fable 5.1 + SessionStart-хук + удаление vendor-зеркал; #616 D-038 ре-аудит: README и миграции без FQDN/абсолютных путей.
+- **Коммиты сессии 04.09:** #613 конвейер Казанской + accept grant'ов + удаление `/obriv`; #614 RP-initiated logout ЕСА + уведомление о передаче имени; #615 аудит инструкций Fable 5.1 + SessionStart-хук + удаление vendor-зеркал; #616 D-038 ре-аудит: README и миграции без FQDN/абсолютных путей; #617 Telegram с повторами (G307), замер R29, отчёт по боксу.
 - **Коммиты сессии 01.09:**
   - `c2aef70` (#597) — D-061: grant'ы ДК «Действует», привязка до 33, §0 self-serve переписан, два письма мозгу;
   - `309892e` (#598) — конвейер: правила сайта в префикс-кэш (база «до» conveyor hit=2048/82.5%, headless 6912/84.9%);
   - `11eaf06` (#599) — OIDC-клиент `pozvoni` (public+PKCE, секрета нет), письмо с пятью ответами;
   - `b99d953` (#600) — PWA Радара: манифест маршрутом по хосту, `id=/radar`, `login_url` → ЕСА, sw v7.
-- **Прод:** `setka` / `setka-celery-worker` / `setka-celery-beat` = active, health 200, прод = `main` = `b99d953`.
+- **Прод:** четыре сервиса active, health 200, прод = `main`. Бокс обслужен 04.09: tzdata/`Host` → `Europe/Moscow` (оффсет тот же), 227 пакетов, journald 200M.
 - **Открытых PR:** нет (кроме закрывающего сессию).
-- **Письма мозгу этой сессии:** `2026-09-04-kazanskaya-config-ready-accept-step-built-six-esa-lines`, `2026-09-04-end-session-live-clients-add-one-redirect`, `2026-09-04-instruction-audit-applied-setka`, `2026-09-04-d038-regrep-found-readme-and-migration-notes`.
+- **Письма мозгу этой сессии:** `2026-09-04-kazanskaya-config-ready-accept-step-built-six-esa-lines`, `2026-09-04-end-session-live-clients-add-one-redirect`, `2026-09-04-instruction-audit-applied-setka`, `2026-09-04-d038-regrep-found-readme-and-migration-notes`, `2026-09-04-box-maintenance-done-tzdata-was-the-root-telegram-retries-built-r29-step2-measured`.
 - **Письма мозгу этой сессии:** `2026-09-01-d061-done-two-grants-live-binding-33-…`,
   `2026-09-01-r29-verified-native-path-and-three-checks-answered`,
   `2026-09-01-pozvoni-oidc-client-registered-public-pkce-…`.
