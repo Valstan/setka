@@ -183,6 +183,14 @@ def test_oidc_authorize_still_401_for_non_get(client):
 # ─── Роли ────────────────────────────────────────────────────────
 
 
+def test_oidc_logout_is_public_for_guests(client):
+    """RP-initiated logout: гость без куки тоже должен пройти, а не уехать на /login."""
+    r = client.get("/oidc/logout", follow_redirects=False)
+    assert r.status_code != 401 and not (
+        r.status_code in (302, 303, 307) and "/login?next=" in r.headers.get("location", "")
+    )
+
+
 def test_operator_reaches_operator_zone(client):
     client.cookies.update(_cookie_for(OPERATOR))
     assert client.get("/api/regions").status_code == 200

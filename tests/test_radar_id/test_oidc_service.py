@@ -218,3 +218,41 @@ def test_discovery_document_shape(rsa_key_env):
     assert doc["jwks_uri"] == f"{iss}/.well-known/jwks.json"
     assert doc["code_challenge_methods_supported"] == ["S256"]
     assert doc["id_token_signing_alg_values_supported"] == ["RS256"]
+
+
+# ───────── RP-initiated logout ─────────
+
+
+def test_discovery_advertises_end_session(rsa_key_env):
+    doc = service.discovery_document()
+    assert doc["end_session_endpoint"] == f"{doc['issuer']}/oidc/logout"
+
+
+@pytest.mark.asyncio
+async def test_post_logout_redirect_allowed_by_origin_only(db_session):
+    """Возврат после выхода — в зону клиента (origin redirect_uri), путь любой; чужой хост — нет."""
+    client, _ = await _seed(db_session)
+    assert service.post_logout_redirect_allowed(client, "https://client.test/")
+    assert service.post_logout_redirect_allowed(client, "https://CLIENT.test/bye?x=1")
+    assert not service.post_logout_redirect_allowed(client, "https://evil.test/")
+    assert not service.post_logout_redirect_allowed(client, "https://client.test:8443/")
+    assert not service.post_logout_redirect_allowed(client, "javascript:alert(1)")
+    assert not service.post_logout_redirect_allowed(client, "")
+    assert not service.post_logout_redirect_allowed(None, "https://client.test/")
+
+
+@pytest.mark.asyncio
+async def test_client_id_from_id_token_hint_ignores_expiry_but_checks_signature(
+    db_session, rsa_key_env
+):
+    client, user = await _seed(db_session)
+    code = await _issue_code(db_session, client, user)
+    bundle = await service.exchange_code(
+        db_session, client=client, raw_code=code, redirect_uri=REDIRECT, code_verifier=VERIFIER
+    )
+    assert service.client_id_from_id_token_hint(bundle.id_token) == "trener"
+    # Испорченная подпись — подсказки нет, а не чужой client_id.
+    tampered = bundle.id_token[:-4] + ("AAAA" if not bundle.id_token.endswith("AAAA") else "BBBB")
+    assert service.client_id_from_id_token_hint(tampered) is None
+    assert service.client_id_from_id_token_hint(None) is None
+    assert service.client_id_from_id_token_hint("not-a-jwt") is None

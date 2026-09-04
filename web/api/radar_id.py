@@ -6,7 +6,10 @@
 - ``GET /oidc/authorize`` — вход в code-flow; требует сессию RadarUser
   (AuthGate отправит на /login?next=... с сохранением query);
 - ``POST /oidc/token`` — обмен кода / refresh (public, своя client-auth);
-- ``GET /oidc/userinfo`` — claims по Bearer access-токену (public).
+- ``GET /oidc/userinfo`` — claims по Bearer access-токену (public);
+- ``GET|POST /oidc/logout`` — RP-initiated logout: гасит сессию ЕСА и, если
+  клиент назван (``client_id`` или ``id_token_hint``) и адрес в его зоне,
+  возвращает на ``post_logout_redirect_uri`` (public: гость тоже «выходит»).
 
 Consent: клиенты Радар-ID регистрируются вручную оператором и все —
 first-party экосистемы (ADR-0002 §8), поэтому согласие неявное
@@ -36,6 +39,7 @@ from modules.radar_id.keys import get_public_jwks
 from modules.radar_id.service import OidcError
 
 logger = logging.getLogger(__name__)
+_audit = logging.getLogger("radar_id.audit")
 
 router = APIRouter()
 
@@ -320,6 +324,92 @@ async def vk_callback(
 # ---------------------------------------------------------------------------
 # Userinfo
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# RP-initiated logout
+# ---------------------------------------------------------------------------
+
+
+async def _end_session(
+    request: Request,
+    *,
+    post_logout_redirect_uri: Optional[str],
+    client_id: Optional[str],
+    id_token_hint: Optional[str],
+    state: Optional[str],
+):
+    """Погасить куку ЕСА и увести человека туда, откуда он вышел.
+
+    Кука одна на весь ``.вмалмыже.рф`` (см. web/api/auth.py::_cookie_domain), так
+    что это выход **из всех сервисов сразу** — ровно то, чего не давал локальный
+    logout сайта. Возврат к клиенту — только в его зону; иначе своя страница
+    входа с пометкой, а не 4xx в лицо человеку.
+    """
+    from modules.radar.auth import SESSION_COOKIE
+    from web.api.auth import _cookie_domain
+
+    _check_enabled()
+    _enforce_ip_rate(request, "logout")
+
+    cid = (client_id or "").strip() or service.client_id_from_id_token_hint(id_token_hint)
+    target = None
+    if cid and post_logout_redirect_uri:
+        async with AsyncSessionLocal() as session:
+            client = await service.get_client(session, cid)
+        if service.post_logout_redirect_allowed(client, post_logout_redirect_uri):
+            target = post_logout_redirect_uri
+            if state:
+                sep = "&" if "?" in target else "?"
+                target = f"{target}{sep}{urlencode({'state': state})}"
+        else:
+            logger.warning(
+                "radar-id: logout client=%s post_logout_redirect_uri вне зоны клиента — на /login",
+                cid,
+            )
+    resp = RedirectResponse(target or "/login?logged_out=1", status_code=302)
+    resp.delete_cookie(SESSION_COOKIE, domain=_cookie_domain())
+    _audit.info(
+        "logout client=%s returned=%s user=%s",
+        cid or "-",
+        "client" if target else "login",
+        getattr(getattr(request.state, "user", None), "id", "-"),
+    )
+    return resp
+
+
+@router.get("/oidc/logout")
+async def end_session_get(
+    request: Request,
+    post_logout_redirect_uri: Optional[str] = None,
+    client_id: Optional[str] = None,
+    id_token_hint: Optional[str] = None,
+    state: Optional[str] = None,
+):
+    return await _end_session(
+        request,
+        post_logout_redirect_uri=post_logout_redirect_uri,
+        client_id=client_id,
+        id_token_hint=id_token_hint,
+        state=state,
+    )
+
+
+@router.post("/oidc/logout")
+async def end_session_post(
+    request: Request,
+    post_logout_redirect_uri: Optional[str] = Form(None),
+    client_id: Optional[str] = Form(None),
+    id_token_hint: Optional[str] = Form(None),
+    state: Optional[str] = Form(None),
+):
+    return await _end_session(
+        request,
+        post_logout_redirect_uri=post_logout_redirect_uri,
+        client_id=client_id,
+        id_token_hint=id_token_hint,
+        state=state,
+    )
 
 
 @router.get("/oidc/userinfo")
