@@ -65,7 +65,7 @@ from web.api import (  # noqa: E402
     task_monitoring,
 )
 from web.api import templates as templates_api  # noqa: E402
-from web.api import test_workflow, theme_quotas, token_management, vk_monitoring  # noqa: E402
+from web.api import theme_quotas, token_management, vk_monitoring  # noqa: E402
 from web.static_files import RevalidatingStaticFiles  # noqa: E402
 
 # Setup logging
@@ -182,7 +182,6 @@ app.include_router(scheduler.router, prefix="/api/scheduler", tags=["Smart Sched
 app.include_router(vk_monitoring.router, prefix="/api/vk", tags=["VK Monitoring"])
 app.include_router(token_management.router, prefix="/api/tokens", tags=["Token Management"])
 app.include_router(service_notifications.router, tags=["Service Notifications"])
-app.include_router(test_workflow.router, tags=["Test Workflow"])
 app.include_router(schedule_management.router, tags=["Schedule Management"])
 app.include_router(system_monitoring.router, tags=["System Monitoring"])
 app.include_router(task_monitoring.router, tags=["Task Monitoring"])

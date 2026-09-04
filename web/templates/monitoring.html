@@ -214,42 +214,6 @@
         </div>
     </div>
 
-    <!-- Ручное управление -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card border-warning">
-                <div class="card-header bg-warning bg-opacity-10">
-                    <h5 class="mb-0">🎛️ Ручное управление</h5>
-                </div>
-                <div class="card-body">
-                    <div class="row g-2 align-items-end">
-                        <div class="col-md-5">
-                            <label class="form-label small mb-1" for="control-region-select">Регион для скана</label>
-                            <select id="control-region-select" class="form-select form-select-sm">
-                                <option value="">— загрузка регионов —</option>
-                            </select>
-                        </div>
-                        <div class="col-md-3">
-                            <button id="control-scan-btn" class="btn btn-sm btn-primary w-100" onclick="controlScanRegion()">
-                                <i class="bi bi-play-fill"></i> Запустить скан
-                            </button>
-                        </div>
-                        <div class="col-md-4">
-                            <button id="control-stop-btn" class="btn btn-sm btn-outline-danger w-100" onclick="controlStopWorkflow()">
-                                <i class="bi bi-stop-fill"></i> Остановить workflow
-                            </button>
-                        </div>
-                    </div>
-                    <div class="small text-muted mt-2">
-                        <i class="bi bi-info-circle"></i>
-                        Скан запускает реальный workflow региона в фоне (как beat-волна, вне расписания).
-                        Остановка сбрасывает флаг выполнения и ставит систему на паузу. Оба действия требуют подтверждения.
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Regions Status -->
     <div class="row mb-4">
         <div class="col-12">
@@ -575,38 +539,6 @@ async function loadLiveness() {
     }
 }
 
-function controlScanRegion() {
-    const sel = document.getElementById('control-region-select');
-    const code = sel ? sel.value : '';
-    if (!code) { showError('Сначала выберите регион'); return; }
-    if (!confirm('Запустить реальный workflow региона "' + code + '" сейчас?\n'
-        + 'Он соберёт и опубликует сводки вне расписания.')) return;
-    const btn = document.getElementById('control-scan-btn');
-    btn.disabled = true;
-    fetch('/api/test-workflow/scan-region/' + encodeURIComponent(code), { method: 'POST' })
-        .then(r => r.json())
-        .then(j => {
-            if (j.success) showSuccess(j.message || 'Скан запущен');
-            else showError(j.detail || j.error || 'Не удалось запустить скан');
-        })
-        .catch(e => showError('Ошибка: ' + e.message))
-        .finally(() => { btn.disabled = false; });
-}
-
-function controlStopWorkflow() {
-    if (!confirm('Остановить текущий workflow и поставить систему на паузу?')) return;
-    const btn = document.getElementById('control-stop-btn');
-    btn.disabled = true;
-    fetch('/api/test-workflow/stop', { method: 'POST' })
-        .then(r => r.json())
-        .then(j => {
-            if (j.success) showSuccess(j.message || 'Workflow остановлен');
-            else showError(j.detail || j.error || 'Не удалось остановить');
-        })
-        .catch(e => showError('Ошибка: ' + e.message))
-        .finally(() => { btn.disabled = false; });
-}
-
 async function loadAllMonitoringData() {
     try {
         console.log('Loading all monitoring data...');
@@ -867,17 +799,6 @@ function updateRegionsStatus(regionsData) {
         return;
     }
 
-    // Заполняем select ручного управления списком регионов (сохраняем выбор)
-    const ctrlSel = document.getElementById('control-region-select');
-    if (ctrlSel) {
-        const cur = ctrlSel.value;
-        ctrlSel.innerHTML = '<option value="">— выберите регион —</option>'
-            + regionsData.regions.map(r =>
-                `<option value="${_esc(r.code)}">${_esc(r.name)} (${_esc(r.code)})</option>`
-            ).join('');
-        if (cur) ctrlSel.value = cur;
-    }
-    
     container.innerHTML = `
         <div class="row mb-3">
             <div class="col-md-6">

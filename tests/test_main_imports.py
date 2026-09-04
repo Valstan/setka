@@ -33,7 +33,6 @@ def test_all_api_routers_importable():
         "web.api.vk_monitoring",
         "web.api.token_management",
         "web.api.service_notifications",
-        "web.api.test_workflow",
         "web.api.schedule_management",
         "web.api.system_monitoring",
         "web.api.task_monitoring",
