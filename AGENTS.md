@@ -145,7 +145,7 @@ Brain-мандат [#027](../brain_matrica/cross-project-ideas/ideas/027-gate-re
 - Не переключай ветку в рабочем дереве, которое может использовать другой агент.
 - Объявляй границы файлов/задачи в описании PR. Если границы пересекаются — второй агент ждёт merge первого и ребейзит свою ветку до начала правок.
 - Один PR решает одну задачу. Коммиты — Conventional Commits.
-- После обрыва сначала восстанавливай фактическое состояние из Git/PR, не повторяй действия по памяти (памятка [`obriv`](.claude/commands/obriv.md)).
+- После обрыва сначала восстанавливай фактическое состояние из Git/PR и `SESSION_HANDOFF`, не повторяй действия по памяти (отдельной команды для этого нет — решение владельца D-066, 2026-09-02).
 
 **Межмодельная память — только артефакты** ([ADR-0011](../brain_matrica/adr/0011-vendor-neutral-agent-contract.md) §Decision п.5): Git/PR, [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md), `mailbox/`, ADR. **Чат одной модели не является источником истины для другой** — что обсуждалось в другой сессии, существует ровно настолько, насколько записано в файл. Долговечные решения живут в документации/ADR, состояние незавершённой работы — в `SESSION_HANDOFF`, история — в коммитах и PR.
 
@@ -153,7 +153,7 @@ Brain-мандат [#027](../brain_matrica/cross-project-ideas/ideas/027-gate-re
 
 ## Исполняемые памятки процедур
 
-В [`.claude/commands/*.md`](.claude/commands/) лежат подробные исполняемые памятки. **Несмотря на имя каталога, их workflow применим к любому агенту** ([ADR-0011](../brain_matrica/adr/0011-vendor-neutral-agent-contract.md) §Decision п.6): агент со slash-командами вызывает `/start`, агент без такого механизма открывает `.claude/commands/start.md` и выполняет шаги. Vendor-нейтральные порты двух памяток лежат в `.agents/skills/source-command-{obriv,reliz}/SKILL.md`.
+В [`.claude/commands/*.md`](.claude/commands/) лежат подробные исполняемые памятки. **Несмотря на имя каталога, их workflow применим к любому агенту** ([ADR-0011](../brain_matrica/adr/0011-vendor-neutral-agent-contract.md) §Decision п.6): агент со slash-командами вызывает `/start`, агент без такого механизма открывает `.claude/commands/start.md` и выполняет шаги. Vendor-нейтральный порт памятки релиза лежит в `.agents/skills/source-command-reliz/SKILL.md`.
 
 **Как читать памятку, если ты не Claude Code.** Она написана на языке этого инструмента — это способ исполнения, а не условие применимости:
 
@@ -170,7 +170,6 @@ Brain-мандат [#027](../brain_matrica/cross-project-ideas/ideas/027-gate-re
 | [`sql`](.claude/commands/sql.md) | psql на проде с обязательным подтверждением для DML. |
 | [`reliz`](.claude/commands/reliz.md) | Релиз: PENDING (если нужно) → commit с описанием → push → PR с полным телом → prod pull → миграции → restart → проверки. |
 | [`close_session`](.claude/commands/close_session.md) | **Единственная процедура закрытия сессии.** Закоммитить+запушить ВСЁ (код+доки) на GitHub через PR, обновить SESSION_HANDOFF.md + PENDING, sync-гейт «всё ли на origin». Триггерится и фразами «закрой сессию [разработки]», «заверши сессию». |
-| [`obriv`](.claude/commands/obriv.md) | Восстановление после обрыва связи: реконструировать состояние из git/PR (ground truth), проверить целостность записанных файлов, реконсилировать последнее действие, перепроверить гейты (black/isort/flake8 + pytest), продолжить нить — **не переделывая сделанное**. Кросс-проектный мандат brain (pool #021). |
 | [`distill`](.claude/commands/distill.md) | Дистилляция Корпуса классификатора в правила файла-корректировщика (из чата). |
 | [`deadcode`](.claude/commands/deadcode.md) | Ежемесячный гигиенический прогон dead-code (#036). |
 | [`discover_communities`](.claude/commands/discover_communities.md) | Подбор и нейро-классификация VK-сообществ в пул региона. |

@@ -38,13 +38,19 @@ curl -s -u "<client_id>:<client_secret>" -X POST "$ESA/oidc/token" \
   -d grant_type=authorization_code -d code=<code> \
   -d redirect_uri=<тот же uri>
 # → {"access_token":"…","id_token":"…","refresh_token":"…"}
+#
+# 3'. Public-клиент (PKCE, секрета нет — например «ПОЗВОНИ»): без -u,
+#     client_id и code_verifier — в теле; на шаге 2 добавить
+#     &code_challenge=<S256(verifier)>&code_challenge_method=S256
+curl -s -X POST "$ESA/oidc/token"   -d grant_type=authorization_code -d client_id=<ваш> -d code=<code>   -d redirect_uri=<тот же uri> -d code_verifier=<verifier>
 
 # 4. Claims по access-токену
 curl -s -H "Authorization: Bearer <access_token>" "$ESA/oidc/userinfo"
 ```
 
 Контракт эндпоинтов машинно-читаем: `GET /.well-known/openid-configuration`
-(и `/.well-known/jwks.json` для офлайн-валидации `id_token`) — оба публичные,
+(и `/.well-known/jwks.json` для офлайн-валидации `id_token` — **единственный** путь JWKS,
+на него указывает `jwks_uri` discovery; `/oidc/jwks` не существует и отдаёт 401 гейта) — оба публичные,
 их можно дёрнуть прямо сейчас, без всякой регистрации.
 
 Consent-экрана в Ф1 нет: клиенты — first-party экосистемы, согласие неявное
@@ -58,7 +64,8 @@ Consent-экрана в Ф1 нет: клиенты — first-party экосис�
 | Проверка | Результат | Что означает |
 |---|---|---|
 | `GET /.well-known/openid-configuration` | `200` | discovery живой |
-| `GET /oidc/authorize` без сессии | `302 → /login?next=…` | гейт по **сессии**, не по VK |
+| `GET /oidc/authorize` без сессии | `302 → /login?next=…` | гейт по **сессии**, не по VK. **Описание, не проверка:** гейт срабатывает раньше валидации клиента — несуществующий `client_id`, пустой, кривой `redirect_uri` дают тот же `302` (замер ТАКСИ 03.09) |
+| `POST /oidc/token` с `client_id` и заведомо неверным `code` | `400 invalid_grant` («unknown authorization code») | **клиент заведён**; `401 invalid_client` — не заведён. Один curl без аккаунта, с честным негативом. `redirect_uri` этот путь не доказывает — код ищется раньше сверки адреса |
 | `POST /api/auth/login` (неверные) | `401` | парольный путь есть и работает |
 | `POST /api/auth/register` | `403 «Регистрация отключена»` | **самореги нет** |
 

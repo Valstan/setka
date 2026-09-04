@@ -659,6 +659,52 @@ env-переменными, которые указывают на community_id 
 
 ## ⏳ В процессе
 
+### 🎪 Казанская — второй приёмник конвейера: конфиг готов, ждёт grant'а; шаг accept стоит (mandate brain 2026-09-02/03, D-015 + D-061)
+
+`⏱ 2026-09-04 · snooze 0 · parked · условие расконсервации: письмо мозга «grant выдан» / первый pending в комнате setka`
+
+**Сделано 04.09 (PR этой сессии):** сайт `kazanskaya` в `config/content_conveyor.py`
+(endpoint `казанская.вмалмыже.рф/api/ingest/posts`, ключ `KAZANSKAYA_INGEST_KEY`, рубрики
+`festival·prep·crafts·culture·history·other`), правила `rules/kazanskaya.md`, новое поле
+`source_owner_ids` — из сводок `mi` берутся только посты РЦКД (`-217788511`, «ДК Малмыжа»).
+Паблика «Сабантуй — Казанская» в пуле сбора нет — попросить id у Казанской через мозг.
+Приём входящих выдач: `scripts/accept_secret_grants.py` + `modules/secrets_grants.py`
+(allowlist `KAZANSKAYA_INGEST_KEY ← kazanskayamalmyzh`; поля `aliasKey`/`sourceSlug`/`state`
+сверены с кодом КАРМАНа read-only; 12 тестов). Отчёт мозгу:
+`mailbox/to-brain/2026-09-04-kazanskaya-config-ready-accept-step-built-six-esa-lines.md`.
+
+**Что дальше, по письму мозга:**
+1. Прогнать на боксе `accept_secret_grants.py --list` → `--dry-run` → без флагов
+   (под `setka.env` + `secrets-token.env`, форма из handoff §Failed approaches).
+2. Рестарт worker'а (bootstrap довезёт ключ), `CONVEYOR_SITES=vmalmyzhe,kazanskaya` в env.
+3. Сначала dry-run раннера по `kazanskaya` — показать мозгу, что поедет первым.
+4. Отчёт: «accept стоит, ключ принят, конфиг включён».
+
+**Ловушки:** `KAZANSKAYA` в `gateway_keys` — ключ ПОТРЕБИТЕЛЯ (их сайт → наш шлюз), а
+`KAZANSKAYA_INGEST_KEY` — ключ ПРИЁМНИКА (мы → их сайт); разные значения. У КАРМАНа
+свой ключ комнаты с тем же именем заслоняет grant (`shadowed`) — если accept даст 409
+«имя занято», смотреть `GET /api/secrets` на своё значение.
+
+### 🔐 ЕСА — три обещания мозгу от 04.09: уведомление о передаче `name`/`email`, RP-initiated logout, ответ на аудит инструкций
+
+`⏱ 2026-09-04 · snooze 0 · fresh · обещано письмом 04.09, срок — следующая сессия`
+
+1. **Уведомление на странице входа** (`web/templates/login.html`): «сервисам экосистемы
+   передаются имя и e-mail из вашего аккаунта» + ссылка на `/services`. Согласие на `name`
+   сегодня текстом не покрыто (ADR-0002 §8 — consent неявный, first-party). Без миграций.
+2. **`end_session_endpoint`** в discovery + `GET/POST /oidc/logout?post_logout_redirect_uri=…`
+   (гасит куку `.вмалмыже.рф`, редирект только на зарегистрированный у клиента origin) +
+   кнопка «Выйти из всех сервисов» на `вход.вмалмыже.рф` для уже вошедшего. Владелец
+   03.09 увидел, что выход на сайте не выход из ЕСА. После выката — письмо мозгу, чтобы
+   портал и ТАКСИ дописали редирект в свой «Выйти».
+3. **Аудит инструкций под Fable 5.1** (письмо мозга 02.09, recommend): High-пункты —
+   «репо private/открыт», `reliz.md` без вопросов вне #025, пины Opus, `/home/` и FQDN в
+   девяти памятках; Medium — пин «159 тестов», ссылки на memory, потолки длины. Тег
+   `pre-fable-freeze-2026-09-02` перед правками; ответ письмом
+   `…-instruction-audit-applied-setka.md`. Туда же — SessionStart-хук с печатью handoff
+   (D-066 §2) и укорочение `/start`.
+
+
 ### 📋 Список кабинетов клиентов с номером — сделан; ВК-бот-дублёр кабинета — план (заказ владельца 2026-09-02)
 
 `⏱ 2026-09-02 · snooze 0 · fresh · список принят; бот живой на проде (демон setka-vk-bot, районы кнопками); этап 3 — фото из ВК`

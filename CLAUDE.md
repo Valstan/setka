@@ -10,7 +10,7 @@
 
 - Исполняемые памятки процедур — [`.claude/commands/`](.claude/commands/), вызываются
   как slash-команды (`/start`, `/reliz`, `/close_session`, `/check`, `/celery`, `/logs`,
-  `/sql`, `/obriv`, `/distill`, `/deadcode`, `/discover_communities`, `/curate`).
+  `/sql`, `/distill`, `/deadcode`, `/discover_communities`, `/curate`).
 - Командная политика разрешений и SessionStart-хук git-sync — [`.claude/settings.json`](.claude/settings.json).
   Файл общий, коммитится и разъезжается на все машины владельца.
 - Локальные разрешения конкретного компьютера — только в игнорируемом

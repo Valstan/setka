@@ -99,3 +99,39 @@ class TestKeysAndLimits:
     def test_batch_max_bounds(self, monkeypatch, raw, expected):
         monkeypatch.setenv("CONVEYOR_BATCH_MAX", raw)
         assert cc.get_batch_max() == expected
+
+
+class TestKazanskaya:
+    """Второй приёмник (mandate brain 2026-09-02): тематический сайт, свой ключ, свои паблики."""
+
+    def test_site_is_described_but_not_active_by_default(self):
+        site = cc.get_site("kazanskaya")
+        assert site is not None
+        assert cc.get_active_sites() == []
+
+    def test_ingest_key_is_receiver_side_name(self):
+        assert cc.get_site("kazanskaya")["key_env"] == "KAZANSKAYA_INGEST_KEY"
+
+    def test_sections_match_receiver_contract(self):
+        assert cc.get_site("kazanskaya")["sections"] == (
+            "festival",
+            "prep",
+            "crafts",
+            "culture",
+            "history",
+            "other",
+        )
+
+    def test_source_is_rckd_public_in_malmyzh(self):
+        site = cc.get_site("kazanskaya")
+        assert site["source_region"] == "mi"
+        assert 217788511 in site["source_owner_ids"]
+
+    def test_owner_ids_are_ints_everywhere(self):
+        for s in cc.SITES:
+            for x in s.get("source_owner_ids") or ():
+                assert isinstance(x, int), s["key"]
+
+    def test_both_sites_can_be_active_together(self, monkeypatch):
+        monkeypatch.setenv("CONVEYOR_SITES", "vmalmyzhe,kazanskaya")
+        assert [s["key"] for s in cc.get_active_sites()] == ["vmalmyzhe", "kazanskaya"]
