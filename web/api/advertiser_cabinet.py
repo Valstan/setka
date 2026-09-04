@@ -458,6 +458,17 @@ async def get_photo(name: str, request: Request, db: AsyncSession = Depends(get_
 async def delete_photo(name: str, request: Request, db: AsyncSession = Depends(get_db_session)):
     _user, client = await _current_client(request, db)
     base = Path(str(name or "")).name
+    # Файл ещё нужен активному посту (аудит 2026-09-05): иначе при одобрении
+    # пост ушёл бы без картинок, а теперь — упал бы в failed.
+    used_by = await photo_in_use(db, client.id, base)
+    if used_by is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Фото используется в посте №{used_by}, который ещё не вышел — "
+                "сначала отмените пост"
+            ),
+        )
     p = _client_photo_dir(client.id) / base
     if p.is_file():
         p.unlink()
@@ -487,16 +498,29 @@ def _real_publisher_factory(db):
     return factory
 
 
+class AttachmentError(RuntimeError):
+    """Фото поста не собрать: пост НЕ должен уйти текстом молча (аудит 2026-09-05).
+
+    Раньше пропавший файл или сбой заливки давали ``[]``, и оплаченный пост с
+    картинками выходил голым текстом без следа в журнале. Теперь ``_send_one``
+    ловит исключение → строка ``failed`` с причиной, слот возвращается в пакет,
+    владелец видит ошибку в очереди/списке.
+    """
+
+
 def _real_attachment_builder(client_id: int, user_token):
     """Заливка клиентских фото на стену группы (owner-specific, на каждую свою)."""
 
     def build(gid: int, image_names) -> List[str]:
-        if not image_names or not user_token:
+        if not image_names:
             return []
+        if not user_token:
+            raise AttachmentError("нет user-токена для заливки фото на стену")
         wanted = {Path(n).name for n in image_names}
         paths = [p for p in _client_photo_paths(client_id) if p.name in wanted]
-        if not paths:
-            return []
+        missing = wanted - {p.name for p in paths}
+        if missing:
+            raise AttachmentError(f"фото не найдены на диске: {', '.join(sorted(missing))}")
         try:
             import vk_api
 
@@ -504,12 +528,39 @@ def _real_attachment_builder(client_id: int, user_token):
 
             api = vk_api.VkApi(token=user_token).get_api()
             images = [p.read_bytes() for p in paths[:MAX_PHOTOS_PER_POST]]
-            return upload_wall_images(api, images, group_id=gid)
-        except Exception as e:  # noqa: BLE001 - пост уйдёт текстом
-            logger.warning("client photo wall upload failed: %s", e)
-            return []
+            out = upload_wall_images(api, images, group_id=gid)
+        except AttachmentError:
+            raise
+        except Exception as e:  # noqa: BLE001 — но не молча
+            raise AttachmentError(f"заливка фото в VK не удалась: {e}") from e
+        if not out:
+            raise AttachmentError("VK не вернул ни одного вложения для фото")
+        return out
 
     return build
+
+
+async def photo_in_use(session, client_id: int, name: str) -> Optional[int]:
+    """id активного (pending/scheduled) поста клиента, который ссылается на файл."""
+    from modules.ad_cabinet.client_orders import ACTIVE_STATUSES
+
+    rows = (
+        (
+            await session.execute(
+                select(AdScheduledPost.id, AdScheduledPost.image_names).where(
+                    AdScheduledPost.client_id == int(client_id),
+                    AdScheduledPost.status.in_(ACTIVE_STATUSES),
+                )
+            )
+        )
+        .tuples()
+        .all()
+    )
+    base = Path(str(name or "")).name
+    for pid, names in rows:
+        if base in {Path(str(n)).name for n in (names or [])}:
+            return int(pid)
+    return None
 
 
 def _parse_publish_at(raw: Optional[str]) -> Optional[datetime]:

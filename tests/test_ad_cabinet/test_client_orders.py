@@ -346,19 +346,24 @@ async def test_approve_is_idempotent(db_session):
 
 
 @pytest.mark.asyncio
-async def test_approve_reanchors_past_date(db_session):
-    """Дата, прошедшая за время модерации, переносится в ближайшее будущее."""
+async def test_approve_past_date_is_not_reanchored_silently(db_session):
+    """Дата, прошедшая за время модерации, НЕ переносится молча (аудит 2026-09-05):
+    без новой даты — OrderError, с новой — выход ровно в неё."""
     client = await _seed_client(db_session)
     post = await _pending_post(db_session, client, publish_date=MSK_NOW - timedelta(hours=2))
-    await client_orders.approve_post(
-        db_session,
-        post,
-        publisher_factory=_factory(FakePublisher()),
+    pub = FakePublisher()
+    kwargs = dict(
+        publisher_factory=_factory(pub),
         attachment_builder=_no_attachments,
         msk_to_unix=_msk_to_unix,
         now=MSK_NOW,
     )
-    assert post.publish_date == MSK_NOW + client_orders.PUBLISH_NOW_DELAY
+    with pytest.raises(client_orders.OrderError):
+        await client_orders.approve_post(db_session, post, **kwargs)
+    assert pub.calls == [] and post.status == "pending"
+    new_at = MSK_NOW + timedelta(hours=5)
+    await client_orders.approve_post(db_session, post, new_publish_at=new_at, **kwargs)
+    assert post.publish_date == new_at and post.status == "scheduled"
 
 
 @pytest.mark.asyncio

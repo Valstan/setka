@@ -1850,11 +1850,21 @@ async function loadModerationQueue() {
     refreshCabinetsBadge();
 }
 
-async function moderationApprove(postId) {
+async function moderationApprove(postId, publishAt) {
     try {
-        const res = await apiClient.request(`/ad-crm/moderation/${postId}/approve`, { method: 'POST' });
+        const body = publishAt ? JSON.stringify({ publish_at: publishAt }) : undefined;
+        const res = await apiClient.request(`/ad-crm/moderation/${postId}/approve`, { method: 'POST', body });
         if (res.status === 'failed') alert('VK не принял пост: ' + (res.error_message || ''));
-    } catch (e) { alert(e.message); }
+    } catch (e) {
+        // 409: дата выхода прошла — спросить новую (аудит 2026-09-05: раньше пост
+        // молча уходил «через три минуты»).
+        if (!publishAt && /прошла|в будущем/.test(e.message || '')) {
+            const when = prompt('Дата выхода уже прошла. Новая дата и время (МСК), напр. 2026-09-12T10:00:', '');
+            if (when) return moderationApprove(postId, when.trim());
+        } else {
+            alert(e.message);
+        }
+    }
     loadModerationQueue();
 }
 

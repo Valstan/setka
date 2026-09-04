@@ -954,6 +954,22 @@ def dispatch_ad_reposts():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.watch_ad_pending")
+def watch_ad_pending():
+    """Сторож pending-постов с прошедшей датой (аудит 2026-09-05): пометка,
+    пинг владельцу (дедуп сутки на пост), одно уведомление клиенту."""
+    try:
+        from modules.ad_cabinet.pending_watch import run_pending_watch
+
+        result = run_coro(run_pending_watch())
+        if result.get("marked"):
+            logger.info("ad pending watch: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"watch_ad_pending failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.check_ad_repost_heartbeat")
 def check_ad_repost_heartbeat():
     """Watchdog планировщика предложки: алёрт, если просроченные строки не взяты."""
@@ -1819,6 +1835,12 @@ app.conf.beat_schedule = {
         "task": "tasks.celery_app.dispatch_ad_reposts",
         "schedule": crontab(minute="*"),
         "options": {"expires": 55, "catchup": False},
+    },
+    # Сторож pending-постов с прошедшей датой (аудит 2026-09-05): раз в час :05, 8–23 МСК.
+    "ad-pending-watch": {
+        "task": "tasks.celery_app.watch_ad_pending",
+        "schedule": crontab(minute=5, hour="8-23"),
+        "options": {"expires": 1800, "catchup": False},
     },
     # Watchdog планировщика предложки: раз в час на :27, алёрт только если
     # есть просроченные строки, которые диспетчер не взял.
