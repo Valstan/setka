@@ -741,17 +741,22 @@ def distill_classifier_rules(limit: int = 200, days: int = 30):
     ИИ-фильтра. Предложения ложатся как ``proposed`` и ждут оператора в ленте —
     автоприменения здесь нет и не будет (ADR-0005).
 
-    Гейт тот же, что у ИИ-фильтра (``CLASSIFIER_HEADLESS_ENABLED``): пока
-    дистилляция делается вручную из чата по памятке ``/distill``, две ветки
-    предлагали бы правила по одному и тому же сырью.
+    Гейт — свой собственный ``CLASSIFIER_DISTILL_ENABLED``, по умолчанию выключен:
+    пока правила чеканит ручная дистилляция из чата по памятке ``/distill``, две
+    ветки предлагали бы правила по одному и тому же сырью.
+
+    До 2026-09-04 здесь стоял ``CLASSIFIER_HEADLESS_ENABLED`` — флаг ИИ-фильтра
+    потока, который на проде поднят. Условие читалось как развод веток, а работало
+    как «всегда включено»: выключить дистилляцию, не выключив фильтр, было нельзя.
+    Панель за неделю набрала 8 черновиков, каждый — пересказ утверждённого правила.
     """
     try:
-        from config.classifier import classifier_disabled, headless_enabled
+        from config.classifier import classifier_disabled, distill_enabled
 
         if classifier_disabled():
             return {"status": "skipped:classifier-disabled"}
-        if not headless_enabled():
-            return {"status": "skipped:headless-off"}
+        if not distill_enabled():
+            return {"status": "skipped:distill-off"}
 
         from modules.classifier import distill as distill_mod
         from modules.classifier import rules
