@@ -223,32 +223,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# Global rate limiter instance for VK API
-vk_rate_limiter = RateLimiter(requests_per_minute=3)  # VK has strict limits
-
-
-async def check_vk_rate_limit(token_name: str) -> bool:
-    """
-    Check if VK API call is allowed for given token
-
-    VK API has limit of 3 requests per second
-
-    Args:
-        token_name: Name of VK token (e.g., 'VALSTAN')
-
-    Returns:
-        True if allowed, raises HTTPException if not
-    """
-    is_allowed, info = await vk_rate_limiter.is_allowed(f"vk_token:{token_name}")
-
-    if not is_allowed:
-        retry_after = info.get("retry_after", 1)
-        raise HTTPException(
-            status_code=429,
-            detail=f"VK API rate limit exceeded. Retry after {retry_after} seconds.",
-        )
-
-    return True
+# Ограничитель ЧТЕНИЯ VK живёт не здесь, а в modules/vk_monitor/rate_limiter.py
+# (Redis/threading-реализации на общий интервал). Здешняя пара
+# `vk_rate_limiter` + `check_vk_rate_limit` осталась от первой версии, ни разу
+# не была подключена и снята 2026-09-04 прогоном /deadcode.
 
 
 if __name__ == "__main__":

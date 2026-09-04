@@ -82,21 +82,6 @@ def is_work_hours_moscow(start_hour: int = 7, end_hour: int = 22, region_name: s
     return start_hour <= current_hour <= end_hour
 
 
-def is_work_hours_for_region(region_name: str, start_hour: int = 7, end_hour: int = 22) -> bool:
-    """
-    Check if current time is within work hours for specific region
-
-    Args:
-        region_name: Region name
-        start_hour: Work start hour (default 7)
-        end_hour: Work end hour (default 22)
-
-    Returns:
-        True if within work hours for this region
-    """
-    return is_work_hours_moscow(start_hour, end_hour, region_name)
-
-
 def format_moscow_time(dt: Optional[datetime] = None) -> str:
     """
     Format datetime in Moscow timezone

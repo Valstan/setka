@@ -77,12 +77,6 @@ class ClassifierVerdict(BaseModel):
         return out
 
 
-class VerdictBatch(BaseModel):
-    """Пакет вердиктов, который POST'ит облачная рутина."""
-
-    verdicts: List[ClassifierVerdict]
-
-
 def parse_verdict_loose(raw: object) -> Optional[ClassifierVerdict]:
     """Толерантный разбор одного вердикта: чинить, что чинится, не роняя батч.
 

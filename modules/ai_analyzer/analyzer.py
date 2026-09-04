@@ -13,7 +13,6 @@ AI Post Analyzer - analyzes VK posts for relevance and categorization.
 ``modules/deepseek_client.py``, а не воскрешать Groq-клиент.
 """
 
-import asyncio
 import logging
 import time
 from datetime import datetime
@@ -22,7 +21,6 @@ from typing import Any, Dict, Optional
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.connection import AsyncSessionLocal
 from database.models import Filter, Post
 from modules.ai_analyzer.sentiment_analyzer import SentimentAnalyzer
 
@@ -269,59 +267,7 @@ class PostAnalyzer:
 
         return min(total, 100)
 
-    async def analyze_new_posts(self, limit: int = 50) -> Dict[str, int]:
-        """
-        Analyze all new posts in database
-
-        Args:
-            limit: Maximum number of posts to analyze
-
-        Returns:
-            Statistics
-        """
-        async with AsyncSessionLocal() as session:
-            # Get new posts
-            result = await session.execute(
-                select(Post).where(Post.ai_analyzed.is_(False)).limit(limit)
-            )
-            posts = result.scalars().all()
-
-            if not posts:
-                logger.info("No new posts to analyze")
-                return {"analyzed": 0}
-
-            logger.info(f"Analyzing {len(posts)} posts...")
-
-            analyzed_count = 0
-            approved_count = 0
-            rejected_count = 0
-
-            for post in posts:
-                try:
-                    await self.analyze_post(post, session)
-
-                    if post.status == "approved":
-                        approved_count += 1
-                    elif post.status == "rejected":
-                        rejected_count += 1
-
-                    analyzed_count += 1
-
-                    # Small delay to avoid rate limits
-                    await asyncio.sleep(0.1)
-
-                except Exception as e:
-                    logger.error(f"Error analyzing post {post.id}: {e}")
-
-            await session.commit()
-
-            logger.info(
-                f"Analysis complete: {analyzed_count} posts, "
-                f"{approved_count} approved, {rejected_count} rejected"
-            )
-
-            return {
-                "analyzed": analyzed_count,
-                "approved": approved_count,
-                "rejected": rejected_count,
-            }
+    # Метод analyze_new_posts снят 2026-09-04 прогоном /deadcode: звавшие его
+    # tasks/analysis_tasks.py (убран вместе с Groq, D-024) и correct_workflow
+    # удалены, потребителя не осталось. Разметку потока ведёт HITL-классификатор
+    # (modules/classifier), а не этот анализатор.
