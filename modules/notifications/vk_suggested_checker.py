@@ -15,7 +15,7 @@ VK API:
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from vk_api.exceptions import ApiError
 
@@ -96,13 +96,18 @@ class VKSuggestedChecker(BaseVKChecker):
         def call(api):
             return api.wall.get(owner_id=group_id, filter="suggests", count=100, extended=1)
 
+        # Сканеру нужно отличать «предложка пуста» от «VK не ответил»: по пустому
+        # списку он помечает исчезнувшие заявки, а по ошибке — не имеет права.
+        self.last_fetch_error: Optional[str] = None
         try:
             result, via = self._call_with_fallback(group_id, "wall.get(suggests,extended)", call)
         except ApiError as e:
             logger.warning(f"fetch_suggested_posts group {group_id}: {e}")
+            self.last_fetch_error = str(e)
             return []
         except Exception as e:
             logger.error(f"fetch_suggested_posts group {group_id}: {e}")
+            self.last_fetch_error = str(e)
             return []
 
         items = result.get("items", []) or []

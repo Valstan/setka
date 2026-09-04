@@ -1716,11 +1716,13 @@ let _ownerChatTimer = null;
 
 async function refreshCabinetsBadge() {
     try {
-        const data = await apiClient.request('/ad-crm/moderation');
+        // Лёгкий счётчик вместо полной очереди с текстами (аудит 2026-09-05).
+        const data = await apiClient.request('/ad-crm/moderation/count');
         const badge = document.getElementById('cabinets-badge');
         if (!badge) return;
-        const n = (data.pending || []).length;
+        const n = Number(data.pending || 0) + Number(data.unread || 0) + Number(data.claimed || 0);
         badge.textContent = n;
+        badge.title = `на одобрении ${data.pending || 0} · непрочитанных ${data.unread || 0} · заявили оплату ${data.claimed || 0}`;
         badge.classList.toggle('d-none', n === 0);
     } catch (e) { /* бейдж не критичен */ }
 }
@@ -1730,6 +1732,7 @@ function initCabinets() {
     loadModerationQueue();
     loadCabinetActivity();
     loadChatThreads();
+    startCabinetsPolling();
 }
 
 // ---------------------- Список кабинетов (заказ владельца 2026-09-02) --------
@@ -1818,36 +1821,122 @@ async function loadCabinetActivity() {
     }
 }
 
+// Очередь модерации (аудит 2026-09-05): владелец одобрял вслепую — без фото, с
+// текстом до 500 символов, район цифрой, заказ на N районов = N карточек.
+// Теперь: группировка по заказу (order_ref), полный текст, фото, названия
+// районов, «в счёт пакета», кнопки на весь заказ, автообновление раз в минуту.
+function _modPrice(p) {
+    if (p.package_id) return 'в счёт пакета';
+    if (p.price == null) return 'без цены';
+    return Number(p.price).toFixed(0) + ' ₽';
+}
+
+function _modPostRow(p) {
+    const photos = (p.photo_urls || []).map(u =>
+        `<a href="${escapeHtml(u)}" target="_blank"><img src="${escapeHtml(u)}" style="height:72px;border-radius:6px;margin:2px;" loading="lazy"></a>`
+    ).join('');
+    const err = p.error_message ? `<div class="text-danger small">${escapeHtml(p.error_message)}</div>` : '';
+    return `
+        <div class="border-top pt-1 mt-1">
+            <div class="d-flex justify-content-between align-items-center small">
+                <div><i class="bi bi-geo-alt"></i> <b>${escapeHtml(p.region_name || ('район ' + (p.region_id ?? '—')))}</b>
+                    · выход ${escapeHtml((p.publish_date || '').replace('T', ' ').slice(0, 16))} МСК · ${_modPrice(p)}</div>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-success py-0" onclick="moderationApprove(${p.id})" title="Одобрить только этот район">✓</button>
+                    <button class="btn btn-outline-danger py-0" onclick="moderationReject(${p.id})" title="Отклонить только этот район">✕</button>
+                </div>
+            </div>
+            ${err}
+        </div>`;
+}
+
 async function loadModerationQueue() {
     const box = document.getElementById('moderation-list');
-    box.innerHTML = '<div class="text-muted small">Загрузка…</div>';
+    if (!box) return;
+    if (!box.dataset.loaded) box.innerHTML = '<div class="text-muted small">Загрузка…</div>';
     try {
         const data = await apiClient.request('/ad-crm/moderation');
-        const items = (data.pending || []).map((p) => `
+        const pending = data.pending || [];
+        // Группировка по заказу: один текст/фото — много районов.
+        const groups = new Map();
+        pending.forEach(p => {
+            const key = p.order_ref || ('single-' + p.id);
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(p);
+        });
+        const cards = Array.from(groups.entries()).map(([key, posts]) => {
+            const first = posts[0];
+            const total = posts.reduce((s, p) => s + (p.package_id ? 0 : Number(p.price || 0)), 0);
+            const anyPkg = posts.some(p => p.package_id);
+            const clientName = first.client ? (first.client.name || ('Кабинет №' + first.client_id))
+                : (first.client_id ? ('Кабинет №' + first.client_id) : '<span class="text-danger">клиент удалён</span>');
+            const clientLink = first.client_id ? `<a href="/cabinet?as_client=${first.client_id}" target="_blank">${clientName}</a>` : clientName;
+            const photos = (first.photo_urls || []).map(u =>
+                `<a href="${escapeHtml(u)}" target="_blank"><img src="${escapeHtml(u)}" style="height:96px;border-radius:6px;margin:2px;" loading="lazy"></a>`
+            ).join('');
+            const orderBtns = posts.length > 1 && first.order_ref ? `
+                <button class="btn btn-success btn-sm" onclick="moderationOrder('${escapeHtml(first.order_ref)}', 'approve')">
+                    <i class="bi bi-check2-all"></i> Одобрить весь заказ (${posts.length})
+                </button>
+                <button class="btn btn-outline-danger btn-sm" onclick="moderationOrder('${escapeHtml(first.order_ref)}', 'reject')">
+                    Отклонить весь заказ
+                </button>` : `
+                <button class="btn btn-success btn-sm" onclick="moderationApprove(${first.id})"><i class="bi bi-check-lg"></i> Одобрить</button>
+                <button class="btn btn-outline-danger btn-sm" onclick="moderationReject(${first.id})">Отклонить</button>`;
+            return `
             <div class="card"><div class="card-body py-2">
-                <div class="d-flex justify-content-between align-items-center mb-1">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-1">
                     <div class="small">
-                        <b>${escapeHtml(p.client?.name || ('Клиент #' + p.client_id))}</b>
-                        · район ${p.region_id ?? '—'} · выход ${escapeHtml((p.publish_date || '').replace('T', ' ').slice(0, 16))} МСК
-                        · ${p.price != null ? p.price + ' ₽' : 'без цены'}
+                        <b>${clientLink}</b>
+                        · ${posts.length} ${posts.length === 1 ? 'район' : 'районов'}
+                        · ${anyPkg ? 'в счёт пакета' : total.toFixed(0) + ' ₽'}
+                        ${first.client && first.client.trusted ? '<span class="badge bg-info text-dark">trusted</span>' : ''}
                     </div>
-                    <div class="btn-group btn-group-sm">
-                        <button class="btn btn-success" onclick="moderationApprove(${p.id})">
-                            <i class="bi bi-check-lg"></i> Одобрить
-                        </button>
-                        <button class="btn btn-outline-danger" onclick="moderationReject(${p.id})">
-                            Отклонить
-                        </button>
-                    </div>
+                    <div class="btn-group btn-group-sm">${orderBtns}</div>
                 </div>
-                <div class="small" style="white-space: pre-wrap;">${escapeHtml((p.text || '').slice(0, 500))}</div>
-            </div></div>`);
-        box.innerHTML = items.length ? items.join('')
+                <div class="small border rounded p-2 bg-light" style="white-space: pre-wrap; max-height: 320px; overflow: auto;">${escapeHtml(first.text || '')}${!(first.text || '').trim() ? '<i class="text-muted">без текста — только фото</i>' : ''}</div>
+                ${photos ? `<div class="mt-1">${photos}</div>` : ((first.image_names || []).length ? '<div class="text-danger small mt-1">фото заявлены, но файлов нет</div>' : '')}
+                ${posts.length > 1 ? posts.map(_modPostRow).join('') : ''}
+            </div></div>`;
+        });
+        box.innerHTML = cards.length ? cards.join('')
             : '<div class="text-muted small">Постов на одобрении нет.</div>';
+        box.dataset.loaded = '1';
     } catch (e) {
         box.innerHTML = `<div class="text-danger small">${escapeHtml(e.message)}</div>`;
     }
     refreshCabinetsBadge();
+}
+
+async function moderationOrder(orderRef, action) {
+    let comment = '';
+    if (action === 'reject') {
+        comment = (prompt('Причина отказа для всего заказа (видна клиенту, обязательна):') || '').trim();
+        if (!comment) { alert('Без причины не отклоняем — клиент должен понять, что править.'); return; }
+    }
+    try {
+        const res = await apiClient.request(`/ad-crm/moderation/order/${encodeURIComponent(orderRef)}/${action}`, {
+            method: 'POST',
+            body: JSON.stringify({ comment }),
+        });
+        if (res.failed) alert(`VK не принял ${res.failed} из ${res.total}: ` + (res.errors || []).join('; '));
+        if (res.past_date) alert('У части постов дата выхода прошла — одобрите их по одному с новой датой.');
+    } catch (e) { alert(e.message); }
+    loadModerationQueue();
+}
+
+let _cabinetsPoll = null;
+function startCabinetsPolling() {
+    if (_cabinetsPoll) return;
+    // Раз в минуту, только когда вкладка на экране: очередь, бейдж и список
+    // кабинетов (аудит 2026-09-05: раньше всё обновлялось только по F5).
+    _cabinetsPoll = setInterval(() => {
+        if (document.hidden) return;
+        const tab = document.getElementById('tab-cabinets');
+        if (tab && !tab.classList.contains('active')) return;
+        loadModerationQueue();
+        loadCabinetList();
+    }, 60000);
 }
 
 async function moderationApprove(postId, publishAt) {
@@ -1869,7 +1958,8 @@ async function moderationApprove(postId, publishAt) {
 }
 
 async function moderationReject(postId) {
-    const comment = prompt('Причина отказа (видна клиенту):') || '';
+    const comment = (prompt('Причина отказа (видна клиенту, обязательна):') || '').trim();
+    if (!comment) { alert('Без причины не отклоняем — клиент должен понять, что править.'); return; }
     try {
         await apiClient.request(`/ad-crm/moderation/${postId}/reject`, {
             method: 'POST',
