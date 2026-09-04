@@ -19,6 +19,8 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    func,
+    literal_column,
     text,
 )
 from sqlalchemy.orm import relationship
@@ -793,6 +795,22 @@ class AdScheduledPost(Base):
             sqlite_where=text("kind = 'suggested' AND status IN ('scheduled', 'published')"),
         ),
         Index("ix_ad_sched_due", "kind", "status", "next_attempt_at"),
+        # Анти-спам «один рекламный пост клиента в одно сообщество в календарный
+        # день МСК» держится БД, а не только чтением в busy_days (миграция 096,
+        # аудит 2026-09-05: двойной сабмит проходил мимо проверки).
+        Index(
+            "uq_ad_sched_client_day_slot",
+            "client_id",
+            "community_vk_id",
+            func.date(literal_column("publish_date")),
+            unique=True,
+            postgresql_where=text(
+                "client_id IS NOT NULL AND status IN ('pending', 'scheduled', 'published')"
+            ),
+            sqlite_where=text(
+                "client_id IS NOT NULL AND status IN ('pending', 'scheduled', 'published')"
+            ),
+        ),
     )
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
@@ -948,6 +966,10 @@ class AdClient(Base):
     # Модерация новых клиентов (решение владельца 2026-08-25): не-trusted
     # публикует через одобрение; после N одобренных постов — trusted.
     trusted = Column(Boolean, nullable=False, default=False)
+    # Архив вместо удаления (миграция 096, аудит 2026-09-05): DELETE каскадом
+    # стирал оплаты, пакеты и чат, а осиротевшие отложки выходили бесплатно.
+    # Архивный клиент скрыт из списков, но история денег и постов цела.
+    is_archived = Column(Boolean, nullable=False, default=False)
     approved_posts_count = Column(SmallInteger, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -981,6 +1003,7 @@ class AdClient(Base):
             "postal_address": self.postal_address,
             "radar_user_id": self.radar_user_id,
             "trusted": bool(self.trusted),
+            "is_archived": bool(self.is_archived),
             "approved_posts_count": self.approved_posts_count or 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
@@ -991,6 +1014,17 @@ class AdPayment(Base):
     """Оплата от клиента-рекламодателя (блок C, CRM). Миграция 027."""
 
     __tablename__ = "ad_payments"
+    # Один awaiting-платёж на одну отложку (миграция 096): параллельный прогон
+    # реконсилера не выставит второй счёт за тот же пост.
+    __table_args__ = (
+        Index(
+            "uq_ad_payments_awaiting_per_post",
+            "scheduled_post_id",
+            unique=True,
+            postgresql_where=text("scheduled_post_id IS NOT NULL AND status = 'awaiting'"),
+            sqlite_where=text("scheduled_post_id IS NOT NULL AND status = 'awaiting'"),
+        ),
+    )
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     client_id = Column(
@@ -1106,6 +1140,17 @@ class AdPublication(Base):
     """Реально вышедшая рекламная публикация (блок C, CRM). Миграция 027."""
 
     __tablename__ = "ad_publications"
+    # Одна публикация на одну отложку (миграция 096): дубли от параллельного
+    # реконсилера ловит БД, а не «идемпотентность в рамках одного прогона».
+    __table_args__ = (
+        Index(
+            "uq_ad_publications_per_post",
+            "scheduled_post_id",
+            unique=True,
+            postgresql_where=text("scheduled_post_id IS NOT NULL"),
+            sqlite_where=text("scheduled_post_id IS NOT NULL"),
+        ),
+    )
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     client_id = Column(

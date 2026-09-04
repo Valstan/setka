@@ -251,12 +251,14 @@ def test_schedule_window():
 async def test_active_posts_limit(db_session):
     ids = await _seed_regions(db_session, 1)
     client = await _seed_client(db_session)
-    for _ in range(client_orders.MAX_ACTIVE_POSTS):
+    # По одному посту в день: уникум «1 пост клиента в сообщество в день» (096)
+    # не даст насыпать 30 постов на одну дату — лимит активных проверяем честно.
+    for i in range(client_orders.MAX_ACTIVE_POSTS):
         db_session.add(
             AdScheduledPost(
                 community_vk_id=-100,
                 text="x",
-                publish_date=MSK_NOW,
+                publish_date=MSK_NOW + timedelta(days=i),
                 status="pending",
                 client_id=client.id,
             )
@@ -303,7 +305,10 @@ async def test_approve_sends_to_vk_and_counts_trust(db_session):
     pub = FakePublisher()
 
     for i in range(client_orders.TRUST_AFTER_POSTS):
-        post = await _pending_post(db_session, client)
+        # Разные дни: уникум «1 пост клиента в сообщество в день» (096).
+        post = await _pending_post(
+            db_session, client, publish_date=MSK_NOW + timedelta(days=i + 1, hours=1)
+        )
         await client_orders.approve_post(
             db_session,
             post,

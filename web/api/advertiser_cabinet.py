@@ -651,7 +651,14 @@ async def cancel_post(post_id: int, request: Request, db: AsyncSession = Depends
     не меняем, клиент видит реальное состояние).
     """
     _user, client = await _current_client(request, db)
-    row = await db.get(AdScheduledPost, post_id)
+    # FOR UPDATE: реконсилер в этот момент может фиксировать выход этой же строки
+    # (аудит 2026-09-05) — без блокировки отмена снимала уже вышедший пост со
+    # стены, оставляя AdPublication и awaiting-платёж. На sqlite — no-op.
+    row = (
+        await db.execute(
+            select(AdScheduledPost).where(AdScheduledPost.id == post_id).with_for_update()
+        )
+    ).scalar_one_or_none()
     if not row or row.client_id != client.id:
         raise HTTPException(status_code=404, detail="Пост не найден")
     # failed тоже терминален: он УЖЕ возвращён в пакет при сбое отправки —

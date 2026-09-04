@@ -229,7 +229,7 @@ async def test_cancel_repost_without_vk_post_does_not_touch_vk(monkeypatch):
     monkeypatch.setattr(vpe.VKPublisher, "create_with_policy", AsyncMock(return_value=pub))
     row = _row(id=7, kind="repost", source_post_id=1, vk_postponed_post_id=None)
     db = _db()
-    db.get = AsyncMock(return_value=row)
+    db.execute = AsyncMock(return_value=_scalar_one(row))
     out = await api.cancel_scheduled(7, db=db)
     pub.delete_post.assert_not_awaited()
     assert out["status"] == "cancelled" and out["cancelled_reposts"] == 0
@@ -244,8 +244,7 @@ async def test_cancel_queue_mode_original_keeps_suggested_post_and_cascades(monk
     )
     child = _row(id=2, kind="repost", source_post_id=1, vk_postponed_post_id=None)
     db = _db()
-    db.get = AsyncMock(return_value=row)
-    db.execute = AsyncMock(return_value=_scalars_all([child]))
+    db.execute = AsyncMock(side_effect=[_scalar_one(row), _scalars_all([child])])
     out = await api.cancel_scheduled(1, db=db)
     pub.delete_post.assert_not_awaited()  # предложенный пост остаётся в предложке
     assert out["cancelled_reposts"] == 1 and child.status == "cancelled"
@@ -257,8 +256,7 @@ async def test_cancel_vk_postponed_original_deletes_from_vk(monkeypatch):
     monkeypatch.setattr(vpe.VKPublisher, "create_with_policy", AsyncMock(return_value=pub))
     row = _row(id=1, kind="suggested", vk_postponed_post_id=99001, next_attempt_at=None)
     db = _db()
-    db.get = AsyncMock(return_value=row)
-    db.execute = AsyncMock(return_value=_scalars_all([]))
+    db.execute = AsyncMock(side_effect=[_scalar_one(row), _scalars_all([])])
     await api.cancel_scheduled(1, db=db)
     pub.delete_post.assert_awaited_once_with(-158787639, 99001)
 
@@ -269,7 +267,7 @@ async def test_cancel_published_row_is_refused(monkeypatch):
     monkeypatch.setattr(vpe.VKPublisher, "create_with_policy", AsyncMock(return_value=pub))
     row = _row(id=3, status="published")
     db = _db()
-    db.get = AsyncMock(return_value=row)
+    db.execute = AsyncMock(return_value=_scalar_one(row))
     out = await api.cancel_scheduled(3, db=db)
     pub.delete_post.assert_not_awaited()
     assert out["status"] == "published" and "cancel_error" in out
