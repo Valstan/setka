@@ -23,13 +23,7 @@ git log --oneline -5                        # последние коммиты
 
 ## Шаг 1. Качественные ворота
 
-`AskUserQuestion`: «Прогнать тесты и pre-commit перед коммитом?» Опции:
-- «Да, всё» — pytest + pre-commit
-- «Только pytest»
-- «Только pre-commit»
-- «Пропустить» (если правка тривиальная: docs / комментарии)
-
-Соответственно:
+Гейты безусловны (канон `AGENTS.md` §Автономия под гейтами) — без вопроса и без варианта «пропустить»:
 
 ```bash
 .\venv\Scripts\python.exe -m pytest tests/ -q 2>&1 | tail -15
@@ -55,7 +49,7 @@ pre-commit run --all-files 2>&1 | tail -30
 Как применять на проде (миграция? restart? pip install -e .? ничего?).
 Какие хвосты остаются — ссылка на PENDING_FOLLOWUPS.
 
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+Co-Authored-By: <агент и его фактическая версия> <noreply@anthropic.com>
 ```
 
 2. **`docs/PENDING_FOLLOWUPS.md`**: `Read`, и если что-то из закрываемой задачи висело в ⏳/🟡/🟢 — `Edit` убрать (или пометить `~~strikethrough~~` с пометкой «закрыто в PR #N»). Если в процессе вылезли новые техдолги — `Edit` добавить.
@@ -73,7 +67,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 git checkout -b <type>/<slug>   # feat/, fix/, chore/, docs/, refactor/
 ```
 
-`AskUserQuestion` — попросить короткое сообщение коммита (или предложить своё на основе `git diff --stat`). Conventional-commits prefix:
+Сообщение коммита составить самому по `git diff --stat` и содержанию правки (описательное, без вопроса пользователю). Conventional-commits prefix:
 
 - `feat(scope):` — новая фича
 - `fix(scope):` — баг-фикс
@@ -153,18 +147,14 @@ Merge-стратегия по умолчанию `--squash` (для коротк
 
 Прод упал, нужно зафиксить в течение часа? Допустим direct push в `main` ([ADR-0002 §8](../../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md)), **но обязательный follow-up PR постфактум** с описанием инцидента (для audit trail). Спросить пользователя через `AskUserQuestion`: «Это hot-fix аварии прода? (иначе — через PR)».
 
-`AskUserQuestion`: «Продолжаем деплой на прод сейчас?» — варианты:
-- «Да, выкатываем»
-- «Стоп, посижу подумаю» — выйти; пользователь продолжит позже вручную или через повтор `/reliz`
+## Шаг 5. Прод-доступ
 
-## Шаг 5. Прод-доступ — подтверждение
-
-`AskUserQuestion`: «Открыть SSH-доступ к `setka` на этот деплой?» — нужно один раз для всех последующих ssh-команд в этом флоу.
+Деплой не-схемных правок идёт без вопроса (канон). SSH-подтверждение — только если его требует фильтр инструмента на этой машине; это удобство, не гейт.
 
 ## Шаг 6. Прод: pull кода
 
 ```bash
-ssh sarafan "cd /home/valstan/SETKA && git fetch --all && git log --oneline HEAD..origin/main 2>&1 | head -10"
+ssh sarafan "cd ~/SETKA && git fetch --all && git log --oneline HEAD..origin/main 2>&1 | head -10"
 ```
 
 Показать пользователю diff. Если есть конфликты или нет fast-forward — стоп, разобраться вручную.
@@ -172,7 +162,7 @@ ssh sarafan "cd /home/valstan/SETKA && git fetch --all && git log --oneline HEAD
 Если всё чисто:
 
 ```bash
-ssh sarafan "cd /home/valstan/SETKA && git pull --ff-only origin main && git log --oneline -3"
+ssh sarafan "cd ~/SETKA && git pull --ff-only origin main && git log --oneline -3"
 ```
 
 ## Шаг 7. Миграции БД (если есть)
@@ -191,33 +181,27 @@ git log --since=<previous-prod-commit> --name-only --diff-filter=A -- 'database/
 2. `AskUserQuestion`: «Применить миграцию <NNN_file.sql> на прод?» с опциями «да / dry-run / отмена».
 3. При «да» — через `/sql migrate <file>` или эквивалентно:
    ```bash
-   ssh sarafan 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/<file>'
+   ssh sarafan 'sudo -u postgres psql -d setka -f ~/SETKA/database/migrations/<file>'
    ```
 4. Зафиксировать факт применения в commit message следующего коммита (если ещё не указали).
 
 Если в pull притянулся `requirements.txt` — тогда:
 
 ```bash
-ssh sarafan "cd /home/valstan/SETKA && source venv/bin/activate && pip install -r requirements.txt 2>&1 | tail -10"
+ssh sarafan "cd ~/SETKA && source venv/bin/activate && pip install -r requirements.txt 2>&1 | tail -10"
 ```
 
-Если в pull притянулся `pyproject.toml` (либо это первый деплой с editable install после 2026-05-24, либо `pyproject.toml` изменён — посмотри `git diff --name-only HEAD~1 HEAD -- pyproject.toml`) — переустановить editable пакет:
+Если в pull притянулся `pyproject.toml` (`git diff --name-only HEAD~1 HEAD -- pyproject.toml`) — переустановить editable пакет:
 
 ```bash
-ssh sarafan "cd /home/valstan/SETKA && source venv/bin/activate && pip install -e . 2>&1 | tail -5"
+ssh sarafan "cd ~/SETKA && source venv/bin/activate && pip install -e . 2>&1 | tail -5"
 ```
 
-Это регистрирует `setka` как editable-пакет в venv, чтобы `from modules.X import Y` работало из любой папки без `sys.path.insert` (см. PR #28 от 2026-05-24, `gh pr view 28`). Прод-systemd-сервисы продолжают использовать `PYTHONPATH=/home/valstan/SETKA`, ничего там менять не нужно.
+Это регистрирует `setka` как editable-пакет в venv, чтобы `from modules.X import Y` работало из любой папки без `sys.path.insert`. Прод-systemd-сервисы используют `PYTHONPATH=~/SETKA`, ничего там менять не нужно.
 
 ## Шаг 8. Restart сервисов
 
-`AskUserQuestion`: «Перезапускаем `setka setka-celery-worker setka-celery-beat`?» — варианты:
-- «Да, всё три»
-- «Только setka» (если правка только в FastAPI)
-- «Только celery-worker» (если правка только в tasks)
-- «Никаких рестартов» (например, если изменены только тесты/доки)
-
-Если «да»:
+Рестарт — без вопроса, по составу правки: `setka` (web/шаблоны/middleware), `setka-celery-worker` (tasks/modules), `setka-celery-beat` (расписание), `setka-vk-bot` (бот). Только тесты/доки — рестартов нет.
 
 ```bash
 ssh sarafan "sudo systemctl restart <services> && sleep 4 && systemctl is-active <services>"
@@ -225,11 +209,10 @@ ssh sarafan "sudo systemctl restart <services> && sleep 4 && systemctl is-active
 
 После рестарта **дождаться готовности web поллингом**, а не одиночным curl —
 на тонком VPS (1 ядро / 1.5 ГБ) при рестарте нескольких сервисов uvicorn
-встаёт >5с, и одиночный `curl` ловит `000` (ложный фейл деплоя; инцидент
-2026-06-07 — цикл 6× зря рестартил прод). Если рестартили `setka` (web):
+встаёт >5с, и одиночный `curl` ловит `000` — ложный фейл деплоя. Если рестартили `setka` (web):
 
 ```bash
-ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 90 --interval 3"
+ssh sarafan "cd ~/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 90 --interval 3"
 ```
 
 Exit 0 — web поднялся (health 200). Exit 1 — не поднялся за 90с: **тогда**
@@ -243,13 +226,10 @@ Exit 0 — web поднялся (health 200). Exit 1 — не поднялся �
 (PR #122): ставит diagnostics-задачу эталонного региона и опрашивает по `task_id`.
 
 Пропускать, если деплой был **без рестарта worker/beat** (только docs / web-статика /
-тесты) — тогда пайплайн не затронут. `AskUserQuestion`: «Прогнать smoke-test пайплайна
-(dry-run, без публикации)?» — варианты «Да», «Пропустить (правка не трогает пайплайн)».
-
-При «да»:
+тесты) — тогда пайплайн не затронут. Рестартили worker/beat — прогонять без вопроса:
 
 ```bash
-ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py --region mi --theme novost"
+ssh sarafan "cd ~/SETKA && ./venv/bin/python scripts/smoke_test.py --region mi --theme novost"
 ```
 
 Exit 0 — пайплайн жив (в stderr: `posts_parsed=…, would_publish=…`). Exit 1 — провал
@@ -265,20 +245,15 @@ Exit 2 — сетевая ошибка/нет `task_id` (API не поднялс
 
 ```bash
 # Поллер (Шаг 8) уже дождался 200; этот вызов вернётся сразу, если web жив.
-ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 30 --interval 3"
+ssh sarafan "cd ~/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 30 --interval 3"
 
 ssh sarafan "systemctl is-active setka setka-celery-worker setka-celery-beat"
 
 ssh sarafan "journalctl -u setka -u setka-celery-worker -u setka-celery-beat --since '2 minutes ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -10"
 
-ssh sarafan "tail -50 /home/valstan/SETKA/logs/uvicorn_production.log 2>&1 | grep -iE 'error|critical|exception|traceback' | tail -5"
+ssh sarafan "tail -50 ~/SETKA/logs/uvicorn_production.log 2>&1 | grep -iE 'error|critical|exception|traceback' | tail -5"
 ```
 
-Через внешний домен (опционально):
-
-```bash
-curl -s -o /dev/null -w 'public /: %{http_code}\n' --max-time 20 http://3931b3fe50ab.vps.myjino.ru/
-```
 
 ## Шаг 10. Финальный отчёт
 
@@ -294,7 +269,7 @@ curl -s -o /dev/null -w 'public /: %{http_code}\n' --max-time 20 http://3931b3fe
 
 - **Тесты упали** → стоп до коммита, разобраться. **Никогда не** обходить через `--no-verify`.
 - **psql упал на миграции** → откатить если можно (`BEGIN; ... ROLLBACK;` либо обратная миграция). Зафиксировать в `PENDING_FOLLOWUPS.md` как 🔴.
-- **Сервис не запускается после restart** → `journalctl -u <service> -n 100 --no-pager`. Чаще всего — синтакс/импорт ошибка от свежего коммита. Откатить prod-репо: `ssh sarafan "cd /home/valstan/SETKA && git reset --hard <prev-hash>"` + restart. **Только с явным «да» пользователя через AskUserQuestion.**
+- **Сервис не запускается после restart** → `journalctl -u <service> -n 100 --no-pager`. Чаще всего — синтакс/импорт ошибка от свежего коммита. Откатить prod-репо: `ssh sarafan "cd ~/SETKA && git reset --hard <prev-hash>"` + restart. **Только с явным «да» пользователя через AskUserQuestion.**
 - **`/api/health/full` отвечает 500** → тоже самое: журнал, откат.
 
 Никогда не оставляй прод в сломанном виде. Если не можешь починить за 5 минут — спроси «откатываемся?», и при «да» выполни откат.

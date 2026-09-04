@@ -20,8 +20,6 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion
 | [`/close_session`](close_session.md) | Закрыть сессию: закоммитить+запушить **ВСЁ** (код + доки) через PR, обновить `SESSION_HANDOFF` + `PENDING`, проверить sync-гейт |
 | [`/reliz`](reliz.md) | Деплой на прод: PR → merge → SSH `git pull` → миграции → `systemctl restart` → health |
 
-> Команда `/finish` удалена 2026-05-30 — её роль «закоммитить рабочий код» теперь **внутри** `/close_session`. Одна команда закрытия — без путаницы.
-
 ## Когда вызывать
 
 - Перед паузой в работе (конец дня), сменой компа, длительным перерывом.
@@ -280,7 +278,7 @@ gh pr checks "$PR_NUM" --required --watch --interval 15 \
 
 ## Шаг 10. Финальный отчёт
 
-Структура (5-9 строк, на русском):
+Структура (на русском; только то, что нужно следующей сессии):
 
 1. **Сделано в сессии:** 1-3 строки из git log.
 2. **✅ Всё на GitHub:** ветка `<branch>` запушена, PR #N (смержен / ждёт ревью); `git_sync_check.sh --gate` → OK.

@@ -21,16 +21,16 @@ echo '=== systemd ==='
 systemctl status setka-celery-worker setka-celery-beat --no-pager 2>&1 | head -30
 
 echo '=== beat: последние срабатывания ==='
-tail -50 /home/valstan/SETKA/logs/celery-beat.log 2>&1 | grep -iE 'sending|publish|due' | tail -15
+tail -50 ~/SETKA/logs/celery-beat.log 2>&1 | grep -iE 'sending|publish|due' | tail -15
 
 echo '=== worker: последние завершённые задачи ==='
-tail -200 /home/valstan/SETKA/logs/celery-worker.log 2>&1 | grep -iE 'succeeded|completed|published digest' | tail -15
+tail -200 ~/SETKA/logs/celery-worker.log 2>&1 | grep -iE 'succeeded|completed|published digest' | tail -15
 
 echo '=== Redis cooldown (кто публиковал в текущем часу) ==='
 redis-cli --scan --pattern 'setka:digest_last_published:*' | sort
 
 echo '=== Beat-schedule из кода ==='
-cd /home/valstan/SETKA && python -c "
+cd ~/SETKA && python -c "
 from tasks.celery_app import app
 for name, conf in sorted(app.conf.beat_schedule.items())[:30]:
     print(f'{name:50s} -> {conf.get(\"schedule\")}')

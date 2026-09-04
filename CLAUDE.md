@@ -34,5 +34,4 @@
 - **Авто-архивацию сессий** (Claude Desktop → вкладка **Cowork** → «Classify session
   states») при желании отключить вручную — это UI-настройка, не ключ `settings.json`.
   Sync-гейт и SessionStart-хук защищают независимо от неё.
-- В коммитах подписывайся собой: `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`
-  (версию — свою фактическую).
+- В коммитах подписывайся собой: `Co-Authored-By: <Имя модели и версия> <noreply@anthropic.com>`.

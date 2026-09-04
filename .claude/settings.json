@@ -86,6 +86,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/git_sync_check.sh\" --warn"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/session_start.sh\""
           }
         ]
       }
