@@ -58,6 +58,23 @@ def _published_lips(
     return out
 
 
+def _only_owners(lip_theme: Dict[str, str], owner_ids: Sequence[int]) -> Dict[str, str]:
+    """Оставить посты только названных пабликов. Пустой список — без ограничения.
+
+    Тематический сайт (Казанская — ярмарка и карнавал) берёт не весь район, а
+    один-два источника: Дом культуры и оргкомитет. Сужаем ДО LLM — это второй
+    дешёвый префильтр рядом с ``skip_themes``, а не редакционное решение: что из
+    постов ДК про ярмарку, решает модель по правилам сайта.
+
+    ``lip`` хранит owner по модулю (так пишет сбор), поэтому сравниваем с
+    ``abs(owner_id)`` — конфиг может быть записан и со знаком ВК, и без.
+    """
+    wanted = {str(abs(int(x))) for x in owner_ids if str(x).strip()}
+    if not wanted:
+        return lip_theme
+    return {lip: theme for lip, theme in lip_theme.items() if lip.partition("_")[0] in wanted}
+
+
 async def _delivered_lips(session, *, site: str) -> set:
     """lip'ы, у которых для этого сайта уже есть строка журнала — в любом статусе.
 
@@ -105,6 +122,7 @@ async def fetch_pending_for_site(
         .all()
     )
     lip_theme = _published_lips(runs, site.get("skip_themes") or ())
+    lip_theme = _only_owners(lip_theme, site.get("source_owner_ids") or ())
     if not lip_theme:
         return []
 

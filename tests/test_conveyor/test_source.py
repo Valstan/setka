@@ -163,3 +163,30 @@ def test_summarize_truncates_long_text():
     out = source.summarize_for_prompt({"text": "я" * 5000, "theme": "novost"}, max_chars=100)
     body = out.split("\n", 1)[1]  # считаем хвост, а не всю строку: в шапке своя кириллица
     assert len(body) == 100
+
+
+# ───────── source_owner_ids ─────────
+
+
+@pytest.mark.asyncio
+async def test_owner_ids_prefilter_keeps_only_named_publics(db_session):
+    """Тематический сайт (Казанская) берёт посты РЦКД, а не весь район."""
+    await seed_pair(db_session, lip="217788511_10")
+    await seed_pair(db_session, lip="111_20")
+    site = dict(SITE, key="kazanskaya", source_owner_ids=(-217788511,))
+    out = await source.fetch_pending_for_site(db_session, site)
+    assert [p["lip"] for p in out] == ["217788511_10"]
+
+
+@pytest.mark.asyncio
+async def test_owner_ids_empty_means_whole_region(db_session):
+    await seed_pair(db_session, lip="217788511_10")
+    await seed_pair(db_session, lip="111_20")
+    out = await source.fetch_pending_for_site(db_session, dict(SITE, source_owner_ids=()))
+    assert sorted(p["lip"] for p in out) == ["111_20", "217788511_10"]
+
+
+def test_only_owners_matches_by_abs_value():
+    lt = {"217788511_1": "k", "111_2": "n", "2177885110_3": "n"}
+    assert source._only_owners(lt, (217788511,)) == {"217788511_1": "k"}
+    assert source._only_owners(lt, ("-217788511",)) == {"217788511_1": "k"}
