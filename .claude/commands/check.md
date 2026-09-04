@@ -40,7 +40,7 @@ ssh -o ConnectTimeout=10 sarafan "systemctl is-active setka setka-celery-worker 
 
 ssh -o ConnectTimeout=10 sarafan "curl -s -o /dev/null -w '/api/health/full: %{http_code} (%{time_total}s)\n' --max-time 15 http://127.0.0.1:8000/api/health/full" 2>&1
 
-ssh -o ConnectTimeout=10 sarafan "cd /home/valstan/SETKA && git log --oneline -3 && git status --short" 2>&1
+ssh -o ConnectTimeout=10 sarafan "cd ~/SETKA && git log --oneline -3 && git status --short" 2>&1
 
 # Сколько регионов опубликовалось в этот час
 ssh -o ConnectTimeout=10 sarafan "redis-cli --scan --pattern 'setka:digest_last_published:*' | wc -l" 2>&1
@@ -55,7 +55,7 @@ ssh -o ConnectTimeout=10 sarafan "journalctl -u setka-celery-worker --since '1 h
 |---|---|
 | локально / git | clean / N ahead / M behind |
 | локально / venv | ✅ есть / ❌ нет |
-| локально / pytest | ✅ 159/159 / ❌ N failed |
+| локально / pytest | ✅ N passed / ❌ N failed |
 | прод / setka.service | ✅ active / ❌ inactive |
 | прод / setka-celery-worker | ✅ active / ❌ ... |
 | прод / setka-celery-beat | ✅ active / ❌ ... |

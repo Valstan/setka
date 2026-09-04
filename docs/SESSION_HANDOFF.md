@@ -32,10 +32,9 @@ allowlist (`scripts/accept_secret_grants.py`). Мозгу ушло одно пи
 2. **По письму мозга «grant выдан»:** `accept_secret_grants.py --list/--dry-run/…` под
    env (форма — Failed approaches), рестарт worker, `CONVEYOR_SITES=vmalmyzhe,kazanskaya`,
    dry-run раннера по `kazanskaya`, отчёт мозгу. Детали — PENDING §🎪 Казанская.
-3. **Осталось из обещаний по ЕСА** (PENDING §🔐): ответ на аудит инструкций Fable 5.1
-   (тег `pre-fable-freeze-2026-09-02` перед правками) вместе с SessionStart-хуком печати
-   handoff. Logout ЕСА и уведомление о передаче имени — выкачены 04.09 (#614); приёмка
-   владельцем — кнопка «Выйти из всех сервисов» на `/login` ЕСА.
+3. **Обещания по ЕСА и аудит инструкций — закрыты 04.09** (#614, #615). Осталась приёмка
+   владельцем: кнопка «Выйти из всех сервисов» на `/login` ЕСА. Хук `session_start.sh`
+   проверить на второй машине (должен напечатать handoff при старте) → потом укоротить `/start`.
 4. **`/distill`** — 13 коррекций за 14 дней (порог 10), последняя дистилляция 20.08.
 5. Хвосты прошлого handoff: семь аватаров `--repair` первым прогоном суток; замер
    префикс-кэша конвейера (константа `hit`, база 2048); отчёт мозгу 06.09 по
@@ -47,7 +46,7 @@ allowlist (`scripts/accept_secret_grants.py`). Мозгу ушло одно пи
 ## Контекст
 
 - **План:** нет активного файла-плана.
-- **Коммиты сессии 04.09:** #613 конвейер Казанской + accept grant'ов + удаление `/obriv`; #614 RP-initiated logout ЕСА + уведомление о передаче имени.
+- **Коммиты сессии 04.09:** #613 конвейер Казанской + accept grant'ов + удаление `/obriv`; #614 RP-initiated logout ЕСА + уведомление о передаче имени; #615 аудит инструкций Fable 5.1 + SessionStart-хук + удаление vendor-зеркал.
 - **Коммиты сессии 01.09:**
   - `c2aef70` (#597) — D-061: grant'ы ДК «Действует», привязка до 33, §0 self-serve переписан, два письма мозгу;
   - `309892e` (#598) — конвейер: правила сайта в префикс-кэш (база «до» conveyor hit=2048/82.5%, headless 6912/84.9%);
@@ -55,7 +54,7 @@ allowlist (`scripts/accept_secret_grants.py`). Мозгу ушло одно пи
   - `b99d953` (#600) — PWA Радара: манифест маршрутом по хосту, `id=/radar`, `login_url` → ЕСА, sw v7.
 - **Прод:** `setka` / `setka-celery-worker` / `setka-celery-beat` = active, health 200, прод = `main` = `b99d953`.
 - **Открытых PR:** нет (кроме закрывающего сессию).
-- **Письма мозгу этой сессии:** `2026-09-04-kazanskaya-config-ready-accept-step-built-six-esa-lines`, `2026-09-04-end-session-live-clients-add-one-redirect`.
+- **Письма мозгу этой сессии:** `2026-09-04-kazanskaya-config-ready-accept-step-built-six-esa-lines`, `2026-09-04-end-session-live-clients-add-one-redirect`, `2026-09-04-instruction-audit-applied-setka`.
 - **Письма мозгу этой сессии:** `2026-09-01-d061-done-two-grants-live-binding-33-…`,
   `2026-09-01-r29-verified-native-path-and-three-checks-answered`,
   `2026-09-01-pozvoni-oidc-client-registered-public-pkce-…`.

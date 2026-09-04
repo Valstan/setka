@@ -12,11 +12,11 @@ allowed-tools: Bash, AskUserQuestion
 
 | `<service>` | Где |
 |---|---|
-| `app` / `setka` | `/home/valstan/SETKA/logs/uvicorn_production.log` или `journalctl -u setka` |
-| `worker` | `/home/valstan/SETKA/logs/celery-worker.log` или `journalctl -u setka-celery-worker` |
-| `beat` | `/home/valstan/SETKA/logs/celery-beat.log` или `journalctl -u setka-celery-beat` |
-| `nginx` | `/home/valstan/SETKA/logs/nginx_access.log` + `nginx_error.log` |
-| `backup` | `/home/valstan/SETKA/logs/backup.log` |
+| `app` / `setka` | `~/SETKA/logs/uvicorn_production.log` или `journalctl -u setka` |
+| `worker` | `~/SETKA/logs/celery-worker.log` или `journalctl -u setka-celery-worker` |
+| `beat` | `~/SETKA/logs/celery-beat.log` или `journalctl -u setka-celery-beat` |
+| `nginx` | `~/SETKA/logs/nginx_access.log` + `nginx_error.log` |
+| `backup` | `~/SETKA/logs/backup.log` |
 
 По умолчанию — файл из `logs/` (там запись приложения, более удобная). Через `--journal` — переключиться на `journalctl` (там systemd-уровень: рестарты, сигналы).
 
@@ -49,12 +49,12 @@ use_journal = '--journal' in args
 
 ```python
 mapping = {
-    'app': ('/home/valstan/SETKA/logs/uvicorn_production.log', 'setka'),
-    'setka': ('/home/valstan/SETKA/logs/uvicorn_production.log', 'setka'),
-    'worker': ('/home/valstan/SETKA/logs/celery-worker.log', 'setka-celery-worker'),
-    'beat': ('/home/valstan/SETKA/logs/celery-beat.log', 'setka-celery-beat'),
-    'nginx': ('/home/valstan/SETKA/logs/nginx_access.log', None),
-    'backup': ('/home/valstan/SETKA/logs/backup.log', None),
+    'app': ('~/SETKA/logs/uvicorn_production.log', 'setka'),
+    'setka': ('~/SETKA/logs/uvicorn_production.log', 'setka'),
+    'worker': ('~/SETKA/logs/celery-worker.log', 'setka-celery-worker'),
+    'beat': ('~/SETKA/logs/celery-beat.log', 'setka-celery-beat'),
+    'nginx': ('~/SETKA/logs/nginx_access.log', None),
+    'backup': ('~/SETKA/logs/backup.log', None),
 }
 ```
 

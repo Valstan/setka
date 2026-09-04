@@ -20,19 +20,19 @@ setka управляется meta-репо [brain_matrica](../../../brain_matric
 
 **Канал A — локально.** Только корень (`*.md` без рекурсии), **не** `DRAFTS/`, **не** `ARCHIVE/`. Для каждого письма прочитать через `Read` (по конкретному пути работает) и извлечь frontmatter: `kind`, `urgency`, `compliance`, `topic`.
 
-**⚠️ НЕ использовать `Glob`** — он не видит пути вне корня проекта setka и возвращает «No files found» даже когда письма есть (инцидент 2026-05-24). Использовать `Bash`:
+Список — через `Bash` (каталог лежит вне корня проекта):
 
 ```bash
 ls ../brain_matrica/mailboxes/setka/from-brain/*.md 2>/dev/null
 ```
 
-**Канал B — GitHub API** (`main` того же репо, без clone/fetch/pull). Репо private → нужна аутентификация `gh`. Запрос на каждый запуск:
+**Канал B — GitHub API** (`main` того же репо, без clone/fetch/pull). Запрос на каждый запуск:
 
 ```bash
 gh api repos/Valstan/brain_matrica/contents/mailboxes/setka/from-brain --jq '.[].name'
 ```
 
-. Репо private (2026-08-04) — `curl` без токена даёт 404 «Not Found»; `gh api` работает на любой машине с `gh auth`.
+`gh api` работает и без токена на публичном репо; при 404/лимите — `gh auth status`.
 
 **Сведение каналов по каждому письму.** Набор = объединение. Одноимённое письмо различается → свежесть по истории **именно этого пути**: незакоммиченная локальная версия — свежее; иначе последний локальный коммит файла vs последний коммит пути на GitHub; порядок не определяется — прочитать обе версии, явно отметить конфликт, **не перезаписывать**. Свежесть одного письма/проекта не переносится на другие.
 
@@ -134,7 +134,7 @@ gh pr list --state open --limit 20 2>/dev/null | head -20  # опц.
 6. [`docs/START_HERE.md`](../../docs/START_HERE.md) — быстрые команды на проде
 7. [`docs/adr/`](../../docs/adr/) — посмотри список ADR-ов (заголовков достаточно для оценки контекста; читай файлом при необходимости)
 
-Memory-файлы автоматически подгружены через `MEMORY.md` — учитывай их (особенно `reference-ssh-alias`, `remote-access-ssh-only`, `workflow-dev-history` — последний теперь говорит «DEV_HISTORY упразднена, пиши описательные commit messages»).
+Прод-доступ и правила — по [`docs/REMOTE_ACCESS.md`](../../docs/REMOTE_ACCESS.md) и `AGENTS.md`; описательные commit messages вместо истории — [ADR-0001](../../docs/adr/0001-archive-dev-history.md).
 
 ### 3.1. Самопроверка старения PENDING (pool #033)
 
@@ -151,12 +151,10 @@ Memory-файлы автоматически подгружены через `ME
 `--no-prod` или отказе пропустить и напомнить по дате, пометив «без проверки корпуса»):
 
 ```bash
-ssh sarafan 'cd /home/valstan/SETKA && CLASSIFIER_INGEST_KEY=$(sudo -n grep -m1 "^CLASSIFIER_INGEST_KEY=" /etc/setka/classifier-routine-key.txt | cut -d= -f2- | tr -d "[:space:]") python3 scripts/classifier_routine.py corrections --limit 200 --days <N> --out /tmp/distill_probe'
+ssh sarafan 'cd ~/SETKA && CLASSIFIER_INGEST_KEY=$(sudo -n grep -m1 "^CLASSIFIER_INGEST_KEY=" /etc/setka/classifier-routine-key.txt | cut -d= -f2- | tr -d "[:space:]") python3 scripts/classifier_routine.py corrections --limit 200 --days <N> --out /tmp/distill_probe'
 ```
 
-`<N>` — **дней с последней дистилляции минус один**: правки, сделанные в день самой
-дистилляции, ею уже переработаны, и окно «ровно N дней» затянет их повторно (ровно
-так `/start` соврал 2026-07-28 — насчитал 34 коррекции, все от 07-20, при нуле новых).
+`<N>` — **дней с последней дистилляции минус один** (обоснование — в [`/distill`](distill.md)).
 
 - `count ≥ 10` (порог осмысленности из `/distill`) → напоминание в отчёт (Шаг 6):
   «⏰ Дистилляция не делалась N дней, накопилось K коррекций — запустить `/distill`?».
@@ -175,10 +173,10 @@ ssh sarafan 'cd /home/valstan/SETKA && CLASSIFIER_INGEST_KEY=$(sudo -n grep -m1 
 Только чтения:
 
 - `Glob` `venv/Scripts/python.exe` или `venv/bin/python` — есть ли venv в текущем worktree.
-- Если venv есть — быстрая discovery: `.\venv\Scripts\python.exe -m pytest --co -q 2>&1 | tail -5` (или `./venv/bin/python -m pytest --co -q | tail -5` на Linux). Должно быть `159+ tests collected` без ошибок.
+- Если venv есть — быстрая discovery: `.\venv\Scripts\python.exe -m pytest --co -q 2>&1 | tail -5` (или `./venv/bin/python -m pytest --co -q | tail -5` на Linux). Число — порядка указанного в `AGENTS.md` §Состояние проекта; резкое падение = сломанный сбор.
 - `Glob` `database/migrations/*.sql` — посмотреть свежесть последней миграции (`git log -1 --format='%cs %s' -- database/migrations/`).
 
-Если venv нет — отметить в отчёте, **не создавать сам**: подсказать пользователю команду из memory `reference-local-env`.
+Если venv нет — отметить в отчёте, **не создавать сам**: команда создания — в [`docs/START_HERE.md`](../../docs/START_HERE.md).
 
 ## Шаг 5. Прод-probe (опционально — пропускается при `--no-prod`)
 
@@ -194,14 +192,14 @@ ssh sarafan 'cd /home/valstan/SETKA && CLASSIFIER_INGEST_KEY=$(sudo -n grep -m1 
 ```bash
 ssh -o ConnectTimeout=10 sarafan "systemctl is-active setka setka-celery-worker setka-celery-beat" 2>&1
 ssh -o ConnectTimeout=10 sarafan "curl -s -o /dev/null -w 'health: %{http_code} in %{time_total}s\n' --max-time 10 http://127.0.0.1:8000/api/health/full" 2>&1
-ssh -o ConnectTimeout=10 sarafan "cd /home/valstan/SETKA && git log --oneline -3" 2>&1
+ssh -o ConnectTimeout=10 sarafan "cd ~/SETKA && git log --oneline -3" 2>&1
 ```
 
 Если что-то не 200 / не active — отметить в отчёте, **но не диагностировать без запроса пользователя**.
 
 ## Шаг 6. Отчёт пользователю
 
-Структура (8-14 строк, на русском):
+Структура (на русском; ровно столько, сколько нужно для решения «продолжаем нитку?»):
 
 0. **📬 Mailbox:** `N писем от brain_matrica` со списком `[urgency COMPLIANCE] slug — topic` (из Шага 0). Любые `MANDATE` / `high` выделить отдельно. Если писем нет — `📬 mailbox чист`.
 1. **Сессия:** `СЕТКА <дата>` — отмечена.

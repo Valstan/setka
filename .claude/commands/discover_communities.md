@@ -41,7 +41,7 @@ VK-токен живёт **только на проде**. В чат НЕ печ
 ## Шаг 0. Подтверждение прод-доступа
 SSH на прод классификатор может блокировать → подтвердить через `AskUserQuestion`
 («дать доступ ssh sarafan на сессию»). Проверка попадания в SETKA:
-`ssh sarafan 'test -f /home/valstan/SETKA/main.py && echo OK_SETKA'`.
+`ssh sarafan 'test -f ~/SETKA/main.py && echo OK_SETKA'`.
 
 ## Шаг 1. Запросы по темам
 Составь `queries.json` — список `{"q": "<запрос>", "label": "<тема>"}`. Принципы
@@ -71,7 +71,7 @@ set -euo pipefail
 TOKEN="$(sudo -u postgres psql -d setka -tA -c "SELECT token FROM vk_tokens WHERE community_id IS NULL AND is_active AND token<>'' AND (disabled_until IS NULL OR disabled_until < now()) AND COALESCE(validation_status,'')<>'invalid' ORDER BY last_used NULLS FIRST, id LIMIT 1")"
 [ -z "$TOKEN" ] && { echo NO_TOKEN; exit 1; }
 echo "token loaded (len ${#TOKEN})"   # печатаем только длину
-SCAN_VK_TOKEN="$TOKEN" /home/valstan/SETKA/venv/bin/python /tmp/discover_scan.py \
+SCAN_VK_TOKEN="$TOKEN" ~/SETKA/venv/bin/python /tmp/discover_scan.py \
   --queries /tmp/queries.json --out /tmp/scan.json \
   --count 40 --per-label-top 8 --top 70 --posts 5 --min-members 300 \
   --region-filter '(<маркеры региона>)' \
@@ -138,9 +138,9 @@ scp sarafan:/tmp/scan.json ./_scan.json
 ```bash
 scp scripts/seed_region_communities.py ./seed.json sarafan:/tmp/
 # DRY-RUN
-ssh sarafan "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd /home/valstan/SETKA && ./venv/bin/python /tmp/seed_region_communities.py --region-code <code> --file /tmp/seed.json --dry-run'"
+ssh sarafan "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd ~/SETKA && ./venv/bin/python /tmp/seed_region_communities.py --region-code <code> --file /tmp/seed.json --dry-run'"
 # WRITE (после проверки вывода)
-ssh sarafan "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd /home/valstan/SETKA && ./venv/bin/python /tmp/seed_region_communities.py --region-code <code> --file /tmp/seed.json'"
+ssh sarafan "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd ~/SETKA && ./venv/bin/python /tmp/seed_region_communities.py --region-code <code> --file /tmp/seed.json'"
 ```
 (env читается под `sudo`, т.к. `valstan` сам `/etc/setka/setka.env` не видит.)
 
