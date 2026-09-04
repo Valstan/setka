@@ -11,6 +11,29 @@ config/runtime.py::VK_AUXILIARY_TOKENS  # dead — пустой dict, никог
 config/runtime.py::VK_TOKEN_CONFIG  # dead — env-загрузка без потребителя
 config/runtime.py::copy_setka_use_repost  # test-only — tests/test_copy_setka_runtime.py
 database/models_extended.py::ScheduledPublication  # sleeping — задел Smart Scheduler, persistence не доделан (TODO smart_scheduler.py:226)
+config/content_conveyor.py::get_site  # test-only — только tests/test_conveyor/test_config.py; прод идёт через get_active_sites
+config/promo.py::CHANNELS  # sleeping — задел этапа 0 раскрутки (#538); живой реестр — modules/promotion/settings.py::DEFAULT_CHANNELS
+config/promo.py::USER_TOKEN_CHANNELS  # sleeping — тот же задел этапа 0 (#538), потребителя не было никогда
+
+# ── modules/ad_cabinet ────────────────────────────────────────────────────────
+modules/ad_cabinet/packages.py::PROMO_POSTS  # sleeping — константа «3 поста акции»; фактическое значение задаётся литералом в web/static/js/ad_crm.js:1971
+modules/ad_cabinet/packages.py::KINDS  # sleeping — перечень видов пакетов; живой контроль — regex в web/api/ad_crm.py:2168
+modules/ad_cabinet/vk_bot/dialog.py::REGIONS_KEYBOARD  # dead — хвост #609: клавиатура строится функцией regions_keyboard()
+
+# ── core / middleware — каталоги, вошедшие в скоуп скана 2026-09-04 ───────────
+# Таксономия исключений: объявлена целиком, потребителя нет у листьев.
+core/exceptions.py::ValidationException  # sleeping — лист таксономии без потребителя
+core/exceptions.py::DuplicateException  # sleeping — потребитель только в examples/error_handling_example.py (демо, не прод-путь)
+core/exceptions.py::DatabaseConnectionException  # sleeping — лист таксономии без потребителя
+core/exceptions.py::DatabaseQueryException  # sleeping — лист таксономии без потребителя
+core/exceptions.py::CacheConnectionException  # sleeping — лист таксономии без потребителя
+core/exceptions.py::AnalysisException  # sleeping — лист таксономии без потребителя
+core/exceptions.py::PublishingException  # sleeping — лист таксономии без потребителя
+core/exceptions.py::DeduplicationException  # sleeping — лист таксономии без потребителя
+core/exceptions.py::MissingConfigException  # sleeping — лист таксономии без потребителя
+core/exceptions.py::LLMAPIException  # sleeping — лист таксономии без потребителя
+core/exceptions.py::TelegramAPIException  # sleeping — лист таксономии без потребителя
+middleware/rate_limiter.py::check_vk_rate_limit  # dead — вытеснен modules/vk_monitor/rate_limiter.py; при удалении тянуть orphan vk_rate_limiter (строка 227)
 
 # ── modules/aggregation, ai_analyzer, celery_task_monitor ──────────────────
 modules/aggregation/clustering.py::cluster_by_similarity  # dead — не вызывается
@@ -18,6 +41,7 @@ modules/aggregation/content_mixer.py::OPTIMAL_SENTIMENT_MIX  # dead — конс
 modules/celery_task_monitor.py::RETRY  # dead — enum-значение не используется
 modules/celery_task_monitor.py::REVOKED  # dead — enum-значение не используется
 modules/celery_task_monitor.py::task_history  # dead — init без чтения/записи
+modules/ai_analyzer/analyzer.py::analyze_new_posts  # dead — хвост: звавшие tasks/analysis_tasks.py (D-024) и correct_workflow удалены
 
 # ── modules/core — postopus-слой; живой только calculate_post_score ────────
 modules/core/scoring.py::get_score_breakdown  # dead — не вызывается
@@ -78,6 +102,17 @@ modules/publisher/vk_publisher_extended.py::set_publish_candidates  # alive — 
 modules/publisher/vk_publisher_extended.py::is_test_mode  # uncertain — интерфейсный геттер без найденных вызовов
 modules/publisher/vk_publisher_extended.py::get_posts_remaining_today  # uncertain — интерфейсный геттер без найденных вызовов
 
+# ── modules/promotion ─────────────────────────────────────────────────────────
+modules/promotion/branding.py::COVER_SAFE_H  # test-only — только tests/test_promotion/test_cover_crop.py; сосед COVER_SAFE_W живой
+modules/promotion/branding.py::h_top  # dead — переприсвоенная локальная в render_cover, ниже не читается
+modules/promotion/copy.py::render_outreach_draft  # sleeping — заготовка этапа 5 (#538): колонка draft_text есть, UI нет (покрыт тестами)
+modules/promotion/hashtags.py::plan_hashtags_for_regions  # test-only — обёртка над build_hashtag_plan; enrollment_service зовёт план сам
+modules/promotion/pairing.py::HOP_SECOND  # sleeping — задел этапа 0 (#538); dispatcher.py:649 пишет hop=3 литералом
+modules/promotion/pairing.py::HOP_OBLAST  # sleeping — то же самое, тот же литерал вместо константы
+modules/promotion/settings.py::DISPATCH_CHANNELS  # test-only — dispatcher.py:723 перечисляет каналы литералами
+modules/promotion/vk_errors.py::alert  # sleeping — поле контракта PromoAction: выставляется, читают только тесты (будильщика владельца нет)
+modules/promotion/vk_errors.py::is_stop_signal  # test-only — dispatcher.py:579 сравнивает action.kind == "stop_module" напрямую
+
 # ── modules: region_config / scheduler / notifiers / vk_monitor / router ───
 modules/region_config.py::get_active_regions  # dead — не вызывается
 modules/region_config.py::get_region_neighbors  # dead — не вызывается
@@ -107,10 +142,22 @@ modules/vk_monitor/vk_client_async.py::get_multiple_groups_info  # dead — не
 modules/vk_monitor/vk_client_async.py::check_all_tokens  # dead — не вызывается
 modules/vk_token_router.py::pick_token  # uncertain — документированная back-compat обёртка, вызовов нет
 modules/vk_token_router.py::get_publish_candidates_for_group  # dead — не вызывается
+modules/vk_monitor/token_usage.py::reset_for_tests  # test-only — autouse-фикстуры tests/test_vk_monitor + test_vk_token_router
+
+# ── modules/gateway ───────────────────────────────────────────────────────────
+modules/gateway/keys.py::get_bootstrap_env_keys  # dead — дубль: scripts/list_gateway_keys.py считает то же сам (строки 119, 207)
+
+# ── modules/conveyor ──────────────────────────────────────────────────────────
+modules/conveyor/classify.py::stable_prefix  # test-only — тест-зонд префикс-кэша (R29/#598), в коде не вызывается
+modules/conveyor/delivery.py::unknown_sections  # test-only — в проде тот же смысл даёт classify.collect_unknown_sections (runner.py:103)
+modules/conveyor/runner.py::retry_failed  # sleeping — готовый ops-инструмент повтора failed-доставок, ни разу не вызывался (покрыт тестами)
+modules/conveyor/source.py::site_status_counts  # test-only — только tests/test_conveyor/
+modules/conveyor/source.py::summarize_for_prompt  # test-only — LLM-сводку строит classify.build_user_prompt (#457)
 
 # ── modules: classifier / radar_id ─────────────────────────────────────────
 modules/classifier/schema.py::has_merge_signal  # sleeping — для merge agree-rate (VERDICT_TYPES), ещё не подключён в прод-подсчёт
 modules/radar_id/keys.py::keys_available  # sleeping — readiness-хелпер RS256-ключа (Ф1), не подключён к health-check
+modules/classifier/schema.py::VerdictBatch  # dead — схема POST /verdicts переведена на batch: dict + parse_verdict_loose (#354)
 
 # ── monitoring / scripts / tasks ────────────────────────────────────────────
 monitoring/metrics.py::db_connections_active  # alive — multiproc-gauge, проверяется test_metrics_multiproc
@@ -133,6 +180,8 @@ utils/retry.py::retry_with_circuit_breaker  # uncertain — examples/ + тест
 utils/retry.py::log_error_to_db  # uncertain — только examples/
 utils/text_utils.py::clear_text  # alive — database/models_extended.py + scripts
 utils/translit.py::slugify_cyrillic  # test-only — tests/test_utils/test_translit.py
+utils/log_redaction.py::_reset_for_tests  # test-only — teardown-хелпер tests/test_logging/
+utils/timezone.py::is_work_hours_for_region  # dead — хвост b05d5c2 (#510); живой сосед — is_work_hours_moscow
 
 # ── web/api ─────────────────────────────────────────────────────────────────
 web/api/notifications.py::NotificationsResponse  # dead — схема ни в одном endpoint

@@ -39,13 +39,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # Что сканируем: прикладной код. tests/ намеренно вне скоупа (fixtures/parametrize
-# дают сплошной шум), database/migrations — SQL.
+# дают сплошной шум), database/migrations — SQL, examples/ — примеры для человека,
+# они и не должны иметь потребителя.
+#
+# Каталог, забытый в этом списке, врёт ДВАЖДЫ и оба раза молча: мёртвый код внутри
+# него не ищется вовсе, а живой символ, чей единственный потребитель лежит в нём,
+# всплывает кандидатом на удаление — потребителя сканер не видит. Так на прогоне
+# 2026-09-04 в кандидаты попал modules/radar_id/vk_upstream.py::host_shares_session,
+# которого зовёт middleware/auth_gate.py. Пополняя проект новым каталогом верхнего
+# уровня с прикладным кодом, добавляй его сюда.
 SCAN_TARGETS = [
     "main.py",
     "celery_app.py",
     "_version.py",
     "config",
+    "core",
     "database",
+    "gateway_mcp",
+    "middleware",
     "modules",
     "monitoring",
     "tasks",
@@ -61,6 +72,7 @@ IGNORE_DECORATORS = [
     "@shared_task",
     "@router.*",  # FastAPI APIRouter endpoints
     "@signals.*",  # Celery signals (worker_ready, worker_shutdown, ...)
+    "@mcp.*",  # MCP-инструменты шлюза (gateway_mcp/server.py) — зовёт протокол, не код
     "@validator",
     "@field_validator",
     "@model_validator",
@@ -72,6 +84,10 @@ IGNORE_NAMES_STATIC = [
     "cls",
     "args",
     "kwargs",
+    # Контракт Starlette BaseHTTPMiddleware: метод зовёт фреймворк на каждом запросе.
+    # Гасим по имени, а не через FRAMEWORK_BASE_HINTS: тот механизм собирает только
+    # поля и методы не берёт намеренно (неиспользуемый метод на схеме — кандидат).
+    "dispatch",
     "Config",  # pydantic inner-Config + его ключи
     "frozen",
     "from_attributes",
