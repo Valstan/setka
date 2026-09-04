@@ -464,7 +464,10 @@ async def delete_photo(name: str, request: Request, db: AsyncSession = Depends(g
     if used_by is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"Фото используется в посте №{used_by}, который ещё не вышел — сначала отмените пост",
+            detail=(
+                f"Фото используется в посте №{used_by}, который ещё не вышел — "
+                "сначала отмените пост"
+            ),
         )
     p = _client_photo_dir(client.id) / base
     if p.is_file():
