@@ -2399,6 +2399,12 @@ def _cabinet_publisher_factory(db):
     return factory
 
 
+class ApproveIn(BaseModel):
+    """Тело одобрения: новая дата выхода (ISO, МСК), если старая прошла."""
+
+    publish_at: Optional[str] = None
+
+
 @router.get("/moderation")
 async def moderation_queue(db: AsyncSession = Depends(get_db_session)):
     """Клиентские посты, ждущие одобрения владельца (``status='pending'``)."""
@@ -2421,11 +2427,17 @@ async def moderation_queue(db: AsyncSession = Depends(get_db_session)):
 
 
 @router.post("/moderation/{post_id}/approve")
-async def moderation_approve(post_id: int, db: AsyncSession = Depends(get_db_session)):
+async def moderation_approve(
+    post_id: int,
+    payload: Optional[ApproveIn] = None,
+    db: AsyncSession = Depends(get_db_session),
+):
     """Одобрить pending-пост: отправка в VK-отложку + счётчик доверия клиента.
 
     Идемпотентно (повторный клик не публикует второй раз — approve_post
-    возвращает не-pending пост как есть).
+    возвращает не-pending пост как есть). Прошедшая дата выхода → 409 с
+    просьбой передать ``publish_at`` (аудит 2026-09-05: раньше пост молча
+    выходил «через три минуты»).
     """
     from modules.ad_cabinet import client_orders
     from modules.vk_token_router import load_vk_routing
@@ -2436,14 +2448,25 @@ async def moderation_approve(post_id: int, db: AsyncSession = Depends(get_db_ses
         raise HTTPException(status_code=404, detail="post not found")
     was_pending = row.status == "pending"
 
+    new_at = None
+    if payload is not None and payload.publish_at:
+        try:
+            new_at = datetime.fromisoformat(payload.publish_at).replace(tzinfo=None)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некорректная дата publish_at")
+
     user_token, _community_tokens = await load_vk_routing()
-    await client_orders.approve_post(
-        db,
-        row,
-        publisher_factory=_cabinet_publisher_factory(db),
-        attachment_builder=_real_attachment_builder(row.client_id, user_token),
-        msk_to_unix=_msk_to_unix,
-    )
+    try:
+        await client_orders.approve_post(
+            db,
+            row,
+            publisher_factory=_cabinet_publisher_factory(db),
+            attachment_builder=_real_attachment_builder(row.client_id, user_token),
+            msk_to_unix=_msk_to_unix,
+            new_publish_at=new_at,
+        )
+    except client_orders.OrderError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     if was_pending:
         log_interaction(
             db,

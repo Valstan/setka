@@ -43,6 +43,15 @@ def test_ad_repost_dispatch_registered_every_minute():
     assert wd["task"] == "tasks.celery_app.check_ad_repost_heartbeat"
 
 
+def test_ad_pending_watch_registered_hourly():
+    """Сторож pending с прошедшей датой (аудит 2026-09-05): задача + hourly beat."""
+    from tasks.celery_app import app, watch_ad_pending  # noqa: F401
+
+    assert "tasks.celery_app.watch_ad_pending" in app.tasks
+    entry = app.conf.beat_schedule["ad-pending-watch"]
+    assert entry["task"] == "tasks.celery_app.watch_ad_pending"
+
+
 def test_expire_ad_posts_task_registered():
     """Авто-снятие постов по сроку (С2) зарегистрировано + ежедневный beat."""
     from tasks.celery_app import app, expire_ad_posts  # noqa: F401

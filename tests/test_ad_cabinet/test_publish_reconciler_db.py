@@ -65,7 +65,7 @@ async def test_due_row_in_msk_scale_is_reconciled(db_session):
         is_published=lambda o, p: True,
         now=datetime(2026, 9, 5, 20, 30),
     )
-    assert out == {"reconciled": 1, "checked": 1}
+    assert (out["reconciled"], out["checked"]) == (1, 1)
     await db_session.refresh(row)
     assert row.status == "published"
     pubs = (await db_session.execute(select(AdPublication))).scalars().all()
@@ -84,7 +84,7 @@ async def test_future_row_is_not_touched(db_session):
         is_published=lambda o, p: True,
         now=datetime(2026, 9, 5, 20, 30),
     )
-    assert out == {"reconciled": 0, "checked": 0}
+    assert (out["reconciled"], out["checked"]) == (0, 0)
     await db_session.refresh(row)
     assert row.status == "scheduled"
 

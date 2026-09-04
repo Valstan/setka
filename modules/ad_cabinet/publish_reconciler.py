@@ -176,18 +176,42 @@ async def record_published(
     return pub
 
 
+# Сторож зависших отложек (аудит 2026-09-05): пост, который VK не подтвердил
+# спустя это время после назначенной даты, — не «ещё в отложке», а потеря
+# денег молча (AdPayment не создаётся, в сводке должников его нет).
+STALL_AFTER = timedelta(hours=2)
+STALL_PING_TTL = 12 * 3600
+
+
+def _default_stall_alert(text: str, dedup_key: str) -> None:  # pragma: no cover - сеть
+    from modules.ad_cabinet import owner_ping
+
+    try:
+        owner_ping.notify_owner(text, dedup_key=dedup_key, dedup_ttl=STALL_PING_TTL)
+    except Exception:
+        logger.warning("stall alert failed", exc_info=True)
+
+
 async def run_reconcile(
     *,
     session_factory: Optional[Callable] = None,
     is_published: Optional[Callable[[int, int], Optional[bool]]] = None,
     now: Optional[datetime] = None,
+    stall_alert: Optional[Callable[[str, str], Any]] = None,
 ) -> Dict[str, Any]:
     """Реконсилировать опубликованные VK отложки → фиксация в CRM. Возвращает счётчики."""
+    import asyncio
+
     if session_factory is None:
         from database.connection import AsyncSessionLocal
 
         session_factory = AsyncSessionLocal
     now = now or now_msk()
+    stall_alert = stall_alert or (
+        lambda text, key: asyncio.get_running_loop().run_in_executor(
+            None, _default_stall_alert, text, key
+        )
+    )
 
     # Дефолтная VK-проверка собирается лениво (нужны токены) — только если не инжектирована.
     if is_published is None:
@@ -197,6 +221,7 @@ async def run_reconcile(
             return {"reconciled": 0, "checked": 0, "skipped": "no_token"}
 
     reconciled = 0
+    stalled = 0
     async with session_factory() as session:
         rows = (
             (
@@ -224,11 +249,26 @@ async def run_reconcile(
                 logger.warning("reconcile check failed for post %s: %s", row.id, e)
                 state = None
             if state is not True:
+                # Зависла? Через STALL_AFTER после даты — владельцу пинг (дедуп
+                # 12 ч на строку), в строке — пометка. Статус не меняем: VK может
+                # подтвердить позже, и тогда фиксация пройдёт штатно.
+                if row.publish_date and now - row.publish_date >= STALL_AFTER:
+                    hours = int((now - row.publish_date).total_seconds() // 3600)
+                    row.error_message = f"VK не подтвердил выход за {hours} ч (post_type={state})"
+                    stalled += 1
+                    res = stall_alert(
+                        f"⏳ Отложка №{row.id} в {row.community_vk_id} не подтверждена VK "
+                        f"{hours} ч после {row.publish_date:%d.%m %H:%M} — проверь стену, "
+                        "счёт клиенту не выставлен.",
+                        f"stalled:{row.id}",
+                    )
+                    if hasattr(res, "__await__"):
+                        await res
                 continue
             await record_published(session, row)
             reconciled += 1
 
         await session.commit()
 
-    logger.info("reconcile: checked=%d, reconciled=%d", len(rows), reconciled)
-    return {"reconciled": reconciled, "checked": len(rows)}
+    logger.info("reconcile: checked=%d, reconciled=%d, stalled=%d", len(rows), reconciled, stalled)
+    return {"reconciled": reconciled, "checked": len(rows), "stalled": stalled}

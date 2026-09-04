@@ -52,6 +52,40 @@ SCHEDULE_MAX_AHEAD = timedelta(days=60)
 # Статусы, считающиеся «активными» для лимита MAX_ACTIVE_POSTS.
 ACTIVE_STATUSES = ("pending", "scheduled")
 
+# Долговой гейт для trusted-клиентов (аудит 2026-09-05): trusted публиковался
+# бесконтрольно — до 150 неоплаченных постов в неделю при полном молчании
+# системы. Накопленный awaiting выше лимита (₽) или старше AD_DEBTOR_DAYS
+# возвращает заказы на одобрение владельцу (не блокирует — владелец решает).
+TRUST_DEBT_LIMIT_RUB = int(os.getenv("AD_TRUST_DEBT_LIMIT", "2000"))
+
+
+async def debt_hold_reason(session, client: AdClient, *, now_utc: datetime) -> Optional[str]:
+    """Почему заказ trusted-клиента уходит на одобрение: сумма или возраст долга.
+
+    ``None`` — долга нет или он в пределах. Считается по ``ad_payments`` со
+    ``status='awaiting'`` (единственный источник денежного требования).
+    """
+    from database.models import AdPayment
+    from modules.ad_cabinet.debtors import DEBTOR_DAYS
+
+    total, oldest = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(AdPayment.amount), 0), func.min(AdPayment.created_at)
+            ).where(AdPayment.client_id == client.id, AdPayment.status == "awaiting")
+        )
+    ).one()
+    total = float(total or 0)
+    if total <= 0:
+        return None
+    if TRUST_DEBT_LIMIT_RUB > 0 and total > TRUST_DEBT_LIMIT_RUB:
+        return f"неоплаченных постов на {total:.0f} ₽ (лимит {TRUST_DEBT_LIMIT_RUB} ₽)"
+    if oldest is not None and oldest <= now_utc - timedelta(days=DEBTOR_DAYS):
+        days = (now_utc - oldest).days
+        return f"есть неоплаченный пост старше {days} дн. (порог {DEBTOR_DAYS})"
+    return None
+
+
 # Инъектируемые фабрики: async publisher_factory(group_id) -> объект с
 # publish_bulletin(...); attachment_builder(group_id, image_paths) -> ["photo…"].
 PublisherFactory = Callable[[int], Awaitable[Any]]
@@ -290,7 +324,13 @@ async def submit_order(
         quote = quote_price(len(targets))
         prices = price_split(Decimal(quote["price"]), len(targets))
     order_ref = str(uuid.uuid4())
-    trusted = bool(client.trusted)
+    # Долговой гейт: trusted с долгом сверх лимита/срока — снова на одобрение.
+    debt_reason = (
+        await debt_hold_reason(session, client, now_utc=now - timedelta(hours=3))
+        if client.trusted
+        else None
+    )
+    trusted = bool(client.trusted) and debt_reason is None
 
     rows: List[AdScheduledPost] = []
     for (region_id, gid, _name), price in zip(targets, prices):
@@ -331,6 +371,8 @@ async def submit_order(
         "quote": quote,
         "posts": rows,
         "moderation": not trusted,
+        # Причина, по которой trusted-клиент попал на одобрение (долг); None — обычный путь.
+        "debt_hold": debt_reason,
         "package": package.to_dict() if package is not None else None,
     }
 
@@ -343,18 +385,28 @@ async def approve_post(
     attachment_builder: AttachmentBuilder,
     msk_to_unix: Callable[[datetime], int],
     now: Optional[datetime] = None,
+    new_publish_at: Optional[datetime] = None,
 ) -> AdScheduledPost:
     """Владелец одобряет pending-пост: отправка в VK + счётчик доверия.
 
     Идемпотентно: не-``pending`` пост возвращается как есть (повторный клик
-    «Одобрить» не публикует второй раз). Прошедшая дата публикации
-    переносится на ближайшее будущее. Commit — на вызывающем.
+    «Одобрить» не публикует второй раз). Прошедшая дата публикации **не
+    переносится молча** (аудит 2026-09-05: пост, заказанный на субботнее утро
+    и одобренный в среду, выходил через три минуты): нужен явный
+    ``new_publish_at``, иначе ``OrderError``. Commit — на вызывающем.
     """
     if post.status != "pending":
         return post
     now = now or datetime.utcnow() + timedelta(hours=3)
-    if post.publish_date <= now + timedelta(minutes=1):
-        post.publish_date = now + PUBLISH_NOW_DELAY
+    if new_publish_at is not None:
+        if new_publish_at <= now + timedelta(minutes=1):
+            raise OrderError("Новая дата публикации должна быть в будущем")
+        post.publish_date = new_publish_at
+    elif post.publish_date <= now + timedelta(minutes=1):
+        raise OrderError(
+            f"Дата публикации {post.publish_date:%d.%m %H:%M} уже прошла — "
+            "укажите новую дату при одобрении"
+        )
     await _send_one(
         post,
         publisher_factory=publisher_factory,
