@@ -18,7 +18,6 @@ config/promo.py::USER_TOKEN_CHANNELS  # sleeping — тот же задел эт
 # ── modules/ad_cabinet ────────────────────────────────────────────────────────
 modules/ad_cabinet/packages.py::PROMO_POSTS  # sleeping — константа «3 поста акции»; фактическое значение задаётся литералом в web/static/js/ad_crm.js:1971
 modules/ad_cabinet/packages.py::KINDS  # sleeping — перечень видов пакетов; живой контроль — regex в web/api/ad_crm.py:2168
-modules/ad_cabinet/vk_bot/dialog.py::REGIONS_KEYBOARD  # dead — хвост #609: клавиатура строится функцией regions_keyboard()
 
 # ── core / middleware — каталоги, вошедшие в скоуп скана 2026-09-04 ───────────
 # Таксономия исключений: объявлена целиком, потребителя нет у листьев.
@@ -33,15 +32,14 @@ core/exceptions.py::DeduplicationException  # sleeping — лист таксон
 core/exceptions.py::MissingConfigException  # sleeping — лист таксономии без потребителя
 core/exceptions.py::LLMAPIException  # sleeping — лист таксономии без потребителя
 core/exceptions.py::TelegramAPIException  # sleeping — лист таксономии без потребителя
-middleware/rate_limiter.py::check_vk_rate_limit  # dead — вытеснен modules/vk_monitor/rate_limiter.py; при удалении тянуть orphan vk_rate_limiter (строка 227)
 
 # ── modules/aggregation, ai_analyzer, celery_task_monitor ──────────────────
 modules/aggregation/clustering.py::cluster_by_similarity  # dead — не вызывается
 modules/aggregation/content_mixer.py::OPTIMAL_SENTIMENT_MIX  # dead — константа без чтения
+modules/ai_analyzer/analyzer.py::analyze_post  # dead — обнажён удалением analyze_new_posts 04.09; тянет весь PostAnalyzer, решение отдельное (PENDING)
 modules/celery_task_monitor.py::RETRY  # dead — enum-значение не используется
 modules/celery_task_monitor.py::REVOKED  # dead — enum-значение не используется
 modules/celery_task_monitor.py::task_history  # dead — init без чтения/записи
-modules/ai_analyzer/analyzer.py::analyze_new_posts  # dead — хвост: звавшие tasks/analysis_tasks.py (D-024) и correct_workflow удалены
 
 # ── modules/core — postopus-слой; живой только calculate_post_score ────────
 modules/core/scoring.py::get_score_breakdown  # dead — не вызывается
@@ -104,7 +102,6 @@ modules/publisher/vk_publisher_extended.py::get_posts_remaining_today  # uncerta
 
 # ── modules/promotion ─────────────────────────────────────────────────────────
 modules/promotion/branding.py::COVER_SAFE_H  # test-only — только tests/test_promotion/test_cover_crop.py; сосед COVER_SAFE_W живой
-modules/promotion/branding.py::h_top  # dead — переприсвоенная локальная в render_cover, ниже не читается
 modules/promotion/copy.py::render_outreach_draft  # sleeping — заготовка этапа 5 (#538): колонка draft_text есть, UI нет (покрыт тестами)
 modules/promotion/hashtags.py::plan_hashtags_for_regions  # test-only — обёртка над build_hashtag_plan; enrollment_service зовёт план сам
 modules/promotion/pairing.py::HOP_SECOND  # sleeping — задел этапа 0 (#538); dispatcher.py:649 пишет hop=3 литералом
@@ -145,7 +142,6 @@ modules/vk_token_router.py::get_publish_candidates_for_group  # dead — не в
 modules/vk_monitor/token_usage.py::reset_for_tests  # test-only — autouse-фикстуры tests/test_vk_monitor + test_vk_token_router
 
 # ── modules/gateway ───────────────────────────────────────────────────────────
-modules/gateway/keys.py::get_bootstrap_env_keys  # dead — дубль: scripts/list_gateway_keys.py считает то же сам (строки 119, 207)
 
 # ── modules/conveyor ──────────────────────────────────────────────────────────
 modules/conveyor/classify.py::stable_prefix  # test-only — тест-зонд префикс-кэша (R29/#598), в коде не вызывается
@@ -157,7 +153,6 @@ modules/conveyor/source.py::summarize_for_prompt  # test-only — LLM-сводк
 # ── modules: classifier / radar_id ─────────────────────────────────────────
 modules/classifier/schema.py::has_merge_signal  # sleeping — для merge agree-rate (VERDICT_TYPES), ещё не подключён в прод-подсчёт
 modules/radar_id/keys.py::keys_available  # sleeping — readiness-хелпер RS256-ключа (Ф1), не подключён к health-check
-modules/classifier/schema.py::VerdictBatch  # dead — схема POST /verdicts переведена на batch: dict + parse_verdict_loose (#354)
 
 # ── monitoring / scripts / tasks ────────────────────────────────────────────
 monitoring/metrics.py::db_connections_active  # alive — multiproc-gauge, проверяется test_metrics_multiproc
@@ -181,7 +176,6 @@ utils/retry.py::log_error_to_db  # uncertain — только examples/
 utils/text_utils.py::clear_text  # alive — database/models_extended.py + scripts
 utils/translit.py::slugify_cyrillic  # test-only — tests/test_utils/test_translit.py
 utils/log_redaction.py::_reset_for_tests  # test-only — teardown-хелпер tests/test_logging/
-utils/timezone.py::is_work_hours_for_region  # dead — хвост b05d5c2 (#510); живой сосед — is_work_hours_moscow
 
 # ── web/api ─────────────────────────────────────────────────────────────────
 web/api/notifications.py::NotificationsResponse  # dead — схема ни в одном endpoint

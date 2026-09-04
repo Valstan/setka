@@ -103,12 +103,6 @@ MAIN_KEYBOARD = keyboard(
     ]
 )
 CANCEL_KEYBOARD = keyboard([[_btn("❌ Отмена", CMD_CANCEL, "negative")]])
-REGIONS_KEYBOARD = keyboard(
-    [
-        [_btn("🌐 Все районы", CMD_ALL_REGIONS, "primary")],
-        [_btn("❌ Отмена", CMD_CANCEL, "negative")],
-    ]
-)
 WHEN_KEYBOARD = keyboard(
     [[_btn("⚡ Сейчас", CMD_NOW, "primary")], [_btn("❌ Отмена", CMD_CANCEL, "negative")]]
 )

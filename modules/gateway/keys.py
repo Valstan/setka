@@ -32,7 +32,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-from typing import Dict, Optional
+from typing import Optional
 
 from sqlalchemy import select
 
@@ -102,24 +102,7 @@ def _match_env(presented: str, blocked: set) -> Optional[str]:
     return None
 
 
-async def get_bootstrap_env_keys() -> Dict[str, str]:
-    """Env-ключи, у которых нет строки в БД, — только для диагностики/перечня.
-
-    Значения нужны вызывающему лишь для того, чтобы показать сам факт наличия
-    ключа в окружении; перечень (``scripts/list_gateway_keys.py``) печатает
-    имена, а не значения.
-    """
-    env_keys = get_env_gateway_keys()
-    if not env_keys:
-        return {}
-    try:
-        from database.connection import AsyncSessionLocal
-        from database.models import GatewayKey
-
-        async with AsyncSessionLocal() as session:
-            rows = (await session.execute(select(GatewayKey.name))).all()
-        db_names = {row[0] for row in rows}
-    except Exception as e:  # defensive
-        logger.warning("gateway keys: DB read failed while listing env bootstrap: %s", e)
-        db_names = set()
-    return {name: secret for name, secret in env_keys.items() if name not in db_names}
+# Перечень «ключ есть в env, но не в БД» строит сам scripts/list_gateway_keys.py
+# (get_env_gateway_keys + сверка с GatewayKey, строки 119 и 207). Здешняя
+# get_bootstrap_env_keys делала ровно то же и не вызывалась ни разу — снята
+# 2026-09-04 прогоном /deadcode, чтобы одна задача не жила в двух местах.

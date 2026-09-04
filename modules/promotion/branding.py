@@ -203,7 +203,7 @@ def render_cover(code: str, name: str, tagline: str) -> bytes:
     total_h = t_h + gap + g_h
     y = (COVER_H - total_h) // 2 - t_box[1]
 
-    for text, font, h_top in ((title, title_font, t_box[1]), (tagline, tag_font, g_box[1])):
+    for text, font in ((title, title_font), (tagline, tag_font)):
         w = _text_w(draw, text, font)
         x = (COVER_W - w) // 2
         draw.text((x + 5, y + 5), text, font=font, fill=_hls_rgb(hue, 0.16, _SAT))
