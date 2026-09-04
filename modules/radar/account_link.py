@@ -246,9 +246,9 @@ def get_bot_username(token: str) -> Optional[str]:
     if not token:
         return None
     try:
-        import httpx
+        from modules import telegram_http as tg_http
 
-        resp = httpx.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15)
+        resp = tg_http.get_httpx(f"https://api.telegram.org/bot{token}/getMe")
         data = resp.json()
         username = ((data or {}).get("result") or {}).get("username")
     except Exception as e:  # noqa: BLE001 - сеть; UI переживёт отсутствие username

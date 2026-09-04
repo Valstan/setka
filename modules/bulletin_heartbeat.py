@@ -191,9 +191,9 @@ def maybe_alert_stale_bulletin(
     message = "\n".join(parts)
 
     try:
-        import requests
+        from modules import telegram_http as tg_http
 
-        resp = requests.post(
+        resp = tg_http.post(
             f"https://api.telegram.org/bot{telegram_token}/sendMessage",
             json={
                 "chat_id": chat_id,
@@ -201,7 +201,6 @@ def maybe_alert_stale_bulletin(
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
-            timeout=15,
         )
         if resp.status_code != 200:
             logger.warning("stale-bulletin alert failed: %s %s", resp.status_code, resp.text[:200])

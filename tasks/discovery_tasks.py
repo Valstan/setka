@@ -657,9 +657,8 @@ def _send_telegram_html(text: str, *, log_prefix: str) -> None:
     pick первого работающего бот-токена + ``TELEGRAM_ALERT_CHAT_ID``.
     """
     try:
-        import requests
-
         from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from modules import telegram_http as tg_http
     except ImportError as e:  # pragma: no cover
         logger.warning("%s: telegram deps missing: %s", log_prefix, e)
         return
@@ -676,7 +675,7 @@ def _send_telegram_html(text: str, *, log_prefix: str) -> None:
         return
 
     try:
-        resp = requests.post(
+        resp = tg_http.post(
             f"https://api.telegram.org/bot{bot_token}/sendMessage",
             json={
                 "chat_id": TELEGRAM_ALERT_CHAT_ID,
@@ -684,7 +683,6 @@ def _send_telegram_html(text: str, *, log_prefix: str) -> None:
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
-            timeout=10,
         )
         if resp.status_code != 200:
             logger.warning(

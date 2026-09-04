@@ -259,9 +259,9 @@ def maybe_alert(
         except Exception:  # noqa: BLE001
             pass
     try:
-        import requests
+        from modules import telegram_http as tg_http
 
-        resp = requests.post(
+        resp = tg_http.post(
             f"https://api.telegram.org/bot{telegram_token}/sendMessage",
             json={
                 "chat_id": chat_id,
@@ -269,7 +269,6 @@ def maybe_alert(
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
-            timeout=15,
         )
         if resp.status_code != 200:
             return f"error:http-{resp.status_code}"

@@ -171,12 +171,12 @@ async def _call(token: str, method: str, payload: Dict[str, Any]) -> bool:
     POST to the Telegram Bot API once (with a single ``RetryAfter`` retry on 429).
     Never raises — returns success bool and logs failures.
     """
-    import requests
+    from modules import telegram_http as tg_http
 
     url = _TG_API.format(token=token, method=method)
     for attempt in range(2):
         try:
-            resp = await asyncio.to_thread(requests.post, url, json=payload, timeout=30)
+            resp = await asyncio.to_thread(tg_http.post, url, json=payload, timeout=30)
         except Exception as e:  # network error
             logger.warning("Telegram %s request error: %s", method, e)
             return False

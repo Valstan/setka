@@ -81,9 +81,8 @@ def _maybe_send_telegram_notifications_alert() -> None:
     so that suggested/messages/comments are aggregated into a single alert.
     """
     try:
-        import requests
-
         from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from modules import telegram_http as tg_http
         from modules.notifications.storage import NotificationsStorage
 
         storage = NotificationsStorage()
@@ -161,7 +160,7 @@ def _maybe_send_telegram_notifications_alert() -> None:
 
         message = "\n".join(lines)
 
-        resp = requests.post(
+        resp = tg_http.post(
             f"https://api.telegram.org/bot{bot_token}/sendMessage",
             json={
                 "chat_id": chat_id,
@@ -169,7 +168,6 @@ def _maybe_send_telegram_notifications_alert() -> None:
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
-            timeout=10,
         )
         if resp.status_code != 200:
             logger.warning(f"Telegram sendMessage failed: {resp.status_code} {resp.text[:300]}")
@@ -529,9 +527,8 @@ def _maybe_alert_new_ads(new_total: int, regions: list, source_label: str = "п�
     ``source_label`` — откуда заявки (``"предложке"`` / ``"личке"``), для текста.
     """
     try:
-        import requests as _requests
-
         from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from modules import telegram_http as tg_http
 
         token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
         chat_id = TELEGRAM_ALERT_CHAT_ID
@@ -548,7 +545,7 @@ def _maybe_alert_new_ads(new_total: int, regions: list, source_label: str = "п�
             f"📢 Новых рекламных заявок в {source_label}: <b>{new_total}</b>\n"
             f"{by_region}\n\n{url}"
         )
-        _requests.post(
+        tg_http.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
             json={
                 "chat_id": chat_id,
@@ -556,7 +553,6 @@ def _maybe_alert_new_ads(new_total: int, regions: list, source_label: str = "п�
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
-            timeout=15,
         )
     except Exception as e:
         logger.warning(f"ad cabinet telegram alert failed: {e}")
@@ -565,15 +561,14 @@ def _maybe_alert_new_ads(new_total: int, regions: list, source_label: str = "п�
 def _send_debtor_alert(text: str) -> None:
     """Отправить Telegram-напоминание о должниках (best-effort, С4)."""
     try:
-        import requests as _requests
-
         from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from modules import telegram_http as tg_http
 
         token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
         chat_id = TELEGRAM_ALERT_CHAT_ID
         if not token or not chat_id:
             return
-        _requests.post(
+        tg_http.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
             json={
                 "chat_id": chat_id,
@@ -581,7 +576,6 @@ def _send_debtor_alert(text: str) -> None:
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
-            timeout=15,
         )
     except Exception as e:
         logger.warning(f"ad debtor telegram alert failed: {e}")

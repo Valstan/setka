@@ -262,12 +262,11 @@ async def maybe_alert_stale_radar_poll(
         "Проверь celery-worker/beat и логи radar poll."
     )
     try:
-        import requests
+        from modules import telegram_http as tg_http
 
-        requests.post(
+        tg_http.post(
             f"https://api.telegram.org/bot{telegram_token}/sendMessage",
             json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=15,
         )
         client.setex(_ALERT_COOLDOWN_KEY, ALERT_COOLDOWN_SECONDS, 1)
     except Exception as e:  # noqa: BLE001
