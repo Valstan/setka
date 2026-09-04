@@ -421,6 +421,67 @@ async def userinfo(session, bearer_token: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# RP-initiated logout (OIDC RP-Initiated Logout 1.0, минимальный профиль)
+# ---------------------------------------------------------------------------
+#
+# Зачем. Сессия ЕСА живёт кукой домена ``.вмалмыже.рф``; «Выйти» на сайте-клиенте
+# гасит только его сессию, и следующий ``authorize`` молча авторизует снова —
+# владелец 03.09 увидел это как «не могу выйти». ``end_session_endpoint`` даёт
+# клиенту одну строку в его logout: редирект сюда после локального выхода.
+#
+# Куда возвращать. Отдельного реестра ``post_logout_redirect_uris`` у клиентов
+# нет (и миграции ради него не надо): возврат разрешён на ORIGIN любого
+# зарегистрированного ``redirect_uri`` клиента — та же зона доверия, что и для
+# кода. Не совпало / клиент не назван — уводим на свою страницу входа, ошибкой
+# в чужой адрес не отвечаем (open-redirect через logout — классика).
+
+
+def _origin(url: str) -> str:
+    """``scheme://host[:port]`` в нижнем регистре; битый URL → пусто."""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit((url or "").strip())
+    except ValueError:
+        return ""
+    if parts.scheme not in ("https", "http") or not parts.hostname:
+        return ""
+    host = parts.hostname.lower()
+    return f"{parts.scheme}://{host}:{parts.port}" if parts.port else f"{parts.scheme}://{host}"
+
+
+def post_logout_redirect_allowed(client: Optional[OAuthClient], uri: str) -> bool:
+    """Разрешён ли возврат на ``uri`` после выхода: origin ∈ origins(redirect_uris)."""
+    if client is None or not uri:
+        return False
+    target = _origin(uri)
+    if not target:
+        return False
+    return any(_origin(str(u)) == target for u in (client.redirect_uris or []))
+
+
+def client_id_from_id_token_hint(id_token_hint: Optional[str]) -> Optional[str]:
+    """``aud`` из ``id_token_hint`` — подпись проверяем, срок НЕ проверяем.
+
+    Протухший id_token — штатный случай для logout (человек ушёл через час), а
+    подпись обязана сойтись: иначе любой мог бы назвать чужой ``client_id``.
+    Не разобралось — ``None``, и logout идёт без возврата к клиенту.
+    """
+    if not id_token_hint:
+        return None
+    try:
+        claims = jwt.decode(id_token_hint, get_public_jwks())
+    except Exception:  # noqa: BLE001 — любая порча токена = «подсказки нет»
+        return None
+    if claims.get("iss") != get_issuer():
+        return None
+    aud = claims.get("aud")
+    if isinstance(aud, list):
+        aud = aud[0] if aud else None
+    return str(aud) if aud else None
+
+
+# ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
 
@@ -432,6 +493,7 @@ def discovery_document() -> Dict[str, Any]:
         "authorization_endpoint": f"{issuer}/oidc/authorize",
         "token_endpoint": f"{issuer}/oidc/token",
         "userinfo_endpoint": f"{issuer}/oidc/userinfo",
+        "end_session_endpoint": f"{issuer}/oidc/logout",
         "jwks_uri": f"{issuer}/.well-known/jwks.json",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],

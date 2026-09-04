@@ -30,6 +30,15 @@
                 <p class="text-secondary text-center mb-4" id="form-subtitle">{{ brand.sub }}</p>
 
                 <div class="alert alert-danger d-none" id="error-box" role="alert"></div>
+                {% if logged_out %}
+                <div class="alert alert-success small" role="status">Вы вышли из всех сервисов Малмыжа.</div>
+                {% endif %}
+                {% if current_login %}
+                <div class="alert alert-info small" id="already-in" role="status">
+                    Вы уже вошли как <strong>{{ current_login }}</strong>.
+                    <a href="#" class="alert-link" id="logout-all">Выйти из всех сервисов</a>
+                </div>
+                {% endif %}
 
                 <form id="auth-form">
                     <div class="mb-3">
@@ -60,7 +69,8 @@
                     <a href="#" class="link-secondary small" id="mode-toggle">Регистрация по инвайт-коду</a>
                 </div>
                 <p class="text-center text-secondary small mt-3 mb-0">
-                    Единый вход «Сервисы Малмыжа» — один аккаунт для всех сервисов на вмалмыже.рф
+                    Единый вход «Сервисы Малмыжа» — один аккаунт для всех сервисов на вмалмыже.рф.
+                    Входя, вы разрешаете передавать сервисам экосистемы ваше имя и e-mail из этого аккаунта.
                 </p>
                 <p class="text-center small mt-2 mb-0">
                     <a class="link-secondary" href="/services"><i class="bi bi-grid-3x3-gap me-1"></i>Каталог сервисов Малмыжа</a>
@@ -82,6 +92,16 @@
         const safeNext = {{ safe_next | tojson }};
         if (safeNext) {
             document.getElementById('vk-login-btn').href = '/auth/vk/login?next=' + encodeURIComponent(safeNext);
+        }
+
+        const logoutAll = document.getElementById('logout-all');
+        if (logoutAll) {
+            logoutAll.addEventListener('click', async (e) => {
+                e.preventDefault();
+                // Кука ЕСА — на весь домен, поэтому это выход из всех сервисов разом.
+                await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+                location.href = '/login?logged_out=1';
+            });
         }
 
         document.getElementById('mode-toggle').addEventListener('click', (e) => {

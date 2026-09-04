@@ -340,8 +340,24 @@ async def login_page(request: Request):
         safe_next = resolved if resolved == raw_next else None
 
     brand = await resolve_brand(raw_next, request.headers.get("host"))
+    # Уже вошедший видит, кто он, и кнопку «Выйти из всех сервисов»: выход на
+    # сайте-клиенте гасит только сайт, а сессия ЕСА живёт кукой всего домена —
+    # без этой кнопки человеку из ЕСА не выйти (владелец 03.09).
+    current = getattr(request.state, "user", None)
+    current_login = None
+    if current is not None:
+        current_login = (
+            getattr(current, "display_name", None) or getattr(current, "login", None) or "аккаунт"
+        )
     return templates.TemplateResponse(
-        "login.html", {"request": request, "brand": brand, "safe_next": safe_next}
+        "login.html",
+        {
+            "request": request,
+            "brand": brand,
+            "safe_next": safe_next,
+            "current_login": current_login,
+            "logged_out": request.query_params.get("logged_out") == "1",
+        },
     )
 
 
