@@ -30,7 +30,7 @@ VK-проверка вынесена в инъектируемый ``is_publishe
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional
 
 from sqlalchemy import select
@@ -39,6 +39,19 @@ from database.models import AdClient, AdPayment, AdPublication, AdScheduledPost
 from modules.ad_cabinet.interaction_log import log_interaction
 
 logger = logging.getLogger(__name__)
+
+MSK = timezone(timedelta(hours=3))
+
+
+def now_msk() -> datetime:
+    """«Сейчас» в той же шкале, что ``AdScheduledPost.publish_date`` — МСК wall-clock naive.
+
+    До 2026-09-05 реконсилер сравнивал МСК-дату публикации с ``datetime.utcnow()``
+    (аудит кабинета): фиксация выхода, awaiting-платёж и «Ваш пост вышел»
+    опаздывали ровно на три часа, а с окном beat 8–22 вечерние посты ждали до
+    утра. Образец — ``post_expirer.run_expiry``.
+    """
+    return datetime.now(MSK).replace(tzinfo=None)
 
 
 def _build_default_checker(user_token: str, community_tokens: Dict[int, str]):
@@ -174,7 +187,7 @@ async def run_reconcile(
         from database.connection import AsyncSessionLocal
 
         session_factory = AsyncSessionLocal
-    now = now or datetime.utcnow()
+    now = now or now_msk()
 
     # Дефолтная VK-проверка собирается лениво (нужны токены) — только если не инжектирована.
     if is_published is None:
