@@ -38,17 +38,33 @@ class FakePublisher:
 
     async def publish_suggested(self, group_id, post_id, *, signed=True, publish_date=None):
         self.calls.append(
-            {"group_id": group_id, "post_id": post_id, "signed": signed, "publish_date": publish_date}
+            {
+                "group_id": group_id,
+                "post_id": post_id,
+                "signed": signed,
+                "publish_date": publish_date,
+            }
         )
         if self.fail:
-            return {"success": False, "error": "VK API error: [15] Access denied", "vk_error_code": 15}
+            return {
+                "success": False,
+                "error": "VK API error: [15] Access denied",
+                "vk_error_code": 15,
+            }
         return {"success": True, "post_id": self.returned_id or post_id}
 
 
 async def _seed(session):
     session.add_all(
         [
-            Region(id=1, code="mi", name="Малмыж", vk_group_id=158787639, is_active=True, neighbors="ur,klz,dead"),
+            Region(
+                id=1,
+                code="mi",
+                name="Малмыж",
+                vk_group_id=158787639,
+                is_active=True,
+                neighbors="ur,klz,dead",
+            ),
             Region(id=2, code="ur", name="Уржум", vk_group_id=168170215, is_active=True),
             Region(id=3, code="klz", name="Кильмезь", vk_group_id=168172770, is_active=True),
             Region(id=4, code="dead", name="Мёртвый", vk_group_id=444, is_active=False),
@@ -139,7 +155,13 @@ async def test_price_below_floor_rejected_before_vk(db_session):
     dups = await sp.default_dup_targets(db_session, region)
     with pytest.raises(OrderError):
         await sp.plan_item(
-            db_session, ar, publish_at=PUBLISH_AT, price=100, dup_targets=dups, publisher=pub, now=NOW
+            db_session,
+            ar,
+            publish_at=PUBLISH_AT,
+            price=100,
+            dup_targets=dups,
+            publisher=pub,
+            now=NOW,
         )
     assert pub.calls == []
     assert (await db_session.execute(select(AdScheduledPost))).scalars().all() == []
@@ -150,7 +172,13 @@ async def test_empty_price_uses_floor_per_placement(db_session):
     region, ar = await _seed(db_session)
     dups = await sp.default_dup_targets(db_session, region)
     res = await sp.plan_item(
-        db_session, ar, publish_at=PUBLISH_AT, price=None, dup_targets=dups, publisher=FakePublisher(), now=NOW
+        db_session,
+        ar,
+        publish_at=PUBLISH_AT,
+        price=None,
+        dup_targets=dups,
+        publisher=FakePublisher(),
+        now=NOW,
     )
     assert res["price_total"] == float(sp.PLACEMENT_FLOOR_RUB * 3)
 
@@ -171,7 +199,13 @@ async def test_vk_failure_marks_original_failed_without_reposts(db_session):
     region, ar = await _seed(db_session)
     dups = await sp.default_dup_targets(db_session, region)
     res = await sp.plan_item(
-        db_session, ar, publish_at=PUBLISH_AT, price=None, dup_targets=dups, publisher=FakePublisher(fail=True), now=NOW
+        db_session,
+        ar,
+        publish_at=PUBLISH_AT,
+        price=None,
+        dup_targets=dups,
+        publisher=FakePublisher(fail=True),
+        now=NOW,
     )
     assert res["ok"] is False and "15" in res["error"]
     rows = (await db_session.execute(select(AdScheduledPost))).scalars().all()
@@ -185,11 +219,22 @@ async def test_queue_mode_makes_no_vk_calls(db_session):
     pub = FakePublisher()
     dups = await sp.default_dup_targets(db_session, region)
     res = await sp.plan_item(
-        db_session, ar, publish_at=PUBLISH_AT, price=None, dup_targets=dups, publisher=pub, mode=sp.MODE_QUEUE, now=NOW
+        db_session,
+        ar,
+        publish_at=PUBLISH_AT,
+        price=None,
+        dup_targets=dups,
+        publisher=pub,
+        mode=sp.MODE_QUEUE,
+        now=NOW,
     )
     assert res["ok"] and pub.calls == []
     o = res["original"]
-    assert o.status == "scheduled" and o.next_attempt_at == PUBLISH_AT and o.vk_postponed_post_id == 78276
+    assert (
+        o.status == "scheduled"
+        and o.next_attempt_at == PUBLISH_AT
+        and o.vk_postponed_post_id == 78276
+    )
 
 
 @pytest.mark.asyncio
@@ -197,7 +242,13 @@ async def test_past_date_rejected(db_session):
     region, ar = await _seed(db_session)
     with pytest.raises(OrderError):
         await sp.plan_item(
-            db_session, ar, publish_at=NOW - timedelta(minutes=5), price=None, dup_targets=[], publisher=FakePublisher(), now=NOW
+            db_session,
+            ar,
+            publish_at=NOW - timedelta(minutes=5),
+            price=None,
+            dup_targets=[],
+            publisher=FakePublisher(),
+            now=NOW,
         )
 
 
@@ -221,7 +272,13 @@ async def test_busy_day_in_dup_community_rejected(db_session):
     dups = await sp.default_dup_targets(db_session, region)
     with pytest.raises(OrderError) as ei:
         await sp.plan_item(
-            db_session, ar, publish_at=PUBLISH_AT, price=None, dup_targets=dups, publisher=FakePublisher(), now=NOW
+            db_session,
+            ar,
+            publish_at=PUBLISH_AT,
+            price=None,
+            dup_targets=dups,
+            publisher=FakePublisher(),
+            now=NOW,
         )
     assert "Уржум" in str(ei.value)
 
@@ -232,7 +289,13 @@ async def test_second_plan_of_same_request_blocked_by_unique(db_session):
     region, ar = await _seed(db_session)
     dups = await sp.default_dup_targets(db_session, region)
     await sp.plan_item(
-        db_session, ar, publish_at=PUBLISH_AT, price=None, dup_targets=dups, publisher=FakePublisher(), now=NOW
+        db_session,
+        ar,
+        publish_at=PUBLISH_AT,
+        price=None,
+        dup_targets=dups,
+        publisher=FakePublisher(),
+        now=NOW,
     )
     await db_session.commit()
     ar.status = "new"  # имитируем гонку: второй запрос прочитал 'new'
@@ -240,6 +303,12 @@ async def test_second_plan_of_same_request_blocked_by_unique(db_session):
 
     with pytest.raises(IntegrityError):
         await sp.plan_item(
-            db_session, ar, publish_at=PUBLISH_AT + timedelta(days=1), price=None, dup_targets=dups, publisher=FakePublisher(), now=NOW
+            db_session,
+            ar,
+            publish_at=PUBLISH_AT + timedelta(days=1),
+            price=None,
+            dup_targets=dups,
+            publisher=FakePublisher(),
+            now=NOW,
         )
     await db_session.rollback()

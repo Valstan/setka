@@ -35,7 +35,9 @@ def _scalar_one(obj):
 
 
 def _region():
-    return Region(id=1, code="mi", name="Малмыж", vk_group_id=158787639, is_active=True, neighbors="ur")
+    return Region(
+        id=1, code="mi", name="Малмыж", vk_group_id=158787639, is_active=True, neighbors="ur"
+    )
 
 
 def _request(**kw):
@@ -109,7 +111,9 @@ async def test_options_404_for_unknown_community():
 
 def _patch_engine(monkeypatch, *, plan_result=None, plan_error=None):
     monkeypatch.setattr(vpe.VKPublisher, "create_with_policy", AsyncMock(return_value=MagicMock()))
-    monkeypatch.setattr(sp, "resolve_dup_targets", AsyncMock(return_value=[(2, -168170215, "Уржум")]))
+    monkeypatch.setattr(
+        sp, "resolve_dup_targets", AsyncMock(return_value=[(2, -168170215, "Уржум")])
+    )
     calls = []
 
     async def plan_item(session, ar, **kw):
@@ -150,7 +154,11 @@ async def test_create_plans_item_and_serializes(monkeypatch):
     db.execute = AsyncMock(side_effect=[_scalar_one(_region()), _scalar_one(ar)])
     payload = api.SuggestedPlanIn(
         community_vk_id=-158787639,
-        items=[api.SuggestedPlanItemIn(request_id=11, publish_at=_FUTURE, price=1100, dup_community_ids=[-168170215])],
+        items=[
+            api.SuggestedPlanItemIn(
+                request_id=11, publish_at=_FUTURE, price=1100, dup_community_ids=[-168170215]
+            )
+        ],
     )
     out = await api.suggested_plan_create(payload, db=db)
     assert out["mode"] == "vk_postpone"
@@ -166,7 +174,9 @@ async def test_create_reports_order_error_per_item_and_continues(monkeypatch):
     monkeypatch.setenv("AD_SUGGESTED_VK_POSTPONE", "0")
     _patch_engine(monkeypatch, plan_error=OrderError("Цена ниже минимума"))
     db = _db()
-    db.execute = AsyncMock(side_effect=[_scalar_one(_region()), _scalar_one(_request()), _scalar_one(None)])
+    db.execute = AsyncMock(
+        side_effect=[_scalar_one(_region()), _scalar_one(_request()), _scalar_one(None)]
+    )
     payload = api.SuggestedPlanIn(
         community_vk_id=-158787639,
         items=[
@@ -185,9 +195,12 @@ async def test_create_rejects_request_from_other_community(monkeypatch):
     monkeypatch.setenv("AD_SUGGESTED_VK_POSTPONE", "0")
     _patch_engine(monkeypatch, plan_result={"ok": True})
     db = _db()
-    db.execute = AsyncMock(side_effect=[_scalar_one(_region()), _scalar_one(_request(community_vk_id=-1))])
+    db.execute = AsyncMock(
+        side_effect=[_scalar_one(_region()), _scalar_one(_request(community_vk_id=-1))]
+    )
     payload = api.SuggestedPlanIn(
-        community_vk_id=-158787639, items=[api.SuggestedPlanItemIn(request_id=11, publish_at=_FUTURE)]
+        community_vk_id=-158787639,
+        items=[api.SuggestedPlanItemIn(request_id=11, publish_at=_FUTURE)],
     )
     out = await api.suggested_plan_create(payload, db=db)
     assert out["items"][0]["ok"] is False and "другого сообщества" in out["items"][0]["error"]
@@ -226,7 +239,9 @@ async def test_cancel_queue_mode_original_keeps_suggested_post_and_cascades(monk
     pub = MagicMock()
     pub.delete_post = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(vpe.VKPublisher, "create_with_policy", AsyncMock(return_value=pub))
-    row = _row(id=1, kind="suggested", vk_postponed_post_id=78276, next_attempt_at=datetime(2090, 1, 1))
+    row = _row(
+        id=1, kind="suggested", vk_postponed_post_id=78276, next_attempt_at=datetime(2090, 1, 1)
+    )
     child = _row(id=2, kind="repost", source_post_id=1, vk_postponed_post_id=None)
     db = _db()
     db.get = AsyncMock(return_value=row)

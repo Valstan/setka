@@ -53,7 +53,9 @@ class FakePublisher:
         return {"success": True, "post_id": 5000 + self._n}
 
     async def publish_suggested(self, group_id, post_id, *, signed=True, publish_date=None):
-        self.suggested.append({"group_id": group_id, "post_id": post_id, "publish_date": publish_date})
+        self.suggested.append(
+            {"group_id": group_id, "post_id": post_id, "publish_date": publish_date}
+        )
         return {"success": True, "post_id": self.suggested_id}
 
 
@@ -190,7 +192,11 @@ async def test_deadline_fails_repost_with_alert(db_session):
         r.next_attempt_at = late - timedelta(minutes=1)
     await db_session.commit()
     stats = await _run(
-        db_session, publisher_factory=_factory(pub), is_published=lambda o, p: False, now=late, alert=alerts
+        db_session,
+        publisher_factory=_factory(pub),
+        is_published=lambda o, p: False,
+        now=late,
+        alert=alerts,
     )
     assert stats["failed"] == 2 and pub.reposts == []
     assert len(alerts.msgs) == 2
@@ -217,7 +223,9 @@ async def test_flood_control_stops_tick_and_shifts_all_due(db_session):
 @pytest.mark.asyncio
 async def test_wall_code_214_fails_only_that_row(db_session):
     _, reposts = await _seed(db_session, original_status="published")
-    pub = FakePublisher(repost_errors={DUP1: ("VK API error: [214] Access to adding post denied", 214)})
+    pub = FakePublisher(
+        repost_errors={DUP1: ("VK API error: [214] Access to adding post denied", 214)}
+    )
     stats = await _run(db_session, publisher_factory=_factory(pub))
     assert stats["failed"] == 1 and stats["published"] == 1
     await db_session.refresh(reposts[0])
@@ -229,7 +237,9 @@ async def test_wall_code_214_fails_only_that_row(db_session):
 @pytest.mark.asyncio
 async def test_error_without_code_retries_then_fails(db_session):
     _, reposts = await _seed(db_session, original_status="published", attempts=rd.MAX_ATTEMPTS - 2)
-    pub = FakePublisher(repost_errors={DUP1: ("connection reset", None), DUP2: ("connection reset", None)})
+    pub = FakePublisher(
+        repost_errors={DUP1: ("connection reset", None), DUP2: ("connection reset", None)}
+    )
     stats = await _run(db_session, publisher_factory=_factory(pub))
     assert stats["retry"] == 2
     for r in reposts:

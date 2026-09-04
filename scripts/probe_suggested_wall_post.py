@@ -252,7 +252,9 @@ async def main() -> int:
     used_token: Optional[str] = None
     for name, tok in candidates:
         try:
-            result = await asyncio.to_thread(lambda t=tok: vk_api.VkApi(token=t).get_api().wall.post(**params))
+            result = await asyncio.to_thread(
+                lambda t=tok: vk_api.VkApi(token=t).get_api().wall.post(**params)
+            )
             used_name, used_token = name, tok
             print(f"  {name}: wall.post → {result}")
             break
@@ -295,7 +297,9 @@ async def main() -> int:
     repost_owner: Optional[int] = None
     if args.repost_to:
         if not post or post.get("post_type") != "post":
-            print("\n(repost пропущен: оригинал ещё не вышел — репостить можно только вышедший пост)")
+            print(
+                "\n(repost пропущен: оригинал ещё не вышел — репостить можно только вышедший пост)"
+            )
         else:
             repost_owner = -abs(int(args.repost_to))
             print(f"\n→ wall.repost wall{owner_id}_{new_post_id} → {repost_owner} …")
@@ -315,7 +319,11 @@ async def main() -> int:
                     print(
                         f"   внутри репоста: signer_id={inner.get('signer_id')} "
                         f"from_id={inner.get('from_id')} — "
-                        + ("✅ подпись автора видна" if inner.get("signer_id") else "❌ подписи нет")
+                        + (
+                            "✅ подпись автора видна"
+                            if inner.get("signer_id")
+                            else "❌ подписи нет"
+                        )
                     )
             except ApiError as e:
                 print(f"  ❌ wall.repost отказал: [{getattr(e, 'code', '?')}] {e}")

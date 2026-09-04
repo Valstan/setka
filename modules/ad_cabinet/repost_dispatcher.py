@@ -207,8 +207,7 @@ async def run_repost_dispatch(
         due_ids = (
             (
                 await session.execute(
-                    select(AdScheduledPost.id)
-                    .where(
+                    select(AdScheduledPost.id).where(
                         AdScheduledPost.kind.in_(DISPATCH_KINDS),
                         AdScheduledPost.status == "scheduled",
                         AdScheduledPost.next_attempt_at.isnot(None),
@@ -237,9 +236,7 @@ async def run_repost_dispatch(
 
         async def get_checker():
             if not checker_cache["built"]:
-                from modules.ad_cabinet.publish_reconciler import (
-                    build_default_checker_from_routing,
-                )
+                from modules.ad_cabinet.publish_reconciler import build_default_checker_from_routing
 
                 checker_cache["fn"] = await build_default_checker_from_routing()
                 checker_cache["built"] = True
@@ -315,7 +312,9 @@ async def _handle_row(
         return await _apply_error(session, row, res, now, alert)
 
     # kind == 'repost'
-    src = await session.get(AdScheduledPost, int(row.source_post_id)) if row.source_post_id else None
+    src = (
+        await session.get(AdScheduledPost, int(row.source_post_id)) if row.source_post_id else None
+    )
     if src is None or src.status in ("failed", "cancelled", "rejected"):
         row.status = "failed"
         row.error_message = "оригинал не опубликован (отменён/отклонён/ошибка)"
