@@ -39,14 +39,13 @@ allowlist (`scripts/accept_secret_grants.py`). Мозгу ушло одно пи
 5. Хвосты прошлого handoff: семь аватаров `--repair` первым прогоном суток; замер
    префикс-кэша конвейера (константа `hit`, база 2048); отчёт мозгу 06.09 по
    техобслуживанию бокса (`apt-daily.timer` включён 31.08, 167/103).
-6. Письма-рекомендации мозга 29.08 / 01.09 без реакции: `vars` в логах Actions
-   (у нас workflow без `vars.` — проверить и промолчать, если чисто), grep-аудит D-038
-   с непустым контролем (G286/G288), урезанный вывод journalctl (#265).
+6. ~~Письма-рекомендации мозга 29.08 / 01.09~~ — закрыты 04.09: `ci.yml` без `vars`/`journalctl`
+   (молчание честное); ре-аудит D-038 нашёл README и миграции — вычищено (#616), письмо мозгу.
 
 ## Контекст
 
 - **План:** нет активного файла-плана.
-- **Коммиты сессии 04.09:** #613 конвейер Казанской + accept grant'ов + удаление `/obriv`; #614 RP-initiated logout ЕСА + уведомление о передаче имени; #615 аудит инструкций Fable 5.1 + SessionStart-хук + удаление vendor-зеркал.
+- **Коммиты сессии 04.09:** #613 конвейер Казанской + accept grant'ов + удаление `/obriv`; #614 RP-initiated logout ЕСА + уведомление о передаче имени; #615 аудит инструкций Fable 5.1 + SessionStart-хук + удаление vendor-зеркал; #616 D-038 ре-аудит: README и миграции без FQDN/абсолютных путей.
 - **Коммиты сессии 01.09:**
   - `c2aef70` (#597) — D-061: grant'ы ДК «Действует», привязка до 33, §0 self-serve переписан, два письма мозгу;
   - `309892e` (#598) — конвейер: правила сайта в префикс-кэш (база «до» conveyor hit=2048/82.5%, headless 6912/84.9%);
@@ -54,7 +53,7 @@ allowlist (`scripts/accept_secret_grants.py`). Мозгу ушло одно пи
   - `b99d953` (#600) — PWA Радара: манифест маршрутом по хосту, `id=/radar`, `login_url` → ЕСА, sw v7.
 - **Прод:** `setka` / `setka-celery-worker` / `setka-celery-beat` = active, health 200, прод = `main` = `b99d953`.
 - **Открытых PR:** нет (кроме закрывающего сессию).
-- **Письма мозгу этой сессии:** `2026-09-04-kazanskaya-config-ready-accept-step-built-six-esa-lines`, `2026-09-04-end-session-live-clients-add-one-redirect`, `2026-09-04-instruction-audit-applied-setka`.
+- **Письма мозгу этой сессии:** `2026-09-04-kazanskaya-config-ready-accept-step-built-six-esa-lines`, `2026-09-04-end-session-live-clients-add-one-redirect`, `2026-09-04-instruction-audit-applied-setka`, `2026-09-04-d038-regrep-found-readme-and-migration-notes`.
 - **Письма мозгу этой сессии:** `2026-09-01-d061-done-two-grants-live-binding-33-…`,
   `2026-09-01-r29-verified-native-path-and-three-checks-answered`,
   `2026-09-01-pozvoni-oidc-client-registered-public-pkce-…`.

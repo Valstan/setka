@@ -11,7 +11,7 @@ Prometheus + Grafana стек для наблюдения за сводками,
 ## Установка (один раз на проде)
 
 ```bash
-ssh sarafan 'cd /home/valstan/SETKA && sudo bash scripts/setup-monitoring.sh'
+ssh sarafan 'cd ~/SETKA && sudo bash scripts/setup-monitoring.sh'
 ```
 
 Скрипт ставит `prometheus` и `grafana` через apt, копирует конфиги из репо. Идемпотентен — повторный запуск только обновляет конфиги. Доп. флаги:

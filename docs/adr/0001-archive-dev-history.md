@@ -30,7 +30,7 @@
 | «Куда мы шли» | `docs/SESSION_HANDOFF.md` (нить между сессиями) |
 | «Архитектурные решения» | `docs/adr/` ADRs (этот файл — первый) |
 | «Открытые задачи» | `docs/PENDING_FOLLOWUPS.md` |
-| «Что задеплоили на прод» | `gh pr list --state merged --search 'in:title release'` + `ssh sarafan 'cd /home/valstan/SETKA && git log --oneline -5'` |
+| «Что задеплоили на прод» | `gh pr list --state merged --search 'in:title release'` + `ssh sarafan 'cd ~/SETKA && git log --oneline -5'` |
 
 ## Что **не** становится избыточным
 

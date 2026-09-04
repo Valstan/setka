@@ -6,7 +6,7 @@
 
 ## Удалённый доступ к продакшену (важно для AI)
 
-**Только SSH** к хосту SETKA (`/home/valstan/SETKA`): shell, git, systemd, логи, деплой. MCP-серверы в IDE для этого проекта **не используются** (см. **[`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)**).
+**Только SSH** к хосту SETKA (`~/SETKA`): shell, git, systemd, логи, деплой. MCP-серверы в IDE для этого проекта **не используются** (см. **[`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)**).
 
 ---
 
@@ -15,7 +15,7 @@
 **Перед любой работой AI должен синхронизироваться:**
 
 ```bash
-cd /home/valstan/SETKA
+cd ~/SETKA
 git status
 git fetch origin
 git pull origin $(git branch --show-current)
@@ -58,14 +58,14 @@ Swagger: `http://127.0.0.1:8000/docs`
 sudo systemctl restart setka setka-celery-worker setka-celery-beat
 ```
 
-Логи: `/home/valstan/SETKA/logs/` (есть logrotate).
+Логи: `~/SETKA/logs/` (есть logrotate).
 
 ## 4) Dev/ручной запуск
 
 FastAPI:
 
 ```bash
-cd /home/valstan/SETKA
+cd ~/SETKA
 source venv/bin/activate
 python main.py
 ```
@@ -73,7 +73,7 @@ python main.py
 Celery:
 
 ```bash
-cd /home/valstan/SETKA
+cd ~/SETKA
 source venv/bin/activate
 ./scripts/start_celery.sh
 ```
@@ -89,7 +89,7 @@ source venv/bin/activate
 Если менялись зависимости или окружение:
 
 ```bash
-cd /home/valstan/SETKA
+cd ~/SETKA
 source venv/bin/activate
 pip install -r requirements.txt
 sudo systemctl restart setka setka-celery-worker setka-celery-beat
@@ -103,7 +103,7 @@ sudo systemctl restart setka setka-celery-worker setka-celery-beat
 
 ```bash
 # Запуск всех unit-тестов
-cd /home/valstan/SETKA
+cd ~/SETKA
 source venv/bin/activate
 pytest tests/ -v
 

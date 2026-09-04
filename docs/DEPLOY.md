@@ -38,7 +38,7 @@ If services don't exist yet, see setup below.
 ### Step 1: Pull Latest Code
 
 ```bash
-cd /home/valstan/SETKA
+cd ~/SETKA
 git pull origin main
 ```
 
@@ -160,7 +160,7 @@ All crontab entries from old_postopus are now Celery Beat schedules:
 ```bash
 # App logs (uvicorn stdout/stderr + Python logging — systemd редиректит
 # stdout/stderr в этот файл, см. setka.service)
-tail -f /home/valstan/SETKA/logs/uvicorn_production.log
+tail -f ~/SETKA/logs/uvicorn_production.log
 
 # Celery worker logs
 journalctl -u setka-celery-worker -f --no-pager

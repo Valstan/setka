@@ -2,7 +2,7 @@
 
 **Версия:** 1.0.0-beta  
 **Статус:** ✅ Production-ready (90% готовности)  
-**Домен:** http://3931b3fe50ab.vps.myjino.ru
+**Домен:** https://сарафан.вмалмыже.рф
 
 ---
 
@@ -65,7 +65,7 @@ modules/
 
 ### Активация окружения:
 ```bash
-cd /home/valstan/SETKA
+cd ~/SETKA
 source venv/bin/activate
 ```
 
@@ -94,7 +94,7 @@ python scripts/test_ai_analyzer.py  # (создать)
 
 ## 📡 API Endpoints
 
-**Base URL:** `https://3931b3fe50ab.vps.myjino.ru`
+**Base URL:** `https://сарафан.вмалмыже.рф`
 
 ### Health:
 - `GET /api/health/` - Quick health check
@@ -112,7 +112,7 @@ python scripts/test_ai_analyzer.py  # (создать)
 - `GET /api/posts/` - List posts
 - `GET /api/posts/{id}` - Get post by ID
 
-**Документация:** https://3931b3fe50ab.vps.myjino.ru/docs
+**Документация:** https://сарафан.вмалмыже.рф/docs
 
 ---
 
@@ -182,12 +182,12 @@ SETKA/
 ## 💾 Бэкапы
 
 **Автоматический бэкап:** Ежедневно в 3:00 AM  
-**Расположение:** `/home/valstan/SETKA/backup/`  
+**Расположение:** `~/SETKA/backup/`  
 **Хранение:** Последние 7 бэкапов
 
 Ручной бэкап:
 ```bash
-/home/valstan/SETKA/scripts/backup_database.sh
+~/SETKA/scripts/backup_database.sh
 ```
 
 ---
@@ -196,7 +196,7 @@ SETKA/
 
 **Health checks:** Каждые 5 минут  
 **Telegram алерты:** При ошибках и предупреждениях  
-**Логи:** `/home/valstan/SETKA/logs/`
+**Логи:** `~/SETKA/logs/`
 
 ---
 
@@ -253,7 +253,7 @@ scripts/backup_database.sh
 
 ## 🔗 Ссылки
 
-- **API Docs:** https://3931b3fe50ab.vps.myjino.ru/docs
+- **API Docs:** https://сарафан.вмалмыже.рф/docs
 - **Старый проект:** https://github.com/Valstan/postopus
 - **Groq Console:** https://console.groq.com
 

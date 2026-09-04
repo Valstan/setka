@@ -89,7 +89,7 @@ Example:
 ### 1. Migrate MongoDB Data
 
 ```bash
-cd /home/valstan/SETKA
+cd ~/SETKA
 source venv/bin/activate
 
 # Run migration script
@@ -244,7 +244,7 @@ After migration is complete:
 ## Support
 
 If you encounter issues:
-- Check logs: `/home/valstan/SETKA/logs/`
+- Check logs: `~/SETKA/logs/`
 - Review API docs: `http://your-server/docs`
 - Check Celery task status: `/api/monitoring/tasks/`
 

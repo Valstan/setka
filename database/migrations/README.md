@@ -6,7 +6,7 @@
 накатить одну конкретную миграцию руками, по-прежнему работает:
 
 ```bash
-ssh sarafan 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/NNN_*.sql'
+ssh sarafan 'sudo -u postgres psql -d setka -f ~/SETKA/database/migrations/NNN_*.sql'
 ```
 
 Также можно через `/sql` slash-команду в Claude-сессии (она спросит
@@ -25,9 +25,9 @@ ssh sarafan 'sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migr
 
 ```bash
 # на прод-VPS
-ssh sarafan 'cd /home/valstan/SETKA && python3 scripts/migrate.py status'
-ssh sarafan 'cd /home/valstan/SETKA && python3 scripts/migrate.py up --dry-run'
-ssh sarafan 'cd /home/valstan/SETKA && python3 scripts/migrate.py up'
+ssh sarafan 'cd ~/SETKA && python3 scripts/migrate.py status'
+ssh sarafan 'cd ~/SETKA && python3 scripts/migrate.py up --dry-run'
+ssh sarafan 'cd ~/SETKA && python3 scripts/migrate.py up'
 ```
 
 Каждая миграция применяется в одной транзакции вместе с

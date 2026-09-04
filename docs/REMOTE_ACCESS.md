@@ -6,9 +6,9 @@
 
 ## Главное правило
 
-1. **Единственный поддерживаемый способ для задач SETKA — SSH** к хосту, где развёрнут проект (`/home/valstan/SETKA`). Полный shell: `git`, `systemctl`, логи, `curl`, отладка, произвольные команды.
+1. **Единственный поддерживаемый способ для задач SETKA — SSH** к хосту, где развёрнут проект (`~/SETKA`). Полный shell: `git`, `systemctl`, логи, `curl`, отладка, произвольные команды.
 2. **MCP-серверы в Cursor/IDE для SETKA не используются** — они путают разные VPS и проекты. Агентам и людям: деплой, диагностика и прод всегда через **стандартный SSH** (см. конфиг ниже). Лишние MCP в настройках IDE лучше **отключить** для этого репозитория.
-3. Если сомнение — проверяй **`hostname`**, **`pwd`**, наличие **`/home/valstan/SETKA/main.py`**.
+3. Если сомнение — проверяй **`hostname`**, **`pwd`**, наличие **`~/SETKA/main.py`**.
 
 ---
 
@@ -16,7 +16,7 @@
 
 | Что | Значение |
 |-----|----------|
-| Проект на сервере | `/home/valstan/SETKA` |
+| Проект на сервере | `~/SETKA` |
 | Пользователь | `valstan` (как правило) |
 | API (локально на сервере) | `http://127.0.0.1:8000` (наружу — Nginx) |
 | Сервисы systemd | `setka`, `setka-celery-worker`, `setka-celery-beat` |
@@ -38,13 +38,13 @@ Host sarafan
 
 ```bash
 ssh sarafan
-cd /home/valstan/SETKA
+cd ~/SETKA
 ```
 
 Проверка, что это SETKA:
 
 ```bash
-test -f /home/valstan/SETKA/main.py && echo OK_SETKA
+test -f ~/SETKA/main.py && echo OK_SETKA
 ```
 
 ---
@@ -52,12 +52,12 @@ test -f /home/valstan/SETKA/main.py && echo OK_SETKA
 ## Типичные операции по SSH
 
 ```bash
-ssh sarafan "cd /home/valstan/SETKA && git status && git pull origin main"
+ssh sarafan "cd ~/SETKA && git status && git pull origin main"
 ssh sarafan "systemctl status setka setka-celery-worker setka-celery-beat --no-pager"
 ssh sarafan "curl -sS http://127.0.0.1:8000/api/health/"
 ```
 
-Логи: `/home/valstan/SETKA/logs/` (см. также [`START_HERE.md`](START_HERE.md)).
+Логи: `~/SETKA/logs/` (см. также [`START_HERE.md`](START_HERE.md)).
 
 ---
 

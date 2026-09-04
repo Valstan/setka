@@ -3,7 +3,7 @@
 ## 1) Быстрый запуск и проверка
 
 ```bash
-cd /home/valstan/SETKA
+cd ~/SETKA
 source venv/bin/activate
 python main.py
 ```
@@ -30,12 +30,12 @@ Swagger: `http://127.0.0.1:8000/docs`
 sudo systemctl restart setka setka-celery-worker setka-celery-beat
 ```
 
-Логи: `/home/valstan/SETKA/logs/` (есть logrotate).
+Логи: `~/SETKA/logs/` (есть logrotate).
 
 ## 3) Celery (ручной запуск)
 
 ```bash
-cd /home/valstan/SETKA
+cd ~/SETKA
 ./scripts/start_celery.sh
 ```
 
@@ -75,7 +75,7 @@ cd /home/valstan/SETKA
 Применение:
 
 ```bash
-/home/valstan/SETKA/scripts/apply_nginx_config.sh
+~/SETKA/scripts/apply_nginx_config.sh
 ```
 
 Что должно работать:
@@ -95,7 +95,7 @@ cd /home/valstan/SETKA
 Сводка состояния:
 
 ```bash
-cd /home/valstan/SETKA
+cd ~/SETKA
 bash scripts/check-setka.sh
 ```
 
