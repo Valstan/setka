@@ -86,10 +86,11 @@ async def run_pending_watch(
                 await res
             if first_time and row.client_id:
                 try:
+                    when = f"{row.publish_date:%d.%m %H:%M}"
                     res2 = client_notify(
                         session,
                         row.client_id,
-                        f"⌛ Ваш пост на {row.publish_date:%d.%m %H:%M} ещё не одобрен, дата прошла — "
+                        f"⌛ Ваш пост на {when} ещё не одобрен, дата прошла — "
                         "владелец назначит новую или свяжется с вами.",
                     )
                     if hasattr(res2, "__await__"):
