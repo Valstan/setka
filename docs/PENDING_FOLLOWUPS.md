@@ -406,7 +406,16 @@ python scripts/gitleaks_precommit.py --which
 
 ### 🟡 D-038 — вычистка инфра-деталей сужена сознательно: код и nginx остались
 
-`⏱ 2026-08-25 · snooze 0 · fresh · нужен релиз и сверка env на проде`
+`⏱ 2026-08-25 · snooze 0 · parked · условие расконсервации: решение снять дефолты в коде (релиз + сверка env на боксе)`
+
+**Ре-аудит 04.09 по G286/G288** (`git grep -i` по всем отслеживаемым, контроль непустой по тегу
+`pre-fable-freeze-2026-09-02`): утверждение «доки почищены» ниже было **ложно-чистым** — абсолютный
+корень деплоя стоял в 14 файлах `docs/` (~45 строк), в корневом `README.md` (+ FQDN хостера ×5
+как «домен»), в `database/migrations/` (README + комментарии 036/058) и `monitoring/README.md`.
+Вычищено PR #616; памятки `.claude/commands` — PR #615. **Не тронуты сознательно:** docstring-примеры
+и дефолты в `scripts/*` (~40 строк, класс «дефолт, а не проза»), FQDN как машинный адрес в
+`docs/GATEWAY.md` / `docs/ops/HOSTS.md` / `hitl-classifier-routine.md`. Письмо мозгу
+`2026-09-04-d038-regrep-found-readme-and-migration-notes.md`.
 
 Предохранитель переписан через свойство (`AGENTS.md` §«Что не публикуется»), доки и памятки
 почищены, шесть копий правила сведены к одной. **Не тронуты код и nginx-конфиги** — там
@@ -5207,7 +5216,7 @@ env и комнаты, надо решить их судьбу: перевест
 каким это делает раннер, и строка бухгалтерии дописана вручную —
 
 ```
-ssh sarafan "sudo -u postgres psql -d setka -v ON_ERROR_STOP=1 -f /home/valstan/SETKA/database/migrations/<файл>.sql"
+ssh sarafan "sudo -u postgres psql -d setka -v ON_ERROR_STOP=1 -f ~/SETKA/database/migrations/<файл>.sql"
 ssh sarafan "sudo -u postgres psql -d setka -c \"INSERT INTO applied_migrations (filename, sha256) VALUES ('<файл>.sql','<sha из status>') ON CONFLICT (filename) DO UPDATE SET sha256=EXCLUDED.sha256, applied_at=CURRENT_TIMESTAMP;\""
 ```
 
@@ -5616,10 +5625,10 @@ MVP: детект рекламы в предложке (`modules/ad_cabinet/clas
 
 ### Запуск и окружение
 
-- ~~**`main.py:25` хардкодит `/home/valstan/SETKA/logs/app.log`.**~~ Закрыто ранее: `main.py:45` уже использует `os.getenv("LOG_PATH", "/home/valstan/SETKA/logs/app.log")` с safe-fallback на StreamHandler. Запись была устаревшей.
+- ~~**`main.py:25` хардкодит `~/SETKA/logs/app.log`.**~~ Закрыто ранее: `main.py:45` уже использует `os.getenv("LOG_PATH", "~/SETKA/logs/app.log")` с safe-fallback на StreamHandler. Запись была устаревшей.
 - ~~**`venv` создаётся вручную в каждом worktree.**~~ Закрыто ранее: есть `scripts/setup-dev.ps1` и `scripts/setup-dev.sh`. 2026-05-22 добавлено `pre-commit install` в оба скрипта — теперь свежий worktree сразу получает git-хук.
 - ~~**`scripts/setup-dev.ps1` хардкодит `py -3.11`**~~ Закрыто 2026-05-23 (см. `DEV_HISTORY.md`): fallback `py -3.11 → -3.12 → -3` по аналогии с `setup-dev.sh`. Заодно добавлен UTF-8 BOM (PS 5.1 без BOM путал encoding на русской локали).
-- ~~**Хардкоды `/home/valstan/SETKA/logs/parser*` в `web/api/parsing.py` и `tasks/parsing_tasks.py`.**~~ Закрыто 2026-05-23 (см. `DEV_HISTORY.md`): введён env `SETKA_LOGS_DIR` (default `/home/valstan/SETKA/logs`), `OUTPUT_DIR`/`REPORTS_DIR`/`VIDEO_REPORT_PATH` вычисляются от него, `_init_logger` safe-fallback'ит на StreamHandler при недоступном пути. В `web/api/parsing.py` удалён неиспользуемый дубль `OUTPUT_DIR`. +5 тестов в `tests/test_tasks/`.
+- ~~**Хардкоды `~/SETKA/logs/parser*` в `web/api/parsing.py` и `tasks/parsing_tasks.py`.**~~ Закрыто 2026-05-23 (см. `DEV_HISTORY.md`): введён env `SETKA_LOGS_DIR` (default `~/SETKA/logs`), `OUTPUT_DIR`/`REPORTS_DIR`/`VIDEO_REPORT_PATH` вычисляются от него, `_init_logger` safe-fallback'ит на StreamHandler при недоступном пути. В `web/api/parsing.py` удалён неиспользуемый дубль `OUTPUT_DIR`. +5 тестов в `tests/test_tasks/`.
 
 ### Документация / разработка
 
@@ -5632,12 +5641,12 @@ MVP: детект рекламы в предложке (`modules/ad_cabinet/clas
   - `extend-ignore` обрезан с `E203,W503,E402,E501,E712,F841,W291,E303,E722,F601,F811,E302,W391,F541` (14 кодов) до `E203,W503` (только black ↔ pep8 конфликт). Все новые нарушения flake8 теперь падают в pre-commit.
 - ~~**Отслеживать F601-фикс в фильтре рекламы**~~ Закрыто 2026-05-26: ratio стабилизировался. Замеры за 3 окна (0.347 % → 0.600 % → **0.54 %** за последние 100 succeeded-tasks 2026-05-25 21:21 → 2026-05-26). Колеблется в коридоре 0.35-0.60 %, далеко от тревожного порога 1.5 %. PR [#35](https://github.com/Valstan/setka/pull/35) фиксировал нитку ещё 2026-05-24, эта запись была вторичным мониторингом. Решение оставить вес price-patterns=2.
 - ~~**Инкрементально ломать длинные строки, помеченные `# noqa: E501`**~~ Закрыто 2026-05-24 (см. `DEV_HISTORY.md` «Break long lines PR #1-#4»). За 4 атомарных PR в один день: PR #1 (`modules/system_status_notifier.py`, 15), PR #2 (`tasks/parsing_tasks.py`, 10), PR #3 (`tasks/vk_carousel_tasks.py` + `modules/service_activity_notifier.py`, 8), PR #4 (остальные 40 файлов, 63). **В проекте 0 строк с `# noqa: E501`**. Поведение функций не менялось (Python склеивает adjacent string literals на этапе компиляции).
-- ~~**Рефакторинг `scripts/*` через `pyproject.toml` + `pip install -e .`**~~ Закрыто 2026-05-24 (см. `DEV_HISTORY.md` «pyproject.toml + editable install»). Создан `pyproject.toml`, добавлен `pip install -e .` в CI и `scripts/setup-dev.{sh,ps1}`. Из 53 файлов удалён `sys.path.insert(0, ...)` и ~50 связанных unused-импортов; ~90 `# noqa: E402` снято. Осталось ~30 legit-кейсов noqa: E402 (logging.basicConfig / os.environ.setdefault до импортов в scripts/tests). **Прод-action item**: разовый `ssh sarafan 'cd /home/valstan/SETKA && ./venv/bin/pip install -e .'` после merge.
+- ~~**Рефакторинг `scripts/*` через `pyproject.toml` + `pip install -e .`**~~ Закрыто 2026-05-24 (см. `DEV_HISTORY.md` «pyproject.toml + editable install»). Создан `pyproject.toml`, добавлен `pip install -e .` в CI и `scripts/setup-dev.{sh,ps1}`. Из 53 файлов удалён `sys.path.insert(0, ...)` и ~50 связанных unused-импортов; ~90 `# noqa: E402` снято. Осталось ~30 legit-кейсов noqa: E402 (logging.basicConfig / os.environ.setdefault до импортов в scripts/tests). **Прод-action item**: разовый `ssh sarafan 'cd ~/SETKA && ./venv/bin/pip install -e .'` после merge.
 - ~~**Покрыть тестами восстановленные F821-ветки**~~ Закрыто 2026-05-23 (см. `DEV_HISTORY.md`): +14 тестов в `tests/test_core/test_context_factory.py` (3), `tests/test_utils/test_retry_utility.py` (6), `tests/test_utils/test_text_utils.py` (5). Покрыты `ContextFactory.create_from_region`, `retry_with_fallback`, `retry_with_circuit_breaker` (+`CircuitBreaker` сценарии заодно), `truncate_text` (+ integration через `TextOnlyBulletinBuilder.build_bezfoto_bulletin`). Итого 379/379 зелёных.
 
 ### Прод-операции
 
-- ~~**Применение SQL-миграций — ручное.**~~ Закрыто 2026-05-22: миграция 010 + `scripts/migrate.py` (stdlib, через `sudo -u postgres psql`). Сверяется с `applied_migrations`, применяет недостающее в транзакции вместе с INSERT-ом. Использование: `ssh sarafan-prod 'cd /home/valstan/SETKA && python3 scripts/migrate.py up'`.
+- ~~**Применение SQL-миграций — ручное.**~~ Закрыто 2026-05-22: миграция 010 + `scripts/migrate.py` (stdlib, через `sudo -u postgres psql`). Сверяется с `applied_migrations`, применяет недостающее в транзакции вместе с INSERT-ом. Использование: `ssh sarafan-prod 'cd ~/SETKA && python3 scripts/migrate.py up'`.
 - ~~**GRANT в миграциях / ALTER DEFAULT PRIVILEGES.**~~ Закрыто 2026-05-22 миграцией 009 (см. `DEV_HISTORY.md`). Будущие миграции не должны включать explicit `GRANT ALL ... TO setka_user` — default privileges выдаст их автоматически.
 - ~~**Auto-mode classifier блокирует SSH на прод.**~~ Закрыто 2026-05-22: `.claude/settings.json` с `permissions.allow: ["Bash(ssh sarafan-prod:*)"]` (закоммичен в репо через `!.claude/settings.json` в `.gitignore`). Destructive-операции по-прежнему через `AskUserQuestion` — это политика CLAUDE.md, не permissions.
 
@@ -5734,7 +5743,7 @@ suggest). Реализация — на стороне Мозга. Факты в
 - **`/sql`** — psql на проде с подтверждением. _(Сделано — см. [`.claude/commands/sql.md`](../.claude/commands/sql.md).)_
 - ~~**Скрипт `scripts/dev-doctor.sh`** проверяет окружение~~ Закрыто 2026-06-03 (ветка `chore/dev-doctor`): read-only доктор — Python 3.11/3.12/3, venv + версия, импорт fastapi/celery/sqlalchemy/pytest, editable-install (`import modules`), pre-commit git-хук, psql, git-sync (делегирует `git_sync_check.sh`), best-effort SSH-probe прода (`--no-prod` чтобы пропустить). Exit 1 при FAIL, 0 при WARN.
 - ~~**Hook на `git commit`**, который проверяет качество commit message~~ Закрыто 2026-06-03 (ветка `chore/commit-msg-hook`): `scripts/check_commit_msg.py` (stdlib-only) подключён `commit-msg`-стейджем в `.pre-commit-config.yaml` (+ `default_install_hook_types: [pre-commit, commit-msg]`, чтобы `pre-commit install` ставил оба типа). Проверяет Conventional Commits subject + обязательное тело для `feat`/`fix`/`refactor`; пропускает Merge/Revert/fixup/squash. +15 тестов. **Существующим dev-машинам** нужен разовый `pre-commit install` для активации commit-msg-хука.
-- ~~**Smoke-test после деплоя** — отдельный шаг в `/reliz`.~~ Закрыто 2026-06-05 (ветка `feat/reliz-smoke-test`): `scripts/smoke_test.py` (stdlib-only urllib) поверх seam'а `parse_and_publish_theme(dry_run=True)` ([PR #122](https://github.com/Valstan/setka/pull/122)) — ставит diagnostics-задачу эталонного региона (`POST /api/regions/{code}/diagnostics`), опрашивает по `task_id`, проверяет `success` + `posts_parsed >= --min-posts`, возвращает exit 0/1/2. Подключён как **Шаг 8.5** в [`/reliz`](../.claude/commands/reliz.md) (после рестарта, под `AskUserQuestion`, пропускается для деплоев без рестарта worker/beat). Чистая логика в `evaluate_result`; +13 тестов (`tests/test_scripts/test_smoke_test.py`). Применение: `ssh sarafan "cd /home/valstan/SETKA && ./venv/bin/python scripts/smoke_test.py"`.
+- ~~**Smoke-test после деплоя** — отдельный шаг в `/reliz`.~~ Закрыто 2026-06-05 (ветка `feat/reliz-smoke-test`): `scripts/smoke_test.py` (stdlib-only urllib) поверх seam'а `parse_and_publish_theme(dry_run=True)` ([PR #122](https://github.com/Valstan/setka/pull/122)) — ставит diagnostics-задачу эталонного региона (`POST /api/regions/{code}/diagnostics`), опрашивает по `task_id`, проверяет `success` + `posts_parsed >= --min-posts`, возвращает exit 0/1/2. Подключён как **Шаг 8.5** в [`/reliz`](../.claude/commands/reliz.md) (после рестарта, под `AskUserQuestion`, пропускается для деплоев без рестарта worker/beat). Чистая логика в `evaluate_result`; +13 тестов (`tests/test_scripts/test_smoke_test.py`). Применение: `ssh sarafan "cd ~/SETKA && ./venv/bin/python scripts/smoke_test.py"`.
 
 ### Наблюдаемость
 

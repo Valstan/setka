@@ -225,7 +225,7 @@ timestamp генерации): дифф = реальное изменение с
 (с прода коммитить нельзя, PR-only ADR-0002): при касании нитки классификатора
 
 ```
-ssh sarafan "cat /home/valstan/SETKA/logs/classifier_learned_rules_snapshot.md" \
+ssh sarafan "cat ~/SETKA/logs/classifier_learned_rules_snapshot.md" \
   > config/classification_postulates_learned.snapshot.md   # + обычный PR
 ```
 

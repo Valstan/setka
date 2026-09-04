@@ -13,7 +13,7 @@
 ### Структура директорий
 
 ```
-/home/valstan/SETKA/
+~/SETKA/
 ├── main.py                     # FastAPI приложение (lifespan, роуты, middleware)
 ├── celery_app.py               # Точка входа Celery (re-export из tasks/)
 ├── config/                     # Конфигурация
@@ -268,7 +268,7 @@ AI: "Финальное решение: X с обработкой ошибок �
 
 1. **Проверить текущую ветку и статус:**
    ```bash
-   cd /home/valstan/SETKA && git status && git branch -a
+   cd ~/SETKA && git status && git branch -a
    ```
 
 2. **Синхронизироваться:**

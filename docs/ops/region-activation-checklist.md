@@ -503,7 +503,7 @@ VALSTAN последним, потому что его бан гасит воо�
 vk_group_id IS NOT NULL`, то есть неактивный сосед в сводку не попадает.
 
 ```bash
-ssh sarafan "sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migrations/073_kirov_oblast_neighbors.sql"
+ssh sarafan "sudo -u postgres psql -d setka -f ~/SETKA/database/migrations/073_kirov_oblast_neighbors.sql"
 ```
 
 ## Шаг 5. Активация
@@ -512,7 +512,7 @@ ssh sarafan "sudo -u postgres psql -d setka -f /home/valstan/SETKA/database/migr
 отчёт готовности, запись только с `--apply`.
 
 ```bash
-ssh sarafan "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd /home/valstan/SETKA && exec ./venv/bin/python scripts/activate_regions.py omutninsk belholunitsa verhnekame=kirs_info43 afanasyevo'"
+ssh sarafan "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd ~/SETKA && exec ./venv/bin/python scripts/activate_regions.py omutninsk belholunitsa verhnekame=kirs_info43 afanasyevo'"
 ```
 
 > ⚠️ **Три части команды обязательны, иначе она не запустится.** `/etc/setka/setka.env` —
@@ -556,7 +556,7 @@ community-токен, neighbors и права токена, и печатает 
 ## Шаг 6. Проверка живьём
 
 ```bash
-ssh sarafan "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd /home/valstan/SETKA && exec ./venv/bin/python scripts/smoke_test.py --region omutninsk --theme novost --min-posts 1'"
+ssh sarafan "sudo bash -c 'set -a; . /etc/setka/setka.env; set +a; cd ~/SETKA && exec ./venv/bin/python scripts/smoke_test.py --region omutninsk --theme novost --min-posts 1'"
 ```
 
 > ⏱ **Окно «передумать» измеряется минутами, а не часами.** Ни один прежний батч этого

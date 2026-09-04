@@ -99,7 +99,7 @@ git push
 
 ```bash
 # Используем интеграционный скрипт (требует working окружения)
-cd /home/valstan/SETKA
+cd ~/SETKA
 source venv/bin/activate
 python scripts/test_publisher.py
 ```
