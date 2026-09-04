@@ -19,6 +19,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import relationship
 
@@ -772,6 +773,27 @@ class AdScheduledPost(Base):
     """
 
     __tablename__ = "ad_scheduled_posts"
+    # Планировщик предложки (миграция 095). Уникумы держат идемпотентность в БД:
+    # один репост в одно сообщество на один оригинал; одна активная публикация
+    # оригинала на заявку. Объявлены и для sqlite — тесты обязаны ловить дубль.
+    __table_args__ = (
+        Index(
+            "uq_ad_sched_repost_target",
+            "source_post_id",
+            "community_vk_id",
+            unique=True,
+            postgresql_where=text("source_post_id IS NOT NULL"),
+            sqlite_where=text("source_post_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_ad_sched_suggested_active",
+            "source_ad_request_id",
+            unique=True,
+            postgresql_where=text("kind = 'suggested' AND status IN ('scheduled', 'published')"),
+            sqlite_where=text("kind = 'suggested' AND status IN ('scheduled', 'published')"),
+        ),
+        Index("ix_ad_sched_due", "kind", "status", "next_attempt_at"),
+    )
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     community_vk_id = Column(BigInteger, nullable=False)  # owner_id группы (отрицательный)
@@ -819,6 +841,22 @@ class AdScheduledPost(Base):
         BigInteger, ForeignKey("ad_client_packages.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Планировщик предложки (миграция 095, план 2026-09-05):
+    #   kind — 'post' (всё, что было) | 'suggested' (оригинал предложки: сам
+    #          предложенный пост с подписью автора) | 'repost' (дублёр: wall.repost
+    #          оригинала от имени сообщества-дублёра после его выхода);
+    #   source_post_id — для 'repost' строка-оригинал;
+    #   next_attempt_at — МСК wall-clock naive, когда диспетчер вправе взять
+    #          строку; сдвигается вперёд как lease при claim;
+    #   attempts — счётчик попыток (предел ретраев + UI).
+    # У 'repost' vk_postponed_post_id пуст до выхода — реконсилер их не берёт.
+    kind = Column(String(20), nullable=False, default="post", index=True)
+    source_post_id = Column(
+        BigInteger, ForeignKey("ad_scheduled_posts.id", ondelete="CASCADE"), nullable=True
+    )
+    next_attempt_at = Column(DateTime, nullable=True)
+    attempts = Column(SmallInteger, nullable=False, default=0)
+
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -852,6 +890,10 @@ class AdScheduledPost(Base):
             "moderated_at": self.moderated_at.isoformat() if self.moderated_at else None,
             "moderation_comment": self.moderation_comment,
             "package_id": self.package_id,
+            "kind": self.kind or "post",
+            "source_post_id": self.source_post_id,
+            "next_attempt_at": self.next_attempt_at.isoformat() if self.next_attempt_at else None,
+            "attempts": int(self.attempts or 0),
             "error_message": self.error_message,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

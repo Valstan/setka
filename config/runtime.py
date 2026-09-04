@@ -477,6 +477,31 @@ def broadcast_disabled() -> bool:
     )
 
 
+def ad_repost_disabled() -> bool:
+    """Аварийный стоп диспетчера планировщика предложки (дефолт — работает).
+
+    AD_REPOST_DISABLED=1/true/yes/on => репосты и оригиналы в режиме queue не
+    публикуются (no-op), строки ждут. Безопасность по умолчанию держится тем,
+    что план создаёт оператор явно."""
+    return (_getenv("AD_REPOST_DISABLED", "0") or "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def ad_suggested_mode() -> str:
+    """Режим публикации оригинала предложки: ``vk_postpone`` | ``queue``.
+
+    AD_SUGGESTED_VK_POSTPONE=1 (дефолт) — оригинал уходит в VK-отложку
+    (``wall.post post_id publish_date``); 0 — VK не трогаем, оригинал публикует
+    диспетчер «сейчас» в момент publish_date (fallback, если probe покажет, что
+    отложка предложки теряет подпись автора)."""
+    raw = (_getenv("AD_SUGGESTED_VK_POSTPONE", "1") or "1").strip().lower()
+    return "vk_postpone" if raw in ("1", "true", "yes", "on") else "queue"
+
+
 def radar_delivery_disabled() -> bool:
     """Аварийный стоп доставки радара во внешние выводы (дефолт — ВКЛючена).
 

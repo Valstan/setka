@@ -30,6 +30,19 @@ def test_reconcile_publications_task_registered():
     assert entry["task"] == "tasks.celery_app.reconcile_scheduled_publications"
 
 
+def test_ad_repost_dispatch_registered_every_minute():
+    """Диспетчер планировщика предложки: поминутный beat + watchdog (Этап 0)."""
+    from tasks.celery_app import app, check_ad_repost_heartbeat, dispatch_ad_reposts  # noqa: F401
+
+    assert "tasks.celery_app.dispatch_ad_reposts" in app.tasks
+    assert "tasks.celery_app.check_ad_repost_heartbeat" in app.tasks
+    entry = app.conf.beat_schedule["ad-repost-dispatch"]
+    assert entry["task"] == "tasks.celery_app.dispatch_ad_reposts"
+    assert entry["options"]["expires"] <= 60  # тик минутный — устаревший не копится
+    wd = app.conf.beat_schedule["ad-repost-watchdog"]
+    assert wd["task"] == "tasks.celery_app.check_ad_repost_heartbeat"
+
+
 def test_expire_ad_posts_task_registered():
     """Авто-снятие постов по сроку (С2) зарегистрировано + ежедневный beat."""
     from tasks.celery_app import app, expire_ad_posts  # noqa: F401

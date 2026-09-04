@@ -88,7 +88,11 @@ class VKPublisher:
     # — VK docs explicitly state these need a user token. We don't even try
     # the community-token first to save a guaranteed-failure round trip and
     # to keep the publish-token rate-limit budget intact.
-    _USER_TOKEN_ONLY_METHODS = frozenset({"wall.repost"})
+    # wall.pin / wall.unpin — community-токен отвечает error 27 (доказано в
+    # modules/promotion/group_setup_vk.py, probe 2026-08-28). wall.post с
+    # post_id=<предложенный> тоже только user-токеном админа, но метод у него
+    # общий с обычной публикацией — поэтому он идёт через ``user_only=True``.
+    _USER_TOKEN_ONLY_METHODS = frozenset({"wall.repost", "wall.pin", "wall.unpin"})
 
     def __init__(
         self,
@@ -363,6 +367,97 @@ class VKPublisher:
                 "vk_error_code": _vk_error_code_of(e),
             }
 
+    async def publish_suggested(
+        self,
+        group_id: int,
+        post_id: int,
+        *,
+        signed: bool = True,
+        publish_date: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Опубликовать ПРЕДЛОЖЕННЫЙ пост «как есть» (планировщик предложки, Этап 0).
+
+        VK: ``wall.post(owner_id, post_id=<suggest>, from_group=1, signed=1
+        [, publish_date])`` — принимает предложенную запись, сохраняя подпись
+        автора («Предложил(а): …»). Только user-токеном администратора:
+        community-токен на этот вызов отвечает 15/27 (probe
+        ``scripts/probe_suggested_wall_post.py``), поэтому идём сразу по
+        publish-кандидатам, минуя community, как ``wall.repost``.
+
+        ``publish_date`` (unix) — отложка; ``None`` — публикация сейчас (режим
+        ``queue`` диспетчера). Возвращает dict как ``publish_bulletin``; VK может
+        вернуть новый ``post_id`` — вызывающий обязан хранить возвращённый.
+        """
+        target_group_id = self._normalize_group_owner_id(group_id)
+        if self.test_polygon_mode:
+            target_group_id = self._normalize_group_owner_id(self.test_polygon_group_id)
+            logger.info("🧪 TEST POLYGON MODE: suggested post goes to %s", target_group_id)
+
+        await self._enforce_rate_limit(target_group_id)
+
+        params: Dict[str, Any] = {
+            "owner_id": target_group_id,
+            "post_id": int(post_id),
+            "from_group": 1,
+        }
+        if signed:
+            params["signed"] = 1
+        is_postponed = bool(publish_date and int(publish_date) > 0)
+        if is_postponed:
+            params["publish_date"] = int(publish_date)
+
+        try:
+            response, via = await self._call_wall_post(params, user_only=True)
+            new_id = response.get("post_id") or int(post_id)
+            self._last_post_time[target_group_id] = datetime.now()
+            logger.info(
+                "✅ %s suggested post %s → %s in group %s (via %s)",
+                "Scheduled" if is_postponed else "Published",
+                post_id,
+                new_id,
+                target_group_id,
+                via,
+            )
+            return {
+                "success": True,
+                "post_id": new_id,
+                "owner_id": target_group_id,
+                "url": f"https://vk.com/wall{target_group_id}_{new_id}",
+                "postponed": is_postponed,
+                "via": via,
+            }
+        except Exception as e:
+            logger.error("❌ Failed to publish suggested %s in %s: %s", post_id, target_group_id, e)
+            return {
+                "success": False,
+                "error": str(e),
+                "group_id": target_group_id,
+                "vk_error_code": _vk_error_code_of(e),
+            }
+
+    async def pin_post(self, owner_id: int, post_id: int) -> Dict[str, Any]:
+        """Закрепить пост на стене сообщества — VK ``wall.pin`` (только user-токен)."""
+        return await self._wall_simple_call("wall.pin", owner_id, post_id, "📌 Pinned")
+
+    async def unpin_post(self, owner_id: int, post_id: int) -> Dict[str, Any]:
+        """Открепить пост — VK ``wall.unpin`` (только user-токен)."""
+        return await self._wall_simple_call("wall.unpin", owner_id, post_id, "📍 Unpinned")
+
+    async def _wall_simple_call(
+        self, method: str, owner_id: int, post_id: int, log_prefix: str
+    ) -> Dict[str, Any]:
+        """Общий каркас для wall.pin/unpin: тот же токен-роутинг, тот же формат ответа."""
+        target = self._normalize_group_owner_id(owner_id)
+        params = {"owner_id": target, "post_id": int(post_id)}
+        client, _via_community = self._client_for_group(target)
+        try:
+            _response, via = await self._call_wall_post(params, method=method, client=client)
+            logger.info("%s wall%s_%s (via %s)", log_prefix, target, post_id, via)
+            return {"success": True, "via": via}
+        except Exception as e:
+            logger.error("❌ %s failed for wall%s_%s: %s", method, target, post_id, e)
+            return {"success": False, "error": str(e), "vk_error_code": _vk_error_code_of(e)}
+
     async def publish_repost(
         self,
         group_id: int,
@@ -516,6 +611,8 @@ class VKPublisher:
         params: Dict[str, Any],
         method: str = "wall.post",
         client=None,
+        *,
+        user_only: bool = False,
     ) -> Tuple[Dict, str]:
         """
         Call VK API wall.post / wall.repost.
@@ -543,8 +640,10 @@ class VKPublisher:
         policy = getattr(self, "_policy", None)
         active_name = getattr(self, "_active_publish_name", None)
 
-        # Step 1: VK API restrictions — never try a group-token call we know fails
-        if method in self._USER_TOKEN_ONLY_METHODS:
+        # Step 1: VK API restrictions — never try a group-token call we know fails.
+        # ``user_only`` — то же для вызовов, у которых метод общий (wall.post с
+        # post_id=<предложенный>), а право — только у user-токена админа.
+        if user_only or method in self._USER_TOKEN_ONLY_METHODS:
             if candidates:
                 return await self._try_publish_candidates(
                     method, params, via_prefix="publish-token"

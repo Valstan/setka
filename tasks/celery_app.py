@@ -934,6 +934,42 @@ def reconcile_scheduled_publications():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.dispatch_ad_reposts")
+def dispatch_ad_reposts():
+    """Тик диспетчера планировщика предложки (каждую минуту, 24/7).
+
+    Репосты в сообщества-дублёры после выхода оригинала + оригиналы в режиме
+    ``queue``. No-op без due-строк или при AD_REPOST_DISABLED. Идемпотентно
+    (lease-claim), throttle ≥5 с между VK-записями.
+    """
+    try:
+        from modules.ad_cabinet.repost_dispatcher import run_repost_dispatch
+
+        result = run_coro(run_repost_dispatch())
+        if result.get("taken"):
+            logger.info("ad repost dispatch: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"dispatch_ad_reposts failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
+@app.task(name="tasks.celery_app.check_ad_repost_heartbeat")
+def check_ad_repost_heartbeat():
+    """Watchdog планировщика предложки: алёрт, если просроченные строки не взяты."""
+    try:
+        from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from modules.ad_cabinet.repost_dispatcher import maybe_alert_stale
+
+        token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
+        status = run_coro(maybe_alert_stale(telegram_token=token, chat_id=TELEGRAM_ALERT_CHAT_ID))
+        logger.info("ad repost watchdog: %s", status)
+        return {"success": True, "status": status, "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        logger.error(f"check_ad_repost_heartbeat failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.expire_ad_posts")
 def expire_ad_posts():
     """Авто-снятие рекламных постов по истечении срока (С2, ad-CRM).
@@ -1772,6 +1808,21 @@ app.conf.beat_schedule = {
             "expires": 1500,
             "catchup": False,
         },
+    },
+    # Планировщик предложки (Этап 0, план 2026-09-05): диспетчер раз в минуту
+    # 24/7 — репосты в дублёры после выхода оригинала и оригиналы в режиме
+    # queue. No-op без due-строк или при AD_REPOST_DISABLED.
+    "ad-repost-dispatch": {
+        "task": "tasks.celery_app.dispatch_ad_reposts",
+        "schedule": crontab(minute="*"),
+        "options": {"expires": 55, "catchup": False},
+    },
+    # Watchdog планировщика предложки: раз в час на :27, алёрт только если
+    # есть просроченные строки, которые диспетчер не взял.
+    "ad-repost-watchdog": {
+        "task": "tasks.celery_app.check_ad_repost_heartbeat",
+        "schedule": crontab(minute=27),
+        "options": {"expires": 1800, "catchup": False},
     },
     # Авто-снятие рекламных постов по истечении срока (С2, ad-CRM) — 03:30 MSK
     # (после cleanup 03:00 и radar-retention 03:20). Срок опционален.
