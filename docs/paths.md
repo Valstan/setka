@@ -113,7 +113,7 @@ flowchart LR
 
 ### Системные/служебные endpoints (укрупнено)
 
-Источники: `web/api/workflow.py`, `system_monitoring.py`, `task_monitoring.py`, `service_notifications.py`, `test_workflow.py`.
+Источники: `web/api/workflow.py`, `system_monitoring.py`, `task_monitoring.py`, `service_notifications.py`.
 
 - Workflow: статус, запуск цикла, publish, расписание, stats
 - System monitoring: stats/operations/regions-status/workflow-status/live/system-status
