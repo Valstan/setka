@@ -550,7 +550,7 @@ function renderClientDetails(d) {
                     <i class="bi bi-save"></i> Сохранить
                 </button>
                 <button class="btn btn-sm btn-outline-danger ms-auto" onclick="deleteClient(${c.id})">
-                    <i class="bi bi-trash"></i> Удалить клиента
+                    <i class="bi bi-archive"></i> В архив
                 </button>
             </div>
             <div class="small mt-1" id="cf-res-${c.id}"></div>
@@ -1297,7 +1297,7 @@ async function saveClientFields(id) {
 }
 
 async function deleteClient(id) {
-    if (!confirm('Удалить клиента вместе с его оплатами? Публикации останутся без привязки. Действие необратимо.')) return;
+    if (!confirm('Архивировать клиента? Карточка уйдёт из списков, оплаты, пакеты и посты сохранятся; вернуть можно через API /clients/{id}/unarchive.')) return;
     try {
         await apiClient.deleteCrmClient(id);
         await loadCrm();
@@ -1573,7 +1573,7 @@ function renderClientPageDetails(d) {
                     <i class="bi bi-save"></i> Сохранить
                 </button>
                 <button class="btn btn-sm btn-outline-danger ms-auto" onclick="deleteClientAndGoBack(${c.id})">
-                    <i class="bi bi-trash"></i> Удалить клиента
+                    <i class="bi bi-archive"></i> В архив
                 </button>
             </div>
             <div class="small mt-1" id="cf-res-${c.id}"></div>
@@ -1636,7 +1636,7 @@ function renderClientPageDetails(d) {
 }
 
 async function deleteClientAndGoBack(id) {
-    if (!confirm('Удалить клиента и все его оплаты безвозвратно? Публикации останутся, но отвяжутся от клиента.')) return;
+    if (!confirm('Архивировать клиента? Карточка уйдёт из списков, оплаты, пакеты и посты сохранятся; вернуть можно через API /clients/{id}/unarchive.')) return;
     try {
         await apiClient.deleteCrmClient(id);
         window.location.href = '/ad#clients';

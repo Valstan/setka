@@ -317,6 +317,7 @@ async def list_clients(
     region_id: Optional[int] = None,
     q: Optional[str] = None,
     debtors_only: bool = False,
+    include_archived: bool = False,
     limit: int = 200,
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -385,6 +386,8 @@ async def list_clients(
         consumed_units_sq.label("consumed_units"),
         order_items_sq.label("order_items_count"),
     )
+    if not include_archived:
+        stmt = stmt.where(AdClient.is_archived.is_(False))
     if stage:
         stmt = stmt.where(AdClient.stage == stage)
     if region_id is not None:
@@ -618,13 +621,31 @@ async def delete_client(
     client_id: int,
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Удалить клиента. Оплаты уходят каскадом, публикации/заявки → client_id NULL."""
+    """Архивировать клиента (аудит 2026-09-05): раньше DELETE каскадом стирал
+    оплаты, пакеты и чат, а осиротевшие отложки выходили бесплатно и пропадали
+    из очереди модерации. Архивный клиент скрыт из списков, история цела;
+    вернуть — ``POST /clients/{id}/unarchive``."""
     client = await db.get(AdClient, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="client not found")
-    await db.delete(client)
+    client.is_archived = True
+    log_interaction(db, kind="archived", client_id=client.id, summary="Клиент архивирован")
     await db.commit()
-    return {"success": True}
+    return {"success": True, "archived": True}
+
+
+@router.post("/clients/{client_id}/unarchive")
+async def unarchive_client(client_id: int, db: AsyncSession = Depends(get_db_session)):
+    """Вернуть клиента из архива."""
+    client = await db.get(AdClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="client not found")
+    client.is_archived = False
+    log_interaction(
+        db, kind="unarchived", client_id=client.id, summary="Клиент возвращён из архива"
+    )
+    await db.commit()
+    return {"success": True, "archived": False}
 
 
 @router.post("/clients/upsert-from-request/{request_id}")
@@ -2381,15 +2402,22 @@ def _cabinet_publisher_factory(db):
 @router.get("/moderation")
 async def moderation_queue(db: AsyncSession = Depends(get_db_session)):
     """Клиентские посты, ждущие одобрения владельца (``status='pending'``)."""
+    # OUTER JOIN (аудит 2026-09-05): pending-пост без карточки клиента (сирота
+    # после старого DELETE) раньше исчезал из очереди навсегда — теперь виден.
     rows = (
         await db.execute(
             select(AdScheduledPost, AdClient)
-            .join(AdClient, AdClient.id == AdScheduledPost.client_id)
+            .outerjoin(AdClient, AdClient.id == AdScheduledPost.client_id)
             .where(AdScheduledPost.status == "pending")
-            .order_by(AdScheduledPost.id.asc())
+            .order_by(AdScheduledPost.publish_date.asc(), AdScheduledPost.id.asc())
         )
     ).all()
-    return {"pending": [{**post.to_dict(), "client": client.to_dict()} for post, client in rows]}
+    return {
+        "pending": [
+            {**post.to_dict(), "client": (client.to_dict() if client is not None else None)}
+            for post, client in rows
+        ]
+    }
 
 
 @router.post("/moderation/{post_id}/approve")

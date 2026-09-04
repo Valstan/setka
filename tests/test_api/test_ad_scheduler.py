@@ -28,6 +28,12 @@ def _scalars_all(objs):
     return r
 
 
+def _scalar_one(obj):
+    r = MagicMock()
+    r.scalar_one_or_none.return_value = obj
+    return r
+
+
 def _fake_publisher(publish_result=None, **overrides):
     pub = MagicMock()
     pub.publish_bulletin = AsyncMock(
@@ -561,7 +567,7 @@ async def test_cancel_deletes_and_marks(monkeypatch):
     )
     db = AsyncMock()
     db.add = MagicMock()  # реальная AsyncSession.add синхронна (лог взаимодействий)
-    db.get = AsyncMock(return_value=row)
+    db.execute = AsyncMock(return_value=_scalar_one(row))  # SELECT … FOR UPDATE
 
     out = await api.cancel_scheduled(1, db=db)
     assert out["status"] == "cancelled"
@@ -576,7 +582,7 @@ async def test_cancel_vk_fail_keeps_status(monkeypatch):
         community_vk_id=-100, publish_date=None, status="scheduled", vk_postponed_post_id=42
     )
     db = AsyncMock()
-    db.get = AsyncMock(return_value=row)
+    db.execute = AsyncMock(return_value=_scalar_one(row))
 
     out = await api.cancel_scheduled(1, db=db)
     assert out["cancel_error"] == "already published"
@@ -585,7 +591,7 @@ async def test_cancel_vk_fail_keeps_status(monkeypatch):
 
 async def test_cancel_404():
     db = AsyncMock()
-    db.get = AsyncMock(return_value=None)
+    db.execute = AsyncMock(return_value=_scalar_one(None))
     with pytest.raises(HTTPException) as exc:
         await api.cancel_scheduled(999, db=db)
     assert exc.value.status_code == 404

@@ -26,6 +26,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
@@ -130,6 +131,10 @@ class ScheduleCreateIn(BaseModel):
     # Если заданы оба — приоритет у expire_at. Ни одного → expires_at=NULL.
     expire_days: Optional[int] = None
     expire_at: Optional[str] = None
+    # Идемпотентность двойного сабмита (аудит 2026-09-05): UI генерирует uuid на
+    # каждую форму; повторный запрос с тем же ключом возвращает уже созданные
+    # строки (order_ref) вместо второй раскладки в VK.
+    client_ref: Optional[str] = None
 
 
 class AcceptRequestIn(BaseModel):
@@ -717,6 +722,32 @@ async def create_scheduled(
         raise HTTPException(status_code=400, detail="Срок в днях должен быть положительным")
 
     gid = int(payload.community_vk_id)
+
+    # Идемпотентность: тот же client_ref → отдать уже созданное, VK не трогать.
+    if payload.client_ref:
+        existing = (
+            (
+                await db.execute(
+                    select(AdScheduledPost)
+                    .where(AdScheduledPost.order_ref == str(payload.client_ref)[:36])
+                    .order_by(AdScheduledPost.id.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if existing:
+            sched = sum(1 for r in existing if r.status == "scheduled")
+            return {
+                "created": [r.to_dict() for r in existing],
+                "scheduled": sched,
+                "failed": sum(1 for r in existing if r.status == "failed"),
+                "already": True,
+                "original_removed": False,
+                "original_remove_error": None,
+                "client_id": existing[0].client_id,
+            }
+
     user_token, _community_tokens = await load_vk_routing()
 
     # Картинки на стену — один раз, переиспользуем attachment'ы для всех дат (одна
@@ -754,8 +785,23 @@ async def create_scheduled(
             client_id=payload.client_id,
             price=payload.price,
             status="draft",
+            order_ref=(str(payload.client_ref)[:36] if payload.client_ref else None),
         )
         db.add(row)
+        # Claim до VK (образец modules/broadcast/dispatcher): строка в БД раньше
+        # wall.post — падение между VK и коммитом не оставит пост в отложке без
+        # следа. Уникум «1 пост клиента в сообщество в день» (096) ловится здесь.
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "У этого клиента уже есть пост в это сообщество на "
+                    f"{naive_dt:%d.%m} — не больше одного рекламного поста в день"
+                ),
+            )
         try:
             res = await publisher.publish_bulletin(
                 group_id=gid,
@@ -1134,7 +1180,13 @@ async def cancel_scheduled(
     """
     from modules.publisher.vk_publisher_extended import VKPublisher
 
-    row = await db.get(AdScheduledPost, post_id)
+    # FOR UPDATE против реконсилера/диспетчера, которые могут фиксировать выход
+    # этой же строки прямо сейчас (аудит 2026-09-05). На sqlite — no-op.
+    row = (
+        await db.execute(
+            select(AdScheduledPost).where(AdScheduledPost.id == post_id).with_for_update()
+        )
+    ).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="scheduled post not found")
     if row.status == "cancelled":

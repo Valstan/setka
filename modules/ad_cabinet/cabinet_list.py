@@ -163,6 +163,8 @@ async def list_cabinets(session, *, include_unlinked: bool = False) -> List[Dict
     )
     if not include_unlinked:
         q = q.where(AdClient.radar_user_id.isnot(None))
+    # Архивные карточки (096) в списке кабинетов не показываем.
+    q = q.where(AdClient.is_archived.is_(False))
 
     rows = (await session.execute(q)).all()
 

@@ -1128,6 +1128,8 @@ async function submitSchedule() {
         price: priceRaw ? parseFloat(priceRaw) : null,
         expire_days: expDaysRaw ? parseInt(expDaysRaw, 10) : null,
         expire_at: expAtRaw || null,
+        // Ключ идемпотентности: повторный клик/ретрай с тем же ключом не создаст вторую раскладку.
+        client_ref: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()),
     };
     _schRes('Планирую…');
     const btn = document.getElementById('sch-submit');
