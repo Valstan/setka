@@ -119,13 +119,18 @@ async def resolve_dup_targets(
     src_gid = -abs(int(region.vk_group_id)) if region.vk_group_id else None
     if src_gid in wanted:
         raise OrderError("Исходное сообщество нельзя выбрать дублёром")
+    # На проде regions.vk_group_id хранится СО ЗНАКОМ МИНУС (owner_id), в части
+    # фикстур — положительным; сравниваем по модулю на стороне SQL (поймано
+    # владельцем 05.09 на первом же плане: «сообщества недоступны»).
+    from sqlalchemy import func
+
     rows = (
         (
             await session.execute(
                 select(Region).where(
                     Region.is_active.is_(True),
                     Region.vk_group_id.isnot(None),
-                    Region.vk_group_id.in_([abs(g) for g in wanted]),
+                    func.abs(Region.vk_group_id).in_([abs(g) for g in wanted]),
                 )
             )
         )
