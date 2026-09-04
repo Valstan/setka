@@ -1024,6 +1024,16 @@ class AdPayment(Base):
             postgresql_where=text("scheduled_post_id IS NOT NULL AND status = 'awaiting'"),
             sqlite_where=text("scheduled_post_id IS NOT NULL AND status = 'awaiting'"),
         ),
+        # На проде создан миграцией 083; здесь — чтобы sqlite-тесты ловили дубль
+        # платежа за пакет (provider='package', external_id=id пакета).
+        Index(
+            "uq_ad_payments_provider_ext",
+            "provider",
+            "external_id",
+            unique=True,
+            postgresql_where=text("external_id IS NOT NULL"),
+            sqlite_where=text("external_id IS NOT NULL"),
+        ),
     )
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)

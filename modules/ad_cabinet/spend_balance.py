@@ -23,7 +23,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 
 from database.models import AdClient, AdPayment, AdPublication
 
@@ -55,11 +55,14 @@ async def collect_overspent(
         .where(AdPayment.client_id == AdClient.id, AdPayment.status == "paid")
         .scalar_subquery()
     )
+    # Публикации в счёт пакета (price=0) штучный лимит не тратят (аудит
+    # 2026-09-05: клиент с промо-пакетом получал ложный «перерасход»).
     consumed_sq = (
         select(func.count(AdPublication.id))
         .where(
             AdPublication.client_id == AdClient.id,
             AdPublication.status == "published",
+            or_(AdPublication.price.is_(None), AdPublication.price != 0),
         )
         .scalar_subquery()
     )

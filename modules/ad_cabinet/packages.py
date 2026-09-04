@@ -25,7 +25,50 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import func, select
 
-from database.models import AdClientPackage, AdScheduledPost
+from database.models import AdClientPackage, AdPayment, AdScheduledPost
+
+#: Провайдер платежа, которым помечаются деньги за пакет (миграция 097).
+PACKAGE_PAYMENT_PROVIDER = "package"
+
+
+async def record_package_payment(session, pkg: AdClientPackage) -> Optional[AdPayment]:
+    """Деньги за пакет → строка ``ad_payments`` (аудит 2026-09-05).
+
+    До этого оплата пакета жила только в ``ad_client_packages.price`` и не
+    попадала ни в баланс клиента, ни в «оплачено» списка кабинетов: клиент,
+    заплативший 5000 ₽ за пакет, выглядел как «вышло 10 · оплачено 0».
+    Один платёж на пакет: ``(provider='package', external_id=str(pkg.id))`` —
+    уникум ``uq_ad_payments_provider_ext`` (083). Бесплатный промо и нулевая
+    цена платежа не порождают. ``units_paid=posts_total`` — штучный учёт
+    перерасхода продолжает работать. Commit — на вызывающем.
+    """
+    if pkg.paid_at is None or pkg.kind == "free_promo" or float(pkg.price or 0) <= 0:
+        return None
+    ext = str(int(pkg.id))
+    existing = (
+        await session.execute(
+            select(AdPayment).where(
+                AdPayment.provider == PACKAGE_PAYMENT_PROVIDER, AdPayment.external_id == ext
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    pay = AdPayment(
+        client_id=pkg.client_id,
+        amount=pkg.price,
+        status="paid",
+        units_paid=int(pkg.posts_total) if pkg.posts_total else None,
+        provider=PACKAGE_PAYMENT_PROVIDER,
+        external_id=ext,
+        note=f"пакет #{pkg.id} ({pkg.kind})",
+        paid_at=pkg.paid_at,
+        paid_confirmed_at=pkg.paid_at,
+    )
+    session.add(pay)
+    await session.flush()
+    return pay
+
 
 logger = logging.getLogger(__name__)
 
