@@ -42,6 +42,7 @@ from database.models import (
     AdInteraction,
     AdPayment,
     AdPublication,
+    AdRequest,
     AdScheduledPost,
 )
 from database.models_extended import RadarUser
@@ -49,14 +50,16 @@ from database.models_extended import RadarUser
 #: Виды журнала, которые считаются движением клиента в кабинете, когда их
 #: пишет сам клиент (``actor='client'``). Операторские копии тех же видов
 #: (массовая отмена в CRM) движением не считаются.
+#: ``cabinet_visit`` сюда сознательно не входит (аудит 2026-09-05): визит пишется
+#: раз в час и перебивал чужие реальные заказы в сортировке.
 CLIENT_ACTIVITY_KINDS = (
     "cabinet_signup",
-    "cabinet_visit",
     "cabinet_js_error",
     "cabinet_order_refused",
     "client_order",
     "cancelled",
     "linked",
+    "payment_claimed",
 )
 
 #: Решения владельца по постам кабинета — тоже движение: клиент ждёт их и
@@ -110,17 +113,37 @@ async def list_cabinets(session, *, include_unlinked: bool = False) -> List[Dict
             AdInteraction.kind.in_(OWNER_DECISION_KINDS),
         ),
     )
-    chat_last = _latest_by_client(AdChatMessage, AdChatMessage.created_at)
+    # Свежесть двигает КЛИЕНТ (аудит 2026-09-05): собственный ответ владельца в
+    # чате поднимал его же кабинет наверх как «💬 чат».
+    chat_last = _latest_by_client(
+        AdChatMessage, AdChatMessage.created_at, AdChatMessage.sender == "client"
+    )
+    # Факт выхода поста и свежая заявка из предложки/ЛС — тоже движение.
+    published_last = _latest_by_client(
+        AdPublication, AdPublication.published_at, AdPublication.status == "published"
+    )
+    requests_last = _latest_by_client(AdRequest, AdRequest.detected_at, AdRequest.status == "new")
     chat_unread = (
         select(AdChatMessage.client_id.label("cid"), func.count().label("n"))
         .where(AdChatMessage.sender == "client", AdChatMessage.read_at.is_(None))
         .group_by(AdChatMessage.client_id)
         .subquery()
     )
+    # Время денег — момент ПОДТВЕРЖДЕНИЯ (awaiting→paid), а не paid_at, который
+    # реконсилер ставит при создании awaiting (аудит 2026-09-05: оплата не
+    # двигала строку). Считаем только status='paid'.
     payments = (
         select(
             AdPayment.client_id.label("cid"),
-            func.max(AdPayment.paid_at).label("ts"),
+            func.max(
+                case(
+                    (
+                        AdPayment.status == "paid",
+                        func.coalesce(AdPayment.paid_confirmed_at, AdPayment.paid_at),
+                    ),
+                    else_=None,
+                )
+            ).label("ts"),
             func.coalesce(
                 func.sum(case((AdPayment.status == "paid", AdPayment.amount), else_=0)), 0
             ).label("paid"),
@@ -128,9 +151,11 @@ async def list_cabinets(session, *, include_unlinked: bool = False) -> List[Dict
         .group_by(AdPayment.client_id)
         .subquery()
     )
+    # «Заказано» — то, что клиент реально ждёт: без отменённых, отклонённых и
+    # не дошедших до VK (они уже возвращены в пакет).
     orders = (
         select(AdScheduledPost.client_id.label("cid"), func.count().label("n"))
-        .where(AdScheduledPost.status != "cancelled")
+        .where(AdScheduledPost.status.notin_(("cancelled", "rejected", "failed")))
         .group_by(AdScheduledPost.client_id)
         .subquery()
     )
@@ -152,28 +177,53 @@ async def list_cabinets(session, *, include_unlinked: bool = False) -> List[Dict
             payments.c.paid,
             orders.c.n,
             published.c.n,
+            published_last.c.ts,
+            requests_last.c.ts,
         )
         .outerjoin(RadarUser, RadarUser.id == AdClient.radar_user_id)
         .outerjoin(interactions, interactions.c.cid == AdClient.id)
         .outerjoin(chat_last, chat_last.c.cid == AdClient.id)
         .outerjoin(chat_unread, chat_unread.c.cid == AdClient.id)
+        .outerjoin(published_last, published_last.c.cid == AdClient.id)
+        .outerjoin(requests_last, requests_last.c.cid == AdClient.id)
         .outerjoin(payments, payments.c.cid == AdClient.id)
         .outerjoin(orders, orders.c.cid == AdClient.id)
         .outerjoin(published, published.c.cid == AdClient.id)
     )
     if not include_unlinked:
-        q = q.where(AdClient.radar_user_id.isnot(None))
+        # Кабинет = аккаунт ЕСА ИЛИ клиент, который сам что-то делал (ВК-бот заводит
+        # карточку без аккаунта — аудит 2026-09-05: такие заказы выпадали из списка).
+        client_acted = (
+            select(AdInteraction.id)
+            .where(AdInteraction.client_id == AdClient.id, AdInteraction.actor == "client")
+            .exists()
+        )
+        q = q.where(or_(AdClient.radar_user_id.isnot(None), client_acted))
     # Архивные карточки (096) в списке кабинетов не показываем.
     q = q.where(AdClient.is_archived.is_(False))
 
     rows = (await session.execute(q)).all()
 
     out: List[Dict[str, Any]] = []
-    for client, user, act_ts, chat_ts, unread, pay_ts, paid, ordered, pub_n in rows:
+    for (
+        client,
+        user,
+        act_ts,
+        chat_ts,
+        unread,
+        pay_ts,
+        paid,
+        ordered,
+        pub_n,
+        pub_ts,
+        req_ts,
+    ) in rows:
         candidates = [
             ("chat", chat_ts),
             ("action", act_ts),
             ("payment", pay_ts),
+            ("published", pub_ts),
+            ("request", req_ts),
             ("created", client.created_at),
         ]
         kind, ts = max(

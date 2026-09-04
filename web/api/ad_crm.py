@@ -842,10 +842,15 @@ async def delete_payment(
     payment_id: int,
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Удалить оплату."""
+    """Удалить оплату. Платёж за пакет (provider='package') — только через пакет."""
     pay = await db.get(AdPayment, payment_id)
     if not pay:
         raise HTTPException(status_code=404, detail="payment not found")
+    if pay.provider == "package":
+        raise HTTPException(
+            status_code=409,
+            detail="Это оплата пакета — она следует за пакетом; закройте пакет, а не платёж",
+        )
     amount = float(pay.amount) if pay.amount is not None else 0
     log_interaction(
         db,
@@ -2263,6 +2268,13 @@ async def create_package(
     )
     db.add(row)
     await db.flush()
+    # Деньги пакета — в ad_payments (097): иначе «оплачено» клиента не видит их.
+    from modules.ad_cabinet import packages as _pkgs
+
+    if await _pkgs.record_package_payment(db, row) is not None:
+        if client.stage not in ("lost",):
+            client.stage = "paid"
+        client.spend_alerted_at = None
     log_interaction(
         db,
         kind="package_created",
@@ -2292,11 +2304,23 @@ async def package_mark_paid(package_id: int, db: AsyncSession = Depends(get_db_s
     row = await _get_package(db, package_id)
     if row.paid_at is None:
         row.paid_at = datetime.utcnow()
+        from modules.ad_cabinet import packages as _pkgs
+
+        pay = await _pkgs.record_package_payment(db, row)
+        if pay is not None:
+            client = await db.get(AdClient, row.client_id)
+            if client is not None:
+                if client.stage != "lost":
+                    client.stage = "paid"
+                client.spend_alerted_at = None
         log_interaction(
             db,
             kind="package_paid",
             client_id=row.client_id,
-            summary=f"Пакет #{row.id} отмечен оплаченным ({float(row.price or 0):.0f} ₽)",
+            summary=(
+                f"Пакет #{row.id} отмечен оплаченным ({float(row.price or 0):.0f} ₽)"
+                + (", в оплаты записано" if pay is not None else "")
+            ),
         )
         await db.commit()
     await db.refresh(row)
@@ -2542,6 +2566,14 @@ CABINET_ACTIVITY_KINDS = (
     "moderation_approved",
     "moderation_rejected",
     "moderation_failed",
+    # Деньги и выход (аудит 2026-09-05): лента без них не отвечала на
+    # «оплаты не теряются, посты выходят».
+    "published",
+    "payment_paid",
+    "payment_claimed",
+    "package_created",
+    "package_paid",
+    "package_extended",
 )
 
 # Ошибочные события — UI подсвечивает красным.
