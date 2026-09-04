@@ -18,6 +18,7 @@ from database.models import (
     AdInteraction,
     AdPayment,
     AdPublication,
+    AdRequest,
     AdScheduledPost,
     Region,
 )
@@ -32,6 +33,7 @@ async def db_session():
         RadarUser.__table__,
         AdClient.__table__,
         AdClientPackage.__table__,
+        AdRequest.__table__,
         AdScheduledPost.__table__,
         AdPayment.__table__,
         AdPublication.__table__,

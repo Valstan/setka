@@ -29,7 +29,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
-from database.models import AdClient, AdRequest, AdScheduledPost, MessageTemplate
+from database.models import AdClient, AdRequest, AdScheduledPost, MessageTemplate, Region
 from modules.ad_cabinet.interaction_log import log_interaction
 from modules.ad_cabinet.message_builder import render
 
@@ -1139,8 +1139,22 @@ async def cancel_scheduled(
         raise HTTPException(status_code=404, detail="scheduled post not found")
     if row.status == "cancelled":
         return row.to_dict()
+    # Терминальные статусы не отменяем: вышедший пост снимает post_expirer/«снять
+    # со стены», а не отмена отложки (аудит 2026-09-05: wall.delete по живому посту
+    # оставлял AdPublication и awaiting-платёж за несуществующий пост).
+    if row.status in ("published", "rejected", "failed"):
+        return {**row.to_dict(), "cancel_error": f"пост в статусе {row.status}, отменять нечего"}
 
-    if row.vk_postponed_post_id:
+    kind = row.kind or "post"
+    # Планировщик предложки: у репоста до выхода в VK ничего нет; у оригинала в
+    # режиме queue vk_postponed_post_id — это id ПРЕДЛОЖЕННОГО поста, который
+    # ещё лежит в предложке и удалять его нельзя (next_attempt_at задан = VK не
+    # трогали). В режиме VK-отложки удаление снимает пост из «Отложенных» —
+    # предложка при этом не восстанавливается, UI обязан предупредить.
+    vk_untouched = (kind == "repost" and not row.vk_postponed_post_id) or (
+        kind == "suggested" and row.next_attempt_at is not None
+    )
+    if row.vk_postponed_post_id and not vk_untouched:
         publisher = await VKPublisher.create_with_policy(
             db, target_group_id=int(row.community_vk_id)
         )
@@ -1153,12 +1167,242 @@ async def cancel_scheduled(
         kind="cancelled",
         client_id=row.client_id,
         scheduled_post_id=row.id,
-        summary="Отменён запланированный пост",
+        summary="Отменён запланированный пост" + (" (репост)" if kind == "repost" else ""),
     )
     row.status = "cancelled"
     from modules.ad_cabinet import packages as pkgs
 
     await pkgs.refund_post(db, row)  # пакетный пост клиента возвращается в пакет
+
+    # Оригинал предложки отменён → невышедшие репосты бессмысленны, отменяем каскадом.
+    cancelled_reposts = 0
+    if kind == "suggested":
+        reposts = (
+            (
+                await db.execute(
+                    select(AdScheduledPost).where(
+                        AdScheduledPost.source_post_id == row.id,
+                        AdScheduledPost.status == "scheduled",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for rp in reposts:
+            rp.status = "cancelled"
+            rp.error_message = "оригинал отменён"
+            await pkgs.refund_post(db, rp)
+            cancelled_reposts += 1
     await db.commit()
     await db.refresh(row)
-    return row.to_dict()
+    return {**row.to_dict(), "cancelled_reposts": cancelled_reposts}
+
+
+# ----------------------------------------------------------------------
+# Планировщик предложки (Этап 0, план 2026-09-05)
+# ----------------------------------------------------------------------
+
+
+class SuggestedPlanItemIn(BaseModel):
+    """Одна заявка из предложки: когда выйти, почём, куда дублировать.
+
+    ``dup_community_ids`` — owner_id сообществ-дублёров; ``None`` = соседи региона
+    по умолчанию, ``[]`` = без дублёров. ``price`` — за ВЕСЬ заказ (оригинал +
+    дублёры), пусто = пол × число размещений.
+    """
+
+    request_id: int
+    publish_at: str  # ISO, МСК wall-clock
+    price: Optional[float] = None
+    dup_community_ids: Optional[List[int]] = None
+
+
+class SuggestedPlanIn(BaseModel):
+    community_vk_id: int
+    items: List[SuggestedPlanItemIn]
+
+
+async def _region_by_group(db: AsyncSession, community_vk_id: int) -> Region:
+    from sqlalchemy import func
+
+    region = (
+        await db.execute(
+            select(Region).where(func.abs(Region.vk_group_id) == abs(int(community_vk_id)))
+        )
+    ).scalar_one_or_none()
+    if region is None:
+        raise HTTPException(status_code=404, detail="Сообщество не заведено как регион")
+    return region
+
+
+@router.get("/suggested-plan/options")
+async def suggested_plan_options(
+    community_vk_id: int,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Данные для формы планировщика: заявки предложки сообщества, дублёры, пол цены."""
+    from config.runtime import ad_suggested_mode
+    from modules.ad_cabinet import suggested_planner as sp
+
+    region = await _region_by_group(db, community_vk_id)
+    gid = -abs(int(community_vk_id))
+    requests = (
+        (
+            await db.execute(
+                select(AdRequest)
+                .where(
+                    AdRequest.community_vk_id == gid,
+                    AdRequest.origin == "suggested",
+                    AdRequest.status == "new",
+                    AdRequest.vk_post_id.isnot(None),
+                )
+                .order_by(AdRequest.detected_at.desc())
+                .limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "region": {
+            "id": region.id,
+            "code": region.code,
+            "name": region.name,
+            "community_vk_id": gid,
+            "neighbors": region.neighbors,
+        },
+        "requests": [ar.to_dict() for ar in requests],
+        "dup_candidates": await sp.all_dup_candidates(db, region),
+        "floor_rub": sp.PLACEMENT_FLOOR_RUB,
+        "mode": ad_suggested_mode(),
+    }
+
+
+@router.post("/suggested-plan")
+async def suggested_plan_create(
+    payload: SuggestedPlanIn,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Запланировать заявки из предложки: оригинал с подписью + репосты в дублёры.
+
+    Частичный успех допустим: каждая заявка несёт свой результат. Заявка под
+    ``FOR UPDATE`` — двойной клик увидит ``already``.
+    """
+    from config.runtime import ad_suggested_mode
+    from modules.ad_cabinet import suggested_planner as sp
+    from modules.ad_cabinet.client_orders import OrderError
+    from modules.publisher.vk_publisher_extended import VKPublisher
+
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="Не выбрано ни одной заявки")
+    region = await _region_by_group(db, payload.community_vk_id)
+    gid = -abs(int(payload.community_vk_id))
+    mode = ad_suggested_mode()
+    now_msk = datetime.now(tz=MSK).replace(tzinfo=None)
+
+    publisher = None
+    if mode == sp.MODE_VK_POSTPONE:
+        try:
+            publisher = await VKPublisher.create_with_policy(db, target_group_id=gid)
+        except Exception as e:
+            logger.exception("suggested-plan: failed to build publisher")
+            raise HTTPException(status_code=500, detail=f"Нет токена для публикации: {e}")
+
+    out = []
+    for item in payload.items:
+        result: dict = {"request_id": item.request_id, "ok": False}
+        try:
+            ar = (
+                await db.execute(
+                    select(AdRequest).where(AdRequest.id == int(item.request_id)).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if ar is None:
+                raise OrderError("заявка не найдена")
+            if int(ar.community_vk_id) != gid:
+                raise OrderError("заявка из другого сообщества")
+            publish_at = _parse_date(item.publish_at)
+            if publish_at is None:
+                raise OrderError(f"некорректная дата: {item.publish_at}")
+            publish_at = publish_at.replace(tzinfo=None)
+            dups = await sp.resolve_dup_targets(db, region, item.dup_community_ids)
+            res = await sp.plan_item(
+                db,
+                ar,
+                publish_at=publish_at,
+                price=item.price,
+                dup_targets=dups,
+                publisher=publisher,
+                mode=mode,
+                now=now_msk,
+            )
+            await db.commit()
+            if res.get("already"):
+                result.update({"ok": True, "already": True, "client_id": res.get("client_id")})
+            else:
+                result.update(
+                    {
+                        "ok": bool(res.get("ok")),
+                        "client_id": res.get("client_id"),
+                        "original": res["original"].to_dict(),
+                        "reposts": [r.to_dict() for r in res.get("reposts") or []],
+                        "price_total": res.get("price_total"),
+                        "order_ref": res.get("order_ref"),
+                        "error": res.get("error"),
+                    }
+                )
+        except OrderError as e:
+            await db.rollback()
+            result["error"] = str(e)
+        except Exception as e:  # noqa: BLE001 — одна заявка не валит остальные
+            await db.rollback()
+            logger.exception("suggested-plan: item %s failed", item.request_id)
+            result["error"] = str(e)[:300]
+        out.append(result)
+    return {"items": out, "mode": mode, "community_vk_id": gid}
+
+
+@router.get("/suggested-plan")
+async def suggested_plan_list(
+    community_vk_id: Optional[int] = None,
+    days: int = 45,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Матрица «пост × дата × дублёры»: оригиналы с вложенными репостами."""
+    since = datetime.now(tz=MSK).replace(tzinfo=None) - timedelta(days=1)
+    until = since + timedelta(days=max(1, int(days)) + 1)
+    stmt = select(AdScheduledPost).where(
+        AdScheduledPost.kind == "suggested",
+        AdScheduledPost.publish_date >= since,
+        AdScheduledPost.publish_date <= until,
+    )
+    if community_vk_id is not None:
+        stmt = stmt.where(AdScheduledPost.community_vk_id == -abs(int(community_vk_id)))
+    originals = (
+        (await db.execute(stmt.order_by(AdScheduledPost.publish_date.asc()).limit(200)))
+        .scalars()
+        .all()
+    )
+    ids = [o.id for o in originals]
+    reposts_by_src: dict = {}
+    if ids:
+        reposts = (
+            (
+                await db.execute(
+                    select(AdScheduledPost)
+                    .where(AdScheduledPost.source_post_id.in_(ids))
+                    .order_by(AdScheduledPost.community_vk_id.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for r in reposts:
+            reposts_by_src.setdefault(int(r.source_post_id), []).append(r.to_dict())
+    return {
+        "plans": [
+            {"original": o.to_dict(), "reposts": reposts_by_src.get(int(o.id), [])}
+            for o in originals
+        ]
+    }
