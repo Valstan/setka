@@ -115,6 +115,22 @@ async def test_explicit_dups_validated(db_session):
 
 
 @pytest.mark.asyncio
+async def test_dups_resolve_when_vk_group_id_stored_negative(db_session):
+    """На проде regions.vk_group_id — отрицательный owner_id (поймано владельцем 05.09)."""
+    region, _ = await _seed(db_session)
+    for r in (await db_session.execute(select(Region))).scalars().all():
+        r.vk_group_id = -abs(int(r.vk_group_id))
+    await db_session.flush()
+    assert sorted(t[1] for t in await sp.default_dup_targets(db_session, region)) == sorted(
+        [UR, KLZ]
+    )
+    explicit = await sp.resolve_dup_targets(db_session, region, [UR, -555])
+    assert {t[1] for t in explicit} == {UR, FAR}
+    cands = await sp.all_dup_candidates(db_session, region)
+    assert {c["community_vk_id"] for c in cands} == {UR, KLZ, FAR}
+
+
+@pytest.mark.asyncio
 async def test_plan_creates_original_and_reposts(db_session):
     region, ar = await _seed(db_session)
     pub = FakePublisher(returned_id=99001)

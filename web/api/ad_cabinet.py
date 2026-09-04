@@ -1389,7 +1389,9 @@ async def suggested_plan_create(
                 mode=mode,
                 now=now_msk,
             )
-            await db.commit()
+            # Сериализуем ДО commit: сессия прода протухает объекты после
+            # коммита, и to_dict() полез бы в БД вне await (greenlet_spawn,
+            # поймано владельцем 05.09 на первом же плане).
             if res.get("already"):
                 result.update({"ok": True, "already": True, "client_id": res.get("client_id")})
             else:
@@ -1404,11 +1406,16 @@ async def suggested_plan_create(
                         "error": res.get("error"),
                     }
                 )
+            await db.commit()
         except OrderError as e:
             await db.rollback()
+            await db.refresh(
+                region
+            )  # rollback протухает регион — иначе следующая заявка ловит greenlet
             result["error"] = str(e)
         except Exception as e:  # noqa: BLE001 — одна заявка не валит остальные
             await db.rollback()
+            await db.refresh(region)
             logger.exception("suggested-plan: item %s failed", item.request_id)
             result["error"] = str(e)[:300]
         out.append(result)
