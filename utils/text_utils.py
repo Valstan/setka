@@ -9,6 +9,21 @@ import re
 from typing import List, Optional
 
 
+def plural_ru(n: int, one: str, few: str, many: str) -> str:
+    """Русская форма числительного: 1 день / 2 дня / 5 дней. Чистая.
+
+    Смотрит на последние разряды, а не на число целиком: 21 → «день»,
+    22 → «дня», 111 → «дней».
+    """
+    n = abs(int(n))
+    mod10, mod100 = n % 10, n % 100
+    if mod10 == 1 and mod100 != 11:
+        return one
+    if 2 <= mod10 <= 4 and not 10 <= mod100 < 20:
+        return few
+    return many
+
+
 def text_to_rafinad(text: str) -> str:
     """
     Strips all non-word characters from text.
