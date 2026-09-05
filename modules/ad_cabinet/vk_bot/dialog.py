@@ -40,7 +40,7 @@ from sqlalchemy import select
 
 from database.models import AdClient, AdPayment, AdPublication, AdScheduledPost, Region
 from database.models_extended import RadarUser
-from modules.ad_cabinet import chat, client_orders, client_photos, photo_retention
+from modules.ad_cabinet import chat, client_orders, client_photos, client_posts, photo_retention
 from modules.ad_cabinet.balance import compute_balance
 from modules.ad_cabinet.interaction_log import log_interaction
 
@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 CMD_BALANCE = "balance"
 CMD_PRICES = "prices"
+CMD_POSTS = "posts"  # «📋 Мои посты» — заказы клиента одним экраном (Этап 5)
 CMD_ORDER = "order"
 CMD_PAY = "pay"
 CMD_PAID = "paid"  # «Я оплатил» — заявить оплату ожидающих счетов (PR 1.7)
@@ -69,6 +70,7 @@ BUTTON_TEXT: Dict[str, str] = {
     "💰 Баланс": CMD_BALANCE,
     "📋 Цены": CMD_PRICES,
     "🛒 Заказать пост": CMD_ORDER,
+    "📋 Мои посты": CMD_POSTS,
     "💳 Оплата": CMD_PAY,
     "✅ Оплатил": CMD_PAID,
     "💬 Написать": CMD_CHAT,
@@ -107,7 +109,7 @@ def keyboard(rows: Sequence[Sequence[Dict[str, Any]]], *, one_time: bool = False
 MAIN_KEYBOARD = keyboard(
     [
         [_btn("💰 Баланс", CMD_BALANCE, "primary"), _btn("📋 Цены", CMD_PRICES)],
-        [_btn("🛒 Заказать пост", CMD_ORDER, "positive")],
+        [_btn("🛒 Заказать пост", CMD_ORDER, "positive"), _btn("📋 Мои посты", CMD_POSTS)],
         [_btn("💳 Оплата", CMD_PAY), _btn("✅ Оплатил", CMD_PAID, "positive")],
         [_btn("💬 Написать", CMD_CHAT), _btn("🏠 Кабинет", CMD_CABINET)],
     ]
@@ -247,6 +249,55 @@ def _money(v: float) -> str:
     return f"{float(v):,.0f} ₽".replace(",", " ")
 
 
+PACKAGE_KIND_RU = {
+    "free_promo": "промо-пакет",
+    "prepaid": "пакет по предоплате",
+    "postpaid": "пакет с постоплатой",
+    "unlimited": "безлимит",
+}
+
+
+def package_line(pkg) -> str:
+    """Строка о пакете клиента для баланса/прайса. Чистая."""
+    from modules.ad_cabinet import packages as pkgs
+
+    if pkg.kind == "unlimited":
+        until = f" до {pkg.period_end:%d.%m.%Y}" if pkg.period_end else ""
+        return f"♾ Безлимит{until}: до 1 поста в сутки в каждом сообществе"
+    left = pkgs.remaining(pkg)
+    until = f", действует до {pkg.period_end:%d.%m.%Y}" if pkg.period_end else ""
+    title = PACKAGE_KIND_RU.get(pkg.kind, "пакет")
+    return f"{title[0].upper()}{title[1:]}: осталось {left} из {pkg.posts_total} постов{until}"
+
+
+def quote_text(q: Dict[str, Any], *, n: int, package=None, left: int = 0) -> str:
+    """Строка «— цена: …» подтверждения заказа: пакет или прайс со скидкой. Чистая."""
+    from config.ad_landing import DISCOUNT_MONTH_CAP_PCT, DISCOUNT_STEP_PCT, PRICE_FLOOR_RUB
+
+    if package is not None:
+        if package.kind == "unlimited":
+            until = f" до {package.period_end:%d.%m.%Y}" if package.period_end else ""
+            return f"— цена: в счёт безлимита{until} (0 ₽)"
+        title = PACKAGE_KIND_RU.get(package.kind, "пакет")
+        return (
+            f"— цена: в счёт пакета «{title}» (0 ₽), останется "
+            f"{max(0, left - n)} из {package.posts_total}"
+        )
+    disc = (
+        f" (скидка {q['discount_pct']} %, по прайсу {_money(q['base_price'])})"
+        if q.get("discount_pct")
+        else ""
+    )
+    line = f"— цена: {_money(q['price'])}{disc}"
+    if q.get("floor_applied"):
+        line += f", минимум {_money(PRICE_FLOOR_RUB)} за размещение"
+    d = q.get("discount") or {}
+    nxt = int(d.get("next_step_posts") or 0)
+    if nxt and int(d.get("month") or 0) < DISCOUNT_MONTH_CAP_PCT:
+        line += f"\n— до следующих {DISCOUNT_STEP_PCT} % скидки — ещё {nxt} оплаченных постов"
+    return line
+
+
 def greeting(client: AdClient, created: bool) -> str:
     who = f", {client.name}" if client.name else ""
     head = (
@@ -258,8 +309,11 @@ def greeting(client: AdClient, created: bool) -> str:
     return head + "\n\nЧто сделать?"
 
 
-async def balance_text(session, client: AdClient) -> str:
+async def balance_text(session, client: AdClient, *, now_msk: Optional[datetime] = None) -> str:
     from modules.ad_cabinet import packages as pkgs
+    from modules.ad_cabinet.pricing import client_discount
+
+    now_msk = now_msk or datetime.utcnow() + timedelta(hours=3)
 
     payments = (
         (await session.execute(select(AdPayment).where(AdPayment.client_id == client.id)))
@@ -284,7 +338,7 @@ async def balance_text(session, client: AdClient) -> str:
         .all()
     )
     bal = compute_balance(payments, pubs)
-    state = await pkgs.get_state(session, client.id)
+    state = await pkgs.get_state(session, client.id, today=now_msk.date())
     lines = [f"💰 Кабинет №{client.id}"]
     lines.append(f"Оплачено: {_money(bal.get('paid', 0))}")
     lines.append(f"Израсходовано: {_money(bal.get('spent', 0))}")
@@ -298,26 +352,72 @@ async def balance_text(session, client: AdClient) -> str:
     if sched:
         lines.append(f"Запланировано: {len(sched)} пост(ов)")
     pkg = state.get("package")
-    if pkg is not None and pkg.kind == "unlimited":
+    if pkg is not None:
+        lines.append(package_line(pkg) + " — заказы идут в его счёт")
+    for p in state.get("packages") or []:
+        if p.kind == "prepaid" and p.paid_at is None and p is not pkg:
+            lines.append(f"Пакет {p.posts_total} постов ждёт подтверждения оплаты")
+    disc = await client_discount(session, client.id, now_msk=now_msk)
+    if disc.get("total"):
         lines.append(
-            f"Безлимит до {pkg.period_end:%d.%m.%Y}: до 1 поста в сутки в каждом сообществе"
+            f"Ваша скидка: {disc['total']} % (оплачено постов в этом месяце: "
+            f"{disc.get('paid_month', 0)}, всего: {disc.get('paid_total', 0)})"
         )
-    elif pkg is not None:
-        left = max(0, int(pkg.posts_total or 0) - int(pkg.posts_used or 0))
-        lines.append(f"Пакет: осталось {left} из {pkg.posts_total} постов")
     if state.get("block_reason"):
         lines.append(f"⛔ {state['block_reason']}")
     return "\n".join(lines)
 
 
-def prices_text() -> str:
-    from config.ad_landing import PACKAGES, PRICE_SINGLE_RUB
+def prices_text(*, discount: Optional[Dict[str, int]] = None, package=None) -> str:
+    """Прайс бота: лесенка, безлимит, поштучные услуги, правила скидок из констант,
+    плюс личное — пакет клиента или его текущая скидка. Синхронная и чистая."""
+    from config.ad_landing import (
+        DISCOUNT_MONTH_CAP_PCT,
+        DISCOUNT_STEP_PCT,
+        DISCOUNT_STEP_POSTS,
+        PACKAGES,
+        PRICE_FLOOR_RUB,
+        PRICE_SINGLE_RUB,
+        REGULAR_AFTER_POSTS,
+        REGULAR_PCT,
+        SINGLE_SERVICES,
+        UNLIMITED_PRICE_RUB,
+    )
+    from modules.ad_cabinet.packages import UNLIMITED_DAYS
 
     lines = ["📋 Цены на размещение поста", f"1 сообщество — {_money(PRICE_SINGLE_RUB)}"]
     for p in PACKAGES:
         covers = p.get("covers")
         tail = f" ({covers} сообществ)" if covers else " (вся сеть)"
         lines.append(f"{p.get('title', 'пакет')}{tail} — {_money(p.get('price', 0))}")
+    lines.append(
+        f"Безлимит на {UNLIMITED_DAYS} дней — {_money(UNLIMITED_PRICE_RUB)}: любые сообщества, "
+        "до 1 поста в сутки в каждом (оформляет владелец — «💬 Написать»)"
+    )
+    lines.append("\nПоштучно в одном сообществе:")
+    for s in SINGLE_SERVICES:
+        note = " (заказывается в кабинете)" if "Закреп" in s["title"] else ""
+        lines.append(f"• {s['title']} — {s['price']}{note}")
+    lines.append(
+        f"\nСкидки: за каждые {DISCOUNT_STEP_POSTS} оплаченных поста в месяце — минус "
+        f"{DISCOUNT_STEP_PCT} % на следующие заказы (до {DISCOUNT_MONTH_CAP_PCT} %, с 1-го числа "
+        f"заново); постоянным клиентам (от {REGULAR_AFTER_POSTS} оплаченных постов) — ещё минус "
+        f"{REGULAR_PCT} % навсегда. Одно размещение — не ниже {_money(PRICE_FLOOR_RUB)}."
+    )
+    if package is not None:
+        lines.append("\n" + package_line(package) + " — заказы идут в его счёт.")
+    elif discount:
+        total = int(discount.get("total") or 0)
+        paid_month = int(discount.get("paid_month") or 0)
+        if total:
+            lines.append(
+                f"\nВаша скидка сейчас: {total} % (оплачено постов в этом месяце: {paid_month})."
+            )
+        else:
+            lines.append(f"\nОплачено постов в этом месяце: {paid_month}.")
+        nxt = int(discount.get("next_step_posts") or 0)
+        if nxt and int(discount.get("month") or 0) < DISCOUNT_MONTH_CAP_PCT:
+            lines.append(f"До следующих {DISCOUNT_STEP_PCT} % — ещё {nxt} оплаченных постов.")
     lines.append("\nЦена считается автоматически при заказе: выберите районы — увидите сумму.")
     return "\n".join(lines)
 
@@ -633,9 +733,17 @@ async def handle(
 
     # Кнопки меню работают из любого шага — клиент не обязан помнить, где он.
     if cmd == CMD_BALANCE:
-        return [(await balance_text(session, client), MAIN_KEYBOARD)], None, events
+        return [(await balance_text(session, client, now_msk=now_msk), MAIN_KEYBOARD)], None, events
     if cmd == CMD_PRICES:
-        return [(prices_text(), MAIN_KEYBOARD)], None, events
+        from modules.ad_cabinet import packages as pkgs
+        from modules.ad_cabinet.pricing import client_discount
+
+        disc = await client_discount(session, client.id, now_msk=now_msk)
+        st = await pkgs.get_state(session, client.id, today=now_msk.date())
+        return [(prices_text(discount=disc, package=st["package"]), MAIN_KEYBOARD)], None, events
+    if cmd == CMD_POSTS:
+        views = await client_posts.list_for_client(session, client.id)
+        return [(chunk, MAIN_KEYBOARD) for chunk in client_posts.render(views)], None, events
     if cmd == CMD_PAY:
         return [(payments_text(), MAIN_KEYBOARD)], None, events
     if cmd == CMD_PAID:
@@ -835,27 +943,73 @@ async def handle(
                 )
             draft["publish_now"] = False
             draft["publish_at"] = when.isoformat()
+        from modules.ad_cabinet import packages as pkgs
         from modules.ad_cabinet.pricing import quote_for_client
 
         n = len(draft.get("region_ids") or [])
+        when_day = (
+            now_msk.date()
+            if draft.get("publish_now")
+            else datetime.fromisoformat(draft["publish_at"]).date()
+        )
+        # Зеркало /api/advertiser/quote и submit_order: пакет, долг и период
+        # видны ДО «Подтвердить», а не сюрпризом после.
+        st = await pkgs.get_state(session, client.id, today=now_msk.date())
+        if st["block_reason"]:
+            log_interaction(
+                session,
+                kind="cabinet_order_refused",
+                client_id=client.id,
+                summary=f"Заказ из ВК-бота не прошёл: {st['block_reason']}",
+                actor="client",
+            )
+            return _noted(note, [(f"⛔ {st['block_reason']}", MAIN_KEYBOARD)]), None, events
+        pkg = st["package"]
+        left = pkgs.remaining(pkg) if pkg is not None else 0
+        if pkg is not None and n > left:
+            regions = [tuple(r) for r in draft.get("regions") or []]
+            chosen = [int(x) for x in draft.get("region_ids") or []]
+            return (
+                _noted(
+                    note,
+                    [
+                        (
+                            f"В пакете осталось {left} постов, а районов выбрано {n} — "
+                            "уменьшите выбор или договоритесь с владельцем о расширении.",
+                            regions_keyboard(regions, chosen, int(draft.get("page") or 0)),
+                        )
+                    ],
+                ),
+                {"step": STEP_ORDER_REGIONS, "draft": draft},
+                events,
+            )
+        if pkg is not None and pkg.period_end is not None and not pkgs.period_covers(pkg, when_day):
+            return (
+                _noted(
+                    note,
+                    [
+                        (
+                            f"Пакет действует до {pkg.period_end:%d.%m.%Y} — выберите дату "
+                            "внутри периода или нажмите «Сейчас».",
+                            WHEN_KEYBOARD,
+                        )
+                    ],
+                ),
+                state,
+                events,
+            )
         q = await quote_for_client(session, client.id, n, now_msk=now_msk)
         when_txt = "сейчас" if draft.get("publish_now") else draft["publish_at"].replace("T", " ")
         text_full = draft.get("text") or ""
         preview = (text_full[:300] + ("…" if len(text_full) > 300 else "")) or "(без текста)"
         photos_n = len(draft.get("photos") or [])
-        disc = (
-            f" (скидка {q['discount_pct']} %, по прайсу {_money(q['base_price'])})"
-            if q.get("discount_pct")
-            else ""
-        )
         return (
             _noted(
                 note,
                 [
                     (
                         f"Проверьте заказ:\n— районов: {n}\n— выход: {when_txt}\n"
-                        f"— цена: {_money(q['price'])}{disc}"
-                        + (" (или в счёт вашего пакета)" if q["price"] else "")
+                        + quote_text(q, n=n, package=pkg, left=left)
                         + (f"\n— фото: {photos_n}" if photos_n else "")
                         + f"\n\nТекст:\n{preview}",
                         CONFIRM_KEYBOARD,
