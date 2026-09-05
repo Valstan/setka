@@ -363,6 +363,7 @@ async def price_table(request: Request, db: AsyncSession = Depends(get_db_sessio
 
 class QuoteIn(BaseModel):
     region_ids: List[int] = Field(default_factory=list)
+    pinned: bool = False  # закреп на сутки (+PIN_PRICE_RUB за сообщество)
 
 
 @router.post("/quote")
@@ -378,7 +379,7 @@ async def quote(payload: QuoteIn, request: Request, db: AsyncSession = Depends(g
     from modules.ad_cabinet import packages as pkgs
     from modules.ad_cabinet.pricing import quote_for_client
 
-    base = await quote_for_client(db, client.id, len(targets))
+    base = await quote_for_client(db, client.id, len(targets), pinned=payload.pinned)
 
     state = await pkgs.get_state(db, client.id)
     if state["block_reason"]:
@@ -388,8 +389,10 @@ async def quote(payload: QuoteIn, request: Request, db: AsyncSession = Depends(g
         left = pkgs.remaining(pkg)  # безлимит — без квоты (Этап 2)
         return {
             "n": len(targets),
-            "price": 0,
+            "price": base["pin_price"],  # пакет закреп не покрывает
             "base_price": base["base_price"],
+            "pinned": payload.pinned,
+            "pin_price": base["pin_price"],
             "package": pkg.to_dict(),
             "over_limit": len(targets) > left,
         }
@@ -515,6 +518,7 @@ class OrderIn(BaseModel):
     whole_network: bool = False
     publish_now: bool = False
     publish_at: Optional[str] = None  # "YYYY-MM-DDTHH:MM", МСК wall-clock
+    pinned: bool = False  # закреп на сутки после выхода (+200 ₽ за сообщество)
 
 
 def _real_publisher_factory(db):
@@ -631,6 +635,7 @@ async def create_order(
             publisher_factory=_real_publisher_factory(db),
             attachment_builder=_real_attachment_builder(client.id, user_token),
             msk_to_unix=_msk_to_unix,
+            pinned=payload.pinned,
         )
     except client_orders.OrderError as e:
         # Отказ формы — тоже событие для владельца: клиент ПЫТАЛСЯ заказать и

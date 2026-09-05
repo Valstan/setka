@@ -827,6 +827,7 @@ class AdScheduledPost(Base):
     expires_at = Column(DateTime, nullable=True)
     from_group = Column(Boolean, nullable=False, default=True)
     signed = Column(Boolean, nullable=False, default=False)
+    pinned = Column(Boolean, nullable=False, default=False)  # закреп на сутки (099)
     comments_enabled = Column(Boolean, nullable=False, default=True)
 
     # Клиентский флоу (миграция 082) добавил значения:
@@ -897,6 +898,7 @@ class AdScheduledPost(Base):
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "from_group": self.from_group,
             "signed": self.signed,
+            "pinned": bool(self.pinned),
             "comments_enabled": self.comments_enabled,
             "status": self.status,
             "vk_postponed_post_id": self.vk_postponed_post_id,
@@ -1187,6 +1189,10 @@ class AdPublication(Base):
     # момент фактического wall.delete (UTC). nullable — без срока висит вечно.
     expires_at = Column(DateTime, nullable=True)
     removed_at = Column(DateTime, nullable=True)
+    # Закреп на сутки (099): когда закрепили, до когда держим, когда сняли.
+    pinned_at = Column(DateTime, nullable=True)
+    pinned_until = Column(DateTime, nullable=True)
+    unpinned_at = Column(DateTime, nullable=True)
     # Метрики поста (С3, миграция 042): просмотры/лайки/репосты из wall.getById.
     # NULL — ещё не собирали; stats_updated_at — момент последнего сбора (UTC).
     views = Column(Integer, nullable=True)
@@ -1220,6 +1226,9 @@ class AdPublication(Base):
             "published_at": self.published_at.isoformat() if self.published_at else None,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "removed_at": self.removed_at.isoformat() if self.removed_at else None,
+            "pinned_at": self.pinned_at.isoformat() if self.pinned_at else None,
+            "pinned_until": self.pinned_until.isoformat() if self.pinned_until else None,
+            "unpinned_at": self.unpinned_at.isoformat() if self.unpinned_at else None,
             "views": self.views,
             "likes": self.likes,
             "reposts": self.reposts,

@@ -310,30 +310,33 @@
     }
 
     var quoteTimer = null;
+    $('np-pin').addEventListener('change', function () { updateQuote(); });
+
     function updateQuote() {
         clearTimeout(quoteTimer);
         quoteTimer = setTimeout(async function () {
             var ids = selectedRegions();
             if (!ids.length) { $('np-price').textContent = '0 ₽'; $('np-price-note').textContent = ''; return; }
             try {
-                var q = await api('/quote', { method: 'POST', body: JSON.stringify({ region_ids: ids }) });
+                var q = await api('/quote', { method: 'POST', body: JSON.stringify({ region_ids: ids, pinned: $('np-pin').checked }) });
                 if (q.blocked) {
                     $('np-price').textContent = '—';
                     $('np-price-note').textContent = '⛔ ' + q.blocked;
                     return;
                 }
                 if (q.package) {
-                    $('np-price').textContent = '0 ₽';
+                    $('np-price').textContent = (q.pin_price || 0) + ' ₽';
+                    var pinNote = q.pin_price ? ' · закреп ' + q.pin_price + ' ₽ отдельно' : '';
                     if (q.package.unlimited) {
-                        $('np-price-note').textContent = '♾ в счёт безлимита до ' + fmtDate(q.package.period_end) + ' (1 пост в сутки в каждом сообществе)';
+                        $('np-price-note').textContent = '♾ в счёт безлимита до ' + fmtDate(q.package.period_end) + ' (1 пост в сутки в каждом сообществе)' + pinNote;
                         return;
                     }
-                    $('np-price-note').textContent = q.over_limit
+                    $('np-price-note').textContent = (q.over_limit
                         ? '⚠️ в пакете осталось ' + q.package.posts_left + ' постов — выберите меньше районов'
-                        : '🎁 в счёт пакета (осталось ' + q.package.posts_left + ' из ' + q.package.posts_total + ')';
+                        : '🎁 в счёт пакета (осталось ' + q.package.posts_left + ' из ' + q.package.posts_total + ')') + pinNote;
                     return;
                 }
-                $('np-price').textContent = q.price + ' ₽';
+                $('np-price').textContent = (q.total != null ? q.total : q.price) + ' ₽';
                 var note = q.anchor ? '(' + q.anchor + (q.saved ? ', выгода ' + q.saved + ' ₽' : '') + ')' : '';
                 if (q.discount_pct) {
                     note += ' · ваша скидка ' + q.discount_pct + '% (по прайсу ' + q.base_price + ' ₽)' +
@@ -342,6 +345,7 @@
                 if (q.discount && q.discount.next_step_posts && q.discount.month < 30) {
                     note += ' · до следующих 5%: ещё ' + q.discount.next_step_posts + ' оплач. поста в этом месяце';
                 }
+                if (q.pin_price) note += ' · закреп на сутки ' + q.pin_price + ' ₽ (без скидки)';
                 $('np-price-note').textContent = note;
             } catch (e) { $('np-price-note').textContent = e.message; }
         }, 250);
@@ -417,6 +421,7 @@
             whole_network: $('np-whole').checked,
             publish_now: $('np-now').checked,
             publish_at: $('np-now').checked ? null : ($('np-datetime').value || null),
+            pinned: $('np-pin').checked,
         };
         $('np-submit').disabled = true;
         try {

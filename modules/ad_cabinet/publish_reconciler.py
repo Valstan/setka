@@ -241,8 +241,12 @@ async def record_published(
     *,
     vk_post_id: Optional[int] = None,
     notify: bool = True,
+    pinner=None,
 ) -> AdPublication:
     """Зафиксировать выход строки отложки — единая правда об учёте.
+
+    ``pinner(owner_id, post_id)`` — закреп после выхода для строк с ``pinned``
+    (Этап 2, PR 2C); ``None`` — собирается из токенов при необходимости.
 
     ``vk_post_id`` — id вышедшей записи (по умолчанию ``row.vk_postponed_post_id``;
     диспетчер репостов передаёт id только что созданного репоста). Создаёт
@@ -285,6 +289,13 @@ async def record_published(
         client = await session.get(AdClient, row.client_id)
         if client and client.stage in ("detected", "contacted", "scheduled"):
             client.stage = "published"
+
+    if getattr(row, "pinned", False) and pub.vk_post_id:
+        from modules.ad_cabinet import pinning
+
+        if pinner is None:
+            pinner = await pinning.build_default_pinner(session)
+        await pinning.pin_after_publish(session, row, pub, pinner=pinner)
 
     kind = getattr(row, "kind", None) or "post"
     log_interaction(
