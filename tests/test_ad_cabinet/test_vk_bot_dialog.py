@@ -139,7 +139,9 @@ async def test_known_vk_account_is_found_not_duplicated(db_session):
     _r, _s, events = await dialog.handle(
         db_session, _msg("hi"), None, submit=_Submit(), now_msk=NOW
     )
-    assert events == []
+    # Не signup: карточка найдена по аккаунту; текст известного клиента вне шага
+    # уходит владельцу в чат (PR 1.7), а не в приветствие.
+    assert events == ["chat"]
     assert len((await db_session.execute(select(AdClient))).scalars().all()) == 1
 
 
@@ -413,3 +415,62 @@ async def test_regions_done_with_nothing_chosen_stays(db_session):
         db_session, _btn("rgdone"), state, submit=s, now_msk=NOW
     )
     assert state["step"] == "order_regions" and "ни один район" in replies[0][0]
+
+
+# ───────── «Я оплатил» и свободный текст (PR 1.7) ─────────
+
+
+async def _awaiting(session, client, amount):
+    from decimal import Decimal
+
+    from database.models import AdPayment
+
+    p = AdPayment(client_id=client.id, amount=Decimal(str(amount)), status="awaiting")
+    session.add(p)
+    await session.flush()
+    return p
+
+
+@pytest.mark.asyncio
+async def test_paid_button_claims_awaiting_and_emits_event(db_session):
+    from database.models import AdPayment
+
+    # первый контакт заводит карточку
+    await dialog.handle(db_session, _btn("balance"), None, submit=_Submit(), now_msk=NOW)
+    client = await dialog.find_client(db_session, 500)
+    pay = await _awaiting(db_session, client, 350)
+
+    replies, state, events = await dialog.handle(
+        db_session, _btn("paid"), None, submit=_Submit(), now_msk=NOW
+    )
+    assert state is None and "payment_claimed" in events
+    assert "350" in replies[0][0]
+    await db_session.flush()
+    assert pay.claimed_at is not None
+    assert (await db_session.execute(select(AdPayment))).scalars().one().status == "awaiting"
+
+    replies, _s, events = await dialog.handle(
+        db_session, _msg("✅ Оплатил"), None, submit=_Submit(), now_msk=NOW
+    )
+    assert "payment_claimed" not in events and "нет" in replies[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_free_text_outside_step_goes_to_chat_for_known_client(db_session):
+    from database.models import AdChatMessage
+
+    # Новый клиент: первое сообщение — приветствие, не письмо владельцу.
+    replies, state, events = await dialog.handle(
+        db_session, _msg("привет"), None, submit=_Submit(), now_msk=NOW
+    )
+    assert "signup" in events and "chat" not in events
+    assert (await db_session.execute(select(AdChatMessage))).scalars().all() == []
+
+    # Тот же клиент вне шага пишет текст — это сообщение владельцу.
+    replies, state, events = await dialog.handle(
+        db_session, _msg("Я перевёл 700, проверьте"), None, submit=_Submit(), now_msk=NOW
+    )
+    assert state is None and events == ["chat"]
+    assert "Передал владельцу" in replies[0][0]
+    msg = (await db_session.execute(select(AdChatMessage))).scalar_one()
+    assert msg.sender == "client" and "700" in msg.body

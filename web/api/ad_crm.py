@@ -834,9 +834,58 @@ async def update_payment(
             + (f", {pay.bank}" if pay.bank else ""),
             meta={"amount": float(pay.amount), "bank": pay.bank},
         )
+        if pay.client_id:
+            await _thank_client(db, pay.client_id, float(pay.amount))
     await db.commit()
     await db.refresh(pay)
     return pay.to_dict()
+
+
+async def _thank_client(db, client_id: int, amount: float) -> None:
+    """«Оплата получена» клиенту в личку ВК (PR 1.7 аудита 2026-09-05). Без commit."""
+    from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+    await vk_notify.notify_client(
+        db, int(client_id), f"✅ Оплата {amount:g} ₽ получена — спасибо! Баланс обновлён."
+    )
+
+
+class ConfirmPaidIn(BaseModel):
+    """Подтверждение пачки счетов: банк зачисления (опционально, фикс-список)."""
+
+    bank: Optional[str] = None
+
+
+@router.post("/orders/{order_ref}/confirm-paid")
+async def order_confirm_paid(
+    order_ref: str, payload: ConfirmPaidIn, db: AsyncSession = Depends(get_db_session)
+):
+    """Подтвердить оплату ВСЕГО заказа — одна кнопка вместо N строк (PR 1.7)."""
+    from modules.ad_cabinet import payment_claims
+
+    res = await payment_claims.confirm_order(db, order_ref, bank=payload.bank)
+    if not res["confirmed"]:
+        raise HTTPException(status_code=404, detail="В заказе нет ожидающих оплаты счетов")
+    await _thank_client(db, res["client_id"], res["amount"])
+    await db.commit()
+    return res
+
+
+@router.post("/clients/{client_id}/payments/confirm-all")
+async def client_confirm_all_paid(
+    client_id: int, payload: ConfirmPaidIn, db: AsyncSession = Depends(get_db_session)
+):
+    """Подтвердить ВСЕ ожидающие счета клиента («всё оплачено»)."""
+    from modules.ad_cabinet import payment_claims
+
+    if await db.get(AdClient, client_id) is None:
+        raise HTTPException(status_code=404, detail="client not found")
+    res = await payment_claims.confirm_client(db, client_id, bank=payload.bank)
+    if not res["confirmed"]:
+        raise HTTPException(status_code=404, detail="Ожидающих оплаты счетов нет")
+    await _thank_client(db, client_id, res["amount"])
+    await db.commit()
+    return res
 
 
 @router.delete("/payments/{payment_id}")
@@ -2478,7 +2527,20 @@ async def moderation_count(db: AsyncSession = Depends(get_db_session)):
             )
         )
     ).scalar_one()
-    return {"pending": int(pending or 0), "unread": int(unread or 0)}
+    # «Заявили оплату» — клиенты с ожидающими счетами, по которым нажато
+    # «Я оплатил» (098): владельцу надо подтвердить, бейдж это считает.
+    claimed = (
+        await db.execute(
+            select(func.count(func.distinct(AdPayment.client_id))).where(
+                AdPayment.status == "awaiting", AdPayment.claimed_at.isnot(None)
+            )
+        )
+    ).scalar_one()
+    return {
+        "pending": int(pending or 0),
+        "unread": int(unread or 0),
+        "claimed": int(claimed or 0),
+    }
 
 
 @router.get("/clients/{client_id}/photos/{name}")

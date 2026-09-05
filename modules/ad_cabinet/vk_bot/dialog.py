@@ -45,6 +45,7 @@ CMD_BALANCE = "balance"
 CMD_PRICES = "prices"
 CMD_ORDER = "order"
 CMD_PAY = "pay"
+CMD_PAID = "paid"  # «Я оплатил» — заявить оплату ожидающих счетов (PR 1.7)
 CMD_CHAT = "chat"
 CMD_CABINET = "cabinet"
 CMD_CANCEL = "cancel"
@@ -62,6 +63,7 @@ BUTTON_TEXT: Dict[str, str] = {
     "📋 Цены": CMD_PRICES,
     "🛒 Заказать пост": CMD_ORDER,
     "💳 Оплата": CMD_PAY,
+    "✅ Оплатил": CMD_PAID,
     "💬 Написать": CMD_CHAT,
     "🏠 Кабинет": CMD_CABINET,
     "❌ Отмена": CMD_CANCEL,
@@ -98,7 +100,8 @@ def keyboard(rows: Sequence[Sequence[Dict[str, Any]]], *, one_time: bool = False
 MAIN_KEYBOARD = keyboard(
     [
         [_btn("💰 Баланс", CMD_BALANCE, "primary"), _btn("📋 Цены", CMD_PRICES)],
-        [_btn("🛒 Заказать пост", CMD_ORDER, "positive"), _btn("💳 Оплата", CMD_PAY)],
+        [_btn("🛒 Заказать пост", CMD_ORDER, "positive")],
+        [_btn("💳 Оплата", CMD_PAY), _btn("✅ Оплатил", CMD_PAID, "positive")],
         [_btn("💬 Написать", CMD_CHAT), _btn("🏠 Кабинет", CMD_CABINET)],
     ]
 )
@@ -306,7 +309,8 @@ def payments_text() -> str:
     for p in PAYMENTS:
         lines.append(f"• {p['bank']}: {p['phone']} ({p['holder']})")
     lines.append(
-        "\nПосле перевода напишите сюда «оплатил» и сумму — владелец отметит оплату в кабинете."
+        "\nПосле перевода нажмите «✅ Оплатил» — владелец увидит и подтвердит оплату, "
+        "подтверждение придёт сюда."
     )
     return "\n".join(lines)
 
@@ -494,6 +498,19 @@ async def handle(
         return [(prices_text(), MAIN_KEYBOARD)], None, events
     if cmd == CMD_PAY:
         return [(payments_text(), MAIN_KEYBOARD)], None, events
+    if cmd == CMD_PAID:
+        from modules.ad_cabinet import payment_claims
+
+        res = await payment_claims.claim_payments(session, client)
+        if res["claimed"]:
+            events.append("payment_claimed")
+            msg = (
+                f"Спасибо! Передал владельцу: {_money(res['amount'])} по "
+                f"{res['claimed']} счёт(ам). Подтверждение придёт сюда."
+            )
+        else:
+            msg = "Неоплаченных счетов нет — всё чисто 👍"
+        return [(msg, MAIN_KEYBOARD)], None, events
     if cmd == CMD_CABINET:
         return (
             [
@@ -693,7 +710,14 @@ async def handle(
             msg = f"Готово: {n} постов поставлены в очередь на {_money(price)}."
         return [(msg, MAIN_KEYBOARD)], None, events
 
-    # Без шага и без команды: приветствие + меню.
+    # Свободный текст вне шага — это сообщение владельцу, а не повод показать
+    # приветствие (аудит 2026-09-05: «алло, я оплатил» уходило в никуда).
+    # Новому клиенту — приветствие с меню: его первое «здравствуйте» не письмо.
+    body = (incoming.text or "").strip()
+    if body and not created:
+        await chat.post_message(session, client.id, chat.SENDER_CLIENT, body)
+        events.append("chat")
+        return [("Передал владельцу. Ответ придёт сюда.", MAIN_KEYBOARD)], None, events
     return [(greeting(client, created), MAIN_KEYBOARD)], None, events
 
 

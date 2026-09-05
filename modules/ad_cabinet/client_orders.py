@@ -12,7 +12,7 @@
 
 Модерация (решение владельца 2026-08-25): не-``trusted`` клиент создаёт посты в
 ``status='pending'`` — в VK не уходит НИЧЕГО до одобрения владельцем. После
-``AD_TRUST_AFTER_POSTS`` одобренных постов клиент становится ``trusted``.
+``AD_TRUST_AFTER_ORDERS`` одобренных заказов клиент становится ``trusted``.
 
 VK-детали (publisher, заливка фото) инъектируются — логика тестируется без сети
 (паттерн ``publish_reconciler``).
@@ -27,15 +27,18 @@ from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import String, func, select
 
 from config.ad_landing import quote_price
 from database.models import AdClient, AdScheduledPost, Region
 
 logger = logging.getLogger(__name__)
 
-# Порог доверия: сколько одобренных постов делает клиента trusted.
-TRUST_AFTER_POSTS = int(os.getenv("AD_TRUST_AFTER_POSTS", "3"))
+# Порог доверия: сколько одобренных ЗАКАЗОВ делает клиента trusted (аудит
+# 2026-09-05: считали посты — один заказ на три района сразу давал доверие).
+# Старое имя env оставлено как запасное.
+TRUST_AFTER_ORDERS = int(os.getenv("AD_TRUST_AFTER_ORDERS", os.getenv("AD_TRUST_AFTER_POSTS", "3")))
+TRUST_AFTER_POSTS = TRUST_AFTER_ORDERS  # обратная совместимость (тесты, доки)
 
 # Лимиты клиентского флоу (анти-флуд; VK-отложка вмещает ~150 постов на группу).
 TEXT_MAX = int(os.getenv("AD_CLIENT_TEXT_MAX", "4000"))
@@ -424,14 +427,36 @@ async def approve_post(
         client = await session.get(AdClient, post.client_id)
         if client is not None:
             client.approved_posts_count = (client.approved_posts_count or 0) + 1
-            if not client.trusted and client.approved_posts_count >= TRUST_AFTER_POSTS:
-                client.trusted = True
-                logger.info(
-                    "client-order: client %s promoted to trusted after %s approved posts",
-                    client.id,
-                    client.approved_posts_count,
-                )
+            if not client.trusted:
+                await session.flush()
+                orders = await approved_orders_count(session, client.id)
+                if orders >= TRUST_AFTER_ORDERS:
+                    client.trusted = True
+                    logger.info(
+                        "client-order: client %s promoted to trusted after %s approved orders",
+                        client.id,
+                        orders,
+                    )
     return post
+
+
+async def approved_orders_count(session, client_id: int) -> int:
+    """Сколько РАЗНЫХ заказов клиента дошло до VK (scheduled/published).
+
+    Строки без ``order_ref`` (старые, операторские) считаются по одной.
+    """
+    key = func.coalesce(AdScheduledPost.order_ref, func.cast(AdScheduledPost.id, String))
+    return int(
+        (
+            await session.execute(
+                select(func.count(func.distinct(key))).where(
+                    AdScheduledPost.client_id == int(client_id),
+                    AdScheduledPost.status.in_(("scheduled", "published")),
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
 
 
 async def reject_post(session, post: AdScheduledPost, *, comment: str) -> AdScheduledPost:

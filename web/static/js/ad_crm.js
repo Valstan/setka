@@ -488,7 +488,9 @@ function renderClientDetails(d) {
         const awaiting = p.status === 'awaiting';
         const amountCls = awaiting ? 'text-warning' : 'text-success';
         const statusBadge = awaiting
-            ? '<span class="badge bg-warning text-dark">ждём</span>'
+            ? (p.claimed_at
+                ? `<span class="badge bg-warning text-dark" title="Клиент нажал «Я оплатил» ${fmtDate(p.claimed_at)}">заявил оплату</span>`
+                : '<span class="badge bg-warning text-dark">ждём</span>')
             : '<span class="badge bg-success">оплачено</span>';
         const markPaidBtn = awaiting
             ? `<button class="btn btn-sm btn-outline-success py-0 px-1" title="Отметить оплаченной"
@@ -558,7 +560,10 @@ function renderClientDetails(d) {
 
         <div class="col-md-7">
             ${balanceBlock(d.balance, c.id)}
-            <div class="fw-bold small mb-1"><i class="bi bi-cash-coin"></i> Оплаты</div>
+            <div class="fw-bold small mb-1 d-flex align-items-center gap-2"><i class="bi bi-cash-coin"></i> Оплаты
+                ${payments.some(p => p.status === 'awaiting') ? `<button class="btn btn-sm btn-success py-0 ms-auto" title="Все ожидающие счета → оплачено, клиенту уйдёт «спасибо»"
+                        onclick="confirmAllPayments(${c.id})"><i class="bi bi-check2-all"></i> Всё оплачено</button>` : ''}
+            </div>
             <table class="table table-sm align-middle mb-2">
                 <tbody>${payRows}</tbody>
             </table>
@@ -1327,6 +1332,19 @@ async function addPayment(id) {
     }
 }
 
+async function confirmAllPayments(clientId) {
+    const bank = prompt('Банк зачисления — Сбербанк, Т-Банк, Альфа-Банк, ВТБ, Озон Банк, Наличные, Перевод (можно пусто):', '');
+    if (bank === null) return;
+    try {
+        const res = await apiClient.confirmClientPayments(clientId, bank.trim() || null);
+        await _detailReload(clientId);
+        await loadFunnel();
+        if (res && res.confirmed) alert(`Подтверждено: ${res.confirmed} сч. на ${fmtMoney(res.amount)}`);
+    } catch (e) {
+        alert('Не удалось подтвердить: ' + e.message);
+    }
+}
+
 async function markPaid(paymentId, clientId) {
     try {
         await apiClient.updateCrmPayment(paymentId, { status: 'paid' });
@@ -1511,7 +1529,9 @@ function renderClientPageDetails(d) {
         const awaiting = p.status === 'awaiting';
         const amountCls = awaiting ? 'text-warning' : 'text-success';
         const statusBadge = awaiting
-            ? '<span class="badge bg-warning text-dark">ждём</span>'
+            ? (p.claimed_at
+                ? `<span class="badge bg-warning text-dark" title="Клиент нажал «Я оплатил» ${fmtDate(p.claimed_at)}">заявил оплату</span>`
+                : '<span class="badge bg-warning text-dark">ждём</span>')
             : '<span class="badge bg-success">оплачено</span>';
         const markPaidBtn = awaiting
             ? `<button class="btn btn-sm btn-outline-success py-0 px-1" title="Отметить оплаченной"
@@ -1581,7 +1601,10 @@ function renderClientPageDetails(d) {
 
         <div class="col-md-7">
             ${balanceBlock(d.balance, c.id)}
-            <div class="fw-bold small mb-1"><i class="bi bi-cash-coin"></i> Оплаты</div>
+            <div class="fw-bold small mb-1 d-flex align-items-center gap-2"><i class="bi bi-cash-coin"></i> Оплаты
+                ${payments.some(p => p.status === 'awaiting') ? `<button class="btn btn-sm btn-success py-0 ms-auto" title="Все ожидающие счета → оплачено, клиенту уйдёт «спасибо»"
+                        onclick="confirmAllPayments(${c.id})"><i class="bi bi-check2-all"></i> Всё оплачено</button>` : ''}
+            </div>
             <table class="table table-sm align-middle mb-2">
                 <tbody>${payRows}</tbody>
             </table>
@@ -1783,7 +1806,10 @@ async function loadCabinetList() {
                 unread +
                 '<span class="text-muted text-nowrap">' + acct + '</span>' +
                 '<span class="text-muted text-nowrap ms-auto" title="' + escapeHtml(c.last_activity_at || '') + '">' + last + '</span>' +
-                '<span class="text-nowrap">заказано <b>' + c.posts_ordered + '</b> · вышло <b>' + c.posts_published + '</b> · оплачено <b>' + fmtMoney(c.paid_total) + '</b></span>' +
+                '<span class="text-nowrap">заказано <b>' + c.posts_ordered + '</b> · вышло <b>' + c.posts_published + '</b> · оплачено <b>' + fmtMoney(c.paid_total) + '</b>' +
+                (c.claimed_total > 0 ? ' · <span class="badge text-bg-warning" title="Клиент нажал «Я оплатил» — подтвердить в карточке">заявил оплату ' + fmtMoney(c.claimed_total) + '</span>'
+                    : (c.awaiting_total > 0 ? ' · <span class="text-warning">ждём ' + fmtMoney(c.awaiting_total) + '</span>' : '')) +
+                '</span>' +
                 '</a>' +
                 '<a class="text-nowrap flex-shrink-0" href="/ad/client/' + c.id + '" title="Карточка клиента в CRM"><i class="bi bi-person-lines-fill"></i></a>' +
                 '</div>';

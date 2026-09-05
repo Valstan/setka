@@ -127,4 +127,4 @@ async def test_count_endpoint_shape():
     r.scalar_one.return_value = 3
     db.execute = AsyncMock(return_value=r)
     out = await ad_crm.moderation_count(db=db)
-    assert out == {"pending": 3, "unread": 3}
+    assert out == {"pending": 3, "unread": 3, "claimed": 3}
