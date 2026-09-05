@@ -207,7 +207,9 @@ async def build_live_checker():
     user_token, community_tokens = await load_vk_routing()
     if not user_token:
         return None
-    return VKSuggestedChecker(user_token, community_tokens=community_tokens)
+    checker = VKSuggestedChecker(user_token, community_tokens=community_tokens)
+    checker.user_token = user_token  # для precheck can_message (чекер сам токен не хранит)
+    return checker
 
 
 async def sync_live_suggests(
@@ -217,30 +219,47 @@ async def sync_live_suggests(
     checker,
     classify_fn=None,
     insert_fn=None,
+    precheck_fn=None,
 ) -> Dict[str, Any]:
     """Подтянуть живую предложку сообщества в ``ad_requests`` перед показом.
 
     - посты, которых нет в базе, заводятся как ``new`` независимо от вердикта
-      классификатора (score/reasons — справочно, плюс пометка «из планировщика»);
-      ``can_message`` не заполняется — автоприветствие такие заявки не трогает;
+      классификатора; рекламные (по классификатору) идут тем же путём, что у
+      сканера (``route='ad_cabinet'``, precheck ``can_message`` → автоприветствие
+      работает), нерекламные — ``route='planner'``: видны планировщику, но не
+      засоряют инбокс и не получают автоприветствие;
     - заявки ``vanished``, чей пост снова в выдаче, возвращаются в ``new``;
     - ``skipped``/``published``/``deleted`` не трогаем — это решения оператора.
 
-    VK не ответил → ``{"error": …}`` и никаких изменений: показываем базу.
-    Без commit.
+    Сетевые вызовы уходят в поток (web — один процесс uvicorn на четыре продукта).
+    Каждая вставка — под SAVEPOINT: сбой одной строки не ломает транзакцию и
+    форму. VK не ответил → ``{"error": …}`` и никаких изменений. Без commit.
     """
+    import asyncio
+
+    from sqlalchemy import update
+
     if classify_fn is None:
         from modules.ad_cabinet.classifier import classify as classify_fn  # noqa: N806
     if insert_fn is None:
         from modules.ad_cabinet.scanner import _insert_if_new as insert_fn  # noqa: N806
+    if precheck_fn is None:
+        from modules.ad_cabinet.scanner import _precheck_can_message as precheck_fn  # noqa: N806
 
     gid = -abs(int(region.vk_group_id))
-    out: Dict[str, Any] = {"fetched": 0, "inserted": 0, "revived": 0, "error": None}
+    out: Dict[str, Any] = {
+        "fetched": 0,
+        "inserted": 0,
+        "inserted_ads": 0,
+        "revived": 0,
+        "errors": 0,
+        "error": None,
+    }
     if checker is None:
         out["error"] = "нет VK-токена"
         return out
     try:
-        posts = checker.fetch_suggested_posts(gid)
+        posts = await asyncio.to_thread(checker.fetch_suggested_posts, gid)
     except Exception as e:  # noqa: BLE001 - показ базы важнее
         out["error"] = str(e)[:200]
         return out
@@ -257,14 +276,41 @@ async def sync_live_suggests(
         "region_code": region.code,
         "vk_group_id": region.vk_group_id,
     }
+    user_token = getattr(checker, "user_token", None)
+    community_tokens = getattr(checker, "community_tokens", None)
     for p in posts:
         try:
-            _is_ad, score, reasons = await classify_fn(p)
+            is_ad, score, reasons = await classify_fn(p)
         except Exception:  # noqa: BLE001
-            score, reasons = 0, []
+            is_ad, score, reasons = False, 0, []
         marked = list(reasons) + ["из планировщика: вся предложка"]
-        if await insert_fn(session, region_dict, p, score, marked):
-            out["inserted"] += 1
+        try:
+            async with session.begin_nested():
+                inserted = await insert_fn(session, region_dict, p, score, marked)
+        except Exception as e:  # noqa: BLE001 - одна битая строка не ломает форму
+            logger.warning(
+                "planner live sync: insert %s_%s failed: %s", gid, p.get("vk_post_id"), e
+            )
+            out["errors"] += 1
+            continue
+        if not inserted:
+            continue
+        out["inserted"] += 1
+        key = (
+            AdRequest.community_vk_id == p["community_vk_id"],
+            AdRequest.vk_post_id == p["vk_post_id"],
+        )
+        if is_ad:
+            out["inserted_ads"] += 1
+            can_msg = await precheck_fn(p, user_token, community_tokens)
+            if can_msg is not None:
+                await session.execute(
+                    update(AdRequest)
+                    .where(*key)
+                    .values(can_message=can_msg, can_message_checked_at=datetime.utcnow())
+                )
+        else:
+            await session.execute(update(AdRequest).where(*key).values(route="planner"))
 
     if live_ids:
         stale = (
@@ -279,7 +325,10 @@ async def sync_live_suggests(
         ).scalars()
         for ar in stale:
             ar.status = "new"
+            ar.detected_at = datetime.utcnow()  # снова свежая — наверх в списке
             out["revived"] += 1
+    if out["inserted"] or out["revived"] or out["errors"]:
+        logger.info("planner live sync %s: %s", gid, out)
     return out
 
 

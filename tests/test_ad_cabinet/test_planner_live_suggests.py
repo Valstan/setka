@@ -98,13 +98,15 @@ async def test_non_ad_posts_are_inserted_for_the_planner(db_session):
     out = await sp.sync_live_suggests(
         db_session, r, checker=checker, classify_fn=_not_ad, insert_fn=_sqlite_insert
     )
-    assert out == {"fetched": 2, "inserted": 2, "revived": 0, "error": None}
+    assert out["fetched"] == 2 and out["inserted"] == 2 and out["inserted_ads"] == 0
+    assert out["revived"] == 0 and out["errors"] == 0 and out["error"] is None
     assert checker.calls == [GID]
     rows = (
         (await db_session.execute(select(AdRequest).order_by(AdRequest.vk_post_id))).scalars().all()
     )
     assert [x.vk_post_id for x in rows] == [78274, 78278]
     assert all(x.status == "new" and x.score == 2 and x.can_message is None for x in rows)
+    assert all(x.route == "planner" for x in rows)  # не реклама → мимо инбокса
     assert "из планировщика" in " ".join(rows[0].reasons_json)
 
     again = await sp.sync_live_suggests(
@@ -166,3 +168,75 @@ async def test_vk_failure_or_no_token_changes_nothing(db_session):
     out = await sp.sync_live_suggests(db_session, r, checker=None)
     assert out["error"]
     assert (await db_session.execute(select(AdRequest))).scalars().all() == []
+
+
+async def _is_ad(post):
+    return True, 5, ["внешняя ссылка", "цена"]
+
+
+@pytest.mark.asyncio
+async def test_ad_posts_keep_scanner_path_precheck_and_inbox_route(db_session):
+    """Настоящая реклама заводится как у сканера: route=ad_cabinet, precheck can_message."""
+    r = await _region(db_session)
+    prechecked = []
+
+    async def precheck(post, user_token, community_tokens):
+        prechecked.append(post["vk_post_id"])
+        return True
+
+    out = await sp.sync_live_suggests(
+        db_session,
+        r,
+        checker=_Checker([_post(1), _post(2)]),
+        classify_fn=_is_ad,
+        insert_fn=_sqlite_insert,
+        precheck_fn=precheck,
+    )
+    assert out["inserted"] == 2 and out["inserted_ads"] == 2 and prechecked == [1, 2]
+    rows = (await db_session.execute(select(AdRequest))).scalars().all()
+    assert all(x.route == "ad_cabinet" and x.can_message is True for x in rows)
+    assert all(x.can_message_checked_at is not None for x in rows)
+
+
+@pytest.mark.asyncio
+async def test_one_broken_insert_does_not_break_the_rest(db_session):
+    r = await _region(db_session)
+
+    async def flaky_insert(session, region, parsed, score, reasons):
+        if parsed["vk_post_id"] == 2:
+            raise RuntimeError("DataError: attachments")
+        return await _sqlite_insert(session, region, parsed, score, reasons)
+
+    out = await sp.sync_live_suggests(
+        db_session,
+        r,
+        checker=_Checker([_post(1), _post(2), _post(3)]),
+        classify_fn=_not_ad,
+        insert_fn=flaky_insert,
+    )
+    assert out["inserted"] == 2 and out["errors"] == 1
+    ids = sorted(x.vk_post_id for x in (await db_session.execute(select(AdRequest))).scalars())
+    assert ids == [1, 3]
+
+
+@pytest.mark.asyncio
+async def test_revived_row_gets_fresh_detected_at(db_session):
+    r = await _region(db_session)
+    old = datetime(2026, 8, 5, 12, 0)
+    db_session.add(
+        AdRequest(
+            id=1,
+            community_vk_id=GID,
+            vk_post_id=100,
+            status="vanished",
+            origin="suggested",
+            detected_at=old,
+        )
+    )
+    await db_session.flush()
+    out = await sp.sync_live_suggests(
+        db_session, r, checker=_Checker([_post(100)]), classify_fn=_not_ad, insert_fn=_sqlite_insert
+    )
+    assert out["revived"] == 1
+    row = (await db_session.execute(select(AdRequest))).scalar_one()
+    assert row.status == "new" and row.detected_at > old
