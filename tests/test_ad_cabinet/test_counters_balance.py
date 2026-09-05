@@ -77,7 +77,11 @@ async def test_bot_client_without_account_is_listed_by_default(db_session):
 @pytest.mark.asyncio
 async def test_package_payment_recorded_once_and_counted(db_session):
     db_session.add(RadarUser(id=5, login="c", role="advertiser"))
-    db_session.add(AdClient(id=1, author_vk_id=7, name="К", radar_user_id=5))
+    # created_at явно раньше T: иначе после 2026-09-05 12:00 UTC дефолтный utcnow()
+    # обгонял платёж и «свежесть» становилась created (CI #646).
+    db_session.add(
+        AdClient(id=1, author_vk_id=7, name="К", radar_user_id=5, created_at=T - timedelta(days=1))
+    )
     pkg = AdClientPackage(
         id=10, client_id=1, kind="prepaid", posts_total=5, price=1500, paid_at=T, is_active=True
     )

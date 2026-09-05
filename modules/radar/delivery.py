@@ -145,15 +145,10 @@ def _make_default_vk_dm_sender() -> Callable[[Any, Dict[str, Any], str], Awaitab
     box: Dict[str, Any] = {}
 
     async def _send(output, item: Dict[str, Any], text: str) -> bool:
-        import secrets
-
-        import httpx
-
         if "tokens" not in box:
-            from modules.vk_token_router import load_vk_routing
+            from modules.vk_token_router import load_community_routing
 
-            _user, community = await load_vk_routing()
-            box["tokens"] = community or {}
+            box["tokens"] = await load_community_routing()
         group_id = int((output.config or {}).get("group_id") or 0)
         token = box["tokens"].get(group_id)
         if not token:
@@ -165,22 +160,15 @@ def _make_default_vk_dm_sender() -> Callable[[Any, Dict[str, Any], str], Awaitab
             user_id = int(str(output.target).strip())
         except (TypeError, ValueError):
             return False
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                "https://api.vk.com/method/messages.send",
-                params={
-                    "user_id": user_id,
-                    "message": text,
-                    "random_id": secrets.randbelow(2_000_000_000),
-                    "group_id": group_id,
-                    "access_token": token,
-                    "v": "5.199",
-                },
-                timeout=20,
-            )
-            data = r.json()
+        # Один транспорт ЛС на проект (Этап 3): пауза канала на 9/14 и общий
+        # лимитер/учёт по токену живут в vk_bot.notify.vk_send.
+        from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+        data = await vk_notify.vk_send(token, group_id, user_id, text)
         if "error" in data:
-            logger.warning("radar vk_dm messages.send error: %s", data["error"].get("error_msg"))
+            logger.warning(
+                "radar vk_dm messages.send error: %s", (data.get("error") or {}).get("error_msg")
+            )
             return False
         return "response" in data
 

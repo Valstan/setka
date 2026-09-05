@@ -71,11 +71,106 @@ class TokenOp(str, enum.Enum):
     USER_WRITE — операции, для которых VK API в принципе не принимает
     community-токен: ``wall.repost`` (copy_setka хаб). Только user-tokens из
     whitelist, исключая deny-list. Если все недоступны — операция fail.
+
+    COMMUNITY_DM — личное сообщение **от имени сообщества** (``messages.send``
+    с ``group_id``): личность отправителя — сообщество, поэтому каскад
+    community-токен → user-токены допустим (user-токен админа шлёт как
+    группа). Отличие от COMMUNITY_WRITE — фильтр по способности ``messages``
+    из снапшота (Этап 3, 2026-09-05).
+
+    USER_DM — сообщение **от конкретного аккаунта** (``account``): ровно этот
+    user-токен или ничего. Никакого каскада и никакого резерва: подмена
+    личности отправителя недопустима.
     """
 
     READ = "read"
     COMMUNITY_WRITE = "community_write"
     USER_WRITE = "user_write"
+    COMMUNITY_DM = "community_dm"
+    USER_DM = "user_dm"
+
+
+# Какая проба снапшота способностей (token_capabilities) отвечает за операцию.
+# Только ЛС: у READ проба «wall.get(чужое)» бьёт в одну конкретную донорскую
+# стену, и err15 там значит «стена закрыта», а не «нет права» (критик Этапа 3) —
+# такой фильтр мог бы на месяц оставить парсер без токенов.
+#
+# Семантика по источнику кандидата:
+# - community-токен: deny-list — исключаем ТОЛЬКО по явному отказу (err7/err15),
+#   неизвестное (в снапшоте всего 2 COMM из ~19) оставляем;
+# - user-токен в DM-операции: allow-list — нужен явный «ok» (у user-токенов
+#   scope ``messages`` нет, замер 2026-09-05; без снапшота хвост не подмешиваем).
+CAPABILITY_PROBE: Dict[str, str] = {
+    "community_dm": "messages.getConversations",
+    "user_dm": "messages.getConversations",
+}
+_CAPABILITY_DENY = frozenset({"err7", "err15"})
+_CAPABILITIES_TTL = 600.0  # секунд: снапшот меняется раз в месяц, Redis дёргаем раз в 10 мин
+# ``at=None`` — ещё не читали. Не 0.0: ``time.monotonic()`` на свежей машине
+# (CI) меньше TTL, и нулевая метка выглядела бы как «свежий кеш» (падение CI #646).
+_capabilities_cache: Dict[str, object] = {"at": None, "matrix": None}
+
+
+def _capability_filter(
+    candidates: List["TokenCandidate"],
+    op: "TokenOp",
+    matrix: Optional[Dict[str, Dict[str, str]]],
+    *,
+    user_allow_list: bool = True,
+) -> List["TokenCandidate"]:
+    """Фильтр по способностям: community — deny-list, user в DM — allow-list.
+
+    ``user_allow_list=False`` — для USER_DM: аккаунт назван явно, и без снапшота
+    его не отсекаем (deny-list, как у community); в COMMUNITY_DM user-хвост
+    подмешивается автоматически и потому требует явного «ok».
+    """
+    probe = CAPABILITY_PROBE.get(getattr(op, "value", str(op)))
+    if not probe:
+        return candidates
+    out: List[TokenCandidate] = []
+    for c in candidates:
+        row = (matrix or {}).get(c.name) or (matrix or {}).get(c.name.upper()) or {}
+        value = row.get(probe)
+        if c.source == "user" and user_allow_list:
+            if value != "ok":
+                logger.info("token router: %s не подмешан для %s — %s=%s", c.name, op, probe, value)
+                continue
+        elif value in _CAPABILITY_DENY:
+            logger.info("token router: %s пропущен для %s — %s=%s", c.name, op, probe, value)
+            continue
+        out.append(c)
+    return out
+
+
+def _capabilities_matrix_safe() -> Optional[Dict[str, Dict[str, str]]]:
+    """Матрица снапшота или ``None`` (нет Redis/замера/выключено env). Синхронно."""
+    from config.runtime import _getenv
+
+    if (_getenv("VK_CAPABILITY_FILTER", "1") or "1").strip().lower() in ("0", "false", "no", "off"):
+        return None
+    try:
+        from modules.vk_monitor.token_capabilities import load_snapshot
+
+        snap = load_snapshot()
+        matrix = (snap or {}).get("matrix")
+        return matrix if isinstance(matrix, dict) else None
+    except Exception:  # pragma: no cover - снапшот не имеет права ломать выбор
+        return None
+
+
+async def _capabilities_matrix_cached() -> Optional[Dict[str, Dict[str, str]]]:
+    """Снапшот с кешем на процесс (TTL) и чтением Redis в потоке — не в event loop."""
+    import asyncio
+    import time as _time
+
+    now = _time.monotonic()
+    at = _capabilities_cache["at"]
+    if at is not None and now - float(at) < _CAPABILITIES_TTL:  # type: ignore[arg-type]
+        return _capabilities_cache["matrix"]  # type: ignore[return-value]
+    matrix = await asyncio.to_thread(_capabilities_matrix_safe)
+    _capabilities_cache["at"] = now
+    _capabilities_cache["matrix"] = matrix
+    return matrix
 
 
 @dataclass(frozen=True)
@@ -202,6 +297,19 @@ async def load_vk_routing() -> "tuple[Optional[str], Dict[int, str]]":
     return user_token, community_tokens
 
 
+async def load_community_routing() -> Dict[int, str]:
+    """``{abs(group_id): community_token}`` **независимо** от живости user-токенов.
+
+    ``load_vk_routing`` возвращает ``(None, {})``, когда нет годного user-токена
+    публикации, и этим молча выключал бот САРАФАНа, доставку Радара и
+    автоприветствие — им user-токен не нужен вовсе (Этап 3, 2026-09-05).
+    """
+    from database.connection import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        return await load_community_tokens(session)
+
+
 def pick_token(
     community_tokens: Dict[int, str],
     group_id: int,
@@ -308,13 +416,16 @@ class TokenPolicy:
         self,
         op: TokenOp,
         group_id: Optional[int] = None,
+        account: Optional[str] = None,
     ) -> List[TokenCandidate]:
         """Упорядоченный список кандидатов для операции.
 
         Args:
             op: семантика операции — см. :class:`TokenOp`.
-            group_id: для ``COMMUNITY_WRITE`` — целевая группа (любой знак, abs
-                берётся внутри). Игнорируется для READ / USER_WRITE.
+            group_id: для ``COMMUNITY_WRITE``/``COMMUNITY_DM`` — целевая группа
+                (любой знак, abs берётся внутри). Игнорируется для READ / USER_WRITE.
+            account: для ``USER_DM`` — имя user-токена (``VALSTAN``, ``MAMA``),
+                от имени которого идёт сообщение. Без него USER_DM пуст.
 
         Returns:
             Список :class:`TokenCandidate` в порядке предпочтения. Пустой
@@ -383,6 +494,20 @@ class TokenPolicy:
                 out.append(_candidate(name, user_tokens[name], "user"))
             return out
 
+        if op == TokenOp.USER_DM:
+            # Личность отправителя фиксирована: ровно этот аккаунт или ничего.
+            # Hard deny-list действует и здесь (VITA не пишет никому).
+            name = (account or "").upper()
+            tok = user_tokens.get(name) if name else None
+            if not tok or name in never_publish:
+                return []
+            return _capability_filter(
+                [_candidate(name, tok, "user")],
+                op,
+                await self._capabilities(),
+                user_allow_list=False,
+            )
+
         # Каскад публикации (решение владельца 2026-07-12):
         # community-токен группы → основной whitelist (VALSTAN) → резерв
         # (VITA, строго последним). Порядок внутри эшелона — порядок env-CSV;
@@ -414,8 +539,11 @@ class TokenPolicy:
                     out.append(_candidate(name, tok, "user"))
             return out
 
-        # COMMUNITY_WRITE: community-token (если group_id передан) первым,
-        # потом user-tokens каскадом whitelist → reserve.
+        # COMMUNITY_WRITE / COMMUNITY_DM: community-token (если group_id передан)
+        # первым, потом user-tokens каскадом whitelist → reserve. Для DM сверху —
+        # фильтр по способности ``messages`` (снапшот), для публикаций — нет:
+        # каскад публикации проверен боем, а замер photos/wall у части токенов
+        # заведомо старее прав.
         out = []
         if group_id is not None:
             cid = abs(int(group_id))
@@ -427,7 +555,13 @@ class TokenPolicy:
             tok = user_tokens.get(name)
             if tok:
                 out.append(_candidate(name, tok, "user"))
+        if op == TokenOp.COMMUNITY_DM:
+            return _capability_filter(out, op, await self._capabilities())
         return out
+
+    async def _capabilities(self) -> Optional[Dict[str, Dict[str, str]]]:
+        """Снапшот способностей (процессный кеш, Redis в потоке, best-effort)."""
+        return await _capabilities_matrix_cached()
 
     async def _token_exists_but_disabled(self, name: str) -> bool:
         """True, если в БД есть запись с этим name и она сейчас в disabled."""
@@ -574,13 +708,19 @@ class TokenPolicy:
 
 
 async def _send_telegram_alert_safe(text: str) -> None:
-    """Telegram-alert best-effort. Любые ошибки глотаются и логируются."""
-    try:
-        from modules.notifications.telegram_notifier import send_telegram_alert
+    """Telegram-алёрт владельцу об автоотключении токена (best-effort).
 
-        await send_telegram_alert(text)
-    except Exception as e:  # pragma: no cover — defensive
-        logger.warning("TokenPolicy: telegram alert failed: %s", e)
+    Раньше импортировал несуществующую функцию и молчал (разведка Этапа 3,
+    2026-09-05) — теперь тот же канал, что у пингов кабинета.
+    """
+    import asyncio
+
+    try:
+        from modules.ad_cabinet import owner_ping
+
+        await asyncio.to_thread(owner_ping.notify_owner, text)
+    except Exception:  # pragma: no cover - алёрт не роняет маршрутизацию
+        logger.warning("token router: telegram alert failed", exc_info=True)
 
 
 # ----------------------------------------------------------------------

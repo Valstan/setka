@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -285,7 +286,8 @@ async def send_reply(
     ):
         allowed = ar.can_message
     else:
-        allowed = messages_allowed(
+        allowed = await asyncio.to_thread(
+            messages_allowed,
             group_id=group_id,
             user_id=peer_id,
             user_token=user_token,
@@ -313,7 +315,8 @@ async def send_reply(
         attachment = ar.message_attachments or _build_offer_attachment(
             group_id, peer_id, community_tokens
         )
-    res = send_message(
+    res = await asyncio.to_thread(
+        send_message,
         group_id=group_id,
         peer_id=peer_id,
         message=ar.prepared_message,

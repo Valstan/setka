@@ -59,9 +59,10 @@ async def community() -> Optional[Tuple[int, str]]:
     group_id = get_sarafan_vk_community_id()
     if not group_id:
         return None
-    from modules.vk_token_router import load_vk_routing
+    from modules.vk_token_router import load_community_routing
 
-    _user_token, community_tokens = await load_vk_routing()
+    # Боту нужен только community-токен: мёртвые user-токены его не выключают.
+    community_tokens = await load_community_routing()
     token = (community_tokens or {}).get(group_id)
     if not token:
         logger.debug("vk_bot: community %s has no token in /tokens — off", group_id)
@@ -106,13 +107,31 @@ async def vk_send(
         params["keyboard"] = keyboard
     if attachment:
         params["attachment"] = attachment
+    # Пауза DM-канала после 9/14 и общий лимитер/учёт по токену (Этап 3).
+    from modules.ad_cabinet import dm_channel
+
+    until = await asyncio.to_thread(dm_channel.paused_until, int(group_id))
+    if until is not None:
+        return {
+            "error": {"error_code": 9, "error_msg": f"канал на паузе до {until:%d.%m %H:%M} UTC"}
+        }
+    try:
+        from modules.vk_monitor.vk_client import enforce_token_rate_limit
+
+        await asyncio.to_thread(enforce_token_rate_limit, token, "messages.send")
+    except Exception:  # noqa: BLE001 - учёт не роняет отправку
+        logger.debug("vk_bot throttle hook failed")
     try:
         async with httpx.AsyncClient(timeout=SEND_TIMEOUT) as client:
             r = await client.post(VK_API.format(method="messages.send"), data=params)
-            return r.json()
+            data = r.json()
     except Exception as e:  # noqa: BLE001 - сеть; уведомление не роняет действие
         logger.warning("vk_bot messages.send failed: %s", e)
         return {}
+    err = (data or {}).get("error") if isinstance(data, dict) else None
+    if isinstance(err, dict) and err.get("error_code") in dm_channel.PAUSE_CODES:
+        await asyncio.to_thread(dm_channel.note_error, int(group_id), int(err["error_code"]))
+    return data
 
 
 def _make_sender(token: str, group_id: int) -> Sender:

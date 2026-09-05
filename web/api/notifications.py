@@ -2,6 +2,7 @@
 Notifications API endpoints
 """
 
+import asyncio
 import logging
 from typing import List
 
@@ -325,7 +326,8 @@ async def send_message_endpoint(req: SendMessageRequest):
     if not vk_token:
         return {"success": False, "error": "VK token not found"}
 
-    return send_message(
+    return await asyncio.to_thread(
+        send_message,
         group_id=req.group_id,
         peer_id=req.peer_id,
         message=req.message,

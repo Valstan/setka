@@ -968,3 +968,115 @@ async def test_load_community_tokens_registers_names_for_usage():
     assert out == {777: "tok_comm"}
     assert token_usage.resolve_token_name("tok_comm") == "COMM_777"
     token_usage.reset_for_tests()
+
+
+# ---------------------------------------------------------------------------
+# Этап 3 (2026-09-05): личность отправителя и фильтр по способностям
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_user_dm_is_exactly_the_account_or_nothing(monkeypatch):
+    """USER_DM — ровно названный аккаунт, без каскада; VITA (deny-list) — никогда."""
+    import modules.vk_token_router as router
+
+    rows_active = [
+        _vk_token_row("VALSTAN", "tok_valstan"),
+        _vk_token_row("MAMA", "tok_mama"),
+        _vk_token_row("VITA", "tok_vita"),
+    ]
+    session = _make_session_with_rows([rows_active])
+    monkeypatch.setattr(router, "_capabilities_matrix_safe", lambda: None)
+    with (
+        patch("config.runtime.VK_TOKENS", {}),
+        patch("config.runtime.get_never_publish_token_names", return_value={"VITA"}),
+        patch("config.runtime.get_publish_token_names", return_value=["VALSTAN"]),
+        patch("config.runtime.get_reserve_publish_token_names", return_value=[]),
+    ):
+        policy = TokenPolicy(session)
+        mama = await policy.pick(TokenOp.USER_DM, account="mama")
+        assert [c.name for c in mama] == ["MAMA"] and mama[0].source == "user"
+        assert await policy.pick(TokenOp.USER_DM, account="VITA") == []
+        assert await policy.pick(TokenOp.USER_DM, account="NOBODY") == []
+        assert await policy.pick(TokenOp.USER_DM) == []
+        # Явный отказ права в снапшоте — аккаунт не годится даже по прямому запросу.
+        router._capabilities_cache.update({"at": None, "matrix": None})
+        monkeypatch.setattr(
+            router,
+            "_capabilities_matrix_safe",
+            lambda: {"MAMA": {"messages.getConversations": "err15"}},
+        )
+        assert await TokenPolicy(session).pick(TokenOp.USER_DM, account="MAMA") == []
+
+
+@pytest.mark.asyncio
+async def test_community_dm_cascade_and_capability_filter(monkeypatch):
+    """COMMUNITY_DM: community-токен первым, затем каскад; без права messages — мимо."""
+    import modules.vk_token_router as router
+
+    rows_active = [_vk_token_row("VALSTAN", "tok_valstan"), _vk_token_row("MAMA", "tok_mama")]
+    rows_comm = [_vk_token_row("COMM_100", "tok_c100", community_id=100)]
+    session = _make_session_with_rows([rows_active, rows_comm])
+    matrix = {
+        "VALSTAN": {"messages.getConversations": "err15"},  # scope messages нет
+        "MAMA": {"messages.getConversations": "ok"},
+        # COMM_100 в снапшоте нет — неизвестное не фильтруем
+    }
+    monkeypatch.setattr(router, "_capabilities_matrix_safe", lambda: matrix)
+    with (
+        patch("config.runtime.VK_TOKENS", {}),
+        patch("config.runtime.get_never_publish_token_names", return_value={"VITA"}),
+        patch("config.runtime.get_publish_token_names", return_value=["VALSTAN", "MAMA"]),
+        patch("config.runtime.get_reserve_publish_token_names", return_value=[]),
+    ):
+        policy = TokenPolicy(session)
+        out = await policy.pick(TokenOp.COMMUNITY_DM, group_id=-100)
+        assert [c.name for c in out] == ["COMM_100", "MAMA"]
+        assert out[0].source == "community" and out[0].community_id == 100
+
+
+@pytest.mark.asyncio
+async def test_read_is_never_filtered_by_snapshot(monkeypatch):
+    """READ не фильтруется: проба «wall.get(чужое)» бьёт в одну донорскую стену."""
+    import modules.vk_token_router as router
+
+    rows_active = [_vk_token_row("A", "ta"), _vk_token_row("B", "tb")]
+    session = _make_session_with_rows([rows_active])
+    monkeypatch.setattr(
+        router, "_capabilities_matrix_safe", lambda: {"A": {"wall.get(чужое)": "err15"}}
+    )
+    monkeypatch.setattr(router, "_calls_today_safe", lambda: {})
+    with (
+        patch("config.runtime.VK_TOKENS", {}),
+        patch("config.runtime.get_never_publish_token_names", return_value=set()),
+        patch("config.runtime.get_publish_token_names", return_value=[]),
+        patch("config.runtime.get_reserve_publish_token_names", return_value=[]),
+    ):
+        out = await TokenPolicy(session).pick(TokenOp.READ)
+        assert sorted(c.name for c in out) == ["A", "B"]
+
+
+@pytest.mark.asyncio
+async def test_community_dm_without_snapshot_has_no_user_tail(monkeypatch):
+    """Без снапшота хвост из user-токенов в DM не подмешивается (allow-list)."""
+    import modules.vk_token_router as router
+
+    rows_active = [_vk_token_row("MAMA", "tok_mama")]
+    rows_comm = [_vk_token_row("COMM_100", "tok_c100", community_id=100)]
+    session = _make_session_with_rows([rows_active, rows_comm])
+    monkeypatch.setattr(router, "_capabilities_matrix_safe", lambda: None)
+    with (
+        patch("config.runtime.VK_TOKENS", {}),
+        patch("config.runtime.get_never_publish_token_names", return_value=set()),
+        patch("config.runtime.get_publish_token_names", return_value=["MAMA"]),
+        patch("config.runtime.get_reserve_publish_token_names", return_value=[]),
+    ):
+        out = await TokenPolicy(session).pick(TokenOp.COMMUNITY_DM, group_id=100)
+        assert [c.name for c in out] == ["COMM_100"]
+
+
+def test_capability_filter_env_kill_switch(monkeypatch):
+    import modules.vk_token_router as router
+
+    monkeypatch.setenv("VK_CAPABILITY_FILTER", "0")
+    assert router._capabilities_matrix_safe() is None
