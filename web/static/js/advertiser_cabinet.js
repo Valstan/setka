@@ -11,6 +11,7 @@
         me: null,
         regions: [],
         photos: [],
+        selectedPhotos: {},
         chatLastId: 0,
         chatTimer: null,
     };
@@ -352,16 +353,31 @@
         } catch (e) { /* не критично */ }
     }
 
+    // Фото под конкретный пост выбираются галочками: новые загрузки отмечены,
+    // библиотека целиком в заказ не уходит (PR 1.8 аудита 2026-09-05).
+    function selectedPhotos() {
+        return state.photos.filter(function (name) { return state.selectedPhotos[name] !== false; });
+    }
+
     function renderPhotos() {
         $('np-photos').innerHTML = state.photos.map(function (name) {
+            var on = state.selectedPhotos[name] !== false;
             return '<div class="position-relative">' +
-                '<img class="cab-photo-thumb" src="/api/advertiser/photos/' + encodeURIComponent(name) + '">' +
+                '<img class="cab-photo-thumb' + (on ? '' : ' opacity-25') + '" src="/api/advertiser/photos/' + encodeURIComponent(name) + '">' +
+                '<input type="checkbox" class="form-check-input position-absolute bottom-0 start-0 m-1" title="В этот пост" data-pick="' + esc(name) + '"' + (on ? ' checked' : '') + '>' +
                 '<button class="btn-close position-absolute top-0 end-0 bg-white" data-del="' + esc(name) + '"></button>' +
                 '</div>';
-        }).join('');
+        }).join('') + (state.photos.length ? '<div class="small text-body-secondary w-100">Отмеченные фото уйдут в пост: ' + selectedPhotos().length + ' из ' + state.photos.length + '</div>' : '');
+        document.querySelectorAll('[data-pick]').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                state.selectedPhotos[cb.dataset.pick] = cb.checked;
+                renderPhotos();
+            });
+        });
         document.querySelectorAll('[data-del]').forEach(function (btn) {
             btn.addEventListener('click', async function () {
                 await api('/photos/' + encodeURIComponent(btn.dataset.del), { method: 'DELETE' });
+                delete state.selectedPhotos[btn.dataset.del];
                 loadMyPhotos();
             });
         });
@@ -384,7 +400,7 @@
     $('np-submit').addEventListener('click', async function () {
         var body = {
             text: $('np-text').value,
-            photos: state.photos,
+            photos: selectedPhotos(),
             region_ids: $('np-whole').checked ? [] : selectedRegions(),
             whole_network: $('np-whole').checked,
             publish_now: $('np-now').checked,

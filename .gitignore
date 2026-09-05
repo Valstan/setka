@@ -115,3 +115,6 @@ old_project_analysis/postopus/
 models/*.bin
 models/*.safetensors
 
+
+# Фото рекламных клиентов (кабинет): данные, не код — на проде AD_UPLOAD_DIR
+web/uploads/

@@ -477,6 +477,26 @@ def broadcast_disabled() -> bool:
     )
 
 
+def ad_upload_dir() -> Optional[str]:
+    """Каталог фото рекламных клиентов (PR 1.8 аудита кабинета 2026-09-05).
+
+    AD_UPLOAD_DIR=/var/lib/setka/ad_uploads — вне дерева репозитория: данные
+    не должны жить рядом с кодом (``git add -A`` в /close_session, деплой).
+    Пусто — старый путь ``web/uploads/advertiser`` (локальная разработка).
+    """
+    v = (_getenv("AD_UPLOAD_DIR", "") or "").strip()
+    return v or None
+
+
+def ad_upload_min_free_bytes() -> int:
+    """Пол свободного места для загрузки фото (дефолт 1 ГиБ; бокс на 10 ГБ)."""
+    raw = (_getenv("AD_UPLOAD_MIN_FREE_BYTES", "") or "").strip()
+    try:
+        return int(raw) if raw else 1024**3
+    except ValueError:
+        return 1024**3
+
+
 def ad_repost_disabled() -> bool:
     """Аварийный стоп диспетчера планировщика предложки (дефолт — работает).
 

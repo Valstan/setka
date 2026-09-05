@@ -1768,7 +1768,12 @@ async def client_reply(
     if not user_token:
         return {"success": False, "error": "VK token not found"}
 
-    res = send_message(
+    # Синхронный HTTP в ВК (до десятков секунд при таймаутах) — в поток, чтобы
+    # не держать event loop всего web (PR 1.8 аудита 2026-09-05).
+    import asyncio
+
+    res = await asyncio.to_thread(
+        send_message,
         group_id=community_vk_id,
         peer_id=peer_id,
         message=payload.message.strip(),
