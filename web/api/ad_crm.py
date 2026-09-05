@@ -2872,6 +2872,7 @@ CABINET_ACTIVITY_KINDS = (
     "published",
     "payment_paid",
     "payment_claimed",
+    "outreach_sent",
     "package_created",
     "package_paid",
     "package_extended",

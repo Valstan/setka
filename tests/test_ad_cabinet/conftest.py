@@ -17,10 +17,14 @@ from database.models import (
     AdClient,
     AdClientPackage,
     AdInteraction,
+    AdOutreachBlacklist,
+    AdOutreachCampaign,
+    AdOutreachRecipient,
     AdPayment,
     AdPublication,
     AdRequest,
     AdScheduledPost,
+    MessageTemplate,
     Region,
 )
 from database.models_extended import RadarUser
@@ -40,6 +44,10 @@ async def db_session():
         AdPublication.__table__,
         AdInteraction.__table__,
         AdChatMessage.__table__,
+        MessageTemplate.__table__,
+        AdOutreachCampaign.__table__,
+        AdOutreachRecipient.__table__,
+        AdOutreachBlacklist.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=tables))

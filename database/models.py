@@ -1089,6 +1089,142 @@ class AdPayment(Base):
         }
 
 
+class AdOutreachCampaign(Base):
+    """Кампания рассылки рекламного оффера (Этап 4, миграция 100).
+
+    ``status``: draft → running → (paused_until по 9/14) → done | stopped.
+    ``dry_run`` — тексты собираются и кладутся в адресатов, VK не трогается.
+    Лимиты: ``per_community_daily`` (30) и ``total_daily`` (150) — отправок в
+    МСК-сутки; тихие часы ``quiet_start``–``quiet_end`` (21–9 МСК).
+    """
+
+    __tablename__ = "ad_outreach_campaigns"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    title = Column(String(200), nullable=False)
+    template_id = Column(
+        Integer, ForeignKey("message_templates.id", ondelete="SET NULL"), nullable=True
+    )
+    months_back = Column(SmallInteger, nullable=False, default=6)
+    per_community_daily = Column(SmallInteger, nullable=False, default=30)
+    total_daily = Column(SmallInteger, nullable=False, default=150)
+    quiet_start = Column(SmallInteger, nullable=False, default=21)
+    quiet_end = Column(SmallInteger, nullable=False, default=9)
+    dry_run = Column(Boolean, nullable=False, default=True)
+    status = Column(String(20), nullable=False, default="draft")
+    paused_until = Column(DateTime, nullable=True)
+    paused_reason = Column(Text, nullable=True)
+    images_json = Column(JSON, nullable=True)  # имена офферных картинок
+    note = Column(Text, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "template_id": self.template_id,
+            "months_back": int(self.months_back or 0),
+            "per_community_daily": int(self.per_community_daily or 0),
+            "total_daily": int(self.total_daily or 0),
+            "quiet_start": int(self.quiet_start or 0),
+            "quiet_end": int(self.quiet_end or 0),
+            "dry_run": bool(self.dry_run),
+            "status": self.status,
+            "paused_until": self.paused_until.isoformat() if self.paused_until else None,
+            "paused_reason": self.paused_reason,
+            "images": list(self.images_json or []),
+            "note": self.note,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AdOutreachRecipient(Base):
+    """Адресат кампании (миграция 100). Уникум ``(campaign_id, vk_user_id)``.
+
+    ``mode``: ``auto`` — шлём от сообщества ``community_vk_id``; ``manual`` —
+    владелец пишет сам (deeplink + текст). ``status``: pending → claimed →
+    sent | dry_run | manual (VK не разрешил) | failed | skipped; для ручных —
+    manual → done_manual.
+    """
+
+    __tablename__ = "ad_outreach_recipients"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    campaign_id = Column(
+        BigInteger, ForeignKey("ad_outreach_campaigns.id", ondelete="CASCADE"), nullable=False
+    )
+    vk_user_id = Column(BigInteger, nullable=False)
+    community_vk_id = Column(BigInteger, nullable=False)  # owner_id сообщества (отрицательный)
+    ad_request_id = Column(BigInteger, nullable=True)
+    client_id = Column(BigInteger, ForeignKey("ad_clients.id", ondelete="SET NULL"), nullable=True)
+    name = Column(String(200), nullable=True)
+    origin = Column(String(20), nullable=True)  # inbound_dm | suggested
+    mode = Column(String(10), nullable=False, default="manual")
+    status = Column(String(20), nullable=False, default="pending")
+    body = Column(Text, nullable=True)
+    attempts = Column(SmallInteger, nullable=False, default=0)
+    claimed_at = Column(DateTime, nullable=True)
+    sent_at = Column(DateTime, nullable=True)
+    vk_message_id = Column(BigInteger, nullable=True)
+    error_code = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("uq_ad_outreach_recipient", "campaign_id", "vk_user_id", unique=True),
+        Index("ix_ad_outreach_recipient_status", "campaign_id", "status"),
+        Index("ix_ad_outreach_recipient_user", "vk_user_id"),
+        Index("ix_ad_outreach_recipient_sent", "status", "sent_at"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "campaign_id": self.campaign_id,
+            "vk_user_id": self.vk_user_id,
+            "community_vk_id": self.community_vk_id,
+            "ad_request_id": self.ad_request_id,
+            "client_id": self.client_id,
+            "name": self.name,
+            "origin": self.origin,
+            "mode": self.mode,
+            "status": self.status,
+            "body": self.body,
+            "attempts": int(self.attempts or 0),
+            "sent_at": self.sent_at.isoformat() if self.sent_at else None,
+            "vk_message_id": self.vk_message_id,
+            "error_code": self.error_code,
+            "error": self.error,
+            "deeplink": f"https://vk.com/im?sel={int(self.vk_user_id)}",
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AdOutreachBlacklist(Base):
+    """Кому оффер не слать: просьба, жалоба, VK 900 (миграция 100)."""
+
+    __tablename__ = "ad_outreach_blacklist"
+
+    vk_user_id = Column(BigInteger, primary_key=True)
+    reason = Column(Text, nullable=True)
+    until = Column(DateTime, nullable=True)  # NULL — навсегда
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "vk_user_id": self.vk_user_id,
+            "reason": self.reason,
+            "until": self.until.isoformat() if self.until else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class AdClientPackage(Base):
     """Пакет постов клиента кабинета (заказ владельца 2026-08-26). Миграция 086.
 

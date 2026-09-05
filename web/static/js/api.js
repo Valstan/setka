@@ -256,6 +256,44 @@ const apiClient = {
         });
     },
 
+    // ---- рассылка оффера (Этап 4) ----
+    async outreachCampaigns() {
+        return this.request('/ad-outreach/campaigns');
+    },
+
+    async outreachCampaign(id) {
+        return this.request(`/ad-outreach/campaigns/${id}`);
+    },
+
+    async outreachCreate(payload) {
+        return this.request('/ad-outreach/campaigns', { method: 'POST', body: JSON.stringify(payload) });
+    },
+
+    async outreachAction(id, action, payload) {
+        return this.request(`/ad-outreach/campaigns/${id}/${action}`, {
+            method: 'POST', body: JSON.stringify(payload || {})
+        });
+    },
+
+    async outreachRecipients(id, status) {
+        const q = status ? '?status=' + encodeURIComponent(status) : '';
+        return this.request(`/ad-outreach/campaigns/${id}/recipients${q}`);
+    },
+
+    async outreachManual(id) {
+        return this.request(`/ad-outreach/campaigns/${id}/manual`);
+    },
+
+    async outreachDone(recipientId) {
+        return this.request(`/ad-outreach/recipients/${recipientId}/done`, { method: 'POST', body: '{}' });
+    },
+
+    async outreachBlacklist(vkUserId, reason) {
+        return this.request('/ad-outreach/blacklist', {
+            method: 'POST', body: JSON.stringify({ vk_user_id: vkUserId, reason })
+        });
+    },
+
     async confirmOrderPaid(orderRef, bank) {
         return this.request(`/ad-crm/orders/${encodeURIComponent(orderRef)}/confirm-paid`, {
             method: 'POST',

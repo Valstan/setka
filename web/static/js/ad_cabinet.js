@@ -1252,3 +1252,147 @@ async function cancelSchedule(id) {
         alert('Ошибка отмены: ' + escapeHtml(e.message));
     }
 }
+
+// ------------------------------------------------ Рассылка оффера (Этап 4, 2026-09-05)
+
+const OR_STATUS = {
+    draft: 'черновик', running: 'идёт', paused: 'на паузе', stopped: 'остановлена', done: 'завершена',
+};
+const OR_REC_STATUS = {
+    pending: 'в очереди', claimed: 'отправляется', sent: 'отправлено', dry_run: 'сухой прогон',
+    manual: 'вручную', done_manual: 'написал сам', failed: 'ошибка', skipped: 'пропущен',
+};
+
+async function orLoadCampaigns() {
+    const box = document.getElementById('or-campaigns');
+    if (!box) return;
+    try {
+        const data = await apiClient.outreachCampaigns();
+        const dis = document.getElementById('or-disabled');
+        if (dis) dis.textContent = data.disabled ? 'AD_OUTREACH_DISABLED=1: тик ничего не шлёт' : '';
+        const rows = data.campaigns || [];
+        box.innerHTML = rows.length ? rows.map(c => {
+            const k = c.counters || {};
+            const paused = c.paused_until ? ` · пауза до ${fmtDate(c.paused_until)} (${escapeHtml(c.paused_reason || '')})` : '';
+            const badgeCls = c.status === 'running' ? 'text-bg-success' : 'text-bg-secondary';
+            return `<div class="border rounded p-2">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <b>#${c.id} ${escapeHtml(c.title)}</b>
+                    <span class="badge ${badgeCls}">${OR_STATUS[c.status] || c.status}${c.dry_run ? ' · dry-run' : ''}</span>
+                    <span class="small text-muted">${c.months_back} мес · ${c.per_community_daily}/сообщ · ${c.total_daily}/сутки${paused}</span>
+                    <span class="ms-auto small">всего <b>${k.total || 0}</b> · очередь ${k.pending || 0} · отправлено <b>${k.sent || 0}</b> · сухих ${k.dry_run || 0} · вручную ${k.manual || 0}/${k.done_manual || 0} · ошибок ${k.failed || 0}</span>
+                </div>
+                <div class="d-flex gap-1 flex-wrap mt-1">
+                    <button class="btn btn-sm btn-outline-primary" onclick="orAction(${c.id}, 'enroll')">Набрать адресатов</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="orAction(${c.id}, 'start', {dry_run: true})">Сухой прогон</button>
+                    <button class="btn btn-sm btn-success" onclick="orStartLive(${c.id})">Запустить боевую</button>
+                    <button class="btn btn-sm btn-outline-warning" onclick="orAction(${c.id}, 'pause')">Пауза</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="orStop(${c.id})">Стоп</button>
+                    <button class="btn btn-sm btn-outline-dark" onclick="orAction(${c.id}, 'dispatch')" title="Тик руками: лимиты и тихие часы действуют">Тик сейчас</button>
+                    <button class="btn btn-sm btn-outline-info ms-auto" onclick="orShowDetail(${c.id})">Адресаты</button>
+                    <button class="btn btn-sm btn-outline-info" onclick="orShowManual(${c.id})">Ручной список</button>
+                </div>
+            </div>`;
+        }).join('') : '<span class="text-muted small">Кампаний нет: создайте первую слева.</span>';
+    } catch (e) {
+        box.innerHTML = `<span class="text-danger small">Ошибка: ${escapeHtml(e.message)}</span>`;
+    }
+}
+
+async function orCreateCampaign() {
+    const title = (document.getElementById('or-title').value || '').trim();
+    if (!title) { alert('Название кампании'); return; }
+    try {
+        await apiClient.outreachCreate({
+            title,
+            months_back: parseInt(document.getElementById('or-months').value, 10) || 6,
+            per_community_daily: parseInt(document.getElementById('or-per-comm').value, 10) || 30,
+            total_daily: parseInt(document.getElementById('or-total').value, 10) || 150,
+        });
+        document.getElementById('or-title').value = '';
+        await orLoadCampaigns();
+    } catch (e) { alert(e.message); }
+}
+
+async function orAction(id, action, payload) {
+    try {
+        const res = await apiClient.outreachAction(id, action, payload);
+        if (action === 'enroll') {
+            alert(`Набрано: ${res.added} (авто ${res.auto}, вручную ${res.manual}); уже были: ${res.existing}; кабинетов заведено ${res.clients_created}, промо-пакетов ${res.promos_created}`);
+        } else if (action === 'dispatch') {
+            alert(res.queued ? 'Тик поставлен воркеру в очередь: обновите счётчики через минуту.' : 'Тик выполнен.');
+        }
+        await orLoadCampaigns();
+    } catch (e) { alert(e.message); }
+}
+
+async function orStartLive(id) {
+    if (!confirm('Боевой запуск: сообщения уйдут настоящим людям от имени сообществ (лимиты и тихие часы действуют). Продолжить?')) return;
+    await orAction(id, 'start', { dry_run: false });
+}
+
+async function orStop(id) {
+    if (!confirm('Остановить кампанию окончательно?')) return;
+    await orAction(id, 'stop');
+}
+
+async function orShowDetail(id) {
+    const box = document.getElementById('or-detail');
+    try {
+        const data = await apiClient.outreachRecipients(id);
+        const rows = data.recipients || [];
+        const body = rows.map(r => `<tr>
+            <td>${r.id}</td>
+            <td><a href="${escapeHtml(r.deeplink)}" target="_blank" rel="noopener">${escapeHtml(r.name || ('id' + r.vk_user_id))}</a></td>
+            <td>${r.community_vk_id}</td><td>${r.mode}</td>
+            <td>${OR_REC_STATUS[r.status] || r.status}${r.sent_at ? ' · ' + fmtDate(r.sent_at) : ''}</td>
+            <td class="text-danger">${escapeHtml(r.error || '')}</td>
+            <td><button class="btn btn-sm btn-outline-secondary py-0 px-1" title="В стоп-лист" onclick="orBlacklist(${r.vk_user_id})">стоп</button></td>
+        </tr>`).join('');
+        box.innerHTML = `<div class="fw-bold small mb-1">Адресаты кампании #${id} (${rows.length})</div>
+            <div class="table-responsive" style="max-height: 420px; overflow:auto;"><table class="table table-sm small">
+            <thead><tr><th>#</th><th>Кто</th><th>Сообщество</th><th>Режим</th><th>Статус</th><th>Ошибка</th><th></th></tr></thead>
+            <tbody>${body}</tbody></table></div>`;
+    } catch (e) { box.innerHTML = `<span class="text-danger small">${escapeHtml(e.message)}</span>`; }
+}
+
+async function orShowManual(id) {
+    const box = document.getElementById('or-detail');
+    try {
+        const data = await apiClient.outreachManual(id);
+        const rows = data.recipients || [];
+        const cards = rows.map(r => `<div class="border rounded p-2 small">
+            <div class="d-flex gap-2 align-items-center">
+                <a href="${escapeHtml(r.deeplink)}" target="_blank" rel="noopener"><b>${escapeHtml(r.name || ('id' + r.vk_user_id))}</b></a>
+                <span class="text-muted">${r.origin || ''} · ${r.community_vk_id}${r.error_code ? ' · VK ' + r.error_code : ''}</span>
+                <button class="btn btn-sm btn-outline-secondary py-0 ms-auto" onclick="orCopy(this)">Копировать текст</button><pre class="d-none">${escapeHtml(r.body || '')}</pre>
+                <button class="btn btn-sm btn-outline-success py-0" onclick="orDone(${r.id}, ${id})">Написал</button>
+            </div>
+            <div class="mt-1" style="white-space:pre-wrap">${escapeHtml(r.body || '')}</div>
+        </div>`).join('');
+        box.innerHTML = `<div class="fw-bold small mb-1">Ручной список кампании #${id} (${rows.length}): открыть диалог, вставить текст, отметить «Написал»</div>
+            <div class="vstack gap-2">${cards || '<span class="text-muted">Ручной список пуст.</span>'}</div>`;
+    } catch (e) { box.innerHTML = `<span class="text-danger small">${escapeHtml(e.message)}</span>`; }
+}
+
+function orCopy(btn) {
+    const pre = btn.nextElementSibling;
+    if (pre && navigator.clipboard) navigator.clipboard.writeText(pre.textContent);
+}
+
+async function orDone(recipientId, campaignId) {
+    try { await apiClient.outreachDone(recipientId); await orShowManual(campaignId); await orLoadCampaigns(); }
+    catch (e) { alert(e.message); }
+}
+
+async function orBlacklist(vkUserId) {
+    const reason = prompt('Причина стоп-листа (просьба, жалоба):', '');
+    if (reason === null) return;
+    try { await apiClient.outreachBlacklist(vkUserId, reason || null); await orLoadCampaigns(); }
+    catch (e) { alert(e.message); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('tab-outreach-btn');
+    if (btn) btn.addEventListener('shown.bs.tab', orLoadCampaigns);
+});
