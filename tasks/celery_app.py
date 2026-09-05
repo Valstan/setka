@@ -979,6 +979,21 @@ def watch_ad_pending():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.ad_photo_retention")
+def ad_photo_retention():
+    """Ретенция фото рекламных клиентов (PR 1.8 аудита 2026-09-05): каталоги
+    архивных клиентов — целиком, у живых — файлы старше AD_PHOTO_KEEP_DAYS без
+    ссылок из активных постов."""
+    try:
+        from modules.ad_cabinet.photo_retention import run_photo_retention
+
+        result = run_coro(run_photo_retention())
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"ad_photo_retention failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.check_ad_repost_heartbeat")
 def check_ad_repost_heartbeat():
     """Watchdog планировщика предложки: алёрт, если просроченные строки не взяты."""
@@ -1850,6 +1865,12 @@ app.conf.beat_schedule = {
         "task": "tasks.celery_app.watch_ad_pending",
         "schedule": crontab(minute=5, hour="8-23"),
         "options": {"expires": 1800, "catchup": False},
+    },
+    # Ретенция фото кабинета — раз в неделю ночью (данные вне БД, 10-ГБ бокс).
+    "ad-photo-retention": {
+        "task": "tasks.celery_app.ad_photo_retention",
+        "schedule": crontab(minute=20, hour=4, day_of_week="sunday"),
+        "options": {"expires": 3600, "catchup": False},
     },
     # Watchdog планировщика предложки: раз в час на :27, алёрт только если
     # есть просроченные строки, которые диспетчер не взял.

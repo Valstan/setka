@@ -68,3 +68,16 @@ ls -t setka_backup_*.sql.gz 2>/dev/null | tail -n +8 | xargs -r rm
 BACKUPS_COUNT=$(ls -1 setka_backup_*.sql.gz 2>/dev/null | wc -l)
 echo "📊 Total backups: $BACKUPS_COUNT"
 
+# Фото рекламных клиентов (кабинет) — данные вне БД (PR 1.8 аудита 2026-09-05).
+# Каталог — AD_UPLOAD_DIR из setka.env, иначе старый путь в дереве репо.
+UPLOAD_DIR="$(sudo -n awk 'BEGIN{FS="="} $1=="AD_UPLOAD_DIR"{sub(/^AD_UPLOAD_DIR=/, ""); print; exit}' "$ENV_FILE" || true)"
+UPLOAD_DIR="${UPLOAD_DIR:-/home/valstan/SETKA/web/uploads/advertiser}"
+if [[ -d "$UPLOAD_DIR" ]] && [[ -n "$(find "$UPLOAD_DIR" -type f -print -quit 2>/dev/null)" ]]; then
+  echo "🖼  Archiving client photos from $UPLOAD_DIR..."
+  tar -czf "$BACKUP_DIR/ad_uploads_$DATE.tar.gz" -C "$UPLOAD_DIR" .
+  ls -t ad_uploads_*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm
+  echo "✅ Photos archived: $(du -h "$BACKUP_DIR/ad_uploads_$DATE.tar.gz" | cut -f1)"
+else
+  echo "🖼  No client photos to archive"
+fi
+

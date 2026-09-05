@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -398,10 +399,36 @@ async def quote(payload: QuoteIn, request: Request, db: AsyncSession = Depends(g
 # ----------------------------------------------------------------------
 
 
+def _upload_root() -> Path:
+    """Корень фото клиентов: ``AD_UPLOAD_DIR`` (прод — вне дерева репо) или
+    ``web/uploads/advertiser`` (разработка). PR 1.8 аудита 2026-09-05."""
+    from config.runtime import ad_upload_dir
+
+    custom = ad_upload_dir()
+    if custom:
+        return Path(custom)
+    return Path(__file__).resolve().parents[1] / "uploads" / "advertiser"
+
+
 def _client_photo_dir(client_id: int) -> Path:
-    d = Path(__file__).resolve().parents[1] / "uploads" / "advertiser" / str(int(client_id))
+    d = _upload_root() / str(int(client_id))
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _fits_disk(size: int) -> bool:
+    """Останется ли после записи ``size`` байт не меньше пола свободного места.
+
+    Диск недоступен для замера → считаем, что влезает (как в архиве Радара):
+    защита от переполнения, а не от сбоя statvfs.
+    """
+    from config.runtime import ad_upload_min_free_bytes
+
+    try:
+        free = shutil.disk_usage(_upload_root()).free
+    except OSError:
+        return True
+    return free - int(size) >= ad_upload_min_free_bytes()
 
 
 def _client_photo_paths(client_id: int) -> List[Path]:
@@ -436,6 +463,8 @@ async def upload_photo(
         raise HTTPException(
             status_code=400, detail=f"Лимит {MAX_PHOTOS_PER_CLIENT} фото — удалите лишние"
         )
+    if not _fits_disk(len(data)):
+        raise HTTPException(status_code=507, detail="На сервере мало места — напишите владельцу")
     name = f"{uuid.uuid4().hex}{suffix}"
     (_client_photo_dir(client.id) / name).write_bytes(data)
     return {"name": name, "size": len(data)}
