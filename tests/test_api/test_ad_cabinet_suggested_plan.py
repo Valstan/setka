@@ -104,6 +104,20 @@ async def test_options_returns_region_requests_dups_and_mode(monkeypatch):
     db.commit.assert_not_awaited()  # ничего не завели — коммитить нечего
 
 
+async def test_options_survives_token_loading_failure(monkeypatch):
+    """Сбой получения токенов (БД/сеть) — форма показывает базу, а не 500."""
+    db = _db()
+    db.execute = AsyncMock(side_effect=[_scalar_one(_region()), _scalars_all([_request()])])
+    monkeypatch.setattr(sp, "all_dup_candidates", AsyncMock(return_value=[]))
+    monkeypatch.setattr(sp, "build_live_checker", AsyncMock(side_effect=RuntimeError("no db")))
+    sync = AsyncMock()
+    monkeypatch.setattr(sp, "sync_live_suggests", sync)
+    out = await api.suggested_plan_options(community_vk_id=158787639, db=db)
+    assert "no db" in out["live"]["error"] and out["requests"][0]["id"] == 11
+    sync.assert_not_awaited()
+    db.commit.assert_not_awaited()
+
+
 async def test_options_commits_when_live_sync_inserted(monkeypatch):
     """Живая предложка завела заявку → commit до выборки, live в ответе."""
     db = _db()

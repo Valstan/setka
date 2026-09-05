@@ -1301,7 +1301,13 @@ async def suggested_plan_options(
     gid = -abs(int(community_vk_id))
     # Живая предложка VK → заявки (инцидент 2026-09-05: посты ниже порога
     # классификатора в планировщике не появлялись). Ошибка VK не роняет форму.
-    live = await sp.sync_live_suggests(db, region, checker=await sp.build_live_checker())
+    try:
+        checker = await sp.build_live_checker()
+    except Exception as e:  # noqa: BLE001 - токены/сеть: форма показывает базу
+        checker = None
+        live = {"fetched": 0, "inserted": 0, "revived": 0, "errors": 0, "error": str(e)[:200]}
+    else:
+        live = await sp.sync_live_suggests(db, region, checker=checker)
     if live.get("inserted") or live.get("revived"):
         await db.commit()
     requests = (

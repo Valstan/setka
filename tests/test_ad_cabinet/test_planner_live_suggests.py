@@ -240,3 +240,20 @@ async def test_revived_row_gets_fresh_detected_at(db_session):
     assert out["revived"] == 1
     row = (await db_session.execute(select(AdRequest))).scalar_one()
     assert row.status == "new" and row.detected_at > old
+
+
+@pytest.mark.asyncio
+async def test_posts_without_vk_post_id_are_skipped(db_session):
+    """NULL не конфликтует в уникальном индексе — такой пост не должен плодиться."""
+    r = await _region(db_session)
+    bad = _post(0)
+    bad["vk_post_id"] = None
+    out = await sp.sync_live_suggests(
+        db_session,
+        r,
+        checker=_Checker([bad, _post(5)]),
+        classify_fn=_not_ad,
+        insert_fn=_sqlite_insert,
+    )
+    assert out["fetched"] == 1 and out["inserted"] == 1
+    assert [x.vk_post_id for x in (await db_session.execute(select(AdRequest))).scalars()] == [5]
