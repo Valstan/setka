@@ -653,17 +653,22 @@ async def handle(
                 )
             draft["publish_now"] = False
             draft["publish_at"] = when.isoformat()
-        from config.ad_landing import quote_price
+        from modules.ad_cabinet.pricing import quote_for_client
 
         n = len(draft.get("region_ids") or [])
-        q = quote_price(n)
+        q = await quote_for_client(session, client.id, n, now_msk=now_msk)
         when_txt = "сейчас" if draft.get("publish_now") else draft["publish_at"].replace("T", " ")
         preview = draft["text"][:300] + ("…" if len(draft["text"]) > 300 else "")
+        disc = (
+            f" (скидка {q['discount_pct']} %, по прайсу {_money(q['base_price'])})"
+            if q.get("discount_pct")
+            else ""
+        )
         return (
             [
                 (
                     f"Проверьте заказ:\n— районов: {n}\n— выход: {when_txt}\n"
-                    f"— цена: {_money(q['price'])}"
+                    f"— цена: {_money(q['price'])}{disc}"
                     + (" (или в счёт вашего пакета)" if q["price"] else "")
                     + f"\n\nТекст:\n{preview}",
                     CONFIRM_KEYBOARD,

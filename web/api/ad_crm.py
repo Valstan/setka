@@ -1025,6 +1025,14 @@ async def update_publication(
 
     changed = []
     if payload.price is not None:
+        from config.ad_landing import PRICE_FLOOR_RUB
+
+        # Пол цены (Этап 2): 0 — бесплатно, иначе не ниже 200 ₽ за размещение.
+        if 0 < float(payload.price) < PRICE_FLOOR_RUB:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Цена размещения не ниже {PRICE_FLOOR_RUB} ₽ (0 — бесплатно)",
+            )
         pub.price = payload.price
         changed.append(f"цена={payload.price:g} ₽")
     if payload.paid_status is not None:

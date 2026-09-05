@@ -330,7 +330,15 @@
                     return;
                 }
                 $('np-price').textContent = q.price + ' ₽';
-                $('np-price-note').textContent = q.anchor ? '(' + q.anchor + (q.saved ? ', выгода ' + q.saved + ' ₽' : '') + ')' : '';
+                var note = q.anchor ? '(' + q.anchor + (q.saved ? ', выгода ' + q.saved + ' ₽' : '') + ')' : '';
+                if (q.discount_pct) {
+                    note += ' · ваша скидка ' + q.discount_pct + '% (по прайсу ' + q.base_price + ' ₽)' +
+                        (q.floor_applied ? ', минимум 200 ₽ за размещение' : '');
+                }
+                if (q.discount && q.discount.next_step_posts && q.discount.month < 30) {
+                    note += ' · до следующих 5%: ещё ' + q.discount.next_step_posts + ' оплач. поста в этом месяце';
+                }
+                $('np-price-note').textContent = note;
             } catch (e) { $('np-price-note').textContent = e.message; }
         }, 250);
     }
