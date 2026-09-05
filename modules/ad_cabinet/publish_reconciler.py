@@ -29,13 +29,14 @@ VK-проверка вынесена в инъектируемый ``is_publishe
 
 from __future__ import annotations
 
+import calendar
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Sequence
 
 from sqlalchemy import select
 
-from database.models import AdClient, AdPayment, AdPublication, AdScheduledPost
+from database.models import AdClient, AdPayment, AdPublication, AdRequest, AdScheduledPost
 from modules.ad_cabinet.interaction_log import log_interaction
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,10 @@ def _build_default_checker(user_token: str, community_tokens: Dict[int, str]):
 
     def is_published(owner_id: int, post_id: int) -> Optional[bool]:  # pragma: no cover - сеть
         cid = abs(int(owner_id))
-        token = community_tokens.get(cid) or user_token
+        # wall.getById — только user-токеном: community-токен отвечает 27 «method
+        # is unavailable with group auth», проверка вечно «неизвестно», и репосты
+        # Анны 05.09 ждали дедлайна вместо выхода (инцидент 2026-09-05 11:45).
+        token = user_token or community_tokens.get(cid)
         if not token:
             return None
         if cid not in sessions:
@@ -90,6 +94,135 @@ def _build_default_checker(user_token: str, community_tokens: Dict[int, str]):
         return None
 
     return is_published
+
+
+# ------------------------------------------------------------ двойник поста
+#
+# Инцидент 2026-09-05: предложенный пост, поставленный в VK-отложку
+# (wall.post post_id=<suggest> publish_date), при выходе получает НОВЫЙ id —
+# старый (78293) исчезает, вышедший (78299) с той же подписью и текстом лежит
+# на стене. Проверка по старому id вечно «неизвестно». Поэтому для оригиналов
+# из предложки ищем «двойника» на стене: подпись автора + время ± окно, либо
+# совпадение начала текста.
+
+TWIN_WINDOW = timedelta(minutes=45)
+TWIN_TEXT_PREFIX = 40
+
+
+def _norm_text(text: Optional[str]) -> str:
+    return " ".join((text or "").split())[:TWIN_TEXT_PREFIX].casefold()
+
+
+def pick_twin(
+    items: Sequence[Dict[str, Any]],
+    *,
+    signer_id: Optional[int],
+    text: Optional[str],
+    publish_date: Optional[datetime],
+) -> Optional[int]:
+    """Выбрать из записей стены вышедший двойник отложки (чистая логика).
+
+    ``publish_date`` — МСК naive (как в строке), ``items[].date`` — unix UTC.
+    Совпадение: ``post_type == post``, время в окне ``TWIN_WINDOW`` и (подпись
+    ``signer_id`` совпала **или** первые 40 символов текста равны).
+    """
+    if publish_date is None:
+        return None
+    want_ts = calendar.timegm((publish_date - timedelta(hours=3)).timetuple())  # МСК → UTC
+    want_text = _norm_text(text)
+    best: Optional[int] = None
+    for it in items:
+        if not isinstance(it, dict) or it.get("post_type", "post") != "post":
+            continue
+        try:
+            ts = int(it.get("date") or 0)
+        except (TypeError, ValueError):
+            continue
+        if abs(ts - want_ts) > TWIN_WINDOW.total_seconds():
+            continue
+        by_signer = signer_id is not None and it.get("signer_id") == int(signer_id)
+        by_text = bool(want_text) and _norm_text(it.get("text")) == want_text
+        if by_signer or by_text:
+            pid = it.get("id")
+            if isinstance(pid, int) and (best is None or pid > best):
+                best = pid
+    return best
+
+
+def _build_default_twin_finder(user_token: Optional[str]):
+    """``find_twin(owner_id, signer_id, text, publish_date) -> id`` через wall.get."""
+    if not user_token:
+        return None
+    import vk_api  # локальный импорт — не тянем в тестах
+
+    api = vk_api.VkApi(token=user_token).get_api()
+
+    def find_twin(  # pragma: no cover - сеть
+        owner_id: int,
+        signer_id: Optional[int],
+        text: Optional[str],
+        publish_date: Optional[datetime],
+    ) -> Optional[int]:
+        try:
+            res = api.wall.get(owner_id=int(owner_id), count=20)
+        except Exception as e:
+            logger.warning("wall.get %s failed: %s", owner_id, e)
+            return None
+        items = res.get("items") if isinstance(res, dict) else res
+        return pick_twin(items or [], signer_id=signer_id, text=text, publish_date=publish_date)
+
+    return find_twin
+
+
+async def build_default_twin_finder_from_routing():
+    from modules.vk_token_router import load_vk_routing
+
+    user_token, _community_tokens = await load_vk_routing()
+    return _build_default_twin_finder(user_token)
+
+
+async def resolve_publication(
+    session,
+    row: AdScheduledPost,
+    *,
+    is_published: Optional[Callable[[int, int], Optional[bool]]],
+    find_twin=None,
+) -> Optional[bool]:
+    """Вышла ли строка отложки: по id, а для предложки — ещё и по двойнику.
+
+    Нашли двойника → ``row.vk_postponed_post_id`` становится настоящим id
+    (``record_published`` и репосты берут именно его). Без commit.
+    """
+    state: Optional[bool] = None
+    if is_published is not None and row.vk_postponed_post_id:
+        try:
+            state = is_published(int(row.community_vk_id), int(row.vk_postponed_post_id))
+        except Exception as e:  # pragma: no cover - защита
+            logger.warning("is_published failed for %s: %s", row.id, e)
+            state = None
+    if state is not None or row.kind != "suggested" or find_twin is None:
+        return state
+    signer_id: Optional[int] = None
+    if row.source_ad_request_id:
+        ar = await session.get(AdRequest, int(row.source_ad_request_id))
+        if ar is not None and ar.author_vk_id:
+            signer_id = int(ar.author_vk_id)
+    try:
+        twin = find_twin(int(row.community_vk_id), signer_id, row.text, row.publish_date)
+    except Exception as e:  # pragma: no cover - защита
+        logger.warning("find_twin failed for %s: %s", row.id, e)
+        return None
+    if not twin:
+        return None
+    logger.info(
+        "reconcile: строка %s — отложка %s вышла как %s_%s (двойник по подписи/тексту)",
+        row.id,
+        row.vk_postponed_post_id,
+        row.community_vk_id,
+        twin,
+    )
+    row.vk_postponed_post_id = int(twin)
+    return True
 
 
 async def build_default_checker_from_routing() -> Optional[Callable[[int, int], Optional[bool]]]:
@@ -209,6 +342,7 @@ async def run_reconcile(
     is_published: Optional[Callable[[int, int], Optional[bool]]] = None,
     now: Optional[datetime] = None,
     stall_alert: Optional[Callable[[str, str], Any]] = None,
+    find_twin=None,
 ) -> Dict[str, Any]:
     """Реконсилировать опубликованные VK отложки → фиксация в CRM. Возвращает счётчики."""
     import asyncio
@@ -225,11 +359,17 @@ async def run_reconcile(
     )
 
     # Дефолтная VK-проверка собирается лениво (нужны токены) — только если не инжектирована.
+    auto_checker = is_published is None
     if is_published is None:
         is_published = await build_default_checker_from_routing()
         if is_published is None:
             logger.warning("reconcile: нет VK-токенов, пропуск")
             return {"reconciled": 0, "checked": 0, "skipped": "no_token"}
+    # Поиск двойника строится из роутинга только вместе с автоматической
+    # проверкой: инжектированная проверка (тесты, пробы) = вызывающий сам
+    # решает, есть ли у него ВК; сеть не трогаем.
+    if find_twin is None and auto_checker:
+        find_twin = await build_default_twin_finder_from_routing()
 
     reconciled = 0
     stalled = 0
@@ -255,7 +395,9 @@ async def run_reconcile(
         )
         for row in rows:
             try:
-                state = is_published(int(row.community_vk_id), int(row.vk_postponed_post_id))
+                state = await resolve_publication(
+                    session, row, is_published=is_published, find_twin=find_twin
+                )
             except Exception as e:  # pragma: no cover - защита
                 logger.warning("reconcile check failed for post %s: %s", row.id, e)
                 state = None

@@ -186,6 +186,7 @@ async def run_repost_dispatch(
     interval: Optional[float] = None,
     now: Optional[datetime] = None,
     alert: Optional[Callable[[str], Any]] = None,
+    find_twin=None,
 ) -> Dict[str, Any]:
     """Один тик диспетчера. Возвращает счётчики."""
     from config.runtime import ad_repost_disabled, get_broadcast_post_interval_seconds
@@ -242,6 +243,25 @@ async def run_repost_dispatch(
                 checker_cache["built"] = True
             return checker_cache["fn"]
 
+        # Поиск двойника (VK меняет id отложке из предложки при выходе —
+        # инцидент 2026-09-05) — тоже лениво, тем же user-токеном.
+        # Строится из роутинга только вместе с автоматической проверкой:
+        # инжектированный ``is_published`` без ``find_twin`` = двойника не ищем.
+        twin_cache: Dict[str, Any] = {
+            "fn": find_twin,
+            "built": find_twin is not None or is_published is not None,
+        }
+
+        async def get_twin_finder():
+            if not twin_cache["built"]:
+                from modules.ad_cabinet.publish_reconciler import (
+                    build_default_twin_finder_from_routing,
+                )
+
+                twin_cache["fn"] = await build_default_twin_finder_from_routing()
+                twin_cache["built"] = True
+            return twin_cache["fn"]
+
         posted_any = False
         for row_id in due_ids:
             if not await _claim(session, int(row_id), now):
@@ -259,6 +279,7 @@ async def run_repost_dispatch(
                     now=now,
                     publisher_factory=publisher_factory,
                     get_checker=get_checker,
+                    get_twin_finder=get_twin_finder,
                     alert=alert,
                     throttle=(interval if posted_any else 0.0),
                 )
@@ -294,6 +315,7 @@ async def _handle_row(
     get_checker,
     alert,
     throttle: float,
+    get_twin_finder=None,
 ) -> str:
     """Обработать одну заклеймленную строку. Возвращает исход."""
     if row.kind == "suggested":
@@ -322,13 +344,14 @@ async def _handle_row(
 
     if src.status != "published":
         state = None
-        is_published = await get_checker() if src.vk_postponed_post_id else None
-        if is_published is not None:
-            try:
-                state = is_published(int(src.community_vk_id), int(src.vk_postponed_post_id))
-            except Exception as e:  # pragma: no cover - защита
-                logger.warning("ad_repost: is_published failed for %s: %s", src.id, e)
-                state = None
+        if src.vk_postponed_post_id:
+            from modules.ad_cabinet.publish_reconciler import resolve_publication
+
+            is_published = await get_checker()
+            finder = await get_twin_finder() if get_twin_finder is not None else None
+            state = await resolve_publication(
+                session, src, is_published=is_published, find_twin=finder
+            )
         if state is True:
             # Оригинал вышел — фиксируем сами, не ждём реконсилер X:45.
             await record_published(session, src)
