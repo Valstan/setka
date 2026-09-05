@@ -9,7 +9,7 @@ cooldown; задача и beat-запись зарегистрированы.
 from __future__ import annotations
 
 import logging
-import os
+from pathlib import Path
 
 import pytest
 
@@ -61,12 +61,24 @@ def test_touch_writes_unix_ts_with_ttl(fake):
 
 
 def test_touch_never_raises_and_throttles_warnings(monkeypatch, caplog):
+    """Sentinel — None, а не 0.0: monotonic() считает от загрузки бокса, и ноль
+    глушил бы первое предупреждение первые 5 минут после рестарта хоста."""
     monkeypatch.setattr(hb, "_redis", lambda: None)
-    monkeypatch.setattr(hb, "_last_warn_at", 0.0)
+    monkeypatch.setattr(hb, "_last_warn_at", None)
+    monkeypatch.setattr(hb.time, "monotonic", lambda: 120.0)  # свежая загрузка
     with caplog.at_level(logging.WARNING, logger=hb.logger.name):
         assert hb.touch() is False
         assert hb.touch(_Boom()) is False
-    assert sum("heartbeat" in r.getMessage() for r in caplog.records) == 1
+    warns = [r for r in caplog.records if "heartbeat" in r.getMessage()]
+    assert len(warns) == 1 and not warns[0].exc_info  # без хвоста NoneType: None
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=hb.logger.name):
+        assert hb.touch(_Boom()) is False  # в пределах окна — молчим
+    assert caplog.records == []
+    monkeypatch.setattr(hb.time, "monotonic", lambda: 120.0 + hb._WARN_EVERY + 1)
+    with caplog.at_level(logging.WARNING, logger=hb.logger.name):
+        assert hb.touch(_Boom()) is False
+    assert [r for r in caplog.records if r.exc_info]  # ошибка Redis — со стеком
     assert hb.last_ts(_Boom()) is None
 
 
@@ -123,8 +135,19 @@ def test_watchdog_registered():
     assert entry["options"]["expires"] < 600 and entry["options"]["catchup"] is False
 
 
-def test_daemon_imports_heartbeat():
-    """Демон импортирует модуль лениво — гвоздь, что имя и функция на месте."""
+def test_daemon_touches_heartbeat_before_failed_branch():
+    """Гвоздь на порядок в демоне: touch стоит ДО ветки reinit (failed=1/2/3).
+
+    Иначе серия failed=2 (ВК переиздаёт key) выглядела бы как мёртвый демон и
+    будила бы владельца, а перенос touch вниз никакой тест бы не заметил.
+    """
     from modules.ad_cabinet.vk_bot.heartbeat import touch
 
-    assert callable(touch) and os.path.exists("scripts/vk_bot_daemon.py")
+    assert callable(touch)
+    src = (Path(__file__).resolve().parents[2] / "scripts" / "vk_bot_daemon.py").read_text(
+        encoding="utf-8"
+    )
+    assert "heartbeat.touch(r)" in src
+    assert src.index("heartbeat.touch(r)") < src.index('if "failed" in data')
+    # ts в Redis пишется под try/except — обрыв Redis не валит демон в crash-loop
+    assert "ts not persisted" in src

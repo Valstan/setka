@@ -31,7 +31,10 @@ ALERT_COOLDOWN_SECONDS = 6 * 3600
 DEFAULT_MAX_AGE_SECONDS = 15 * 60
 #: Лежащий Redis не должен давать строку WARNING на каждый тик Long Poll (25 с).
 _WARN_EVERY = 300.0
-_last_warn_at = 0.0
+#: None (а не 0.0): monotonic() отсчитывается от загрузки бокса, и ноль как
+#: «давно не предупреждали» глушил бы первое предупреждение первые 5 минут
+#: после рестарта хоста — а демон стартует как раз при загрузке.
+_last_warn_at: Optional[float] = None
 
 
 def _redis():
@@ -40,12 +43,12 @@ def _redis():
     return _r()
 
 
-def _warn(msg: str) -> None:
+def _warn(msg: str, *, exc: bool = False) -> None:
     global _last_warn_at
     now = time.monotonic()
-    if now - _last_warn_at >= _WARN_EVERY:
+    if _last_warn_at is None or now - _last_warn_at >= _WARN_EVERY:
         _last_warn_at = now
-        logger.warning(msg, exc_info=True)
+        logger.warning(msg, exc_info=exc)
 
 
 def touch(client=None, *, ts: Optional[float] = None) -> bool:
@@ -53,12 +56,12 @@ def touch(client=None, *, ts: Optional[float] = None) -> bool:
     try:
         client = client if client is not None else _redis()
         if client is None:
-            _warn("vk_bot heartbeat skipped: redis unavailable")
+            _warn("vk_bot heartbeat skipped: redis unavailable")  # без exc_info: нет исключения
             return False
         client.setex(HEARTBEAT_KEY, _HEARTBEAT_TTL, str(int(ts if ts is not None else time.time())))
         return True
     except Exception:  # noqa: BLE001 - наблюдаемость не роняет демон
-        _warn("vk_bot heartbeat write failed")
+        _warn("vk_bot heartbeat write failed", exc=True)
         return False
 
 

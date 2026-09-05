@@ -26,7 +26,7 @@ Required:
 ### 2. Verify Services Status
 
 ```bash
-systemctl status setka setka-celery-worker setka-celery-beat
+systemctl status setka setka-celery-worker setka-celery-beat setka-vk-bot
 ```
 
 If services don't exist yet, see setup below.
@@ -213,7 +213,7 @@ crontab -e
 ### "Module not found" errors
 ```bash
 # Restart services to reload PYTHONPATH
-sudo systemctl restart setka setka-celery-worker setka-celery-beat
+sudo systemctl restart setka setka-celery-worker setka-celery-beat setka-vk-bot
 ```
 
 ### Celery tasks not running

@@ -89,7 +89,14 @@ async def main() -> None:
             if not resp or not resp.get("server"):
                 err = (srv or {}).get("error") or {}
                 logger.warning("getLongPollServer failed: %s", err.get("error_msg", srv))
-                conf, conf_at = None, 0.0  # перечитать конфиг через минуту
+                # Ждём минуту, а не крутим цикл: сброс conf сам по себе паузы не
+                # даёт (перечитанный конфиг тот же), и отозванный токен давал бы
+                # десятки запросов к БД и ВК в секунду с WARNING на каждый.
+                conf, conf_at = None, 0.0
+                try:
+                    await asyncio.wait_for(stop.wait(), CONFIG_RECHECK)
+                except asyncio.TimeoutError:
+                    pass
                 continue
             server, key = resp["server"], resp["key"]
             ts = ts or resp["ts"]

@@ -349,7 +349,7 @@ Co-Authored-By: <агент и версия> <noreply@...>
 ssh sarafan "curl -s http://127.0.0.1:8000/api/health/full"
 
 # статус сервисов
-ssh sarafan "systemctl status setka setka-celery-worker setka-celery-beat --no-pager | head -50"
+ssh sarafan "systemctl status setka setka-celery-worker setka-celery-beat setka-vk-bot --no-pager | head -50"
 
 # свежий лог worker
 ssh sarafan "tail -100 ~/SETKA/logs/celery-worker.log"

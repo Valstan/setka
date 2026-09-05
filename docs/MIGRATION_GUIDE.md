@@ -212,7 +212,7 @@ If you need to rollback:
 
 1. **Stop SETKA services**:
    ```bash
-   systemctl stop setka setka-celery-worker setka-celery-beat
+   systemctl stop setka setka-celery-worker setka-celery-beat setka-vk-bot
    ```
 
 2. **Restore old_postopus**:

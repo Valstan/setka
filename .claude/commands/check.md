@@ -48,8 +48,8 @@ ssh -o ConnectTimeout=10 sarafan "redis-cli --scan --pattern 'setka:digest_last_
 # ВК-бот: heartbeat демона (unix-ts, Redis db 1) и текущее время — разница = возраст, порог 15 мин
 ssh -o ConnectTimeout=10 sarafan "redis-cli -n 1 get setka:vkbot:heartbeat; date +%s" 2>&1
 
-# ВК-бот: ошибки за последние 200 строк лога демона
-ssh -o ConnectTimeout=10 sarafan "tail -200 ~/SETKA/logs/vk-bot.log 2>&1 | grep -iE 'error|critical|exception|traceback' | tail -5" 2>&1
+# ВК-бот: ошибки за последние 200 строк лога демона («нет файла» ≠ «нет ошибок»)
+ssh -o ConnectTimeout=10 sarafan "test -f ~/SETKA/logs/vk-bot.log && tail -200 ~/SETKA/logs/vk-bot.log | grep -iE 'error|critical|exception|traceback' | tail -5 || echo 'vk-bot.log: MISSING'" 2>&1
 
 # Ошибки в worker за последний час
 ssh -o ConnectTimeout=10 sarafan "journalctl -u setka-celery-worker --since '1 hour ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -5" 2>&1
@@ -71,6 +71,7 @@ ssh -o ConnectTimeout=10 sarafan "journalctl -u setka-celery-worker --since '1 h
 | прод / git HEAD | <hash> <subject> |
 | Celery / cooldown ключей | N регионов опубликовали в текущем часу |
 | worker / ошибок за час | 0 / N (показать последние) |
+| vk-bot / ошибок в логе | 0 / N (показать последние) / лога нет |
 
 В конце — короткое summary: «всё ок» или «проблема в X, посмотри».
 
