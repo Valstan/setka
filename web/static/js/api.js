@@ -261,14 +261,14 @@ const apiClient = {
             method: 'POST',
             body: JSON.stringify({ bank: bank || null })
         });
-    }
+    },
 
     async confirmClientPayments(clientId, bank) {
         return this.request(`/ad-crm/clients/${clientId}/payments/confirm-all`, {
             method: 'POST',
             body: JSON.stringify({ bank: bank || null })
         });
-    }
+    },
 
     async updateCrmPayment(id, payload) {
         return this.request(`/ad-crm/payments/${id}`, {
