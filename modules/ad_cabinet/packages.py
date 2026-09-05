@@ -75,14 +75,37 @@ logger = logging.getLogger(__name__)
 # Акция «бесплатная реклама местным» (решение владельца 2026-08-26): 3 поста.
 PROMO_POSTS = 3
 
-KINDS = ("free_promo", "prepaid", "postpaid")
+KINDS = ("free_promo", "prepaid", "postpaid", "unlimited")
+
+# Безлимит (решение владельца 2026-09-05): 5000 ₽ за 30 дней с даты оплаты, любые
+# сообщества сети, каждое не чаще одного поста в сутки (``busy_days`` уже это
+# держит), продление вручную. ``posts_total=0`` = без квоты.
+UNLIMITED_DAYS = 30
+UNLIMITED_VIRTUAL_REMAINING = 10**6
+
+
+def is_unlimited(pkg: AdClientPackage) -> bool:
+    return pkg.kind == "unlimited"
+
+
+def unlimited_period(start: date) -> Tuple[date, date]:
+    """``[start, start+29]`` — 30 календарных дней с даты оплаты."""
+    return start, start + timedelta(days=UNLIMITED_DAYS - 1)
+
 
 # Статусы, занимающие дневной слот сообщества и место в пакете.
 _SLOT_STATUSES = ("pending", "scheduled", "published")
 
 
 def _remaining(pkg: AdClientPackage) -> int:
+    if is_unlimited(pkg):
+        return UNLIMITED_VIRTUAL_REMAINING
     return max(0, int(pkg.posts_total or 0) - int(pkg.posts_used or 0))
+
+
+def remaining(pkg: AdClientPackage) -> int:
+    """Публично: сколько ещё можно списать (безлимит — «очень много»)."""
+    return _remaining(pkg)
 
 
 def _period_covers(pkg: AdClientPackage, today: date) -> bool:
@@ -106,7 +129,29 @@ def _is_available(pkg: AdClientPackage, today: date) -> bool:
         return False
     if pkg.kind == "prepaid" and pkg.paid_at is None:
         return False
+    # Безлимит открывается галочкой «оплачен» (она же ставит период 30 дней).
+    if is_unlimited(pkg) and (pkg.paid_at is None or pkg.period_end is None):
+        return False
     return True
+
+
+async def has_unlimited(session, client_id: int, *, today: Optional[date] = None) -> bool:
+    """Есть ли у клиента действующий безлимит (для лимита незавершённых постов)."""
+    today = today or (datetime.utcnow() + timedelta(hours=3)).date()
+    rows = (
+        (
+            await session.execute(
+                select(AdClientPackage).where(
+                    AdClientPackage.client_id == int(client_id),
+                    AdClientPackage.is_active.is_(True),
+                    AdClientPackage.kind == "unlimited",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return any(_is_available(p, today) for p in rows)
 
 
 async def get_state(session, client_id: int, *, today: Optional[date] = None) -> Dict[str, Any]:
@@ -144,10 +189,12 @@ async def get_state(session, client_id: int, *, today: Optional[date] = None) ->
     #    разблокировки мёртв). Долг при этом остаётся виден владельцу.
     available = [p for p in rows if _is_available(p, today)]
     if available:
+        # Порядок списания: промо → безлимит → старейший платный.
         promo = [p for p in available if p.kind == "free_promo"]
+        unlimited = [p for p in available if is_unlimited(p)]
         return {
             "block_reason": None,
-            "package": (promo or available)[0],
+            "package": (promo or unlimited or available)[0],
             "packages": rows,
         }
 
@@ -199,14 +246,14 @@ async def consume(session, pkg: AdClientPackage, n: int) -> bool:
     """
     from sqlalchemy import update
 
-    result = await session.execute(
+    stmt = (
         update(AdClientPackage)
-        .where(
-            AdClientPackage.id == pkg.id,
-            AdClientPackage.posts_used + int(n) <= AdClientPackage.posts_total,
-        )
+        .where(AdClientPackage.id == pkg.id)
         .values(posts_used=AdClientPackage.posts_used + int(n))
     )
+    if not is_unlimited(pkg):  # безлимит: считаем использованное, квоты нет
+        stmt = stmt.where(AdClientPackage.posts_used + int(n) <= AdClientPackage.posts_total)
+    result = await session.execute(stmt)
     if result.rowcount == 0:
         return False
     await session.refresh(pkg)

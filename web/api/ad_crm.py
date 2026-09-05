@@ -2255,8 +2255,9 @@ class PackageIn(BaseModel):
     (МСК); иначе бессрочный. ``free_promo`` — акция: цена 0, по умолчанию
     3 поста; малмыжским ``site_ad=True`` — плюс размещение на сайте (вручную)."""
 
-    kind: str = Field(..., pattern=r"^(free_promo|prepaid|postpaid)$")
-    posts_total: int = Field(..., ge=1, le=100)
+    kind: str = Field(..., pattern=r"^(free_promo|prepaid|postpaid|unlimited)$")
+    # ``unlimited`` — квоты нет, posts_total=0 (Этап 2, 2026-09-05).
+    posts_total: int = Field(..., ge=0, le=100)
     # Верхняя граница спасает от Infinity и переполнения NUMERIC(10,2) — 500 на
     # flush превращается в валидационную 422 (ревью 2026-08-26).
     price: float = Field(0, ge=0, le=9_999_999)
@@ -2316,13 +2317,22 @@ async def create_package(
     client = await db.get(AdClient, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="client not found")
+    from modules.ad_cabinet import packages as _pkgs
+
+    unlimited = payload.kind == "unlimited"
+    if not unlimited and payload.posts_total < 1:
+        raise HTTPException(status_code=400, detail="posts_total must be >= 1")
     period_start = period_end = None
-    if payload.monthly:
+    if unlimited:
+        # 30 дней с даты оплаты: период ставится галочкой «оплачен» (здесь — если сразу).
+        if payload.paid:
+            period_start, period_end = _pkgs.unlimited_period(_msk_today())
+    elif payload.monthly:
         period_start, period_end = _month_bounds(_msk_today())
     row = AdClientPackage(
         client_id=client_id,
         kind=payload.kind,
-        posts_total=payload.posts_total,
+        posts_total=0 if unlimited else payload.posts_total,
         price=payload.price if payload.kind != "free_promo" else 0,
         period_start=period_start,
         period_end=period_end,
@@ -2344,9 +2354,17 @@ async def create_package(
         kind="package_created",
         client_id=client_id,
         summary=(
-            f"Пакет {row.kind}: {row.posts_total} постов"
+            (
+                f"Безлимит {_pkgs.UNLIMITED_DAYS} дн."
+                if unlimited
+                else f"Пакет {row.kind}: {row.posts_total} постов"
+            )
             + (f", {float(row.price):.0f} ₽" if float(row.price or 0) else ", бесплатно")
-            + (f", до {period_end.isoformat()}" if period_end else ", бессрочно")
+            + (
+                f", до {period_end.isoformat()}"
+                if period_end
+                else (", период с даты оплаты" if unlimited else ", бессрочно")
+            )
             + (" + реклама на сайте" if row.site_ad else "")
         ),
     )
@@ -2370,6 +2388,8 @@ async def package_mark_paid(package_id: int, db: AsyncSession = Depends(get_db_s
         row.paid_at = datetime.utcnow()
         from modules.ad_cabinet import packages as _pkgs
 
+        if _pkgs.is_unlimited(row) and row.period_end is None:
+            row.period_start, row.period_end = _pkgs.unlimited_period(_msk_today())
         pay = await _pkgs.record_package_payment(db, row)
         if pay is not None:
             client = await db.get(AdClient, row.client_id)
@@ -2400,10 +2420,48 @@ async def package_extend(package_id: int, db: AsyncSession = Depends(get_db_sess
     from datetime import date as _date
     from datetime import timedelta as _td
 
+    from modules.ad_cabinet import packages as _pkgs
+
     row = await _get_package(db, package_id)
     if not row.period_end:
         raise HTTPException(status_code=400, detail="бессрочный пакет не продлевается")
     nxt = row.period_end + _td(days=1)
+    if _pkgs.is_unlimited(row):
+        # Безлимит: следующие 30 дней встык, оплата — галочкой (период уже задан).
+        exists = (
+            await db.execute(
+                select(AdClientPackage.id).where(
+                    AdClientPackage.client_id == row.client_id,
+                    AdClientPackage.is_active.is_(True),
+                    AdClientPackage.kind == "unlimited",
+                    AdClientPackage.period_start == nxt,
+                )
+            )
+        ).first()
+        if exists:
+            raise HTTPException(status_code=409, detail="следующий период безлимита уже выдан")
+        u_start, u_end = _pkgs.unlimited_period(nxt)
+        new = AdClientPackage(
+            client_id=row.client_id,
+            kind="unlimited",
+            posts_total=0,
+            price=row.price,
+            period_start=u_start,
+            period_end=u_end,
+            site_ad=False,
+            note=f"продление безлимита #{row.id}",
+        )
+        db.add(new)
+        await db.flush()
+        log_interaction(
+            db,
+            kind="package_extended",
+            client_id=row.client_id,
+            summary=f"Безлимит продлён до {u_end.isoformat()} (#{row.id} → #{new.id})",
+        )
+        await db.commit()
+        await db.refresh(new)
+        return new.to_dict()
     # Идемпотентность: двойной клик «продлить» не выдаёт двойную квоту.
     exists = (
         await db.execute(
