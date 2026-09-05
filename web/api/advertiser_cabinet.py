@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config.ad_landing import PAYMENTS, build_price_table, quote_price
+from config.ad_landing import PAYMENTS, build_price_table
 from database.connection import get_db_session
 from database.models import AdClient, AdPayment, AdPublication, AdScheduledPost, Region
 from modules.ad_cabinet import advertiser_link, chat, client_orders, impersonation
@@ -375,8 +375,10 @@ async def quote(payload: QuoteIn, request: Request, db: AsyncSession = Depends(g
     """
     _user, client = await _current_client(request, db)
     targets = await client_orders.resolve_targets(db, payload.region_ids)
-    base = quote_price(len(targets))
     from modules.ad_cabinet import packages as pkgs
+    from modules.ad_cabinet.pricing import quote_for_client
+
+    base = await quote_for_client(db, client.id, len(targets))
 
     state = await pkgs.get_state(db, client.id)
     if state["block_reason"]:
@@ -387,7 +389,7 @@ async def quote(payload: QuoteIn, request: Request, db: AsyncSession = Depends(g
         return {
             "n": len(targets),
             "price": 0,
-            "base_price": base["price"],
+            "base_price": base["base_price"],
             "package": pkg.to_dict(),
             "over_limit": len(targets) > left,
         }

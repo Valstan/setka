@@ -6,7 +6,7 @@
 ``publish_reconciler`` (он же создаёт ``AdPublication`` и ``AdPayment(awaiting)``
 по ``client_id``+``price`` — клиентский флоу СВОИХ платежей не создаёт).
 
-Деньги: цену заказа считает ТОЛЬКО сервер — ``quote_price(n)``
+Деньги: цену заказа считает ТОЛЬКО сервер — ``pricing.quote_for_client``
 (``config/ad_landing.py``); ``price_split`` раскладывает её по строкам с
 копеечным инвариантом ``Σ = total``, чтобы ``spent`` баланса сходился с прайсом.
 
@@ -29,7 +29,6 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tup
 
 from sqlalchemy import String, func, select
 
-from config.ad_landing import quote_price
 from database.models import AdClient, AdScheduledPost, Region
 
 logger = logging.getLogger(__name__)
@@ -324,7 +323,11 @@ async def submit_order(
         quote = {"n": len(targets), "price": 0, "package_id": package.id, "kind": package.kind}
         prices = [Decimal("0")] * len(targets)
     else:
-        quote = quote_price(len(targets))
+        # Прайс → скидки клиента → пол (Этап 2, 2026-09-05): та же функция, что
+        # у котировки кабинета и бота — клиент платит ровно то, что видел.
+        from modules.ad_cabinet.pricing import quote_for_client
+
+        quote = await quote_for_client(session, client.id, len(targets), now_msk=now)
         prices = price_split(Decimal(quote["price"]), len(targets))
     order_ref = str(uuid.uuid4())
     # Долговой гейт: trusted с долгом сверх лимита/срока — снова на одобрение.

@@ -19,6 +19,23 @@ PRICES_ARE_DRAFT = False
 # Базовая цена одного рекламного поста в одном районном сообществе, ₽.
 PRICE_SINGLE_RUB = 350
 
+# Пол цены одного размещения после всех скидок (решение владельца 2026-09-05):
+# ниже 200 ₽ за пост в сообществе не опускаемся ни скидками, ни операторской
+# ценой (0 — «бесплатно» — разрешён отдельно).
+PRICE_FLOOR_RUB = 200
+# Закреп поста на сутки в одном сообществе — фиксированная доплата, пакетом и
+# скидками не покрывается (SINGLE_SERVICES «+200 ₽»).
+PIN_PRICE_RUB = 200
+# Накопительная скидка (владелец 2026-09-05): 5 % за каждые 3 оплаченных поста
+# в календарном месяце (МСК), потолок 30 %, сгорает 1-го числа.
+DISCOUNT_STEP_POSTS = 3
+DISCOUNT_STEP_PCT = 5
+DISCOUNT_MONTH_CAP_PCT = 30
+# Постоянным (≥ REGULAR_AFTER_POSTS оплаченных постов за всё время) — +10 %
+# бессрочно. Скидки складываются; пол цены защищает снизу.
+REGULAR_AFTER_POSTS = 10
+REGULAR_PCT = 10
+
 # Тарифы по сети. Каждый: название, что входит, цена, старая цена (для
 # зачёркнутой экономии; None = не показывать), бейдж, список фич и ``covers`` —
 # на сколько сообществ рассчитан тариф (None = вся сеть). ``covers`` читает
@@ -90,9 +107,11 @@ SINGLE_SERVICES: List[Dict[str, Any]] = [
 # Доп. условия/скидки — список строк, рендерится маркированным списком.
 EXTRAS: List[str] = [
     "По каждому посту пришлём отчёт со скринами — бесплатно.",
-    "Повтор того же поста через 3–7 дней — минус 30% от цены размещения.",
-    "Серия из 4 публикаций в месяц (раз в неделю) — пятая в подарок.",
-    "При постоянном сотрудничестве — скидки по договорённости.",
+    "Накопительная скидка: за каждые 3 оплаченных поста в месяце — минус 5 % на "
+    "следующие заказы, до 30 %. Считается с 1-го числа заново.",
+    "Постоянным клиентам (от 10 оплаченных постов) — ещё минус 10 % навсегда.",
+    "Скидки складываются, но цена одного размещения не опускается ниже 200 ₽.",
+    "Безлимит на 30 дней — 5000 ₽: любые сообщества сети, до одного поста в " "сутки в каждом.",
     "Поможем бесплатно: подскажем, в каких районах живёт ваша аудитория.",
 ]
 
@@ -231,6 +250,51 @@ def cap_starts_at(max_n: int = PRICE_TABLE_MAX) -> int | None:
         if row["capped"]:
             return row["n"]
     return None
+
+
+def discount_pct(paid_month: int, paid_total: int) -> Dict[str, int]:
+    """Скидка клиента по оплаченным постам: за месяц (ступени) и постоянная.
+
+    Возвращает ``{"month": %, "regular": %, "total": %}``; ``next_step_posts`` —
+    сколько оплаченных постов до следующей ступени (0 — потолок).
+    """
+    paid_month = max(0, int(paid_month))
+    paid_total = max(0, int(paid_total))
+    month = min(DISCOUNT_MONTH_CAP_PCT, (paid_month // DISCOUNT_STEP_POSTS) * DISCOUNT_STEP_PCT)
+    regular = REGULAR_PCT if paid_total >= REGULAR_AFTER_POSTS else 0
+    if month >= DISCOUNT_MONTH_CAP_PCT:
+        next_step = 0
+    else:
+        next_step = DISCOUNT_STEP_POSTS - (paid_month % DISCOUNT_STEP_POSTS)
+    return {
+        "month": month,
+        "regular": regular,
+        "total": month + regular,
+        "next_step_posts": next_step,
+    }
+
+
+def apply_discount(base_total: int | float, n: int, pct: int) -> Dict[str, Any]:
+    """Применить скидку ``pct`` к цене ``n`` размещений с полом ``PRICE_FLOOR_RUB``.
+
+    Пол — ``n × PRICE_FLOOR_RUB``, но не выше базовой цены: тариф «вся сеть»
+    (5000 за все сообщества) дешевле пола на 38 районов и остаётся как есть.
+    Итог округляется до рубля.
+    """
+    n = max(0, int(n))
+    base = float(base_total)
+    if n == 0 or base <= 0:
+        return {"price": 0, "discount_pct": 0, "floor_applied": False, "saved": 0}
+    pct = max(0, min(100, int(pct)))
+    discounted = round(base * (100 - pct) / 100)
+    floor_total = min(base, PRICE_FLOOR_RUB * n)
+    price = int(max(discounted, floor_total))
+    return {
+        "price": price,
+        "discount_pct": pct,
+        "floor_applied": bool(pct and price > discounted),
+        "saved": int(round(base - price)),
+    }
 
 
 def get_ad_landing_context() -> Dict[str, Any]:
