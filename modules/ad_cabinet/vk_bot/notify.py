@@ -245,6 +245,15 @@ async def notify_owner(
         out["vk"] = sent_any
     except Exception:  # noqa: BLE001
         logger.warning("vk_bot notify_owner failed", exc_info=True)
+    finally:
+        # Ключ съеден ДО отправки; если ни один канал не доставил — вернуть его,
+        # иначе следующее честное событие того же ключа молчит весь ttl
+        # (аудит 2026-09-05).
+        if dedup_key and not out["telegram"] and not out["vk"]:
+            try:
+                await asyncio.to_thread(owner_ping.release_dedup, dedup_key)
+            except Exception:  # noqa: BLE001
+                logger.debug("release_dedup failed for %s", dedup_key)
     return out
 
 

@@ -6,6 +6,7 @@ mock-сессий — изоляционные тесты обязаны уме�
 
 from __future__ import annotations
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -46,3 +47,29 @@ async def db_session():
     async with maker() as session:
         yield session
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _owner_pings_offline(monkeypatch):
+    """Пинги владельцу в тестах кабинета не ходят в Redis, Telegram и ВК.
+
+    ``record_published``/``submit_order``/бот зовут ``vk_notify.notify_owner``;
+    без заглушки каждый пинг ждал коннект к Redis (до 10 с на Windows) и при
+    наличии локального ``.env`` слал бы настоящие Telegram-сообщения. Дедуп
+    идёт по локальному слою ``owner_ping`` (тот же код, что при лежащем Redis).
+    Тест, которому нужен свой Redis/Telegram, патчит поверх.
+    """
+    import config.runtime as runtime
+    import modules.vk_monitor.rate_limiter as rate_limiter
+    from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+    def _no_redis():
+        raise RuntimeError("redis disabled in ad_cabinet tests")
+
+    async def _community_off():
+        return None
+
+    monkeypatch.setattr(rate_limiter, "_build_redis_client", _no_redis)
+    monkeypatch.setattr(runtime, "TELEGRAM_TOKENS", {})
+    monkeypatch.setattr(runtime, "TELEGRAM_ALERT_CHAT_ID", None)
+    monkeypatch.setattr(vk_notify, "community", _community_off)

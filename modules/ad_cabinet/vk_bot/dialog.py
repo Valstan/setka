@@ -681,7 +681,9 @@ async def handle(
             actor="client",
             meta={"source": "vk_bot", "order_ref": result.get("order_ref")},
         )
-        events.append("order")
+        # «order» — на одобрение; «order_direct» — trusted, уже в VK-отложке
+        # (аудит 2026-09-05: владельцу говорили «ждёт одобрения», а очередь была пуста).
+        events.append("order" if result.get("moderation") else "order_direct")
         if result.get("moderation"):
             msg = (
                 f"Заказ принят: {n} районов, {_money(price)}. Владелец проверит пост и "

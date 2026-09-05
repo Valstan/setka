@@ -259,28 +259,30 @@ class TestSignupTelemetry:
     async def test_new_onboarding_logged_and_pinged_once(self, db_session):
         user = await _mk_user(db_session)
         with (
-            patch("modules.ad_cabinet.owner_ping.notify_owner") as ping,
-            patch("modules.ad_cabinet.owner_ping.event_budget_pass", return_value=True) as budget,
+            patch("modules.ad_cabinet.vk_bot.notify.notify_owner") as ping,
+            patch("modules.ad_cabinet.owner_ping.event_budget_pass") as budget,
         ):
             await onboarding(OnboardingIn(name="ООО Ромашка"), _req(user), db_session)
             await onboarding(OnboardingIn(name="ООО Ромашка"), _req(user), db_session)
         rows = await _interactions(db_session, "cabinet_signup")
         assert len(rows) == 1  # идемпотентный повтор не плодит события
         assert "Ромашка" in rows[0].summary
-        assert ping.call_count == 1
-        # Пинг под глобальным бюджетом: скриптовые регистрации не заливают TG.
-        assert budget.call_args.args == ("signup_ping",)
+        assert ping.await_count == 1
+        # Дедуп ПО КЛИЕНТУ (аудит 2026-09-05): глобальный бюджет 5/час прятал
+        # шестого настоящего клиента за час после рассылки.
+        assert ping.call_args.kwargs["dedup_key"] == f"signup:{rows[0].client_id}"
+        budget.assert_not_called()
 
-    async def test_signup_ping_budget_exhausted_still_logs(self, db_session):
-        """Бюджет пинга исчерпан → событие всё равно в таймлайне."""
+    async def test_signup_ping_ignores_global_budget(self, db_session):
+        """Исчерпанный глобальный бюджет не глушит регистрацию: пинг и запись есть."""
         user = await _mk_user(db_session, login="quiet")
         with (
-            patch("modules.ad_cabinet.owner_ping.notify_owner") as ping,
+            patch("modules.ad_cabinet.vk_bot.notify.notify_owner") as ping,
             patch("modules.ad_cabinet.owner_ping.event_budget_pass", return_value=False),
         ):
             await onboarding(OnboardingIn(name="Тихий"), _req(user), db_session)
         assert len(await _interactions(db_session, "cabinet_signup")) == 1
-        ping.assert_not_called()
+        assert ping.await_count == 1
 
 
 # ----------------------------------------------------------- refused orders

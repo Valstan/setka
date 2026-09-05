@@ -157,13 +157,20 @@ async def handle_one(
     label = f"№{client.id} «{client.name or client.id}»" if client else f"vk id {incoming.peer_id}"
     for ev in events:
         if ev == "chat":
+            preview = (incoming.text or "").strip().replace("\n", " ")[:80]
             await notify.notify_owner(
-                f"💬 ВК-бот: сообщение от клиента {label} — ответить в /ad → Кабинеты",
+                f"💬 ВК-бот: клиент {label}: {preview} — ответить в /ad → Кабинеты",
                 dedup_key=f"chat:{client.id if client else incoming.peer_id}",
+                dedup_ttl=600,
             )
         elif ev == "order":
             await notify.notify_owner(
                 f"🛎 ВК-бот: клиент {label} сделал заказ — ждёт одобрения в /ad"
+            )
+        elif ev == "order_direct":
+            await notify.notify_owner(
+                f"🛎 ВК-бот: клиент {label} (trusted) сделал заказ — уже в VK-отложке, "
+                "отменить можно в /ad → Кабинеты"
             )
         elif ev == "signup":
             await notify.notify_owner(
