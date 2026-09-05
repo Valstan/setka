@@ -162,3 +162,211 @@ def test_community_off_without_env(monkeypatch):
     assert runtime.get_sarafan_vk_community_id() is None
     monkeypatch.setenv("SARAFAN_VK_COMMUNITY_ID", "-12345")
     assert runtime.get_sarafan_vk_community_id() == 12345
+
+
+# ───────── фото в ЛС (Этап 5) ─────────
+
+
+class _Sender4:
+    """Двойник с четвёртым аргументом — вложением."""
+
+    def __init__(self, resp=None):
+        self.calls = []
+        self.resp = resp if resp is not None else {"response": 1}
+
+    async def __call__(self, peer_id, text, keyboard=None, attachment=None):
+        self.calls.append((peer_id, text, keyboard, attachment))
+        return self.resp
+
+
+@pytest.mark.asyncio
+async def test_notify_client_passes_attachment_only_when_given(db_session):
+    u = await _user(db_session, vk_user_id=777)
+    c = await _client(db_session, radar_user_id=u.id)
+    s = _Sender4()
+    assert await notify.notify_client(db_session, c.id, "x", sender=s, attachment="photo-5_99")
+    assert s.calls == [(777, "x", None, "photo-5_99")]
+    strict = _Sender()  # трёхаргументный двойник: без вложения лишнего не передаём
+    assert await notify.notify_client(db_session, c.id, "y", sender=strict)
+    assert strict.calls == [(777, "y", None)]
+    rows = (await db_session.execute(select(AdInteraction).order_by(AdInteraction.id))).scalars()
+    summaries = [r.summary for r in rows]
+    assert "(с фото)" in summaries[0] and "(с фото)" not in summaries[1]
+
+
+@pytest.mark.asyncio
+async def test_notify_client_uploads_named_photos(db_session, monkeypatch):
+    u = await _user(db_session, vk_user_id=777)
+    c = await _client(db_session, radar_user_id=u.id)
+    got = {}
+
+    async def fake_upload(token, client_id, names, *, peer_id=None, group_id=None):
+        got.update(token=token, client_id=client_id, names=list(names), peer_id=peer_id)
+        return "photo-5_1"
+
+    monkeypatch.setattr(notify, "upload_client_photos", fake_upload)
+    s = _Sender4()
+    assert await notify.notify_client(db_session, c.id, "x", sender=s, photos=["a.jpg"])
+    assert s.calls[0][3] == "photo-5_1"
+    assert got == {"token": None, "client_id": c.id, "names": ["a.jpg"], "peer_id": 777}
+
+    # заливка не удалась — текст всё равно уходит, без вложения
+    async def none_upload(*a, **k):
+        return None
+
+    monkeypatch.setattr(notify, "upload_client_photos", none_upload)
+    s2 = _Sender()
+    assert await notify.notify_client(db_session, c.id, "x", sender=s2, photos=["a.jpg"])
+    assert s2.calls == [(777, "x", None)]
+
+
+@pytest.mark.asyncio
+async def test_upload_client_photos_uses_community_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("AD_UPLOAD_DIR", str(tmp_path))
+    d = tmp_path / "9"
+    d.mkdir()
+    for n in ("a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg"):
+        (d / n).write_bytes(n.encode())
+    calls = {}
+
+    class _Api:
+        pass
+
+    class _VkApi:
+        def __init__(self, token):
+            calls["token"] = token
+
+        def get_api(self):
+            return _Api()
+
+    import vk_api
+
+    monkeypatch.setattr(vk_api, "VkApi", _VkApi)
+
+    def fake_upload(api, images, *, peer_id=None):
+        calls["images"] = images
+        calls["peer_id"] = peer_id
+        return "photo-5_1,photo-5_2"
+
+    monkeypatch.setattr(notify.vk_photo_upload, "upload_offer_images", fake_upload)
+    names = ["b.jpg", "a.jpg", "zzz.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg"]
+    att = await notify.upload_client_photos("T", 9, names, peer_id=77)
+    assert att == "photo-5_1,photo-5_2" and calls["token"] == "T" and calls["peer_id"] == 77
+    # не больше 5 (лимит ЛС), пропавшие пропущены, порядок — каталога
+    assert calls["images"] == [b"a.jpg", b"b.jpg", b"c.jpg", b"d.jpg", b"e.jpg"]
+    assert await notify.upload_client_photos(None, 9, ["a.jpg"]) is None
+    assert await notify.upload_client_photos("T", 9, []) is None
+    assert await notify.upload_client_photos("T", 9, ["zzz.jpg"]) is None
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(notify.vk_photo_upload, "upload_offer_images", boom)
+    assert await notify.upload_client_photos("T", 9, ["a.jpg"]) is None
+
+
+@pytest.mark.asyncio
+async def test_make_sender_passes_attachment(monkeypatch):
+    posted = []
+
+    class _Resp:
+        def json(self):
+            return {"response": 1}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, data=None):
+            posted.append(data)
+            return _Resp()
+
+    monkeypatch.setattr(notify.httpx, "AsyncClient", _Client)
+    import modules.vk_monitor.vk_client as vkc
+
+    monkeypatch.setattr(vkc, "enforce_token_rate_limit", lambda token, method="": None)
+    from modules.ad_cabinet import dm_channel
+
+    monkeypatch.setattr(dm_channel, "paused_until", lambda cid, **kw: None)
+    send = notify._make_sender("T", 1)
+    await send(7, "txt", None, "photo-5_99")
+    await send(7, "txt")
+    assert posted[0]["attachment"] == "photo-5_99" and "attachment" not in posted[1]
+
+
+@pytest.mark.asyncio
+async def test_notify_client_photos_via_community_token(db_session, monkeypatch):
+    """Прод-путь без sender=: токен/group_id САРАФАНа доходят до заливки, вложение — до vk_send."""
+    u = await _user(db_session, vk_user_id=777)
+    c = await _client(db_session, radar_user_id=u.id)
+
+    async def conf():
+        return (241, "T")
+
+    monkeypatch.setattr(notify, "community", conf)
+    got, sent = {}, []
+
+    async def fake_upload(token, client_id, names, *, peer_id=None, group_id=None):
+        got.update(token=token, peer_id=peer_id, group_id=group_id, names=list(names))
+        return "photo-1_2"
+
+    async def fake_send(token, group_id, peer_id, text, keyboard=None, attachment=None):
+        sent.append((token, group_id, peer_id, attachment))
+        return {"response": 1}
+
+    monkeypatch.setattr(notify, "upload_client_photos", fake_upload)
+    monkeypatch.setattr(notify, "vk_send", fake_send)
+    assert await notify.notify_client(db_session, c.id, "x", photos=["a.jpg"]) is True
+    assert got == {"token": "T", "peer_id": 777, "group_id": 241, "names": ["a.jpg"]}
+    assert sent == [("T", 241, 777, "photo-1_2")]
+
+    # бот выключен — тишина без обращения к заливке
+    async def off():
+        return None
+
+    monkeypatch.setattr(notify, "community", off)
+    got.clear()
+    assert await notify.notify_client(db_session, c.id, "x", photos=["a.jpg"]) is False
+    assert got == {}
+
+
+@pytest.mark.asyncio
+async def test_upload_client_photos_skips_paused_channel_and_caches(monkeypatch, tmp_path):
+    monkeypatch.setenv("AD_UPLOAD_DIR", str(tmp_path))
+    (tmp_path / "9").mkdir()
+    (tmp_path / "9" / "a.jpg").write_bytes(b"a")
+    from modules.ad_cabinet import dm_channel
+
+    monkeypatch.setattr(dm_channel, "paused_until", lambda cid, **kw: 1 if cid == 5 else None)
+    import vk_api
+
+    _api = type("A", (), {"get_api": lambda s: None})
+    monkeypatch.setattr(vk_api, "VkApi", lambda token: _api())
+    n = {"uploads": 0}
+
+    def fake_upload(api, images, *, peer_id=None):
+        n["uploads"] += 1
+        return "photo-9_1"
+
+    monkeypatch.setattr(notify.vk_photo_upload, "upload_offer_images", fake_upload)
+    notify._ATTACHMENT_CACHE.clear()
+    # пауза канала — заливки нет
+    assert await notify.upload_client_photos("T", 9, ["a.jpg"], peer_id=7, group_id=5) is None
+    assert n["uploads"] == 0
+    # живой канал — одна заливка на повторные вызовы (кэш по client/имена/peer)
+    assert (
+        await notify.upload_client_photos("T", 9, ["a.jpg"], peer_id=7, group_id=6) == "photo-9_1"
+    )
+    assert (
+        await notify.upload_client_photos("T", 9, ["a.jpg"], peer_id=7, group_id=6) == "photo-9_1"
+    )
+    assert n["uploads"] == 1
+    assert await notify.upload_client_photos("T", 9, ["a.jpg"], peer_id=8) == "photo-9_1"
+    assert n["uploads"] == 2  # другой peer — своя заливка
+    notify._ATTACHMENT_CACHE.clear()

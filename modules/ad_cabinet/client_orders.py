@@ -20,6 +20,8 @@ VK-детали (publisher, заливка фото) инъектируются 
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import os
 import uuid
@@ -234,7 +236,13 @@ async def _send_one(
     """
     gid = int(post.community_vk_id)
     try:
-        attachments = attachment_builder(gid, image_paths) if image_paths else []
+        # Заливка фото на стену — синхронные HTTP-вызовы (до 30 с каждый): в поток,
+        # чтобы не держать event loop демона бота / web (Этап 5).
+        attachments = (
+            await asyncio.to_thread(attachment_builder, gid, image_paths) if image_paths else []
+        )
+        if inspect.isawaitable(attachments):
+            attachments = await attachments
         post.attachments = ",".join(attachments) if attachments else None
         publisher = await publisher_factory(gid)
         res = await publisher.publish_bulletin(

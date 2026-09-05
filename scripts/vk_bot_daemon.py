@@ -60,6 +60,7 @@ async def main() -> None:
         logger.error("no redis — dialog state needs it; exiting")
         return
     state_get, state_set = intake.redis_state_store(r)
+    photo_fetch = intake.make_photo_fetch()  # без состояния — один на процесс
 
     conf = None
     conf_at = 0.0
@@ -125,6 +126,7 @@ async def main() -> None:
                     submit=submit,
                     name_fetch=name_fetch,
                     sender=sender,
+                    photo_fetch=photo_fetch,
                 )
                 logger.info("peer %s: handled, events=%s", inc.peer_id, events)
             except Exception:  # noqa: BLE001

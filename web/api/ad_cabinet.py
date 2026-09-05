@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_db_session
 from database.models import AdClient, AdRequest, AdScheduledPost, MessageTemplate, Region
+from modules.ad_cabinet import client_photos
 from modules.ad_cabinet.interaction_log import log_interaction
 from modules.ad_cabinet.message_builder import render
 
@@ -46,9 +47,10 @@ _VALID_HANDLING = {"new", "in_progress", "done"}
 # Время оператор вводит по Москве; VK ждёт unix (UTC). МСК = UTC+3, без DST.
 MSK = timezone(timedelta(hours=3))
 
-# Офферные картинки: что принимаем и сколько максимум весит загружаемый файл.
-_ALLOWED_IMG_EXT = (".jpg", ".jpeg", ".png")
-_MAX_IMG_BYTES = 12 * 1024 * 1024  # 12 МБ — с запасом под прайс-PNG
+# Офферные картинки: что принимаем и сколько максимум весит загружаемый файл —
+# одна точка правды с библиотекой фото клиента (client_photos).
+_ALLOWED_IMG_EXT = client_photos.ALLOWED_IMG_EXT
+_MAX_IMG_BYTES = client_photos.MAX_IMG_BYTES
 
 
 class PrepareIn(BaseModel):

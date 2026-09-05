@@ -254,3 +254,39 @@ def test_unpin_task_registered():
 
     assert "tasks.celery_app.unpin_ad_posts" in app.tasks
     assert app.conf.beat_schedule["unpin-ad-posts"]["task"] == "tasks.celery_app.unpin_ad_posts"
+
+
+@pytest.mark.asyncio
+async def test_record_published_notifies_client_with_first_photo(db_session, monkeypatch):
+    """«📣 Ваш пост вышел» уходит с первой картинкой поста (Этап 5), без картинок — photos=[]."""
+    from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+    c = await _client(db_session, author_vk_id=555)
+    got = []
+
+    async def fake_notify(session, client_id, text, **kw):
+        got.append((client_id, text, kw))
+        return True
+
+    monkeypatch.setattr(vk_notify, "notify_client", fake_notify)
+
+    async def no_pin(owner_id, post_id):
+        return {"success": True}
+
+    for i, names in enumerate((["a.jpg", "b.jpg"], [])):
+        row = AdScheduledPost(
+            community_vk_id=-100,
+            text="t",
+            publish_date=MSK_NOW + timedelta(days=i),
+            status="scheduled",
+            vk_postponed_post_id=7 + i,
+            client_id=c.id,
+            price=Decimal("0"),
+            image_names=names,
+        )
+        db_session.add(row)
+        await db_session.flush()
+        await record_published(db_session, row, pinner=no_pin)
+    assert [g[0] for g in got] == [c.id, c.id]
+    assert "wall-100_7" in got[0][1] and got[0][2]["photos"] == ["a.jpg"]
+    assert got[1][2]["photos"] == []

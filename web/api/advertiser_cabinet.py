@@ -17,8 +17,7 @@
 from __future__ import annotations
 
 import logging
-import shutil
-import uuid
+import shutil  # noqa: F401 — тесты патчат ac.shutil.disk_usage (модуль общий)
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -32,18 +31,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.ad_landing import PAYMENTS, build_price_table
 from database.connection import get_db_session
 from database.models import AdClient, AdPayment, AdPublication, AdScheduledPost, Region
-from modules.ad_cabinet import advertiser_link, chat, client_orders, impersonation
+from modules.ad_cabinet import advertiser_link, chat, client_orders, client_photos, impersonation
 from modules.ad_cabinet.balance import compute_balance
 from modules.ad_cabinet.interaction_log import log_interaction
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Лимиты фото: расширения/вес — те же, что у операторских офферных картинок.
-from web.api.ad_cabinet import _ALLOWED_IMG_EXT, _MAX_IMG_BYTES, _msk_to_unix  # noqa: E402
+from web.api.ad_cabinet import _msk_to_unix  # noqa: E402
 
-MAX_PHOTOS_PER_POST = 10
-MAX_PHOTOS_PER_CLIENT = 20
+# Лимиты и хранение фото — одна точка правды с ВК-ботом (modules/ad_cabinet/client_photos).
+_ALLOWED_IMG_EXT = client_photos.ALLOWED_IMG_EXT
+_MAX_IMG_BYTES = client_photos.MAX_IMG_BYTES
+MAX_PHOTOS_PER_POST = client_photos.MAX_PHOTOS_PER_POST
+MAX_PHOTOS_PER_CLIENT = client_photos.MAX_PHOTOS_PER_CLIENT
 
 
 def _current_user(request: Request):
@@ -404,41 +405,12 @@ async def quote(payload: QuoteIn, request: Request, db: AsyncSession = Depends(g
 # ----------------------------------------------------------------------
 
 
-def _upload_root() -> Path:
-    """Корень фото клиентов: ``AD_UPLOAD_DIR`` (прод — вне дерева репо) или
-    ``web/uploads/advertiser`` (разработка). PR 1.8 аудита 2026-09-05."""
-    from config.runtime import ad_upload_dir
-
-    custom = ad_upload_dir()
-    if custom:
-        return Path(custom)
-    return Path(__file__).resolve().parents[1] / "uploads" / "advertiser"
-
-
-def _client_photo_dir(client_id: int) -> Path:
-    d = _upload_root() / str(int(client_id))
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _fits_disk(size: int) -> bool:
-    """Останется ли после записи ``size`` байт не меньше пола свободного места.
-
-    Диск недоступен для замера → считаем, что влезает (как в архиве Радара):
-    защита от переполнения, а не от сбоя statvfs.
-    """
-    from config.runtime import ad_upload_min_free_bytes
-
-    try:
-        free = shutil.disk_usage(_upload_root()).free
-    except OSError:
-        return True
-    return free - int(size) >= ad_upload_min_free_bytes()
-
-
-def _client_photo_paths(client_id: int) -> List[Path]:
-    d = _client_photo_dir(client_id)
-    return sorted(p for p in d.iterdir() if p.is_file() and p.suffix.lower() in _ALLOWED_IMG_EXT)
+# Тела живут в client_photos (общие с ВК-ботом); имена здесь сохранены — их
+# импортируют ad_crm, photo_retention, intake и патчат тесты.
+_upload_root = client_photos.upload_root
+_client_photo_dir = client_photos.client_photo_dir
+_fits_disk = client_photos.fits_disk
+_client_photo_paths = client_photos.client_photo_paths
 
 
 @router.get("/photos")
@@ -459,19 +431,11 @@ async def upload_photo(
 ):
     _user, client = await _current_client(request, db)
     suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in _ALLOWED_IMG_EXT:
-        raise HTTPException(status_code=400, detail="Только JPG/PNG")
     data = await file.read()
-    if len(data) > _MAX_IMG_BYTES:
-        raise HTTPException(status_code=400, detail="Файл больше 12 МБ")
-    if len(_client_photo_paths(client.id)) >= MAX_PHOTOS_PER_CLIENT:
-        raise HTTPException(
-            status_code=400, detail=f"Лимит {MAX_PHOTOS_PER_CLIENT} фото — удалите лишние"
-        )
-    if not _fits_disk(len(data)):
-        raise HTTPException(status_code=507, detail="На сервере мало места — напишите владельцу")
-    name = f"{uuid.uuid4().hex}{suffix}"
-    (_client_photo_dir(client.id) / name).write_bytes(data)
+    try:
+        name = client_photos.store_client_photo(client.id, data, suffix)
+    except client_photos.PhotoError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
     return {"name": name, "size": len(data)}
 
 
