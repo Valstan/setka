@@ -19,7 +19,7 @@
 | Проект на сервере | `~/SETKA` |
 | Пользователь | `valstan` (как правило) |
 | API (локально на сервере) | `http://127.0.0.1:8000` (наружу — Nginx) |
-| Сервисы systemd | `setka`, `setka-celery-worker`, `setka-celery-beat` |
+| Сервисы systemd | `setka`, `setka-celery-worker`, `setka-celery-beat`, `setka-vk-bot` |
 | Секреты | `/etc/setka/setka.env` (не коммитить) |
 
 Точный **HostName**, **Port** и **IdentityFile** задаются в **локальном** `~/.ssh/config` (у каждого разработчика свой). Пример структуры (без реальных секретов):
@@ -53,7 +53,7 @@ test -f ~/SETKA/main.py && echo OK_SETKA
 
 ```bash
 ssh sarafan "cd ~/SETKA && git status && git pull origin main"
-ssh sarafan "systemctl status setka setka-celery-worker setka-celery-beat --no-pager"
+ssh sarafan "systemctl status setka setka-celery-worker setka-celery-beat setka-vk-bot --no-pager"
 ssh sarafan "curl -sS http://127.0.0.1:8000/api/health/"
 ```
 

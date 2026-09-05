@@ -1924,6 +1924,14 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=27),
         "options": {"expires": 1800, "catchup": False},
     },
+    # Liveness демона ВК-бота (setka-vk-bot): heartbeat пишется демоном после
+    # каждого ответа Long Poll; протух >15 мин → Telegram (cooldown 6 ч). 24/7 —
+    # бот клиентский; минуты не пересекаются с соседними сторожами.
+    "vk-bot-watchdog": {
+        "task": "tasks.vk_bot_tasks.check_vk_bot_heartbeat",
+        "schedule": crontab(minute="3,13,23,33,43,53"),
+        "options": {"expires": 540, "catchup": False},
+    },
     # Авто-снятие рекламных постов по истечении срока (С2, ad-CRM) — 03:30 MSK
     # (после cleanup 03:00 и radar-retention 03:20). Срок опционален.
     "expire-ad-posts-daily": {
@@ -2573,7 +2581,8 @@ app.conf.beat_schedule = {
     # ВК-бот кабинета: Long Poll крутит отдельный демон setka-vk-bot
     # (scripts/vk_bot_daemon.py) — в beat его нет намеренно: воркер на проде
     # однопроцессный, минутный тик давал клиенту минуту ожидания на каждый шаг.
-    # Задача tasks.vk_bot_tasks.poll_sarafan_vk_bot оставлена для ручного тика.
+    # Задача tasks.vk_bot_tasks.poll_sarafan_vk_bot оставлена для ручного тика;
+    # за живостью демона следит vk-bot-watchdog (выше, рядом с ad-repost-watchdog).
     # Ретенция ленты радара: элементы старше 30 дней (RADAR_ITEMS_RETENTION_DAYS)
     # удаляются ночью в 03:20 (после cleanup-daily в 03:00). Сохранёнки —
     # снимки, не страдают (FK SET NULL).
