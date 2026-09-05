@@ -385,7 +385,7 @@ async def quote(payload: QuoteIn, request: Request, db: AsyncSession = Depends(g
         return {**base, "blocked": state["block_reason"]}
     pkg = state["package"]
     if pkg is not None:
-        left = max(0, int(pkg.posts_total or 0) - int(pkg.posts_used or 0))
+        left = pkgs.remaining(pkg)  # безлимит — без квоты (Этап 2)
         return {
             "n": len(targets),
             "price": 0,

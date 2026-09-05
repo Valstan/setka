@@ -324,6 +324,10 @@
                 }
                 if (q.package) {
                     $('np-price').textContent = '0 ₽';
+                    if (q.package.unlimited) {
+                        $('np-price-note').textContent = '♾ в счёт безлимита до ' + fmtDate(q.package.period_end) + ' (1 пост в сутки в каждом сообществе)';
+                        return;
+                    }
                     $('np-price-note').textContent = q.over_limit
                         ? '⚠️ в пакете осталось ' + q.package.posts_left + ' постов — выберите меньше районов'
                         : '🎁 в счёт пакета (осталось ' + q.package.posts_left + ' из ' + q.package.posts_total + ')';

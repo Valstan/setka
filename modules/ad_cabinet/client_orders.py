@@ -42,6 +42,8 @@ TRUST_AFTER_POSTS = TRUST_AFTER_ORDERS  # обратная совместимо�
 # Лимиты клиентского флоу (анти-флуд; VK-отложка вмещает ~150 постов на группу).
 TEXT_MAX = int(os.getenv("AD_CLIENT_TEXT_MAX", "4000"))
 MAX_ACTIVE_POSTS = int(os.getenv("AD_CLIENT_MAX_ACTIVE_POSTS", "30"))
+# Безлимит (Этап 2): 38 сообществ × 30 дней — потолок незавершённых постов выше.
+MAX_ACTIVE_POSTS_UNLIMITED = int(os.getenv("AD_CLIENT_MAX_ACTIVE_POSTS_UNLIMITED", "500"))
 MAX_ORDERS_PER_DAY = int(os.getenv("AD_CLIENT_MAX_ORDERS_PER_DAY", "5"))
 
 # «Опубликовать сразу» = та же отложка на ближайшее будущее: один пайплайн,
@@ -189,9 +191,18 @@ async def check_client_limits(session, client: AdClient, *, now_utc: datetime) -
             )
         )
     ).scalar_one()
-    if active >= MAX_ACTIVE_POSTS:
+    from modules.ad_cabinet import packages as _pkgs
+
+    cap = (
+        MAX_ACTIVE_POSTS_UNLIMITED
+        if await _pkgs.has_unlimited(
+            session, client.id, today=(now_utc + timedelta(hours=3)).date()
+        )
+        else MAX_ACTIVE_POSTS
+    )
+    if active >= cap:
         raise OrderError(
-            f"Достигнут лимит незавершённых постов ({MAX_ACTIVE_POSTS}) — "
+            f"Достигнут лимит незавершённых постов ({cap}) — "
             "дождитесь публикации или отмените лишние"
         )
     day_ago = now_utc - timedelta(days=1)
@@ -302,7 +313,7 @@ async def submit_order(
         raise OrderError(state["block_reason"])
     package = state["package"]
     if package is not None:
-        left = max(0, int(package.posts_total or 0) - int(package.posts_used or 0))
+        left = pkgs.remaining(package)  # безлимит — без квоты (Этап 2)
         if len(targets) > left:
             raise OrderError(
                 f"В пакете осталось {left} постов, а районов выбрано {len(targets)} — "

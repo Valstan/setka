@@ -1134,7 +1134,12 @@ class AdClientPackage(Base):
             "kind": self.kind,
             "posts_total": int(self.posts_total or 0),
             "posts_used": int(self.posts_used or 0),
-            "posts_left": max(0, int(self.posts_total or 0) - int(self.posts_used or 0)),
+            "posts_left": (
+                None
+                if self.kind == "unlimited"
+                else max(0, int(self.posts_total or 0) - int(self.posts_used or 0))
+            ),
+            "unlimited": self.kind == "unlimited",
             "price": float(self.price) if self.price is not None else 0.0,
             "period_start": self.period_start.isoformat() if self.period_start else None,
             "period_end": self.period_end.isoformat() if self.period_end else None,
