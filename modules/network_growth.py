@@ -44,6 +44,8 @@ from calendar import monthrange
 from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from utils.text_utils import plural_ru  # noqa: F401 — историческое имя, импортируют отсюда
+
 # Окна верхней плашки: (ключ, сколько дней назад, заголовок).
 # «Полгода» = 180 дней; когда история короче, заголовок заменяется на
 # «за всё время (с <дата>)» — см. ``_window``.
@@ -85,17 +87,6 @@ _MONTHS_GENITIVE = (
     "ноября",
     "декабря",
 )
-
-
-def plural_ru(n: int, one: str, few: str, many: str) -> str:
-    """Русская форма числительного: 1 день / 2 дня / 5 дней."""
-    n = abs(int(n))
-    mod10, mod100 = n % 10, n % 100
-    if mod10 == 1 and mod100 != 11:
-        return one
-    if 2 <= mod10 <= 4 and not 10 <= mod100 < 20:
-        return few
-    return many
 
 
 def format_day_ru(day: date) -> str:
