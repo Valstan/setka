@@ -282,7 +282,11 @@ async def balance_text(session, client: AdClient) -> str:
     if sched:
         lines.append(f"Запланировано: {len(sched)} пост(ов)")
     pkg = state.get("package")
-    if pkg is not None:
+    if pkg is not None and pkg.kind == "unlimited":
+        lines.append(
+            f"Безлимит до {pkg.period_end:%d.%m.%Y}: до 1 поста в сутки в каждом сообществе"
+        )
+    elif pkg is not None:
         left = max(0, int(pkg.posts_total or 0) - int(pkg.posts_used or 0))
         lines.append(f"Пакет: осталось {left} из {pkg.posts_total} постов")
     if state.get("block_reason"):

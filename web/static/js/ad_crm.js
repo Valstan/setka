@@ -2059,7 +2059,7 @@ async function ownerChatPoll(reset) {
 
 // ---------------------- Пакеты клиента (заказ владельца 2026-08-26) --------
 
-const PKG_KIND_NAMES = { free_promo: '🎁 акция', prepaid: '💳 предоплата', postpaid: '📆 постоплата' };
+const PKG_KIND_NAMES = { free_promo: '🎁 акция', prepaid: '💳 предоплата', postpaid: '📆 постоплата', unlimited: '♾ безлимит' };
 
 async function loadClientPackages(clientId) {
     const box = document.getElementById('chat-client-packages');
@@ -2077,7 +2077,10 @@ async function loadClientPackages(clientId) {
                 p.period_end ? `<a href="#" onclick="pkgExtend(${p.id}, ${clientId}); return false;">продлить</a>` : '',
                 `<a href="#" class="text-danger" onclick="pkgDeactivate(${p.id}, ${clientId}); return false;">закрыть</a>`,
             ].filter(Boolean).join(' · ');
-            return `<span class="d-block">${kind}: <b>${p.posts_left}/${p.posts_total}</b> постов` +
+            const quota = p.unlimited
+                ? `<b>использовано ${p.posts_used}</b>, 1 пост/сутки в каждом сообществе${p.period_end ? '' : ' · период с даты оплаты'}`
+                : `<b>${p.posts_left}/${p.posts_total}</b> постов`;
+            return `<span class="d-block">${kind}: ${quota}` +
                 `${p.price ? ' · ' + fmtMoney(p.price) : ''}${period}${paid}${site} — ${actions}</span>`;
         });
         const block = data.block_reason
@@ -2085,6 +2088,7 @@ async function loadClientPackages(clientId) {
         box.innerHTML = block + rows.join('') +
             `<span class="d-block mt-1">` +
             `<a href="#" onclick="pkgGivePromo(${clientId}); return false;">🎁 выдать акцию (3 поста бесплатно)</a> · ` +
+            `<a href="#" onclick="pkgUnlimited(${clientId}); return false;">♾ безлимит 30 дней (5000 ₽)</a> · ` +
             `<a href="#" onclick="pkgCreate(${clientId}); return false;">+ пакет</a></span>`;
     } catch (e) { box.textContent = ''; }
 }
@@ -2095,6 +2099,19 @@ async function pkgGivePromo(clientId) {
         await apiClient.request(`/ad-crm/clients/${clientId}/packages`, {
             method: 'POST',
             body: JSON.stringify({ kind: 'free_promo', posts_total: 3, site_ad: site, note: 'акция «бесплатная реклама местным»' }),
+        });
+    } catch (e) { alert(e.message); }
+    loadClientPackages(clientId);
+}
+
+async function pkgUnlimited(clientId) {
+    const price = parseFloat(prompt('Безлимит на 30 дней: цена, ₽', '5000') || '0');
+    if (!(price >= 0)) return;
+    const paid = confirm('Уже оплачен? ОК — период стартует сегодня; Отмена — откроется после отметки «оплачен».');
+    try {
+        await apiClient.request(`/ad-crm/clients/${clientId}/packages`, {
+            method: 'POST',
+            body: JSON.stringify({ kind: 'unlimited', posts_total: 0, price, paid }),
         });
     } catch (e) { alert(e.message); }
     loadClientPackages(clientId);
