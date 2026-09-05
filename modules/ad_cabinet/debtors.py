@@ -84,8 +84,12 @@ def format_debtor_alert(debtors: List[Dict[str, Any]], threshold_days: int, url:
         f"💰 Должники по рекламе (неоплачено > {threshold_days} дн.): "
         f"<b>{len(debtors)}</b> на <b>{int(total)} ₽</b>"
     ]
+    import html
+
     for d in debtors[:20]:
-        lines.append(f"• {d['name']}: {int(d['amount'])} ₽, ждём {d['oldest_days']} дн.")
+        # parse_mode=HTML: «<» или «&» в имени клиента ломали ВЕСЬ алёрт (аудит 2026-09-05).
+        name = html.escape(str(d["name"] or ""))
+        lines.append(f"• {name}: {int(d['amount'])} ₽, ждём {d['oldest_days']} дн.")
     if len(debtors) > 20:
         lines.append(f"…и ещё {len(debtors) - 20}")
     if url:

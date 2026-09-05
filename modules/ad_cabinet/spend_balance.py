@@ -104,10 +104,13 @@ def format_overspent_alert(items: List[Dict[str, Any]], url: str = "") -> str:
         f"📣 Перерасход пакета (вышло больше оплаченного): "
         f"<b>{len(items)}</b> — напомнить о проплате следующего периода"
     ]
+    import html
+
     for d in items[:20]:
+        # parse_mode=HTML: «<»/«&» в имени ломали весь алёрт (аудит 2026-09-05).
         lines.append(
-            f"• {d['name']}: оплачено {d['paid_units']}, вышло {d['consumed']} "
-            f"(перебор +{d['over']})"
+            f"• {html.escape(str(d['name'] or ''))}: оплачено {d['paid_units']}, "
+            f"вышло {d['consumed']} (перебор +{d['over']})"
         )
     if len(items) > 20:
         lines.append(f"…и ещё {len(items) - 20}")
@@ -142,9 +145,14 @@ async def run_overspend_alert(
             return {"overspent": len(items), "alerted": False}
 
         try:
-            send(format_overspent_alert(items, url))
+            delivered = send(format_overspent_alert(items, url))
         except Exception as e:  # pragma: no cover - защита
             logger.warning("overspend alert send failed: %s", e)
+            return {"overspent": len(items), "alerted": False}
+        # ``send`` вернул False → Telegram не принял (400/сеть): НЕ помечать, иначе
+        # напоминание гаснет на три дня (аудит 2026-09-05). ``None`` (старые
+        # инъекции в тестах) считаем доставкой.
+        if delivered is False:
             return {"overspent": len(items), "alerted": False}
 
         # Пометить отправленным — дедуп до доплаты/кулдауна.

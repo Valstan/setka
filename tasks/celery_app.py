@@ -558,8 +558,13 @@ def _maybe_alert_new_ads(new_total: int, regions: list, source_label: str = "п�
         logger.warning(f"ad cabinet telegram alert failed: {e}")
 
 
-def _send_debtor_alert(text: str) -> None:
-    """Отправить Telegram-напоминание о должниках (best-effort, С4)."""
+def _send_debtor_alert(text: str) -> bool:
+    """Отправить Telegram-напоминание о должниках/перерасходе (С4/И2).
+
+    Возвращает True только при HTTP 200 (аудит 2026-09-05): раньше ответ не
+    проверялся, и перерасход помечался «доставленным» после 400 от Telegram —
+    напоминание гасло на три дня.
+    """
     try:
         from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
         from modules import telegram_http as tg_http
@@ -567,8 +572,8 @@ def _send_debtor_alert(text: str) -> None:
         token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
         chat_id = TELEGRAM_ALERT_CHAT_ID
         if not token or not chat_id:
-            return
-        tg_http.post(
+            return False
+        resp = tg_http.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
             json={
                 "chat_id": chat_id,
@@ -577,8 +582,12 @@ def _send_debtor_alert(text: str) -> None:
                 "disable_web_page_preview": True,
             },
         )
+        if not resp.ok:
+            logger.warning("ad cabinet alert: telegram answered %s", resp.status_code)
+        return bool(resp.ok)
     except Exception as e:
         logger.warning(f"ad debtor telegram alert failed: {e}")
+        return False
 
 
 def _dominant_failure(failures) -> str:

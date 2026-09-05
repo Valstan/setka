@@ -185,20 +185,17 @@ async def onboarding(
     await db.commit()
     await db.refresh(client)
     if was_new:
-        import asyncio
+        # Дедуп ПО КЛИЕНТУ, а не глобальный бюджет 5/час (аудит 2026-09-05: после
+        # рассылки шестой настоящий клиент за час владельцу не показывался).
+        # Скриптовые регистрации всё равно режет ЕСА (инвайт / VK ID). Оба
+        # канала — как у регистрации из ВК-бота.
+        from modules.ad_cabinet.vk_bot import notify as vk_notify
 
-        from modules.ad_cabinet import owner_ping
-
-        # Глобальный бюджет пинга: регистрация публична, и скриптовые аккаунты
-        # не должны превращать Telegram владельца в ленту «новых клиентов»
-        # (should-fix ревью). Событие в таймлайне пишется всегда — бюджет
-        # только на пинг.
-        if await asyncio.to_thread(owner_ping.event_budget_pass, "signup_ping", limit=5, ttl=3600):
-            await asyncio.to_thread(
-                owner_ping.notify_owner,
-                f"🆕 Кабинет: новый клиент «{_telemetry_identity(user, client)}» "
-                "прошёл онбординг — карточка в /ad → Кабинеты",
-            )
+        await vk_notify.notify_owner(
+            f"🆕 Кабинет №{client.id}: новый клиент «{_telemetry_identity(user, client)}» "
+            "прошёл онбординг — карточка в /ad → Кабинеты",
+            dedup_key=f"signup:{client.id}",
+        )
     return {"is_advertiser": True, "client": client.to_dict()}
 
 
@@ -635,10 +632,11 @@ async def create_order(
     )
     await db.commit()
 
-    if result["moderation"]:
-        from modules.ad_cabinet.vk_bot import notify as vk_notify
+    # Пинг владельцу — ВСЕГДА (аудит 2026-09-05): заказ trusted-клиента уходил в
+    # VK молча, а «заявка видна владельцу» ломалась ровно на самых активных.
+    from modules.ad_cabinet.vk_bot import notify as vk_notify
 
-        await vk_notify.notify_owner(_pending_text(client, result))
+    await vk_notify.notify_owner(_pending_text(client, result))
 
     return {
         "order_ref": result["order_ref"],
@@ -650,13 +648,17 @@ async def create_order(
 
 
 def _pending_text(client, result) -> str:
-    """Текст пинга владельцу: новый заказ ждёт модерации (без дедупа — каждый
-    заказ важен). Уходит в Telegram и ВК (``vk_bot.notify.notify_owner``)."""
-    return (
+    """Текст пинга владельцу о заказе (без дедупа — каждый заказ важен). Уходит в
+    Telegram и ВК (``vk_bot.notify.notify_owner``). Различает «ждёт одобрения»
+    (с причиной, если это долговой гейт) и «уже в VK-отложке» (trusted)."""
+    head = (
         f"🛎 Кабинет №{client.id}: клиент «{client.name or client.id}» создал заказ на "
-        f"{len(result['posts'])} районов ({result['price_total']:.0f} ₽) — "
-        "ждёт одобрения в /ad"
+        f"{len(result['posts'])} районов ({result['price_total']:.0f} ₽)"
     )
+    if result.get("moderation"):
+        reason = result.get("debt_hold")
+        return head + " — ждёт одобрения в /ad" + (f" (долг: {reason})" if reason else "")
+    return head + " — trusted, уже в VK-отложке; отменить можно в /ad → Кабинеты"
 
 
 @router.get("/posts")
@@ -799,12 +801,15 @@ async def send_chat(payload: ChatIn, request: Request, db: AsyncSession = Depend
     await db.refresh(row)
     from modules.ad_cabinet.vk_bot import notify as vk_notify
 
-    # Пинг о новом сообщении — не чаще раза в час на клиента: владелец узнаёт,
-    # что клиент написал, не входя в /ad; переписка спамом не льётся. Уходит в
-    # оба канала владельца — Telegram и личка ВК (бот САРАФАНа).
+    # Пинг о новом сообщении — не чаще раза в 10 минут на клиента (аудит
+    # 2026-09-05: час дедупа съедал «алло, я оплатил» после «когда выйдет?»), с
+    # началом текста, чтобы владелец понял, что пришло, не открывая /ad. Уходит
+    # в оба канала владельца — Telegram и личка ВК (бот САРАФАНа).
+    preview = (row.body or "").strip().replace("\n", " ")[:80]
     await vk_notify.notify_owner(
-        f"💬 Кабинет №{client.id}: сообщение от «{client.name or client.id}» — "
+        f"💬 Кабинет №{client.id}: «{client.name or client.id}»: {preview} — "
         "ответить в /ad → Кабинеты",
         dedup_key=f"chat:{client.id}",
+        dedup_ttl=600,
     )
     return row.to_dict()

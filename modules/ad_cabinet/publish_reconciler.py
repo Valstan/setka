@@ -135,6 +135,7 @@ async def record_published(
     await session.flush()
 
     # Деньги ждём (owner: «ожидание оплаты»), только если есть клиент и цена.
+    awaiting_created = False
     if row.client_id and row.price:
         session.add(
             AdPayment(
@@ -145,6 +146,7 @@ async def record_published(
                 note="авто: пост опубликован VK",
             )
         )
+        awaiting_created = True
 
     if row.client_id:
         client = await session.get(AdClient, row.client_id)
@@ -173,6 +175,15 @@ async def record_published(
             row.client_id,
             "📣 Ваш пост вышел: " f"https://vk.com/wall{row.community_vk_id}_{pub.vk_post_id}",
         )
+        # Пинг по деньгам владельцу (аудит 2026-09-05: ни одного денежного пинга
+        # не было): появился awaiting — дедуп на пост.
+        if awaiting_created:
+            await vk_notify.notify_owner(
+                f"💰 Вышел пост №{row.id} клиента №{row.client_id} в {row.community_vk_id} — "
+                f"ждёт оплаты {float(row.price):.0f} ₽ (/ad → Кабинеты)",
+                dedup_key=f"awaiting:{row.id}",
+                dedup_ttl=24 * 3600,
+            )
     return pub
 
 
