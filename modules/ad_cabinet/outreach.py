@@ -14,10 +14,11 @@
 ``author_vk_id``.
 
 Диспетчер (тик раз в 5 минут, 9–21 МСК): лиз строки guarded UPDATE, лимиты
-30/сутки на сообщество и 150/сутки всего, тихие часы, dry-run по умолчанию,
-троттл между отправками, стоп тика по VK 9/14 (пауза DM-канала уже стоит в
-``dm_channel``, кампания запоминает ``paused_until``). 900/901/902 → адресат
-уходит в ручной список. Всё сетевое инъектируется.
+30/сутки на сообщество и 150/сутки всего (глобально), тихие часы, dry-run по
+умолчанию, троттл между отправками. VK 9/14 → пауза DM-канала сообщества в
+``dm_channel`` и стоп тика; кампания хранит только ``paused_reason``, остальные
+сообщества продолжают. 901/902 → адресат уходит в ручной список; 900 (человек
+занёс сообщество в ЧС) → стоп-лист. Всё сетевое инъектируется.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ TEMPLATE_CATEGORY = "ad_offer"
 PROMO_POSTS = 3
 MAX_ATTEMPTS = 3
 HEARTBEAT_KEY = "setka:ad_outreach_last_dispatch"
-MANUAL_CODES = (900, 901, 902)
+MANUAL_CODES = (901, 902)  # 900 — человек занёс сообщество в ЧС: стоп-лист, не ручной список
 CABINET_URL = "https://сарафан.вмалмыже.рф/cabinet"
 SENT_STATUSES = ("sent", "done_manual")
 
@@ -142,7 +143,7 @@ async def build_audience(
                 .where(
                     AdRequest.origin.in_(("inbound_dm", "suggested")),
                     AdRequest.route == "ad_cabinet",  # не-реклама из ЛС идёт route=notifications
-                    AdRequest.status != "deleted",
+                    AdRequest.status.notin_(("deleted", "skipped")),  # решения оператора уважаем
                     # ЛС переоткрывается новым сообщением (updated_at), а detected_at —
                     # первый контакт: считаем по последней активности.
                     or_(
@@ -465,8 +466,17 @@ async def _sent_today(session, day_start_utc: datetime) -> Dict[Optional[int], i
         await session.execute(
             select(AdOutreachRecipient.community_vk_id, func.count())
             .where(
-                AdOutreachRecipient.status == "sent",
-                AdOutreachRecipient.sent_at >= day_start_utc,
+                or_(
+                    and_(
+                        AdOutreachRecipient.status == "sent",
+                        AdOutreachRecipient.sent_at >= day_start_utc,
+                    ),
+                    # Взятые параллельным тиком — тоже занимают лимит.
+                    and_(
+                        AdOutreachRecipient.status == "claimed",
+                        AdOutreachRecipient.claimed_at >= day_start_utc,
+                    ),
+                )
             )
             .group_by(AdOutreachRecipient.community_vk_id)
         )
@@ -705,6 +715,15 @@ async def run_outreach_tick(
                 posted_any = True
                 tick_left -= 1
                 code = res.get("error_code")
+                # Капча без кода (текстом) — тоже 14: пауза канала ставится здесь же.
+                if not code and "captcha" in str(res.get("error") or "").lower():
+                    code = 14
+                    until = dm_channel.note_error(cid, 14)
+                    res = {
+                        **res,
+                        "error_code": 14,
+                        "paused_until": until.isoformat() if until else None,
+                    }
                 if res.get("success"):
                     r.status = "sent"
                     r.sent_at = now_utc
@@ -723,13 +742,27 @@ async def run_outreach_tick(
                         summary=f"Оффер отправлен от сообщества {cid} (кампания #{camp.id})",
                         actor="system",
                     )
+                elif code == 900:
+                    # Человек занёс сообщество в ЧС — в стоп-лист, а не в ручной список.
+                    r.status = "skipped"
+                    r.error_code = 900
+                    r.error = str(res.get("error") or "")[:300]
+                    stats["blacklisted"] = stats.get("blacklisted", 0) + 1
+                    await _mark_request_not_messageable(session, r, now_utc)
+                    if await session.get(AdOutreachBlacklist, int(r.vk_user_id)) is None:
+                        session.add(
+                            AdOutreachBlacklist(vk_user_id=int(r.vk_user_id), reason="VK 900")
+                        )
                 elif code in MANUAL_CODES:
                     r.mode = "manual"
                     r.status = "manual"
                     r.error_code = int(code)
                     r.error = str(res.get("error") or "")[:300]
                     stats["manual"] += 1
-                    await _mark_request_not_messageable(session, r, now_utc)
+                    # Только настоящий ответ VK (allowed=False); синтетический «нет токена»
+                    # заявку не трогает — сообщество, может быть, и умеет писать.
+                    if res.get("allowed") is False:
+                        await _mark_request_not_messageable(session, r, now_utc)
                 elif code in (9, 14) or res.get("paused_until"):
                     # Свежий 9/14: send_message уже поставил паузу DM-канала этого
                     # сообщества (dm_channel); остальные сообщества идут дальше в
@@ -794,6 +827,7 @@ async def build_default_sender() -> Sender:  # pragma: no cover - сеть
             return {
                 "success": False,
                 "error_code": 901,
+                "no_token": True,
                 "error": "нет community-токена сообщества — только с личной страницы",
             }
         return await asyncio.to_thread(

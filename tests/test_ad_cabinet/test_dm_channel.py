@@ -223,3 +223,33 @@ def test_flood_codes_never_disable_tokens():
     import modules.vk_token_router as router
 
     assert not set(dm_channel.PAUSE_CODES) & set(router._AUTO_DISABLE_CODES_HOURS)
+
+
+def test_captcha_exception_maps_to_14_and_pauses(monkeypatch):
+    """vk_api.exceptions.Captcha — не ApiError: без отдельной ветки 14 терялся."""
+    from vk_api.exceptions import Captcha
+
+    from modules.notifications import vk_actions
+
+    class _Api:
+        class messages:  # noqa: N801
+            @staticmethod
+            def send(**params):
+                raise Captcha(None, "sid", None)
+
+    class _VkApi:
+        def __init__(self, token):
+            pass
+
+        def get_api(self):
+            return _Api()
+
+    monkeypatch.setattr(vk_actions, "vk_api", type("M", (), {"VkApi": _VkApi}))
+    monkeypatch.setattr(vk_actions, "_throttle", lambda token, op: None)
+    now = 1_800_000_000.0
+    monkeypatch.setattr(dm_channel.time, "time", lambda: now)
+    res = vk_actions.send_message(
+        group_id=100, peer_id=7, message="x", user_token="U", community_tokens={100: "C"}
+    )
+    assert res["error_code"] == 14 and res.get("paused_until")
+    assert dm_channel.paused_until(100, now=now + 10) is not None

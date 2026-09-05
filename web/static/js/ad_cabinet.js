@@ -1273,7 +1273,9 @@ async function orLoadCampaigns() {
         const rows = data.campaigns || [];
         box.innerHTML = rows.length ? rows.map(c => {
             const k = c.counters || {};
-            const paused = c.paused_until ? ` · пауза до ${fmtDate(c.paused_until)} (${escapeHtml(c.paused_reason || '')})` : '';
+            const paused = c.paused_until
+                ? ` · пауза до ${fmtDate(c.paused_until)} (${escapeHtml(c.paused_reason || '')})`
+                : (c.paused_reason ? ` · последний стоп: ${escapeHtml(c.paused_reason)}` : '');
             const badgeCls = c.status === 'running' ? 'text-bg-success' : 'text-bg-secondary';
             return `<div class="border rounded p-2">
                 <div class="d-flex align-items-center gap-2 flex-wrap">
