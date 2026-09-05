@@ -271,8 +271,12 @@ async def submit_order(
     attachment_builder: AttachmentBuilder,
     msk_to_unix: Callable[[datetime], int],
     now: Optional[datetime] = None,
+    pinned: bool = False,
 ) -> Dict[str, Any]:
     """Создать заказ: N строк отложки, цена сервера, модерационный гейт.
+
+    ``pinned`` — закреп на сутки после выхода (+PIN_PRICE_RUB за сообщество,
+    пакетом и скидками не покрывается; занятое окно закрепа — отказ).
 
     ``trusted`` → сразу в VK-отложку; иначе ``pending`` без единого VK-вызова.
     Commit — на вызывающем.
@@ -306,6 +310,17 @@ async def submit_order(
             "выберите другую дату для этих районов"
         )
 
+    if pinned:
+        from modules.ad_cabinet.pinning import pin_conflicts
+
+        busy_pins = await pin_conflicts(session, targets, when)
+        if busy_pins:
+            names = [n for (_r, gid, n) in targets if gid in busy_pins]
+            raise OrderError(
+                "Закреп на эти сутки уже занят: " + ", ".join(names) + " — выберите другую "
+                "дату или снимите галочку закрепа"
+            )
+
     # Пакеты (решения владельца 2026-08-26): долг/исчерпанный месяц — блок;
     # доступный пакет — заказ ТОЛЬКО в счёт пакета, сверх остатка — отказ.
     state = await pkgs.get_state(session, client.id, today=now.date())
@@ -333,13 +348,19 @@ async def submit_order(
             )
         quote = {"n": len(targets), "price": 0, "package_id": package.id, "kind": package.kind}
         prices = [Decimal("0")] * len(targets)
+        if pinned:  # закреп пакетом не покрывается — платится отдельно
+            from config.ad_landing import PIN_PRICE_RUB
+
+            quote = {**quote, "pinned": True, "pin_price": PIN_PRICE_RUB * len(targets)}
+            quote["price"] = quote["pin_price"]
+            prices = [Decimal(PIN_PRICE_RUB)] * len(targets)
     else:
         # Прайс → скидки клиента → пол (Этап 2, 2026-09-05): та же функция, что
         # у котировки кабинета и бота — клиент платит ровно то, что видел.
         from modules.ad_cabinet.pricing import quote_for_client
 
-        quote = await quote_for_client(session, client.id, len(targets), now_msk=now)
-        prices = price_split(Decimal(quote["price"]), len(targets))
+        quote = await quote_for_client(session, client.id, len(targets), pinned=pinned, now_msk=now)
+        prices = price_split(Decimal(quote["total"]), len(targets))
     order_ref = str(uuid.uuid4())
     # Долговой гейт: trusted с долгом сверх лимита/срока — снова на одобрение.
     debt_reason = (
@@ -363,6 +384,7 @@ async def submit_order(
             status="pending" if not trusted else "draft",
             client_id=client.id,
             price=price,
+            pinned=bool(pinned),
             created_by_user_id=user_id,
             order_ref=order_ref,
             package_id=package.id if package is not None else None,
@@ -384,7 +406,7 @@ async def submit_order(
 
     return {
         "order_ref": order_ref,
-        "price_total": float(quote["price"]),
+        "price_total": float(quote.get("total", quote["price"])),
         "quote": quote,
         "posts": rows,
         "moderation": not trusted,

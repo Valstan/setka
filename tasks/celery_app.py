@@ -979,6 +979,21 @@ def watch_ad_pending():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.unpin_ad_posts")
+def unpin_ad_posts():
+    """Снять закрепы рекламных постов, у которых прошли сутки (Этап 2, PR 2C)."""
+    try:
+        from modules.ad_cabinet.pinning import run_unpin
+
+        result = run_coro(run_unpin())
+        if result.get("due"):
+            logger.info("ad unpin: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"unpin_ad_posts failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.ad_photo_retention")
 def ad_photo_retention():
     """Ретенция фото рекламных клиентов (PR 1.8 аудита 2026-09-05): каталоги
@@ -1864,6 +1879,12 @@ app.conf.beat_schedule = {
     "ad-pending-watch": {
         "task": "tasks.celery_app.watch_ad_pending",
         "schedule": crontab(minute=5, hour="8-23"),
+        "options": {"expires": 1800, "catchup": False},
+    },
+    # Снятие суточных закрепов рекламных постов: раз в час на :50, 8–23 МСК.
+    "unpin-ad-posts": {
+        "task": "tasks.celery_app.unpin_ad_posts",
+        "schedule": crontab(minute=50, hour="8-23"),
         "options": {"expires": 1800, "catchup": False},
     },
     # Ретенция фото кабинета — раз в неделю ночью (данные вне БД, 10-ГБ бокс).
