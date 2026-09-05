@@ -314,10 +314,13 @@ async def record_published(
     if notify and row.client_id and pub.vk_post_id:
         from modules.ad_cabinet.vk_bot import notify as vk_notify
 
+        # С первой картинкой поста (Этап 5): заливка в ЛС до 30 с, реконсилер
+        # поминутный — одного фото достаточно, ссылка ведёт на весь пост.
         await vk_notify.notify_client(
             session,
             row.client_id,
             "📣 Ваш пост вышел: " f"https://vk.com/wall{row.community_vk_id}_{pub.vk_post_id}",
+            photos=list(row.image_names or [])[:1],
         )
         # Пинг по деньгам владельцу (аудит 2026-09-05: ни одного денежного пинга
         # не было): появился awaiting — дедуп на пост.

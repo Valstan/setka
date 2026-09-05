@@ -22,12 +22,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+import time
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Dict, Optional, Sequence, Tuple
 
 import httpx
 
 from database.models import AdClient
 from database.models_extended import RadarUser
+from modules.ad_cabinet import client_photos, vk_photo_upload
 from modules.ad_cabinet.interaction_log import log_interaction
 
 logger = logging.getLogger(__name__)
@@ -42,7 +45,10 @@ NOT_ALLOWED_CODES = (900, 901, 902)
 #: ``kind`` записи журнала об отправленном уведомлении.
 KIND_NOTICE = "vk_notice"
 
-Sender = Callable[[int, str, Optional[str]], Awaitable[Dict[str, Any]]]
+#: ``sender(peer_id, text, keyboard=None, attachment=None)`` → ответ ВК. Четвёртый
+#: аргумент передаётся ТОЛЬКО когда вложение есть — трёхаргументные двойники
+#: (тесты, старые вызовы) продолжают работать.
+Sender = Callable[..., Awaitable[Dict[str, Any]]]
 
 
 # ---------------------------------------------------------------- конфиг
@@ -135,10 +141,81 @@ async def vk_send(
 
 
 def _make_sender(token: str, group_id: int) -> Sender:
-    async def _send(peer_id: int, text: str, keyboard: Optional[str] = None):
-        return await vk_send(token, group_id, peer_id, text, keyboard=keyboard)
+    async def _send(
+        peer_id: int,
+        text: str,
+        keyboard: Optional[str] = None,
+        attachment: Optional[str] = None,
+    ):
+        return await vk_send(
+            token, group_id, peer_id, text, keyboard=keyboard, attachment=attachment
+        )
 
     return _send
+
+
+#: Attachment-строки заливок в ЛС: ``(client_id, имена, peer_id) → (когда, строка)``.
+#: Заказ на 30 районов даёт 30 «Ваш пост вышел» с одним фото в один тик
+#: реконсилера — заливаем один раз, строка после saveMessagesPhoto переиспользуема.
+_ATTACHMENT_CACHE: Dict[Tuple[int, Tuple[str, ...], Optional[int]], Tuple[float, str]] = {}
+ATTACHMENT_CACHE_TTL = 600.0
+
+
+async def upload_client_photos(
+    token: Optional[str],
+    client_id: int,
+    names: Sequence[str],
+    *,
+    peer_id: Optional[int] = None,
+    group_id: Optional[int] = None,
+) -> Optional[str]:
+    """Залить фото клиента из его библиотеки в ЛС → attachment-строка или ``None``.
+
+    Грузим community-токеном отправляющего сообщества (требование
+    ``vk_photo_upload``), не больше ``MAX_MESSAGE_PHOTOS``; пропавшие файлы
+    пропускаем. Канал сообщества на паузе (9/14) — не заливаем вовсе (текст всё
+    равно не уйдёт); заливка идёт через общий лимитер токена и кэшируется на
+    ``ATTACHMENT_CACHE_TTL``. Любая ошибка → ``None``: картинка никогда не
+    блокирует текст.
+    """
+    if not token or not names:
+        return None
+    try:
+        from modules.ad_cabinet import dm_channel
+
+        if group_id and await asyncio.to_thread(dm_channel.paused_until, int(group_id)):
+            return None
+        wanted = {Path(str(n)).name for n in names if n}
+        paths = [p for p in client_photos.client_photo_paths(client_id) if p.name in wanted]
+        paths = paths[: vk_photo_upload.MAX_MESSAGE_PHOTOS]
+        if not paths:
+            return None
+        key = (int(client_id), tuple(p.name for p in paths), int(peer_id) if peer_id else None)
+        now = time.monotonic()
+        hit = _ATTACHMENT_CACHE.get(key)
+        if hit and now - hit[0] < ATTACHMENT_CACHE_TTL:
+            return hit[1]
+        try:
+            from modules.vk_monitor.vk_client import enforce_token_rate_limit
+
+            await asyncio.to_thread(enforce_token_rate_limit, token, "photos.saveMessagesPhoto")
+        except Exception:  # noqa: BLE001 - учёт не роняет заливку
+            logger.debug("vk_bot upload throttle hook failed")
+        import vk_api
+
+        api = vk_api.VkApi(token=token).get_api()
+        images = [p.read_bytes() for p in paths]
+        att = await asyncio.to_thread(
+            vk_photo_upload.upload_offer_images, api, images, peer_id=peer_id
+        )
+        if att:
+            if len(_ATTACHMENT_CACHE) > 200:
+                _ATTACHMENT_CACHE.clear()
+            _ATTACHMENT_CACHE[key] = (now, att)
+        return att or None
+    except Exception:  # noqa: BLE001 - фото не блокирует текст
+        logger.warning("vk_bot upload_client_photos failed (client %s)", client_id, exc_info=True)
+        return None
 
 
 def send_outcome(resp: Dict[str, Any]) -> Tuple[bool, Optional[int]]:
@@ -177,6 +254,8 @@ async def notify_client(
     keyboard: Optional[str] = None,
     sender: Optional[Sender] = None,
     log: bool = True,
+    attachment: Optional[str] = None,
+    photos: Optional[Sequence[str]] = None,
 ) -> bool:
     """Написать клиенту в личку ВК от имени САРАФАНа. ``True`` — доставлено.
 
@@ -184,6 +263,10 @@ async def notify_client(
     разрешил сообщения сообществу. Успешная отправка пишется в журнал кабинета
     (``vk_notice``, actor=system), чтобы таймлайн показывал, что клиент
     получил. Без commit — коммитит вызывающий.
+
+    ``attachment`` — готовая attachment-строка ВК; ``photos`` — имена файлов из
+    библиотеки клиента, их зальём community-токеном (Этап 5). Не залилось —
+    уходит текст без картинки.
     """
     try:
         client = await session.get(AdClient, client_id)
@@ -194,13 +277,25 @@ async def notify_client(
         if peer_id is None:
             return False
 
+        token: Optional[str] = None
+        group_id: Optional[int] = None
         if sender is None:
             conf = await community()
             if conf is None:
                 return False
             sender = _make_sender(conf[1], conf[0])
+            group_id, token = int(conf[0]), conf[1]
+        if photos and attachment is None:
+            attachment = await upload_client_photos(
+                token, client_id, photos, peer_id=peer_id, group_id=group_id
+            )
 
-        ok, code = send_outcome(await sender(peer_id, text, keyboard))
+        resp = (
+            await sender(peer_id, text, keyboard, attachment)
+            if attachment
+            else await sender(peer_id, text, keyboard)
+        )
+        ok, code = send_outcome(resp)
         if not ok:
             level = logging.DEBUG if code in NOT_ALLOWED_CODES else logging.WARNING
             logger.log(level, "vk_bot: client %s not notified (vk error %s)", client_id, code)
@@ -210,7 +305,8 @@ async def notify_client(
                 session,
                 kind=KIND_NOTICE,
                 client_id=client_id,
-                summary=f"ВК-уведомление клиенту: {text[:120]}",
+                summary=f"ВК-уведомление клиенту: {text[:120]}"
+                + (" (с фото)" if attachment else ""),
                 actor="system",
             )
         return True
@@ -280,6 +376,7 @@ __all__ = [
     "community",
     "owner_vk_ids",
     "vk_send",
+    "upload_client_photos",
     "send_outcome",
     "client_peer_id",
     "notify_client",

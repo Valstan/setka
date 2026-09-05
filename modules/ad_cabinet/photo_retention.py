@@ -64,9 +64,9 @@ async def run_photo_retention(
 
         session_factory = AsyncSessionLocal
     if root is None:
-        from web.api.advertiser_cabinet import _upload_root
+        from modules.ad_cabinet.client_photos import upload_root
 
-        root = _upload_root()
+        root = upload_root()
     now = now or datetime.utcnow()
     keep_days = KEEP_DAYS if keep_days is None else keep_days
     cutoff = (now - timedelta(days=keep_days)).timestamp()

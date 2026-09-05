@@ -474,3 +474,380 @@ async def test_free_text_outside_step_goes_to_chat_for_known_client(db_session):
     assert "Передал владельцу" in replies[0][0]
     msg = (await db_session.execute(select(AdChatMessage))).scalar_one()
     assert msg.sender == "client" and "700" in msg.body
+
+
+# ───────── фото (Этап 5) ─────────
+
+PHOTO_ATT = {
+    "type": "photo",
+    "photo": {
+        "sizes": [
+            {"type": "m", "width": 130, "url": "u-small"},
+            {"type": "x", "width": 604, "url": "u-big"},
+        ]
+    },
+}
+
+
+def test_extract_incoming_keeps_photo_attachments():
+    inc = intake.extract_incoming(
+        {
+            "type": "message_new",
+            "object": {"message": {"from_id": 7, "text": "", "attachments": [PHOTO_ATT, "мусор"]}},
+        }
+    )
+    assert len(inc.attachments) == 1 and inc.attachments[0]["type"] == "photo"
+
+
+@pytest.fixture
+def photo_store(monkeypatch, tmp_path):
+    monkeypatch.setenv("AD_UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setenv("AD_UPLOAD_MIN_FREE_BYTES", "0")
+    return tmp_path
+
+
+def _fetch_ok(seen):
+    async def fetch(url):
+        seen.append(url)
+        return b"\xff\xd8\xff"
+
+    return fetch
+
+
+def _photo_msg(text="", n=1):
+    return dialog.Incoming(peer_id=500, text=text, attachments=[PHOTO_ATT] * n)
+
+
+@pytest.mark.asyncio
+async def test_order_with_photos_reaches_submit(db_session, photo_store):
+    await _region(db_session, "Арбаж", -1)
+    await _region(db_session, "Уржум", -2)
+    s = _Submit()
+    seen = []
+    fetch = _fetch_ok(seen)
+    kw = dict(submit=s, now_msk=NOW, photo_fetch=fetch)
+    _r, state, _ = await dialog.handle(db_session, _btn("order"), None, submit=s, now_msk=NOW)
+    # текст + фото одним сообщением
+    replies, state, _ = await dialog.handle(db_session, _photo_msg("Продам дрова"), state, **kw)
+    assert seen == ["u-big"] and state["step"] == "order_regions"
+    assert len(state["draft"]["photos"]) == 1 and "Фото добавлено: 1" in replies[0][0]
+    client = (await db_session.execute(select(AdClient))).scalar_one()
+    assert (photo_store / str(client.id) / state["draft"]["photos"][0]).exists()
+    # фото отдельным сообщением на шаге районов — остаёмся на шаге, фото копятся
+    replies, state, _ = await dialog.handle(db_session, _photo_msg(), state, **kw)
+    assert state["step"] == "order_regions" and len(state["draft"]["photos"]) == 2
+    assert "всего 2" in replies[0][0] and "Арбаж" in replies[0][1]
+    _r, state, _ = await dialog.handle(db_session, _msg("1, 2"), state, **kw)
+    replies, state, _ = await dialog.handle(db_session, _btn("now"), state, **kw)
+    assert state["step"] == "order_confirm" and "фото: 2" in replies[0][0]
+    _r, state, events = await dialog.handle(db_session, _btn("confirm"), state, **kw)
+    assert state is None and "order" in events
+    photos = s.calls[0][1]["photos"]
+    assert len(photos) == 2 and all(p.endswith(".jpg") for p in photos)
+    assert intake.order_kwargs(s.calls[0][1])["image_paths"] == photos
+
+
+@pytest.mark.asyncio
+async def test_photo_only_post_via_done(db_session, photo_store):
+    await _region(db_session, "А", -1)
+    s = _Submit()
+    kw = dict(submit=s, now_msk=NOW, photo_fetch=_fetch_ok([]))
+    _r, state, _ = await dialog.handle(db_session, _btn("order"), None, submit=s, now_msk=NOW)
+    replies, state, _ = await dialog.handle(db_session, _photo_msg(), state, **kw)
+    assert state["step"] == "order_text" and "Готово" in replies[0][0]
+    assert replies[0][1] == dialog.TEXT_DONE_KEYBOARD
+    _r, state, _ = await dialog.handle(db_session, _btn("rgdone"), state, **kw)
+    assert state["step"] == "order_regions" and state["draft"]["text"] == ""
+    # без фото и без текста — как раньше
+    _r, st2, _ = await dialog.handle(db_session, _btn("order"), None, submit=s, now_msk=NOW)
+    replies, st2, _ = await dialog.handle(db_session, _msg(""), st2, **kw)
+    assert st2["step"] == "order_text" and "Текст пустой" in replies[0][0]
+    replies, st2, _ = await dialog.handle(db_session, _btn("rgdone"), st2, **kw)
+    assert st2["step"] == "order_text" and "Текст пустой" in replies[0][0]
+
+
+@pytest.mark.asyncio
+async def test_photo_errors_do_not_break_dialog(db_session, photo_store):
+    s = _Submit()
+    state = {"step": "order_text", "draft": {}}
+
+    async def bad_fetch(url):
+        return None
+
+    replies, state, _ = await dialog.handle(
+        db_session, _photo_msg(), state, submit=s, now_msk=NOW, photo_fetch=bad_fetch
+    )
+    assert state["step"] == "order_text" and "не удалось скачать" in replies[0][0].lower()
+    assert state["draft"].get("photos", []) == []
+    # лимит библиотеки: 20 файлов лежат и все заняты активными постами (вытеснять
+    # нечего) — текст лимита, шаг сохранён, исключений нет
+    from database.models import AdScheduledPost
+
+    client = (await db_session.execute(select(AdClient))).scalar_one()
+    d = photo_store / str(client.id)
+    d.mkdir(exist_ok=True)
+    names = [f"{i:02d}.jpg" for i in range(20)]
+    for n in names:
+        (d / n).write_bytes(b"x")
+    db_session.add(
+        AdScheduledPost(
+            client_id=client.id,
+            community_vk_id=-1,
+            text="t",
+            publish_date=NOW,
+            status="pending",
+            image_names=names,
+        )
+    )
+    await db_session.flush()
+    replies, state, _ = await dialog.handle(
+        db_session, _photo_msg(), state, submit=s, now_msk=NOW, photo_fetch=_fetch_ok([])
+    )
+    assert state["step"] == "order_text" and "Лимит 20" in replies[0][0]
+    # без photo_fetch вложения игнорируются — поведение прежнее
+    replies, state, _ = await dialog.handle(db_session, _photo_msg(), state, submit=s, now_msk=NOW)
+    assert "Текст пустой" in replies[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cancel_removes_draft_photos(db_session, photo_store):
+    s = _Submit()
+    _r, state, _ = await dialog.handle(db_session, _btn("order"), None, submit=s, now_msk=NOW)
+    _r, state, _ = await dialog.handle(
+        db_session, _photo_msg(), state, submit=s, now_msk=NOW, photo_fetch=_fetch_ok([])
+    )
+    client = (await db_session.execute(select(AdClient))).scalar_one()
+    path = photo_store / str(client.id) / state["draft"]["photos"][0]
+    assert path.exists()
+    replies, state, _ = await dialog.handle(
+        db_session, _btn("cancel"), state, submit=s, now_msk=NOW
+    )
+    assert state is None and not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_confirm_texts_for_photos_and_failed_posts(db_session):
+    from types import SimpleNamespace
+
+    await _region(db_session, "А", -1)
+    st = {
+        "step": "order_confirm",
+        "draft": {"text": "t", "region_ids": [1], "publish_now": True, "photos": ["a.jpg"]},
+    }
+    s = _Submit(error=client_orders.OrderError("Пакет исчерпан"))
+    replies, _state, _ = await dialog.handle(db_session, _btn("confirm"), st, submit=s, now_msk=NOW)
+    assert "Фото остались" in replies[0][0]
+    failed = SimpleNamespace(status="failed", error_message="нет user-токена")
+    s = _Submit(result={"order_ref": "r", "price_total": 0, "posts": [failed], "moderation": False})
+    replies, _state, events = await dialog.handle(
+        db_session, _btn("confirm"), st, submit=s, now_msk=NOW
+    )
+    assert "ВК не принял" in replies[0][0] and "нет user-токена" in replies[0][0]
+    assert "order_direct" in events
+    s = _Submit(
+        result={
+            "order_ref": "r",
+            "price_total": 350,
+            "posts": [failed, SimpleNamespace(status="scheduled")],
+            "moderation": False,
+        }
+    )
+    replies, _state, _ = await dialog.handle(db_session, _btn("confirm"), st, submit=s, now_msk=NOW)
+    assert "1 постов в очереди" in replies[0][0] and "1 ВК не принял" in replies[0][0]
+
+
+@pytest.mark.asyncio
+async def test_photo_outside_order_gets_hint_not_chat(db_session):
+    s = _Submit()
+    await dialog.handle(db_session, _msg("привет"), None, submit=s, now_msk=NOW)  # карточка есть
+    replies, state, events = await dialog.handle(
+        db_session, _photo_msg(), None, submit=s, now_msk=NOW, photo_fetch=_fetch_ok([])
+    )
+    assert state is None and "Заказать пост" in replies[0][0] and "chat" not in events
+
+
+@pytest.mark.asyncio
+async def test_handle_one_passes_photo_fetch(db_session, photo_store, monkeypatch):
+    async def fake_owner(text, **kw):
+        return {}
+
+    monkeypatch.setattr("modules.ad_cabinet.vk_bot.notify.notify_owner", fake_owner)
+    seen, sent = [], []
+    states = {500: {"step": "order_text", "draft": {}}}
+
+    async def sender(peer_id, text, kb=None):
+        sent.append(text)
+        return {"response": 1}
+
+    class _Factory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return db_session
+
+        async def __aexit__(self, *a):
+            return False
+
+    await intake.handle_one(
+        _photo_msg(),
+        session_factory=_Factory(),
+        state_get=states.get,
+        state_set=lambda p, s: states.__setitem__(p, s),
+        submit=_Submit(),
+        name_fetch=None,
+        sender=sender,
+        photo_fetch=_fetch_ok(seen),
+    )
+    assert seen == ["u-big"] and states[500]["step"] == "order_text"
+    assert len(states[500]["draft"]["photos"]) == 1 and "Фото добавлено" in sent[0]
+
+
+# ───────── фото: находки ревью PR-1 ─────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step", ["order_regions", "order_when", "order_confirm"])
+async def test_photo_with_caption_on_later_steps_keeps_note(db_session, photo_store, step):
+    """Фото с подписью на шагах районов/даты/подтверждения: файл лёг, заметка в ответе."""
+    r = await _region(db_session, "А", -1)
+    s = _Submit()
+    draft = {"text": "t", "regions": [[r.id, "А"]], "region_ids": [r.id], "page": 0}
+    if step == "order_confirm":
+        draft["publish_now"] = True
+    caption = {"order_regions": "1", "order_when": "25.09 14:30", "order_confirm": "ок"}[step]
+    replies, state, _ = await dialog.handle(
+        db_session,
+        _photo_msg(caption),
+        {"step": step, "draft": draft},
+        submit=s,
+        now_msk=NOW,
+        photo_fetch=_fetch_ok([]),
+    )
+    assert "Фото добавлено: 1" in replies[0][0]
+    assert len(state["draft"]["photos"]) == 1
+    expected_next = {
+        "order_regions": "order_when",
+        "order_when": "order_confirm",
+        "order_confirm": "order_confirm",
+    }[step]
+    assert state["step"] == expected_next
+    # неудачная закачка с подписью — предупреждение не теряется
+    replies, state, _ = await dialog.handle(
+        db_session,
+        _photo_msg("ерунда"),
+        {"step": "order_when", "draft": dict(draft)},
+        submit=s,
+        now_msk=NOW,
+        photo_fetch=_none_fetch,
+    )
+    assert "не удалось скачать" in replies[0][0].lower() and "Не понял дату" in replies[0][0]
+
+
+async def _none_fetch(url):
+    return None
+
+
+@pytest.mark.asyncio
+async def test_collect_photos_never_raises(db_session, photo_store, monkeypatch):
+    from modules.ad_cabinet import client_photos
+
+    s = _Submit()
+    base = {"step": "order_text", "draft": {}}
+
+    async def boom(url):
+        raise RuntimeError("net")
+
+    replies, state, _ = await dialog.handle(
+        db_session, _photo_msg(), base, submit=s, now_msk=NOW, photo_fetch=boom
+    )
+    assert state["step"] == "order_text" and "не удалось скачать" in replies[0][0].lower()
+
+    def store_boom(*a, **k):
+        raise PermissionError("ro")
+
+    monkeypatch.setattr(client_photos, "store_client_photo", store_boom)
+    replies, state, _ = await dialog.handle(
+        db_session, _photo_msg(), base, submit=s, now_msk=NOW, photo_fetch=_fetch_ok([])
+    )
+    assert state["step"] == "order_text" and "не удалось сохранить" in replies[0][0]
+    monkeypatch.undo()
+
+    full = {"step": "order_text", "draft": {"photos": [f"{i}.jpg" for i in range(10)]}}
+    replies, state, _ = await dialog.handle(
+        db_session, _photo_msg(), full, submit=s, now_msk=NOW, photo_fetch=_fetch_ok([])
+    )
+    assert "уже 10 фото" in replies[0][0] and len(state["draft"]["photos"]) == 10
+
+    nine = {"step": "order_text", "draft": {"photos": [f"{i}.jpg" for i in range(9)]}}
+    replies, state, _ = await dialog.handle(
+        db_session, _photo_msg(n=2), nine, submit=s, now_msk=NOW, photo_fetch=_fetch_ok([])
+    )
+    assert "Фото добавлено: 1" in replies[0][0] and "Лишние не взял" in replies[0][0]
+    assert len(state["draft"]["photos"]) == 10
+
+
+@pytest.mark.asyncio
+async def test_cancel_keeps_photo_used_by_cabinet_post(db_session, photo_store):
+    """Файл черновика, уже выбранный в активный пост из кабинета, отмена не удаляет."""
+    from database.models import AdScheduledPost
+
+    s = _Submit()
+    _r, state, _ = await dialog.handle(db_session, _btn("order"), None, submit=s, now_msk=NOW)
+    _r, state, _ = await dialog.handle(
+        db_session, _photo_msg(n=2), state, submit=s, now_msk=NOW, photo_fetch=_fetch_ok([])
+    )
+    client = (await db_session.execute(select(AdClient))).scalar_one()
+    used, loose = state["draft"]["photos"]
+    db_session.add(
+        AdScheduledPost(
+            client_id=client.id,
+            community_vk_id=-1,
+            text="из кабинета",
+            publish_date=NOW,
+            status="pending",
+            image_names=[used],
+        )
+    )
+    await db_session.flush()
+    _r, state, _ = await dialog.handle(db_session, _btn("cancel"), state, submit=s, now_msk=NOW)
+    d = photo_store / str(client.id)
+    assert (d / used).exists() and not (d / loose).exists()
+
+
+@pytest.mark.asyncio
+async def test_full_library_evicts_oldest_unreferenced(db_session, photo_store):
+    """Клиент только из бота: 20 файлов от вышедших постов — самый старый вытесняется."""
+    import os
+    import time
+
+    from database.models import AdScheduledPost
+
+    s = _Submit()
+    _r, state, _ = await dialog.handle(db_session, _btn("order"), None, submit=s, now_msk=NOW)
+    client = (await db_session.execute(select(AdClient))).scalar_one()
+    d = photo_store / str(client.id)
+    d.mkdir(exist_ok=True)
+    base = time.time() - 10_000
+    for i in range(20):
+        p = d / f"{i:02d}.jpg"
+        p.write_bytes(b"x")
+        os.utime(p, (base + i, base + i))
+    # 00.jpg — самый старый, но занят активным постом: вытесняется 01.jpg
+    db_session.add(
+        AdScheduledPost(
+            client_id=client.id,
+            community_vk_id=-1,
+            text="t",
+            publish_date=NOW,
+            status="scheduled",
+            image_names=["00.jpg"],
+        )
+    )
+    await db_session.flush()
+    replies, state, _ = await dialog.handle(
+        db_session, _photo_msg(), state, submit=s, now_msk=NOW, photo_fetch=_fetch_ok([])
+    )
+    assert "Фото добавлено: 1" in replies[0][0] and len(state["draft"]["photos"]) == 1
+    names = {p.name for p in d.iterdir()}
+    assert "00.jpg" in names and "01.jpg" not in names and len(names) == 20

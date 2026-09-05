@@ -302,3 +302,32 @@ async def test_send_one_marks_failed_when_photos_missing(db_session):
     assert post.status == "failed" and "фото не найдены" in post.error_message
     assert pub.calls == []
     assert (await db_session.execute(select(Region))).scalars().all()  # sanity: фикстуры на месте
+
+
+@pytest.mark.asyncio
+async def test_submit_order_accepts_photo_only_post(db_session):
+    """Пост из одних фото (бот, «✅ Готово» без текста) проходит; совсем пустой — нет."""
+    ids = await _seed_regions(db_session, 1)
+    client = await _seed_client(db_session, trusted=True)
+    pub = FakePublisher()
+
+    def builder(gid, names):
+        return ["photo-1_1"]
+
+    common = dict(
+        client=client,
+        user_id=1,
+        region_ids=ids,
+        publish_at=None,
+        publish_now=True,
+        publisher_factory=_factory(pub),
+        attachment_builder=builder,
+        msk_to_unix=_msk_to_unix,
+        now=MSK_NOW,
+    )
+    with pytest.raises(client_orders.OrderError):
+        await client_orders.submit_order(db_session, text="", image_paths=[], **common)
+    res = await client_orders.submit_order(db_session, text="", image_paths=["a.jpg"], **common)
+    post = res["posts"][0]
+    assert post.status == "scheduled" and post.text == "" and post.image_names == ["a.jpg"]
+    assert post.attachments == "photo-1_1"
