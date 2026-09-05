@@ -800,6 +800,15 @@ async function spLoadOptions() {
     }
     const badge = document.getElementById('sp-mode-badge');
     if (badge) badge.textContent = _spMode[_spOptions.mode] || _spOptions.mode || '';
+    const hint = document.getElementById('sp-live-hint');
+    if (hint) {
+        const lv = _spOptions.live || {};
+        hint.innerHTML = lv.error
+            ? `<span class="text-warning">⚠️ ${lv.error.includes('токен') ? escapeHtml(lv.error) + ' (проверьте /tokens)' : 'VK не ответил (' + escapeHtml(lv.error) + ')'} — показаны заявки из базы</span>`
+            : `Предложка VK сейчас: <b>${lv.fetched || 0}</b> пост(ов)` +
+              (lv.inserted ? `, новых заявок заведено: <b>${lv.inserted}</b>` : '') +
+              (lv.revived ? `, вернулось из «исчез»: <b>${lv.revived}</b>` : '');
+    }
     spRenderDups();
     spRenderCards();
 }

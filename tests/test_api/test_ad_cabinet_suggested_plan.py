@@ -89,6 +89,10 @@ async def test_options_returns_region_requests_dups_and_mode(monkeypatch):
         "all_dup_candidates",
         AsyncMock(return_value=[{"community_vk_id": -168170215, "name": "Уржум", "default": True}]),
     )
+    # Живая предложка — отдельная функция; здесь она «ничего не нашла».
+    monkeypatch.setattr(sp, "build_live_checker", AsyncMock(return_value=None))
+    sync = AsyncMock(return_value={"fetched": 0, "inserted": 0, "revived": 0, "error": None})
+    monkeypatch.setattr(sp, "sync_live_suggests", sync)
     monkeypatch.setenv("AD_SUGGESTED_VK_POSTPONE", "1")
     out = await api.suggested_plan_options(community_vk_id=158787639, db=db)
     assert out["region"]["community_vk_id"] == -158787639
@@ -96,6 +100,24 @@ async def test_options_returns_region_requests_dups_and_mode(monkeypatch):
     assert out["dup_candidates"][0]["default"] is True
     assert out["floor_rub"] == sp.PLACEMENT_FLOOR_RUB
     assert out["mode"] == "vk_postpone"
+    assert out["live"]["fetched"] == 0 and sync.await_count == 1
+    db.commit.assert_not_awaited()  # ничего не завели — коммитить нечего
+
+
+async def test_options_commits_when_live_sync_inserted(monkeypatch):
+    """Живая предложка завела заявку → commit до выборки, live в ответе."""
+    db = _db()
+    db.execute = AsyncMock(side_effect=[_scalar_one(_region()), _scalars_all([_request()])])
+    monkeypatch.setattr(sp, "all_dup_candidates", AsyncMock(return_value=[]))
+    monkeypatch.setattr(sp, "build_live_checker", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        sp,
+        "sync_live_suggests",
+        AsyncMock(return_value={"fetched": 2, "inserted": 2, "revived": 0, "error": None}),
+    )
+    out = await api.suggested_plan_options(community_vk_id=158787639, db=db)
+    assert out["live"]["inserted"] == 2
+    db.commit.assert_awaited_once()
 
 
 async def test_options_404_for_unknown_community():
