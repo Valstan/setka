@@ -7,6 +7,11 @@
 ``published``; строки предложки/репостов (``kind``) помечаются. Длинный список
 режется под лимит сообщения ВК и заканчивается ссылкой на кабинет.
 
+Окно выборки идёт **по границе заказа, а не по строкам**: сначала дешёвым
+запросом (id, order_ref) находим последние заказы, потом читаем строки только
+их. Иначе заказ на всю сеть, разрезанный лимитом строк, печатал бы заниженные
+число сообществ и сумму как настоящие — и без единого признака обрезки.
+
 ``publish_date`` — МСК naive, печатается как есть; ``created_at`` — UTC naive,
 в заголовке заказа сдвигается на +3 ч.
 """
@@ -15,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import select
 
@@ -24,6 +29,8 @@ from utils.text_utils import plural_ru
 
 MSG_MAX = 4000  # запас до лимита ВК 4096 (как dialog.VK_MSG_MAX)
 HEAD = "📋 Мои посты"
+#: Сколько строк смотрим, чтобы посчитать заказы клиента (две колонки, дёшево).
+SCAN_LIMIT = 2000
 CABINET_URL = "https://сарафан.вмалмыже.рф/cabinet"
 STATUS_RU = {
     "pending": "на одобрении",
@@ -56,57 +63,125 @@ class PostView:
     created_at: Optional[datetime]
 
 
-async def list_for_client(session, client_id: int, *, limit_rows: int = 60) -> List[PostView]:
-    """Последние ``limit_rows`` строк отложки клиента (новые первыми) с именами
-    районов и ссылками на вышедшие посты. Один запрос по постам, один — по
-    публикациям."""
-    rows = (
-        await session.execute(
-            select(AdScheduledPost, Region.name)
-            .outerjoin(Region, Region.id == AdScheduledPost.region_id)
-            .where(AdScheduledPost.client_id == int(client_id))
-            .order_by(AdScheduledPost.id.desc())
-            .limit(int(limit_rows))
-        )
-    ).all()
-    ids = [int(r[0].id) for r in rows]
-    pubs: Dict[int, AdPublication] = {}
-    if ids:
-        for p in (
+def order_key(post_id: int, order_ref: Optional[str]) -> str:
+    """Ключ группировки: заказ целиком либо одиночная строка. Чистая."""
+    return order_ref or f"#{int(post_id)}"
+
+
+async def list_for_client(
+    session, client_id: int, *, max_orders: int = 10, scan_limit: int = SCAN_LIMIT
+) -> Tuple[List[PostView], int, bool]:
+    """``(строки последних заказов, сколько заказов не показано, точен ли счёт)``.
+
+    Выбираются ТОЛЬКО целые заказы: половина заказа на экране печаталась бы как
+    полный заказ с заниженными числом сообществ и суммой. ``scan_limit``
+    ограничивает дешёвый скан ключей; упёрлись в него — счёт скрытых неточен
+    (клиенту показываем «N+»).
+    """
+    keys = (
+        (
             await session.execute(
-                select(AdPublication)
-                .where(AdPublication.scheduled_post_id.in_(ids))
-                .order_by(AdPublication.id.asc())
+                select(AdScheduledPost.id, AdScheduledPost.order_ref)
+                .where(AdScheduledPost.client_id == int(client_id))
+                .order_by(AdScheduledPost.id.desc())
+                .limit(int(scan_limit))
             )
-        ).scalars():
-            if p.scheduled_post_id is not None:
-                pubs.setdefault(int(p.scheduled_post_id), p)
+        )
+        .tuples()
+        .all()
+    )
+    if not keys:
+        return [], 0, True
+    order: List[str] = []
+    ids_by_key: Dict[str, List[int]] = {}
+    for rid, ref in keys:
+        key = order_key(rid, ref)
+        if key not in ids_by_key:
+            ids_by_key[key] = []
+            order.append(key)
+        ids_by_key[key].append(int(rid))
+    shown = order[: max(0, int(max_orders))]
+    hidden = len(order) - len(shown)
+    exact = len(keys) < int(scan_limit)
+    ids = [i for k in shown for i in ids_by_key[k]]
+    if not ids:
+        return [], hidden, exact
+    rows = (
+        (
+            await session.execute(
+                select(
+                    AdScheduledPost.id,
+                    AdScheduledPost.order_ref,
+                    AdScheduledPost.community_vk_id,
+                    AdScheduledPost.publish_date,
+                    AdScheduledPost.status,
+                    AdScheduledPost.kind,
+                    AdScheduledPost.price,
+                    AdScheduledPost.moderation_comment,
+                    AdScheduledPost.error_message,
+                    AdScheduledPost.image_names,
+                    AdScheduledPost.vk_postponed_post_id,
+                    AdScheduledPost.created_at,
+                    Region.name,
+                )
+                .outerjoin(Region, Region.id == AdScheduledPost.region_id)
+                .where(AdScheduledPost.id.in_(ids))
+                .order_by(AdScheduledPost.id.desc())
+            )
+        )
+        .tuples()
+        .all()
+    )
+    pubs: Dict[int, AdPublication] = {}
+    for p in (
+        await session.execute(
+            select(AdPublication)
+            .where(AdPublication.scheduled_post_id.in_(ids))
+            .order_by(AdPublication.id.asc())
+        )
+    ).scalars():
+        if p.scheduled_post_id is not None:
+            pubs.setdefault(int(p.scheduled_post_id), p)
     out: List[PostView] = []
-    for post, region_name in rows:
-        pub = pubs.get(int(post.id))
+    for (
+        rid,
+        ref,
+        gid,
+        publish_date,
+        status,
+        kind,
+        price,
+        moderation_comment,
+        error_message,
+        image_names,
+        postponed_id,
+        created_at,
+        region_name,
+    ) in rows:
+        pub = pubs.get(int(rid))
         url = None
         if pub is not None and pub.vk_post_id:
             url = f"https://vk.com/wall{pub.community_vk_id}_{pub.vk_post_id}"
-        elif post.status == "published" and post.vk_postponed_post_id:
-            url = f"https://vk.com/wall{post.community_vk_id}_{post.vk_postponed_post_id}"
+        elif status == "published" and postponed_id:
+            url = f"https://vk.com/wall{gid}_{postponed_id}"
         out.append(
             PostView(
-                id=int(post.id),
-                order_ref=post.order_ref,
-                region_name=region_name or f"сообщество {post.community_vk_id}",
-                community_vk_id=int(post.community_vk_id),
-                publish_date=post.publish_date,
-                status=str(post.status or ""),
-                kind=str(getattr(post, "kind", None) or "post"),
-                price=float(post.price or 0),
-                moderation_comment=post.moderation_comment,
-                error_message=post.error_message,
-                image_count=len(post.image_names or []),
+                id=int(rid),
+                order_ref=ref,
+                region_name=region_name or f"сообщество {gid}",
+                community_vk_id=int(gid),
+                publish_date=publish_date,
+                status=str(status or ""),
+                kind=str(kind or "post"),
+                price=float(price or 0),
+                moderation_comment=moderation_comment,
+                error_message=error_message,
+                image_count=len(image_names or []),
                 vk_post_url=url,
-                created_at=post.created_at,
+                created_at=created_at,
             )
         )
-    return out
+    return out, hidden, exact
 
 
 def _money(v: float) -> str:
@@ -118,7 +193,7 @@ def _group(views: Sequence[PostView]) -> List[List[PostView]]:
     groups: List[List[PostView]] = []
     index: Dict[str, int] = {}
     for v in views:
-        key = v.order_ref or f"#{v.id}"
+        key = order_key(v.id, v.order_ref)
         if key not in index:
             index[key] = len(groups)
             groups.append([])
@@ -153,16 +228,28 @@ def render_group(group: Sequence[PostView]) -> str:
     return "\n".join(lines)
 
 
-def render(views: Sequence[PostView], *, max_orders: int = 10, msg_max: int = MSG_MAX) -> List[str]:
-    """Экран «Мои посты» — список сообщений под лимит ВК. Чистая."""
+def render(
+    views: Sequence[PostView],
+    *,
+    hidden: int = 0,
+    hidden_exact: bool = True,
+    max_orders: int = 10,
+    msg_max: int = MSG_MAX,
+) -> List[str]:
+    """Экран «Мои посты» — список сообщений под лимит ВК. Чистая.
+
+    ``hidden`` — сколько заказов клиента не попало в выборку (считает
+    ``list_for_client`` по всей истории, а не по окну).
+    """
     if not views:
         return ["Постов пока нет — нажмите «🛒 Заказать пост»."]
     groups = _group(views)
     blocks = [render_group(g) for g in groups[:max_orders]]
-    hidden = len(groups) - len(blocks)
+    hidden = max(0, int(hidden)) + (len(groups) - len(blocks))
     if hidden > 0:
         word = plural_ru(hidden, "заказ", "заказа", "заказов")
-        blocks.append(f"…и ещё {hidden} {word} — полный список в кабинете: {CABINET_URL}")
+        count = f"{hidden}" if hidden_exact else f"{hidden}+"
+        blocks.append(f"…и ещё {count} {word} — полный список в кабинете: {CABINET_URL}")
     tail = f"\n…список обрезан, целиком — в кабинете: {CABINET_URL}"
     chunks: List[str] = []
     cur = HEAD
@@ -188,4 +275,12 @@ def render(views: Sequence[PostView], *, max_orders: int = 10, msg_max: int = MS
     return chunks or [HEAD]
 
 
-__all__ = ["PostView", "list_for_client", "render", "render_group", "STATUS_RU", "KIND_RU"]
+__all__ = [
+    "PostView",
+    "list_for_client",
+    "order_key",
+    "render",
+    "render_group",
+    "STATUS_RU",
+    "KIND_RU",
+]

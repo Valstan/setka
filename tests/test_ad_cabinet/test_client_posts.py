@@ -73,7 +73,8 @@ async def test_list_and_render_group_by_order(db_session):
     )
     await db_session.flush()
 
-    views = await cp.list_for_client(db_session, c.id)
+    views, hidden, exact = await cp.list_for_client(db_session, c.id)
+    assert hidden == 0 and exact is True
     assert [v.id for v in views] == [p5.id, p4.id, p3.id, p2.id, p1.id]
     by_id = {v.id: v for v in views}
     assert by_id[p1.id].vk_post_url == "https://vk.com/wall-1_77"  # публикация первична
@@ -141,6 +142,60 @@ async def test_menu_button_shows_posts(db_session):
     assert state is None and replies[0][1] == dialog.MAIN_KEYBOARD
     assert "Мои посты" in replies[0][0] and "на одобрении" in replies[0][0]
     assert dialog.Incoming(peer_id=1, text="📋 Мои посты").command() == "posts"
+
+
+@pytest.mark.asyncio
+async def test_window_never_cuts_an_order_in_half(db_session):
+    """Заказ на всю сеть не показывается половиной: окно берётся по заказам.
+
+    Иначе шапка печатала бы «22 сообщества, 2 895 ₽» у заказа на 38 сообществ
+    и 5 000 ₽ — заниженные число и сумму, да ещё без признака обрезки.
+    """
+    c = await _client(db_session)
+    regions = [await _region(db_session, f"Район {i:02d}", -(100 + i)) for i in range(38)]
+    for order, day in (("A", 0), ("B", 1)):
+        db_session.add_all(
+            [_post(c, r, day=day, order_ref=order, price=Decimal("100")) for r in regions]
+        )
+    await db_session.flush()
+
+    views, hidden, exact = await cp.list_for_client(db_session, c.id, max_orders=1)
+    assert len(views) == 38 and {v.order_ref for v in views} == {"B"}
+    assert hidden == 1 and exact is True
+    text = "\n".join(cp.render(views, hidden=hidden, hidden_exact=exact))
+    assert "38 сообществ, 3 800 ₽" in text and "22 сообщества" not in text
+    assert "…и ещё 1 заказ —" in text and cp.CABINET_URL in text
+
+    # обе группы влезают — скрытых нет
+    views, hidden, _ = await cp.list_for_client(db_session, c.id, max_orders=10)
+    assert len(views) == 76 and hidden == 0
+
+
+@pytest.mark.asyncio
+async def test_hidden_count_is_honest_and_marked_when_scan_capped(db_session):
+    c = await _client(db_session)
+    a = await _region(db_session, "Арбаж", -1)
+    db_session.add_all([_post(c, a, day=i, order_ref=f"o{i}") for i in range(15)])
+    await db_session.flush()
+
+    views, hidden, exact = await cp.list_for_client(db_session, c.id)
+    assert len(views) == 10 and hidden == 5 and exact is True
+    assert "…и ещё 5 заказов" in "\n".join(cp.render(views, hidden=hidden))
+
+    # скан упёрся в потолок — счёт помечается как неточный
+    views, hidden, exact = await cp.list_for_client(db_session, c.id, max_orders=2, scan_limit=6)
+    assert exact is False and hidden == 4
+    assert "…и ещё 4+ заказа" in "\n".join(cp.render(views, hidden=hidden, hidden_exact=exact))
+
+
+@pytest.mark.asyncio
+async def test_rows_without_order_ref_are_their_own_orders(db_session):
+    c = await _client(db_session)
+    a = await _region(db_session, "Арбаж", -1)
+    db_session.add_all([_post(c, a, day=i) for i in range(3)])
+    await db_session.flush()
+    views, hidden, _ = await cp.list_for_client(db_session, c.id, max_orders=2)
+    assert len(views) == 2 and hidden == 1
 
 
 # ───────── находки ревью PR-3 ─────────

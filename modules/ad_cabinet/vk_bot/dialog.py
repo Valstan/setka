@@ -745,8 +745,9 @@ async def handle(
         st = await pkgs.get_state(session, client.id, today=now_msk.date())
         return [(prices_text(discount=disc, package=st["package"]), MAIN_KEYBOARD)], None, events
     if cmd == CMD_POSTS:
-        views = await client_posts.list_for_client(session, client.id)
-        return [(chunk, MAIN_KEYBOARD) for chunk in client_posts.render(views)], None, events
+        views, hidden, exact = await client_posts.list_for_client(session, client.id)
+        chunks = client_posts.render(views, hidden=hidden, hidden_exact=exact)
+        return [(chunk, MAIN_KEYBOARD) for chunk in chunks], None, events
     if cmd == CMD_PAY:
         return [(payments_text(), MAIN_KEYBOARD)], None, events
     if cmd == CMD_PAID:
@@ -950,11 +951,18 @@ async def handle(
         from modules.ad_cabinet.pricing import quote_for_client
 
         n = len(draft.get("region_ids") or [])
-        when_day = (
-            now_msk.date()
-            if draft.get("publish_now")
-            else datetime.fromisoformat(draft["publish_at"]).date()
-        )
+        # Дату считаем ровно тем же, чем сервер (у «Сейчас» это +3 минуты, и в
+        # последние минуты суток день публикации уже следующий), а окно
+        # планирования проверяем здесь, а не сюрпризом после «Подтвердить».
+        try:
+            when_dt = client_orders.validate_publish_at(
+                datetime.fromisoformat(draft["publish_at"]) if draft.get("publish_at") else None,
+                publish_now=bool(draft.get("publish_now")),
+                now=now_msk,
+            )
+        except client_orders.OrderError as e:
+            return _noted(note, [(f"{e}", WHEN_KEYBOARD)]), state, events
+        when_day = when_dt.date()
         # Зеркало /api/advertiser/quote и submit_order: пакет, долг и период
         # видны ДО «Подтвердить», а не сюрпризом после.
         st = await pkgs.get_state(session, client.id, today=now_msk.date())
@@ -999,6 +1007,36 @@ async def handle(
                     ],
                 ),
                 state,
+                events,
+            )
+        # Анти-спам сервера (1 пост клиента в сообщество в день) — тот же гейт
+        # здесь: иначе бот покажет цену и «Подтвердить», а submit_order отвергнет
+        # весь заказ, и черновик с текстом пропадёт.
+        try:
+            targets = await client_orders.resolve_targets(
+                session, [int(x) for x in draft.get("region_ids") or []]
+            )
+            busy = await pkgs.busy_days(session, client.id, targets, when_day)
+        except client_orders.OrderError as e:
+            return _noted(note, [(f"Не получилось: {e}", MAIN_KEYBOARD)]), None, events
+        if busy:
+            names = [t[2] for t in targets if t[1] in set(busy)]
+            regions = [tuple(r) for r in draft.get("regions") or []]
+            chosen = [int(x) for x in draft.get("region_ids") or []]
+            return (
+                _noted(
+                    note,
+                    [
+                        (
+                            "На этот день у вас уже есть пост в: "
+                            + ", ".join(names)
+                            + " — не больше одного рекламного поста в сообщество в день. "
+                            "Выберите другую дату или снимите эти районы.",
+                            regions_keyboard(regions, chosen, int(draft.get("page") or 0)),
+                        )
+                    ],
+                ),
+                {"step": STEP_ORDER_REGIONS, "draft": draft},
                 events,
             )
         q = await quote_for_client(session, client.id, n, now_msk=now_msk)
