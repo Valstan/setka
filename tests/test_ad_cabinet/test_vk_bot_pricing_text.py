@@ -114,7 +114,8 @@ def test_quote_text_variants():
         "discount": {"month": 5, "next_step_posts": 1},
     }
     t = dialog.quote_text(q, n=2)
-    assert "630 ₽" in t and "скидка 10 %" in t and "ещё 1 оплаченных" in t and "или в счёт" not in t
+    assert "630 ₽" in t and "скидка 10 %" in t and "ещё 1 оплаченный пост" in t
+    assert "или в счёт" not in t
     floor = dialog.quote_text(
         {
             "price": 400,

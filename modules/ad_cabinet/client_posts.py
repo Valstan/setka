@@ -20,8 +20,10 @@ from typing import Dict, List, Optional, Sequence
 from sqlalchemy import select
 
 from database.models import AdPublication, AdScheduledPost, Region
+from utils.text_utils import plural_ru
 
 MSG_MAX = 4000  # запас до лимита ВК 4096 (как dialog.VK_MSG_MAX)
+HEAD = "📋 Мои посты"
 CABINET_URL = "https://сарафан.вмалмыже.рф/cabinet"
 STATUS_RU = {
     "pending": "на одобрении",
@@ -132,7 +134,7 @@ def render_group(group: Sequence[PostView]) -> str:
     n = len(group)
     total = sum(v.price for v in group)
     money = _money(total) if total else "в счёт пакета"
-    word = "сообщество" if n == 1 else ("сообщества" if 2 <= n <= 4 else "сообществ")
+    word = plural_ru(n, "сообщество", "сообщества", "сообществ")
     lines = [f"Заказ{head_date}: {n} {word}, {money}"]
     for v in group:
         date = f"{v.publish_date:%d.%m %H:%M}" if v.publish_date else "—"
@@ -159,18 +161,31 @@ def render(views: Sequence[PostView], *, max_orders: int = 10, msg_max: int = MS
     blocks = [render_group(g) for g in groups[:max_orders]]
     hidden = len(groups) - len(blocks)
     if hidden > 0:
-        blocks.append(f"…и ещё {hidden} заказов — полный список в кабинете: {CABINET_URL}")
+        word = plural_ru(hidden, "заказ", "заказа", "заказов")
+        blocks.append(f"…и ещё {hidden} {word} — полный список в кабинете: {CABINET_URL}")
+    tail = f"\n…список обрезан, целиком — в кабинете: {CABINET_URL}"
     chunks: List[str] = []
-    cur = "📋 Мои посты"
+    cur = HEAD
     for b in blocks:
         piece = "\n\n" + b
-        if len(cur) + len(piece) > msg_max:
-            chunks.append(cur)
-            cur = b if len(b) <= msg_max else b[: msg_max - 1] + "…"
+        if len(cur) + len(piece) <= msg_max:
+            cur += piece
             continue
-        cur += piece
-    chunks.append(cur)
-    return chunks
+        # Шапку не отправляем отдельным пустым сообщением — она едет с блоком.
+        prefix = HEAD + "\n\n" if cur == HEAD else ""
+        if cur != HEAD:
+            chunks.append(cur)
+        room = msg_max - len(prefix)
+        if len(b) <= room:
+            cur = prefix + b
+            continue
+        # Блок сам длиннее сообщения: режем и честно говорим, что обрезали.
+        cut = max(0, room - len(tail))
+        chunks.append(prefix + b[:cut].rstrip() + tail)
+        cur = HEAD if not prefix else ""
+    if cur and cur != HEAD:
+        chunks.append(cur)
+    return chunks or [HEAD]
 
 
 __all__ = ["PostView", "list_for_client", "render", "render_group", "STATUS_RU", "KIND_RU"]

@@ -43,6 +43,7 @@ from database.models_extended import RadarUser
 from modules.ad_cabinet import chat, client_orders, client_photos, client_posts, photo_retention
 from modules.ad_cabinet.balance import compute_balance
 from modules.ad_cabinet.interaction_log import log_interaction
+from utils.text_utils import plural_ru
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +295,8 @@ def quote_text(q: Dict[str, Any], *, n: int, package=None, left: int = 0) -> str
     d = q.get("discount") or {}
     nxt = int(d.get("next_step_posts") or 0)
     if nxt and int(d.get("month") or 0) < DISCOUNT_MONTH_CAP_PCT:
-        line += f"\n— до следующих {DISCOUNT_STEP_PCT} % скидки — ещё {nxt} оплаченных постов"
+        word = plural_ru(nxt, "оплаченный пост", "оплаченных поста", "оплаченных постов")
+        line += f"\n— до следующих {DISCOUNT_STEP_PCT} % скидки — ещё {nxt} {word}"
     return line
 
 
@@ -417,7 +419,8 @@ def prices_text(*, discount: Optional[Dict[str, int]] = None, package=None) -> s
             lines.append(f"\nОплачено постов в этом месяце: {paid_month}.")
         nxt = int(discount.get("next_step_posts") or 0)
         if nxt and int(discount.get("month") or 0) < DISCOUNT_MONTH_CAP_PCT:
-            lines.append(f"До следующих {DISCOUNT_STEP_PCT} % — ещё {nxt} оплаченных постов.")
+            word = plural_ru(nxt, "оплаченный пост", "оплаченных поста", "оплаченных постов")
+            lines.append(f"До следующих {DISCOUNT_STEP_PCT} % — ещё {nxt} {word}.")
     lines.append("\nЦена считается автоматически при заказе: выберите районы — увидите сумму.")
     return "\n".join(lines)
 

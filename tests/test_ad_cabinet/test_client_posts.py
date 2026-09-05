@@ -141,3 +141,60 @@ async def test_menu_button_shows_posts(db_session):
     assert state is None and replies[0][1] == dialog.MAIN_KEYBOARD
     assert "Мои посты" in replies[0][0] and "на одобрении" in replies[0][0]
     assert dialog.Incoming(peer_id=1, text="📋 Мои посты").command() == "posts"
+
+
+# ───────── находки ревью PR-3 ─────────
+
+
+def _views(n, *, order_ref="o1", comment=None, status="scheduled", name="Район"):
+    return [
+        cp.PostView(
+            id=i,
+            order_ref=order_ref,
+            region_name=f"{name} {i}",
+            community_vk_id=-1,
+            publish_date=NOW,
+            status=status,
+            kind="post",
+            price=350.0,
+            moderation_comment=comment,
+            error_message=None,
+            image_count=0,
+            vk_post_url=None,
+            created_at=NOW,
+        )
+        for i in range(n)
+    ]
+
+
+def test_huge_single_order_never_sends_bare_header():
+    """Отказ всего заказа на 38 районов с причиной: шапка едет с блоком, обрыв — честный."""
+    comment = "Уберите номер телефона из текста и оформите как объявление, а не как новость"
+    views = _views(38, status="rejected", comment=comment, name="Кирово-Чепецкий район")
+    chunks = cp.render(views)
+    assert all(len(ch) <= cp.MSG_MAX for ch in chunks)
+    assert chunks[0].startswith(cp.HEAD) and chunks[0].strip() != cp.HEAD
+    joined = "\n".join(chunks)
+    assert "список обрезан" in joined and cp.CABINET_URL in joined
+
+
+def test_plural_forms_in_header_and_tail():
+    for n, word in (
+        (1, "1 сообщество"),
+        (2, "2 сообщества"),
+        (21, "21 сообщество"),
+        (25, "25 сообществ"),
+    ):
+        assert word in cp.render_group(_views(n)), (n, word)
+    many = []
+    for i in range(11):
+        many += _views(1, order_ref=f"o{i}")
+    tail = cp.render(many)[-1]
+    assert "…и ещё 1 заказ —" in tail
+
+
+def test_small_block_after_overflow_keeps_header_once():
+    views = _views(38, status="rejected", comment="причина " * 20) + _views(1, order_ref="o2")
+    chunks = cp.render(views)
+    assert sum(ch.count(cp.HEAD) for ch in chunks) == 1
+    assert any("Район 0" in ch for ch in chunks[-1:]) or len(chunks) >= 2
