@@ -979,6 +979,21 @@ def watch_ad_pending():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.task(name="tasks.celery_app.dispatch_ad_outreach")
+def dispatch_ad_outreach():
+    """Тик рассылки рекламного оффера (Этап 4): лимиты, тихие часы, dry-run, стоп по 9/14."""
+    try:
+        from modules.ad_cabinet.outreach import run_outreach_tick
+
+        result = run_coro(run_outreach_tick(alert=_send_debtor_alert))
+        if result.get("sent") or result.get("dry_run") or result.get("stopped"):
+            logger.info("ad outreach: %s", result)
+        return {"success": True, "timestamp": datetime.now().isoformat(), **result}
+    except Exception as e:
+        logger.error(f"dispatch_ad_outreach failed: {e}", exc_info=True)
+        return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+
 @app.task(name="tasks.celery_app.unpin_ad_posts")
 def unpin_ad_posts():
     """Снять закрепы рекламных постов, у которых прошли сутки (Этап 2, PR 2C)."""
@@ -1880,6 +1895,12 @@ app.conf.beat_schedule = {
         "task": "tasks.celery_app.watch_ad_pending",
         "schedule": crontab(minute=5, hour="8-23"),
         "options": {"expires": 1800, "catchup": False},
+    },
+    # Рассылка оффера: раз в 5 минут 9–20 МСК (тихие часы кампании — внутри тика).
+    "ad-outreach-dispatch": {
+        "task": "tasks.celery_app.dispatch_ad_outreach",
+        "schedule": crontab(minute="*/5", hour="9-20"),
+        "options": {"expires": 240, "catchup": False},
     },
     # Снятие суточных закрепов рекламных постов: раз в час на :50, 8–23 МСК.
     "unpin-ad-posts": {

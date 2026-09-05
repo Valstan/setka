@@ -36,6 +36,7 @@ from modules.module_activity_notifier import notify_system_startup  # noqa: E402
 from web.api import (  # noqa: E402
     ad_cabinet,
     ad_crm,
+    ad_outreach,
     advertiser_cabinet,
     auth,
     broadcast,
@@ -192,6 +193,7 @@ app.include_router(filtration.router, prefix="/api/filtration", tags=["Filtratio
 app.include_router(templates_api.router, prefix="/api/templates", tags=["Message Templates"])
 app.include_router(ad_cabinet.router, prefix="/api/ad-cabinet", tags=["Ad Cabinet"])
 app.include_router(ad_crm.router, prefix="/api/ad-crm", tags=["Ad CRM"])
+app.include_router(ad_outreach.router, prefix="/api/ad-outreach", tags=["Ad Outreach"])
 # Кабинет рекламодателя (клиентская половина ad-CRM): зона роли advertiser,
 # изоляция «только своё» — фильтр client_id из сессии в каждом хендлере.
 app.include_router(advertiser_cabinet.router, prefix="/api/advertiser", tags=["Advertiser Cabinet"])
