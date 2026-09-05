@@ -1320,8 +1320,7 @@ async function orAction(id, action, payload) {
         if (action === 'enroll') {
             alert(`Набрано: ${res.added} (авто ${res.auto}, вручную ${res.manual}); уже были: ${res.existing}; кабинетов заведено ${res.clients_created}, промо-пакетов ${res.promos_created}`);
         } else if (action === 'dispatch') {
-            const tail = (res.skipped ? ' · пропуск: ' + res.skipped : '') + (res.stopped ? ' · остановлен по VK 9/14' : '');
-            alert(`Тик: отправлено ${res.sent || 0}, сухих ${res.dry_run || 0}, вручную ${res.manual || 0}, ошибок ${res.failed || 0}${tail}`);
+            alert(res.queued ? 'Тик поставлен воркеру в очередь: обновите счётчики через минуту.' : 'Тик выполнен.');
         }
         await orLoadCampaigns();
     } catch (e) { alert(e.message); }

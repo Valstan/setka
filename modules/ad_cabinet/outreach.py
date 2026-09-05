@@ -268,6 +268,7 @@ async def ensure_cabinets(
     now_utc = now_utc or datetime.utcnow()
     stats = {"clients_created": 0, "promos_created": 0}
     region_ids: Dict[int, Optional[int]] = {}
+    requests: Dict[int, AdRequest] = {}
     req_ids = [int(r.ad_request_id) for r in recipients if r.ad_request_id]
     if req_ids:
         for ar in (
@@ -276,6 +277,7 @@ async def ensure_cabinets(
             pid = person_id(ar)
             if pid is not None:
                 region_ids[pid] = ar.region_id
+                requests[pid] = ar
     for r in recipients:
         client = (
             await session.execute(
@@ -314,11 +316,18 @@ async def ensure_cabinets(
                     actor="system",
                 )
         r.client_id = client.id
+        ar = requests.get(int(r.vk_user_id))
+        if ar is not None and ar.client_id is None:
+            ar.client_id = client.id  # заявка → кабинет, как в upsert-from-request
+        # Промо не даём, если у клиента уже есть активный пакет или промо когда-либо было.
         has_pkg = (
             await session.execute(
                 select(func.count(AdClientPackage.id)).where(
                     AdClientPackage.client_id == client.id,
-                    AdClientPackage.is_active.is_(True),
+                    or_(
+                        AdClientPackage.is_active.is_(True),
+                        AdClientPackage.kind == "free_promo",
+                    ),
                 )
             )
         ).scalar_one()

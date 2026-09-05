@@ -980,12 +980,15 @@ def watch_ad_pending():
 
 
 @app.task(name="tasks.celery_app.dispatch_ad_outreach")
-def dispatch_ad_outreach():
-    """Тик рассылки рекламного оффера (Этап 4): лимиты, тихие часы, dry-run, стоп по 9/14."""
+def dispatch_ad_outreach(campaign_id=None):
+    """Тик рассылки рекламного оффера (Этап 4): лимиты, тихие часы, dry-run, стоп по 9/14.
+
+    ``campaign_id`` — тик по одной кампании (кнопка «Тик сейчас» в /ad ставит
+    задачу сюда же, чтобы не гнать отправку внутри web-запроса)."""
     try:
         from modules.ad_cabinet.outreach import run_outreach_tick
 
-        result = run_coro(run_outreach_tick(alert=_send_debtor_alert))
+        result = run_coro(run_outreach_tick(alert=_send_debtor_alert, campaign_id=campaign_id))
         if result.get("sent") or result.get("dry_run") or result.get("stopped"):
             logger.info("ad outreach: %s", result)
         return {"success": True, "timestamp": datetime.now().isoformat(), **result}

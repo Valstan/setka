@@ -166,11 +166,22 @@ async def stop(campaign_id: int, db: AsyncSession = Depends(get_db_session)):
 
 @router.post("/campaigns/{campaign_id}/dispatch")
 async def dispatch_now(campaign_id: int, db: AsyncSession = Depends(get_db_session)):
-    """Тик руками — тот же код, что у beat (полезно для пилота на 10 адресатах)."""
+    """Тик руками: ставим задачу воркеру (тот же код, что у beat).
+
+    Не гоняем тик внутри web-запроса: два одновременных входа (кнопка + beat)
+    читали бы лимиты по разу и могли их превысить, а троттл между отправками
+    держал бы event loop. Воркер — один, задачи идут по очереди.
+    """
     c = await _campaign(db, campaign_id)
     if c.status != "running":
         raise HTTPException(status_code=409, detail="кампания не запущена")
-    return await outreach.run_outreach_tick(campaign_id=c.id)
+    try:
+        from tasks.celery_app import dispatch_ad_outreach
+
+        res = dispatch_ad_outreach.apply_async(kwargs={"campaign_id": c.id}, expires=240)
+        return {"queued": True, "task_id": getattr(res, "id", None), "campaign_id": c.id}
+    except Exception as e:  # noqa: BLE001 - брокер недоступен
+        raise HTTPException(status_code=503, detail=f"очередь недоступна: {e}")
 
 
 @router.get("/campaigns/{campaign_id}/preview")

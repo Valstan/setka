@@ -476,3 +476,26 @@ async def test_dry_run_and_channel_pause_do_not_burn_attempts(db_session):
     assert r.status == "dry_run" and r.attempts == 0
     await db_session.refresh(camp)
     assert camp.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_enroll_links_request_to_cabinet_and_skips_promo_for_paid_clients(db_session):
+    db_session.add(_req(1, origin="inbound_dm", person=100, name="Анна"))
+    db_session.add(_req(2, origin="suggested", person=300, can_message=None))
+    paid = AdClient(id=9, author_vk_id=300, name="Платный")
+    db_session.add(paid)
+    db_session.add(
+        AdClientPackage(
+            client_id=9, kind="prepaid", posts_total=5, price=1500, paid_at=NOW, is_active=True
+        )
+    )
+    camp = AdOutreachCampaign(title="К", months_back=6)
+    db_session.add(camp)
+    await db_session.flush()
+    st = await outreach.enroll_campaign(db_session, camp, now_utc=NOW)
+    assert st["promos_created"] == 1  # только Анне; у платного есть активный пакет
+    ar = await db_session.get(AdRequest, 1)
+    anna = (
+        await db_session.execute(select(AdClient).where(AdClient.author_vk_id == 100))
+    ).scalar_one()
+    assert ar.client_id == anna.id
