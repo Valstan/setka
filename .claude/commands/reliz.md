@@ -247,11 +247,14 @@ Exit 2 — сетевая ошибка/нет `task_id` (API не поднялс
 # Поллер (Шаг 8) уже дождался 200; этот вызов вернётся сразу, если web жив.
 ssh sarafan "cd ~/SETKA && ./venv/bin/python scripts/wait_for_health.py --timeout 30 --interval 3"
 
-ssh sarafan "systemctl is-active setka setka-celery-worker setka-celery-beat"
+ssh sarafan "systemctl is-active setka setka-celery-worker setka-celery-beat setka-vk-bot"
 
 ssh sarafan "journalctl -u setka -u setka-celery-worker -u setka-celery-beat --since '2 minutes ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -10"
 
 ssh sarafan "tail -50 ~/SETKA/logs/uvicorn_production.log 2>&1 | grep -iE 'error|critical|exception|traceback' | tail -5"
+
+# Демон бота пишет в файл, а не в journal: падение на ImportError видно только здесь
+ssh sarafan "test -f ~/SETKA/logs/vk-bot.log && tail -50 ~/SETKA/logs/vk-bot.log | grep -iE 'error|critical|exception|traceback' | tail -5 || echo 'vk-bot.log: MISSING'"
 ```
 
 

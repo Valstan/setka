@@ -19,6 +19,8 @@ StandardOutput=append:__SETKA_ROOT__/logs/vk-bot.log
 StandardError=append:__SETKA_ROOT__/logs/vk-bot.log
 Restart=always
 RestartSec=5s
+# Заказ с фото дочитывается до конца (заливка на стену до 30 с на группу).
+TimeoutStopSec=120
 
 [Install]
 WantedBy=multi-user.target

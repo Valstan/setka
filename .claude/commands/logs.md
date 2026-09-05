@@ -15,6 +15,7 @@ allowed-tools: Bash, AskUserQuestion
 | `app` / `setka` | `~/SETKA/logs/uvicorn_production.log` или `journalctl -u setka` |
 | `worker` | `~/SETKA/logs/celery-worker.log` или `journalctl -u setka-celery-worker` |
 | `beat` | `~/SETKA/logs/celery-beat.log` или `journalctl -u setka-celery-beat` |
+| `bot` / `vk-bot` | `~/SETKA/logs/vk-bot.log` или `journalctl -u setka-vk-bot` (демон ВК-бота САРАФАНа) |
 | `nginx` | `~/SETKA/logs/nginx_access.log` + `nginx_error.log` |
 | `backup` | `~/SETKA/logs/backup.log` |
 
@@ -53,6 +54,8 @@ mapping = {
     'setka': ('~/SETKA/logs/uvicorn_production.log', 'setka'),
     'worker': ('~/SETKA/logs/celery-worker.log', 'setka-celery-worker'),
     'beat': ('~/SETKA/logs/celery-beat.log', 'setka-celery-beat'),
+    'bot': ('~/SETKA/logs/vk-bot.log', 'setka-vk-bot'),
+    'vk-bot': ('~/SETKA/logs/vk-bot.log', 'setka-vk-bot'),
     'nginx': ('~/SETKA/logs/nginx_access.log', None),
     'backup': ('~/SETKA/logs/backup.log', None),
 }

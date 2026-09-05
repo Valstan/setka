@@ -43,7 +43,7 @@ async def _config():
 
 async def main() -> None:
     from database.connection import AsyncSessionLocal
-    from modules.ad_cabinet.vk_bot import intake
+    from modules.ad_cabinet.vk_bot import heartbeat, intake
     from modules.bulletin_heartbeat import _redis
     from modules.radar.vk_intake import lp_fetch, vk_api_call
 
@@ -89,7 +89,14 @@ async def main() -> None:
             if not resp or not resp.get("server"):
                 err = (srv or {}).get("error") or {}
                 logger.warning("getLongPollServer failed: %s", err.get("error_msg", srv))
-                conf, conf_at = None, 0.0  # перечитать конфиг через минуту
+                # Ждём минуту, а не крутим цикл: сброс conf сам по себе паузы не
+                # даёт (перечитанный конфиг тот же), и отозванный токен давал бы
+                # десятки запросов к БД и ВК в секунду с WARNING на каждый.
+                conf, conf_at = None, 0.0
+                try:
+                    await asyncio.wait_for(stop.wait(), CONFIG_RECHECK)
+                except asyncio.TimeoutError:
+                    pass
                 continue
             server, key = resp["server"], resp["key"]
             ts = ts or resp["ts"]
@@ -99,6 +106,8 @@ async def main() -> None:
         if not data:
             await asyncio.sleep(3)  # сеть мигнула — не молотить
             continue
+        # Живой ответ ВК (события, пустой или failed) — демон реально опрашивает.
+        heartbeat.touch(r)
         if "failed" in data:
             code = data.get("failed")
             if code == 1 and data.get("ts") is not None:
@@ -141,7 +150,10 @@ async def main() -> None:
                     pass
         if data.get("ts") is not None:
             ts = str(data["ts"])
-            r.set(intake.TS_KEY, ts)
+            try:
+                r.set(intake.TS_KEY, ts)
+            except Exception:  # noqa: BLE001 - обрыв Redis не должен ронять демон в crash-loop
+                logger.warning("vk_bot daemon: ts not persisted", exc_info=True)
 
 
 if __name__ == "__main__":

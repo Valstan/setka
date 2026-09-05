@@ -31,7 +31,7 @@ git log --oneline -5
 - ОС: Ubuntu 24.04.3 LTS
 - Проект: `~/SETKA` (в удалённом шелле разворачивается сам)
 - Переменные окружения: env-файл приложения на боксе, `600 root:root` — секреты только там, не коммитить
-- Systemd-сервисы: `setka`, `setka-celery-worker`, `setka-celery-beat`
+- Systemd-сервисы: `setka`, `setka-celery-worker`, `setka-celery-beat`, `setka-vk-bot` (демон ВК-бота САРАФАНа)
 - FastAPI слушает `127.0.0.1:8000`, наружу проксирует Nginx
 
 ## 1) Источники истины в коде
@@ -46,7 +46,7 @@ git log --oneline -5
 ## 2) Быстрая проверка живости
 
 ```bash
-systemctl status setka setka-celery-worker setka-celery-beat
+systemctl status setka setka-celery-worker setka-celery-beat setka-vk-bot
 curl http://127.0.0.1:8000/api/health/
 ```
 
@@ -55,7 +55,7 @@ Swagger: `http://127.0.0.1:8000/docs`
 ## 3) Production: перезапуск сервисов
 
 ```bash
-sudo systemctl restart setka setka-celery-worker setka-celery-beat
+sudo systemctl restart setka setka-celery-worker setka-celery-beat setka-vk-bot
 ```
 
 Логи: `~/SETKA/logs/` (есть logrotate).
@@ -92,7 +92,7 @@ source venv/bin/activate
 cd ~/SETKA
 source venv/bin/activate
 pip install -r requirements.txt
-sudo systemctl restart setka setka-celery-worker setka-celery-beat
+sudo systemctl restart setka setka-celery-worker setka-celery-beat setka-vk-bot
 ```
 
 Если менялся только код — достаточно перезапуска сервисов.
