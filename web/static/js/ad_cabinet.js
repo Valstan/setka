@@ -784,6 +784,8 @@ async function spLoadOptions() {
     const list = document.getElementById('sp-list');
     const dups = document.getElementById('sp-dups');
     const gid = sel ? parseInt(sel.value, 10) : NaN;
+    const hintEl = document.getElementById('sp-live-hint');
+    if (hintEl) hintEl.innerHTML = '';  // подсказка прошлого сообщества не должна пережить смену выбора
     if (!gid) {
         _spOptions = null;
         if (list) list.innerHTML = '<span class="text-muted small">Сначала выберите сообщество.</span>';
@@ -805,7 +807,7 @@ async function spLoadOptions() {
         const lv = _spOptions.live || {};
         hint.innerHTML = lv.error
             ? `<span class="text-warning">⚠️ ${lv.error.includes('токен') ? escapeHtml(lv.error) + ' (проверьте /tokens)' : 'VK не ответил (' + escapeHtml(lv.error) + ')'} — показаны заявки из базы</span>`
-            : `Предложка VK сейчас: <b>${lv.fetched || 0}</b> пост(ов)` +
+            : `Предложка VK сейчас: <b>${lv.fetched >= 100 ? '100+' : (lv.fetched || 0)}</b> пост(ов)` +
               (lv.inserted ? `, новых заявок заведено: <b>${lv.inserted}</b>` : '') +
               (lv.revived ? `, вернулось из «исчез»: <b>${lv.revived}</b>` : '');
     }

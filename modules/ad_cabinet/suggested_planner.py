@@ -200,7 +200,11 @@ def total_price(price: Optional[Decimal | int | float], n: int) -> Decimal:
 
 
 async def build_live_checker():
-    """Чекер предложки из живых токенов (user-токен по READ-политике); None — нет токенов."""
+    """Чекер предложки из живых токенов; ``None`` — годного user-токена нет.
+
+    Токен — тот же, что у сканера (``load_vk_routing`` → первый живой
+    user-кандидат COMMUNITY_WRITE-политики): предложку читают только user-токены.
+    """
     from modules.notifications.vk_suggested_checker import VKSuggestedChecker
     from modules.vk_token_router import load_vk_routing
 
@@ -267,8 +271,11 @@ async def sync_live_suggests(
     if err:
         out["error"] = str(err)[:200]
         return out
+    # Без vk_post_id строка не имеет ключа уникальности (NULL не конфликтует) —
+    # такой пост заводить нельзя, иначе он плодился бы на каждом открытии.
+    posts = [p for p in posts if p.get("vk_post_id")]
     out["fetched"] = len(posts)
-    live_ids = {int(p["vk_post_id"]) for p in posts if p.get("vk_post_id")}
+    live_ids = {int(p["vk_post_id"]) for p in posts}
 
     region_dict = {
         "region_id": region.id,
