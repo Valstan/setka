@@ -18,7 +18,7 @@
 - **Продукт:** SETKA («САРАФАН») — сеть районных VK-сообществ Кировской области: сбор постов, HITL-классификация, автосводки, продажа рекламы.
 - **Стадия:** боевой прод, ежедневные публикации; ~2000 тестов, около 30 районов в разной степени активации.
 - **Стек:** Python 3.12 (локально 3.11 тоже ок), FastAPI + Jinja2, PostgreSQL, Celery + Redis, systemd на VPS.
-- **Прод:** SSH-алиас `sarafan`, каталог `~/SETKA`, сервисы `setka`, `setka-celery-worker`, `setka-celery-beat`.
+- **Прод:** SSH-алиас `sarafan`, каталог `~/SETKA`, сервисы `setka`, `setka-celery-worker`, `setka-celery-beat`, `setka-vk-bot`.
 - **Экосистема:** SETKA держит ЕСА (единый вход `вход.вмалмыже.рф`), каталог сервисов `/services`, VK-шлюз и Радар для соседних проектов @valstan.
 - **Стратегический hub:** [`../brain_matrica/`](../brain_matrica/), карточка проекта — [`projects/setka.md`](../brain_matrica/projects/setka.md) (**read-only** с нашей стороны).
 - **Незавершённая работа:** [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) — читать первым в каждой сессии.

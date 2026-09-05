@@ -190,7 +190,7 @@ ssh sarafan 'cd ~/SETKA && CLASSIFIER_INGEST_KEY=$(sudo -n grep -m1 "^CLASSIFIER
 При «да» — параллельный SSH-probe (быстрый, безопасный, read-only):
 
 ```bash
-ssh -o ConnectTimeout=10 sarafan "systemctl is-active setka setka-celery-worker setka-celery-beat" 2>&1
+ssh -o ConnectTimeout=10 sarafan "systemctl is-active setka setka-celery-worker setka-celery-beat setka-vk-bot" 2>&1
 ssh -o ConnectTimeout=10 sarafan "curl -s -o /dev/null -w 'health: %{http_code} in %{time_total}s\n' --max-time 10 http://127.0.0.1:8000/api/health/full" 2>&1
 ssh -o ConnectTimeout=10 sarafan "cd ~/SETKA && git log --oneline -3" 2>&1
 ```

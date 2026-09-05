@@ -36,7 +36,7 @@ ls venv/Scripts/python.exe 2>/dev/null && echo 'venv: ok (windows)' || ls venv/b
 Параллельно по SSH:
 
 ```bash
-ssh -o ConnectTimeout=10 sarafan "systemctl is-active setka setka-celery-worker setka-celery-beat" 2>&1
+ssh -o ConnectTimeout=10 sarafan "systemctl is-active setka setka-celery-worker setka-celery-beat setka-vk-bot" 2>&1
 
 ssh -o ConnectTimeout=10 sarafan "curl -s -o /dev/null -w '/api/health/full: %{http_code} (%{time_total}s)\n' --max-time 15 http://127.0.0.1:8000/api/health/full" 2>&1
 
@@ -44,6 +44,12 @@ ssh -o ConnectTimeout=10 sarafan "cd ~/SETKA && git log --oneline -3 && git stat
 
 # Сколько регионов опубликовалось в этот час
 ssh -o ConnectTimeout=10 sarafan "redis-cli --scan --pattern 'setka:digest_last_published:*' | wc -l" 2>&1
+
+# ВК-бот: heartbeat демона (unix-ts, Redis db 1) и текущее время — разница = возраст, порог 15 мин
+ssh -o ConnectTimeout=10 sarafan "redis-cli -n 1 get setka:vkbot:heartbeat; date +%s" 2>&1
+
+# ВК-бот: ошибки за последние 200 строк лога демона
+ssh -o ConnectTimeout=10 sarafan "tail -200 ~/SETKA/logs/vk-bot.log 2>&1 | grep -iE 'error|critical|exception|traceback' | tail -5" 2>&1
 
 # Ошибки в worker за последний час
 ssh -o ConnectTimeout=10 sarafan "journalctl -u setka-celery-worker --since '1 hour ago' --no-pager 2>&1 | grep -iE 'error|critical|exception' | tail -5" 2>&1
@@ -59,6 +65,8 @@ ssh -o ConnectTimeout=10 sarafan "journalctl -u setka-celery-worker --since '1 h
 | прод / setka.service | ✅ active / ❌ inactive |
 | прод / setka-celery-worker | ✅ active / ❌ ... |
 | прод / setka-celery-beat | ✅ active / ❌ ... |
+| прод / setka-vk-bot | ✅ active / ❌ ... |
+| vk-bot / heartbeat | N с назад (порог 15 мин) / ключа нет |
 | прод / /api/health/full | ✅ 200 / ❌ ... |
 | прод / git HEAD | <hash> <subject> |
 | Celery / cooldown ключей | N регионов опубликовали в текущем часу |

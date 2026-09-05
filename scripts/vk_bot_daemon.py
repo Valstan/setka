@@ -43,7 +43,7 @@ async def _config():
 
 async def main() -> None:
     from database.connection import AsyncSessionLocal
-    from modules.ad_cabinet.vk_bot import intake
+    from modules.ad_cabinet.vk_bot import heartbeat, intake
     from modules.bulletin_heartbeat import _redis
     from modules.radar.vk_intake import lp_fetch, vk_api_call
 
@@ -99,6 +99,8 @@ async def main() -> None:
         if not data:
             await asyncio.sleep(3)  # сеть мигнула — не молотить
             continue
+        # Живой ответ ВК (события, пустой или failed) — демон реально опрашивает.
+        heartbeat.touch(r)
         if "failed" in data:
             code = data.get("failed")
             if code == 1 and data.get("ts") is not None:
@@ -141,7 +143,10 @@ async def main() -> None:
                     pass
         if data.get("ts") is not None:
             ts = str(data["ts"])
-            r.set(intake.TS_KEY, ts)
+            try:
+                r.set(intake.TS_KEY, ts)
+            except Exception:  # noqa: BLE001 - обрыв Redis не должен ронять демон в crash-loop
+                logger.warning("vk_bot daemon: ts not persisted", exc_info=True)
 
 
 if __name__ == "__main__":

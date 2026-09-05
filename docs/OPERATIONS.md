@@ -23,14 +23,21 @@ Swagger: `http://127.0.0.1:8000/docs`
 - `setka`
 - `setka-celery-worker`
 - `setka-celery-beat`
+- `setka-vk-bot` — демон ВК-бота САРАФАНа (Bots Long Poll, `scripts/vk_bot_daemon.py`;
+  юнит ставится `scripts/install_vk_bot_service.sh`)
 
 Перезапуск:
 
 ```bash
-sudo systemctl restart setka setka-celery-worker setka-celery-beat
+sudo systemctl restart setka setka-celery-worker setka-celery-beat setka-vk-bot
 ```
 
-Логи: `~/SETKA/logs/` (есть logrotate).
+Логи: `~/SETKA/logs/` (есть logrotate); демон бота пишет в `logs/vk-bot.log`.
+
+ВК-бот: демон пишет heartbeat `setka:vkbot:heartbeat` (Redis db 1, unix-ts) после
+каждого ответа Long Poll; сторож `vk-bot-watchdog` (beat, каждые 10 минут) шлёт Telegram,
+если ключ старше 15 минут (cooldown 6 ч). Ключа нет — предупреждение в логе воркера, без
+алёрта (свежий деплой). Проверка руками: `redis-cli -n 1 get setka:vkbot:heartbeat`.
 
 ## 3) Celery (ручной запуск)
 

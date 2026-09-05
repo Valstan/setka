@@ -1,9 +1,14 @@
-"""Celery-задача ВК-бота кабинета: один ручной тик Long Poll (диагностика).
+"""Celery-задачи ВК-бота кабинета: ручной тик Long Poll и сторож демона.
 
-В расписании beat её нет: постоянный опрос ведёт демон ``setka-vk-bot``
+Тика в расписании beat нет: постоянный опрос ведёт демон ``setka-vk-bot``
 (``scripts/vk_bot_daemon.py``), два читателя одного Long Poll делили бы
-события. Задача — для ручной проверки: ``celery call tasks.vk_bot_tasks.poll_sarafan_vk_bot``.
-No-op без ``SARAFAN_VK_COMMUNITY_ID`` и community-токена.
+события. ``poll_sarafan_vk_bot`` — для ручной проверки:
+``celery call tasks.vk_bot_tasks.poll_sarafan_vk_bot``. No-op без
+``SARAFAN_VK_COMMUNITY_ID`` и community-токена.
+
+``check_vk_bot_heartbeat`` — сторож (beat каждые 10 минут): демон пишет
+heartbeat после каждого ответа Long Poll; протух — Telegram владельцу
+(:mod:`modules.ad_cabinet.vk_bot.heartbeat`).
 """
 
 from __future__ import annotations
@@ -73,3 +78,21 @@ def poll_sarafan_vk_bot():
     except Exception as e:  # noqa: BLE001
         logger.error("poll_sarafan_vk_bot failed: %s", e, exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+@app.task(name="tasks.vk_bot_tasks.check_vk_bot_heartbeat")
+def check_vk_bot_heartbeat():
+    """Сторож демона setka-vk-bot: heartbeat протух (>15 мин) → Telegram, cooldown 6 ч."""
+    try:
+        from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
+        from modules.ad_cabinet.vk_bot.heartbeat import maybe_alert_stale_vk_bot
+
+        token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
+        status = run_coro(
+            maybe_alert_stale_vk_bot(telegram_token=token, chat_id=TELEGRAM_ALERT_CHAT_ID)
+        )
+        logger.info("vk_bot watchdog: %s", status)
+        return {"success": True, "status": status, "timestamp": datetime.now().isoformat()}
+    except Exception as e:  # noqa: BLE001
+        logger.error("check_vk_bot_heartbeat failed: %s", e, exc_info=True)
+        return {"success": False, "error": str(e), "timestamp": datetime.now().isoformat()}
