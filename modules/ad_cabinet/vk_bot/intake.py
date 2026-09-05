@@ -172,6 +172,12 @@ async def handle_one(
                 f"🛎 ВК-бот: клиент {label} (trusted) сделал заказ — уже в VK-отложке, "
                 "отменить можно в /ad → Кабинеты"
             )
+        elif ev == "payment_claimed":
+            await notify.notify_owner(
+                f"💳 ВК-бот: клиент {label} сообщил об оплате — подтвердить в /ad → Кабинеты",
+                dedup_key=f"claim:{client.id if client else incoming.peer_id}",
+                dedup_ttl=600,
+            )
         elif ev == "signup":
             await notify.notify_owner(
                 f"🆕 ВК-бот: новый клиент {label} — карточка заведена автоматически",

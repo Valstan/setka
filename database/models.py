@@ -1058,6 +1058,7 @@ class AdPayment(Base):
     note = Column(Text, nullable=True)
     paid_at = Column(DateTime, default=datetime.utcnow)
     paid_confirmed_at = Column(DateTime, nullable=True)  # когда awaiting → paid
+    claimed_at = Column(DateTime, nullable=True)  # клиент нажал «Я оплатил» (098)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):
@@ -1081,6 +1082,7 @@ class AdPayment(Base):
             "paid_confirmed_at": (
                 self.paid_confirmed_at.isoformat() if self.paid_confirmed_at else None
             ),
+            "claimed_at": self.claimed_at.isoformat() if self.claimed_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

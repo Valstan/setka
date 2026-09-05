@@ -769,6 +769,37 @@ async def my_payments(request: Request, db: AsyncSession = Depends(get_db_sessio
     return {"payments": [r.to_dict() for r in rows], "requisites": PAYMENTS}
 
 
+class ClaimIn(BaseModel):
+    """«Я оплатил»: ``payment_ids`` — какие счета; пусто/None — все ожидающие."""
+
+    payment_ids: Optional[List[int]] = None
+
+
+@router.post("/payments/claim")
+async def claim_payments(
+    payload: ClaimIn, request: Request, db: AsyncSession = Depends(get_db_session)
+):
+    """Клиент сообщает, что перевёл деньги (PR 1.7 аудита 2026-09-05).
+
+    Ставит ``claimed_at`` на ожидающие счета и пингует владельца; повторное
+    нажатие ничего не плодит (уже заявленные строки не трогаются).
+    """
+    from modules.ad_cabinet import payment_claims
+    from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+    _user, client = await _current_client(request, db)
+    res = await payment_claims.claim_payments(db, client, payment_ids=payload.payment_ids)
+    await db.commit()
+    if res["claimed"]:
+        await vk_notify.notify_owner(
+            f"💳 Кабинет №{client.id}: «{client.name or client.id}» сообщил об оплате "
+            f"{res['amount']:g} ₽ ({res['claimed']} сч.) — подтвердить в /ad → Кабинеты",
+            dedup_key=f"claim:{client.id}",
+            dedup_ttl=600,
+        )
+    return res
+
+
 # ----------------------------------------------------------------------
 # Чат с владельцем
 # ----------------------------------------------------------------------

@@ -424,12 +424,35 @@
             $('money-requisites').innerHTML = (data.requisites || []).map(function (r) {
                 return '<div class="small">' + esc(r.bank) + ': <a href="' + esc(r.phone_url) + '">' + esc(r.phone) + '</a> — ' + esc(r.holder) + '</div>';
             }).join('');
+            var unclaimed = (data.payments || []).filter(function (p) { return p.status === 'awaiting' && !p.claimed_at; });
             $('money-list').innerHTML = (data.payments || []).map(function (p) {
-                return '<div class="small">' + esc(fmtDate(p.paid_at)) + ' · ' + p.amount + ' ₽ · ' +
-                    (p.status === 'paid' ? '<span class="text-success">получено</span>' : '<span class="text-warning">ожидается</span>') +
-                    '</div>';
+                var status;
+                if (p.status === 'paid') status = '<span class="text-success">получено</span>';
+                else if (p.claimed_at) status = '<span class="text-info">вы сообщили об оплате ' + esc(fmtDate(p.claimed_at)) + ', ждём подтверждения</span>';
+                else status = '<span class="text-warning">ожидается</span> ' +
+                    '<button class="btn btn-sm btn-outline-success py-0 px-1" data-claim="' + p.id + '">Я оплатил</button>';
+                return '<div class="small">' + esc(fmtDate(p.paid_at)) + ' · ' + p.amount + ' ₽ · ' + status + '</div>';
             }).join('') || '<div class="text-body-secondary small">Оплат пока нет.</div>';
+            if (unclaimed.length > 1) {
+                var total = unclaimed.reduce(function (a, p) { return a + Number(p.amount || 0); }, 0);
+                $('money-list').insertAdjacentHTML('afterbegin',
+                    '<div><button class="btn btn-sm btn-success" data-claim="all">Я оплатил всё — ' + total + ' ₽</button></div>');
+            }
+            $('money-list').querySelectorAll('[data-claim]').forEach(function (btn) {
+                btn.addEventListener('click', function () { claimPayment(btn.getAttribute('data-claim'), btn); });
+            });
         } catch (e) { alert(e.message); }
+    }
+
+    // «Я оплатил»: клиент заявляет перевод, владелец подтверждает в /ad (PR 1.7).
+    async function claimPayment(which, btn) {
+        btn.disabled = true;
+        try {
+            var body = which === 'all' ? {} : { payment_ids: [Number(which)] };
+            var res = await api('/payments/claim', { method: 'POST', body: JSON.stringify(body) });
+            if (!res.claimed) alert('Ожидающих оплаты счетов нет.');
+            await loadMoney();
+        } catch (e) { btn.disabled = false; alert(e.message); }
     }
 
     // ---------------- Чат ----------------

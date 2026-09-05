@@ -147,6 +147,23 @@ async def list_cabinets(session, *, include_unlinked: bool = False) -> List[Dict
             func.coalesce(
                 func.sum(case((AdPayment.status == "paid", AdPayment.amount), else_=0)), 0
             ).label("paid"),
+            # Ожидает оплаты и сколько из этого клиент уже ЗАЯВИЛ («Я оплатил», 098):
+            # владелец видит, кого подтверждать, не открывая карточку.
+            func.coalesce(
+                func.sum(case((AdPayment.status == "awaiting", AdPayment.amount), else_=0)), 0
+            ).label("awaiting"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            (AdPayment.status == "awaiting") & AdPayment.claimed_at.isnot(None),
+                            AdPayment.amount,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("claimed"),
         )
         .group_by(AdPayment.client_id)
         .subquery()
@@ -175,6 +192,8 @@ async def list_cabinets(session, *, include_unlinked: bool = False) -> List[Dict
             chat_unread.c.n,
             payments.c.ts,
             payments.c.paid,
+            payments.c.awaiting,
+            payments.c.claimed,
             orders.c.n,
             published.c.n,
             published_last.c.ts,
@@ -213,6 +232,8 @@ async def list_cabinets(session, *, include_unlinked: bool = False) -> List[Dict
         unread,
         pay_ts,
         paid,
+        awaiting,
+        claimed,
         ordered,
         pub_n,
         pub_ts,
@@ -248,6 +269,8 @@ async def list_cabinets(session, *, include_unlinked: bool = False) -> List[Dict
                 "posts_ordered": int(ordered or 0),
                 "posts_published": int(pub_n or 0),
                 "paid_total": float(paid or 0),
+                "awaiting_total": float(awaiting or 0),
+                "claimed_total": float(claimed or 0),
                 "region_id": client.region_id,
             }
         )
