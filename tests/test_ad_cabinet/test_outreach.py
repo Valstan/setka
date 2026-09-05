@@ -461,6 +461,8 @@ def test_interleave_by_community_round_robin():
     def mk(i, c):
         return AdOutreachRecipient(id=i, campaign_id=1, vk_user_id=i, community_vk_id=c)
 
+    rows = [mk(1, -1), mk(2, -1), mk(3, -1), mk(4, -2), mk(5, -3)]
+    out = outreach._interleave_by_community(rows)
     assert [r.community_vk_id for r in out] == [-1, -2, -3, -1, -1]
 
 
