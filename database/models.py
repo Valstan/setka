@@ -1092,7 +1092,9 @@ class AdPayment(Base):
 class AdOutreachCampaign(Base):
     """Кампания рассылки рекламного оффера (Этап 4, миграция 100).
 
-    ``status``: draft → running → (paused_until по 9/14) → done | stopped.
+    ``status``: draft → running → done | stopped. VK 9/14 ставит паузу DM-канала
+    сообщества в ``dm_channel``; кампания хранит только ``paused_reason``
+    (последний стоп), ``paused_until`` — ручная пауза владельца на будущее.
     ``dry_run`` — тексты собираются и кладутся в адресатов, VK не трогается.
     Лимиты: ``per_community_daily`` (30) и ``total_daily`` (150) — отправок в
     МСК-сутки; тихие часы ``quiet_start``–``quiet_end`` (21–9 МСК).

@@ -31,7 +31,7 @@ import logging
 from typing import Dict, Optional
 
 import vk_api
-from vk_api.exceptions import ApiError
+from vk_api.exceptions import ApiError, Captcha
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +336,15 @@ def send_message(
             resp["personal_deeplink"] = f"https://vk.com/im?sel={int(peer_id)}"
         # 9/14 — про поток, не про токен: пауза канала + алёрт (Этап 3).
         paused = dm_channel.note_error(positive_group_id, e.code)
+        if paused is not None:
+            resp["paused_until"] = paused.isoformat()
+        return resp
+    except Captcha as e:
+        # vk_api поднимает капчу отдельным классом (не ApiError) — без этой ветки
+        # 14 уходил в «error_code 0», пауза канала не ставилась (ревью Этапа 4).
+        logger.warning("Captcha for messages.send on group %s: %s", positive_group_id, e)
+        resp = {"success": False, "error_code": 14, "error": "VK 14: captcha needed"}
+        paused = dm_channel.note_error(positive_group_id, 14)
         if paused is not None:
             resp["paused_until"] = paused.isoformat()
         return resp

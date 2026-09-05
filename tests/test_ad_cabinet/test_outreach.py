@@ -272,7 +272,7 @@ async def test_not_allowed_goes_manual_and_flood_stops_tick(db_session, monkeypa
     camp = await _seed_running(db_session, dry_run=False, n=3)
     answers = iter(
         [
-            {"success": False, "error_code": 901, "error": "not allowed"},
+            {"success": False, "error_code": 901, "error": "not allowed", "allowed": False},
             {
                 "success": False,
                 "error_code": 9,
@@ -499,3 +499,72 @@ async def test_enroll_links_request_to_cabinet_and_skips_promo_for_paid_clients(
         await db_session.execute(select(AdClient).where(AdClient.author_vk_id == 100))
     ).scalar_one()
     assert ar.client_id == anna.id
+
+
+@pytest.mark.asyncio
+async def test_900_goes_to_blacklist_and_synthetic_901_keeps_request(db_session):
+    """900 → стоп-лист и skipped; синтетический 901 (нет токена) не трогает can_message заявки."""
+    camp = await _seed_running(db_session, dry_run=False, n=2)
+    answers = iter(
+        [
+            {"success": False, "error_code": 900, "error": "blacklisted", "allowed": False},
+            {
+                "success": False,
+                "error_code": 901,
+                "error": "нет community-токена",
+                "no_token": True,
+            },
+        ]
+    )
+
+    async def send(cid, peer, text, att, rid=None):
+        return next(answers)
+
+    out = await outreach.run_outreach_tick(
+        session_factory=_F(db_session), send=send, now_utc=NOW, interval=0
+    )
+    assert out.get("blacklisted") == 1 and out["manual"] == 1
+    rows = (
+        (await db_session.execute(select(AdOutreachRecipient).order_by(AdOutreachRecipient.id)))
+        .scalars()
+        .all()
+    )
+    assert rows[0].status == "skipped" and rows[0].error_code == 900
+    assert await db_session.get(AdOutreachBlacklist, 100) is not None
+    assert rows[1].status == "manual"
+    ar1 = await db_session.get(AdRequest, 1)
+    ar2 = await db_session.get(AdRequest, 2)
+    assert ar1.can_message is False and ar2.can_message is None
+    manual = await outreach.manual_list(db_session, camp.id)
+    assert [m["vk_user_id"] for m in manual] == [101]
+
+
+@pytest.mark.asyncio
+async def test_captcha_text_without_code_pauses_channel(db_session, monkeypatch):
+    await _seed_running(db_session, dry_run=False, n=2)
+    from modules.ad_cabinet import dm_channel
+
+    noted = []
+    monkeypatch.setattr(
+        dm_channel, "note_error", lambda cid, code, **kw: noted.append((cid, code)) or None
+    )
+    monkeypatch.setattr(dm_channel, "paused_until", lambda cid, **kw: None)
+
+    async def send(cid, peer, text, att, rid=None):
+        return {"success": False, "error_code": 0, "error": "Captcha needed"}
+
+    out = await outreach.run_outreach_tick(
+        session_factory=_F(db_session), send=send, now_utc=NOW, interval=0
+    )
+    assert out["stopped"] is True and noted == [(INFO, 14)]
+
+
+@pytest.mark.asyncio
+async def test_audience_respects_operator_skipped(db_session):
+    db_session.add(_req(1, origin="inbound_dm", person=100))
+    skipped = _req(2, origin="inbound_dm", person=200)
+    skipped.status = "skipped"
+    db_session.add(skipped)
+    await db_session.flush()
+    rows = await outreach.build_audience(db_session, months_back=6, now_utc=NOW)
+    assert {r["vk_user_id"] for r in rows} == {100}
