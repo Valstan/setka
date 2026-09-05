@@ -40,12 +40,26 @@ COMMUNITY_FALLBACK_CODES: frozenset = frozenset({15, 27})
 
 
 def _api_for(owner_id: int, *, user_token: str, community_tokens: Dict[int, str]):
-    """Return (api_handle, via_community) for the target wall owner."""
+    """Return (api_handle, via_community, token) for the target wall owner."""
     cid = abs(int(owner_id))
     tok = community_tokens.get(cid)
     if tok:
-        return vk_api.VkApi(token=tok).get_api(), True
-    return vk_api.VkApi(token=user_token).get_api(), False
+        return vk_api.VkApi(token=tok).get_api(), True, tok
+    return vk_api.VkApi(token=user_token).get_api(), False, user_token
+
+
+def _throttle(token: str, op_name: str) -> None:
+    """Общий лимитер и учёт расхода по токену (Этап 3, 2026-09-05).
+
+    Раньше ЛС и лайки ходили мимо :class:`VKClient` — без тормоза и без
+    счётчика (расход уезжал в «UNKNOWN»). Тормоз обязан быть ОДИН на токен.
+    """
+    try:
+        from modules.vk_monitor.vk_client import enforce_token_rate_limit
+
+        enforce_token_rate_limit(token, op_name)
+    except Exception:  # pragma: no cover - учёт не роняет отправку
+        logger.debug("throttle/usage hook failed for %s", op_name)
 
 
 def _call_with_fallback(
@@ -55,16 +69,21 @@ def _call_with_fallback(
     fn,
     user_token: str,
     community_tokens: Dict[int, str],
+    user_fallback: bool = True,
 ):
-    api, via_community = _api_for(
+    """``user_fallback=False`` — для ЛС: у user-токенов нет scope ``messages``
+    (замер 2026-09-05), повтор user-токеном на 15/27 заведомо пуст и только
+    жжёт слот лимитера."""
+    api, via_community, token = _api_for(
         owner_id,
         user_token=user_token,
         community_tokens=community_tokens,
     )
     try:
+        _throttle(token, op_name)
         return fn(api), ("community-token" if via_community else "user-token")
     except ApiError as e:
-        if via_community and e.code in COMMUNITY_FALLBACK_CODES:
+        if user_fallback and via_community and e.code in COMMUNITY_FALLBACK_CODES:
             logger.info(
                 "VK action %s for owner %s failed via community-token with code %s, "
                 "retrying via user-token",
@@ -73,6 +92,7 @@ def _call_with_fallback(
                 e.code,
             )
             api2 = vk_api.VkApi(token=user_token).get_api()
+            _throttle(user_token, op_name)
             return fn(api2), "community-fallback-user"
         raise
 
@@ -256,6 +276,18 @@ def send_message(
     if random_id is None:
         random_id = random.randint(1, 2**31 - 1)
 
+    # Пауза DM-канала после 9/14 (Этап 3): пока VK просит замолчать, не стучим.
+    from modules.ad_cabinet import dm_channel
+
+    until = dm_channel.paused_until(positive_group_id)
+    if until is not None:
+        return {
+            "success": False,
+            "error_code": 9,
+            "error": f"канал ЛС сообщества на паузе до {until:%d.%m %H:%M} UTC (VK 9/14)",
+            "paused_until": until.isoformat(),
+        }
+
     def call(api):
         params = dict(
             peer_id=int(peer_id),
@@ -276,6 +308,7 @@ def send_message(
             fn=call,
             user_token=user_token,
             community_tokens=community_tokens,
+            user_fallback=False,
         )
         # messages.send returns an int (the new message_id) directly.
         new_mid = int(resp) if isinstance(resp, int) else None
@@ -301,6 +334,10 @@ def send_message(
         if e.code in (900, 901, 902):
             resp["allowed"] = False
             resp["personal_deeplink"] = f"https://vk.com/im?sel={int(peer_id)}"
+        # 9/14 — про поток, не про токен: пауза канала + алёрт (Этап 3).
+        paused = dm_channel.note_error(positive_group_id, e.code)
+        if paused is not None:
+            resp["paused_until"] = paused.isoformat()
         return resp
     except Exception as e:
         logger.error("Unexpected error sending message: %s", e)
@@ -339,6 +376,7 @@ def messages_allowed(
             fn=call,
             user_token=user_token,
             community_tokens=community_tokens,
+            user_fallback=False,
         )
         return bool(int((resp or {}).get("is_allowed", 0)))
     except ApiError as e:

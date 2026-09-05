@@ -226,6 +226,12 @@ async def run_auto_greeting(
                 communities_count=stats["communities_count"],
                 subscribers_count=stats["subscribers_count"],
             )
+            # Канал сообщества на паузе после VK 9/14 — не стучим, заявка ждёт
+            # следующего прогона (Этап 3, 2026-09-05).
+            from modules.ad_cabinet import dm_channel
+
+            if dm_channel.paused_until(int(ar.community_vk_id)) is not None:
+                continue
             try:
                 res = send(int(ar.community_vk_id), int(ar.peer_id), text)
             except Exception as e:  # pragma: no cover - защита

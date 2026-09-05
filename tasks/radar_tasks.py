@@ -143,10 +143,6 @@ def poll_radar_bot():
 
 async def _run_vk_intake():
     """Один тик VK-интейка: Bots Long Poll сообщества → привязка VK-лички по коду."""
-    import secrets
-
-    import httpx
-
     from config.runtime import get_radar_vk_community_id
 
     community_id = get_radar_vk_community_id()
@@ -185,19 +181,10 @@ async def _run_vk_intake():
         return await link_vk(code, vk_user_id, display_name=display_name, group_id=community_id)
 
     async def reply(peer_id, text):
-        async with httpx.AsyncClient() as client:
-            await client.get(
-                "https://api.vk.com/method/messages.send",
-                params={
-                    "user_id": peer_id,
-                    "message": text,
-                    "random_id": secrets.randbelow(2_000_000_000),
-                    "group_id": community_id,
-                    "access_token": token,
-                    "v": "5.199",
-                },
-                timeout=20,
-            )
+        # Тот же транспорт, что у бота САРАФАНа: пауза канала на 9/14 + лимитер.
+        from modules.ad_cabinet.vk_bot import notify as vk_notify
+
+        await vk_notify.vk_send(token, community_id, peer_id, text)
 
     from modules.radar.vk_intake import poll_vk_intake_once
 
