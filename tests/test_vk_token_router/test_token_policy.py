@@ -1000,7 +1000,7 @@ async def test_user_dm_is_exactly_the_account_or_nothing(monkeypatch):
         assert await policy.pick(TokenOp.USER_DM, account="NOBODY") == []
         assert await policy.pick(TokenOp.USER_DM) == []
         # Явный отказ права в снапшоте — аккаунт не годится даже по прямому запросу.
-        router._capabilities_cache.update({"at": 0.0, "matrix": None})
+        router._capabilities_cache.update({"at": None, "matrix": None})
         monkeypatch.setattr(
             router,
             "_capabilities_matrix_safe",

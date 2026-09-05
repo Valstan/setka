@@ -106,7 +106,9 @@ CAPABILITY_PROBE: Dict[str, str] = {
 }
 _CAPABILITY_DENY = frozenset({"err7", "err15"})
 _CAPABILITIES_TTL = 600.0  # секунд: снапшот меняется раз в месяц, Redis дёргаем раз в 10 мин
-_capabilities_cache: Dict[str, object] = {"at": 0.0, "matrix": None}
+# ``at=None`` — ещё не читали. Не 0.0: ``time.monotonic()`` на свежей машине
+# (CI) меньше TTL, и нулевая метка выглядела бы как «свежий кеш» (падение CI #646).
+_capabilities_cache: Dict[str, object] = {"at": None, "matrix": None}
 
 
 def _capability_filter(
@@ -162,7 +164,8 @@ async def _capabilities_matrix_cached() -> Optional[Dict[str, Dict[str, str]]]:
     import time as _time
 
     now = _time.monotonic()
-    if now - float(_capabilities_cache["at"]) < _CAPABILITIES_TTL:
+    at = _capabilities_cache["at"]
+    if at is not None and now - float(at) < _CAPABILITIES_TTL:  # type: ignore[arg-type]
         return _capabilities_cache["matrix"]  # type: ignore[return-value]
     matrix = await asyncio.to_thread(_capabilities_matrix_safe)
     _capabilities_cache["at"] = now
