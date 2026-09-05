@@ -190,6 +190,148 @@ def total_price(price: Optional[Decimal | int | float], n: int) -> Decimal:
     return total
 
 
+# ------------------------------------------------------- живая предложка
+#
+# Инцидент 2026-09-05: планировщик показывал только заявки, которые сканер
+# счёл рекламой (порог классификатора 3), и два поста Анны Валиевой (балл 2 —
+# только «номер телефона») в нём отсутствовали, хотя висели в предложке VK.
+# Оператор, выбравший сообщество в планировщике, хочет видеть ВСЮ предложку —
+# классификатор здесь не фильтр, а подсказка (score в карточке).
+
+
+async def build_live_checker():
+    """Чекер предложки из живых токенов (user-токен по READ-политике); None — нет токенов."""
+    from modules.notifications.vk_suggested_checker import VKSuggestedChecker
+    from modules.vk_token_router import load_vk_routing
+
+    user_token, community_tokens = await load_vk_routing()
+    if not user_token:
+        return None
+    checker = VKSuggestedChecker(user_token, community_tokens=community_tokens)
+    checker.user_token = user_token  # для precheck can_message (чекер сам токен не хранит)
+    return checker
+
+
+async def sync_live_suggests(
+    session,
+    region: Region,
+    *,
+    checker,
+    classify_fn=None,
+    insert_fn=None,
+    precheck_fn=None,
+) -> Dict[str, Any]:
+    """Подтянуть живую предложку сообщества в ``ad_requests`` перед показом.
+
+    - посты, которых нет в базе, заводятся как ``new`` независимо от вердикта
+      классификатора; рекламные (по классификатору) идут тем же путём, что у
+      сканера (``route='ad_cabinet'``, precheck ``can_message`` → автоприветствие
+      работает), нерекламные — ``route='planner'``: видны планировщику, но не
+      засоряют инбокс и не получают автоприветствие;
+    - заявки ``vanished``, чей пост снова в выдаче, возвращаются в ``new``;
+    - ``skipped``/``published``/``deleted`` не трогаем — это решения оператора.
+
+    Сетевые вызовы уходят в поток (web — один процесс uvicorn на четыре продукта).
+    Каждая вставка — под SAVEPOINT: сбой одной строки не ломает транзакцию и
+    форму. VK не ответил → ``{"error": …}`` и никаких изменений. Без commit.
+    """
+    import asyncio
+
+    from sqlalchemy import update
+
+    if classify_fn is None:
+        from modules.ad_cabinet.classifier import classify as classify_fn  # noqa: N806
+    if insert_fn is None:
+        from modules.ad_cabinet.scanner import _insert_if_new as insert_fn  # noqa: N806
+    if precheck_fn is None:
+        from modules.ad_cabinet.scanner import _precheck_can_message as precheck_fn  # noqa: N806
+
+    gid = -abs(int(region.vk_group_id))
+    out: Dict[str, Any] = {
+        "fetched": 0,
+        "inserted": 0,
+        "inserted_ads": 0,
+        "revived": 0,
+        "errors": 0,
+        "error": None,
+    }
+    if checker is None:
+        out["error"] = "нет VK-токена"
+        return out
+    try:
+        posts = await asyncio.to_thread(checker.fetch_suggested_posts, gid)
+    except Exception as e:  # noqa: BLE001 - показ базы важнее
+        out["error"] = str(e)[:200]
+        return out
+    err = getattr(checker, "last_fetch_error", None)
+    if err:
+        out["error"] = str(err)[:200]
+        return out
+    out["fetched"] = len(posts)
+    live_ids = {int(p["vk_post_id"]) for p in posts if p.get("vk_post_id")}
+
+    region_dict = {
+        "region_id": region.id,
+        "region_name": region.name,
+        "region_code": region.code,
+        "vk_group_id": region.vk_group_id,
+    }
+    user_token = getattr(checker, "user_token", None)
+    community_tokens = getattr(checker, "community_tokens", None)
+    for p in posts:
+        try:
+            is_ad, score, reasons = await classify_fn(p)
+        except Exception:  # noqa: BLE001
+            is_ad, score, reasons = False, 0, []
+        marked = list(reasons) + ["из планировщика: вся предложка"]
+        try:
+            async with session.begin_nested():
+                inserted = await insert_fn(session, region_dict, p, score, marked)
+        except Exception as e:  # noqa: BLE001 - одна битая строка не ломает форму
+            logger.warning(
+                "planner live sync: insert %s_%s failed: %s", gid, p.get("vk_post_id"), e
+            )
+            out["errors"] += 1
+            continue
+        if not inserted:
+            continue
+        out["inserted"] += 1
+        key = (
+            AdRequest.community_vk_id == p["community_vk_id"],
+            AdRequest.vk_post_id == p["vk_post_id"],
+        )
+        if is_ad:
+            out["inserted_ads"] += 1
+            can_msg = await precheck_fn(p, user_token, community_tokens)
+            if can_msg is not None:
+                await session.execute(
+                    update(AdRequest)
+                    .where(*key)
+                    .values(can_message=can_msg, can_message_checked_at=datetime.utcnow())
+                )
+        else:
+            await session.execute(update(AdRequest).where(*key).values(route="planner"))
+
+    if live_ids:
+        stale = (
+            await session.execute(
+                select(AdRequest).where(
+                    AdRequest.community_vk_id == gid,
+                    AdRequest.origin == "suggested",
+                    AdRequest.status == "vanished",
+                    AdRequest.vk_post_id.in_(list(live_ids)),
+                )
+            )
+        ).scalars()
+        for ar in stale:
+            ar.status = "new"
+            ar.detected_at = datetime.utcnow()  # снова свежая — наверх в списке
+            out["revived"] += 1
+    if out["inserted"] or out["revived"] or out["errors"]:
+        logger.info("planner live sync %s: %s", gid, out)
+    return out
+
+
 async def plan_item(
     session,
     ar: AdRequest,

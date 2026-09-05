@@ -1299,6 +1299,11 @@ async def suggested_plan_options(
 
     region = await _region_by_group(db, community_vk_id)
     gid = -abs(int(community_vk_id))
+    # Живая предложка VK → заявки (инцидент 2026-09-05: посты ниже порога
+    # классификатора в планировщике не появлялись). Ошибка VK не роняет форму.
+    live = await sp.sync_live_suggests(db, region, checker=await sp.build_live_checker())
+    if live.get("inserted") or live.get("revived"):
+        await db.commit()
     requests = (
         (
             await db.execute(
@@ -1317,6 +1322,7 @@ async def suggested_plan_options(
         .all()
     )
     return {
+        "live": live,
         "region": {
             "id": region.id,
             "code": region.code,
