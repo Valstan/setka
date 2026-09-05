@@ -425,3 +425,52 @@ def test_routes_and_task_registered():
         app.conf.beat_schedule["ad-outreach-dispatch"]["task"]
         == "tasks.celery_app.dispatch_ad_outreach"
     )
+
+
+@pytest.mark.asyncio
+async def test_person_in_live_campaign_is_not_enrolled_twice(db_session):
+    """Один человек — в одной живой кампании: pending/manual/dry_run в другой кампании исключают."""
+    db_session.add(_req(1, origin="inbound_dm", person=100))
+    db_session.add(_req(2, origin="suggested", person=300, can_message=None))
+    camp1 = AdOutreachCampaign(title="Первая", months_back=6, status="running", dry_run=True)
+    db_session.add(camp1)
+    await db_session.flush()
+    await outreach.enroll_campaign(db_session, camp1, now_utc=NOW)
+    camp2 = AdOutreachCampaign(title="Вторая", months_back=6)
+    db_session.add(camp2)
+    await db_session.flush()
+    st = await outreach.enroll_campaign(db_session, camp2, now_utc=NOW)
+    assert st["added"] == 0  # оба уже заняты первой кампанией
+
+
+@pytest.mark.asyncio
+async def test_inbound_window_uses_last_activity(db_session):
+    """Старый диалог, переоткрытый новым сообщением (updated_at), снова в окне."""
+    old = _req(1, origin="inbound_dm", person=100, days_ago=400)
+    old.updated_at = NOW - timedelta(days=2)
+    db_session.add(old)
+    stale = _req(2, origin="inbound_dm", person=200, days_ago=400)
+    stale.updated_at = NOW - timedelta(days=300)
+    db_session.add(stale)
+    await db_session.flush()
+    rows = await outreach.build_audience(db_session, months_back=6, now_utc=NOW)
+    assert {r["vk_user_id"] for r in rows} == {100}
+
+
+def test_interleave_by_community_round_robin():
+    def mk(i, c):
+        return AdOutreachRecipient(id=i, campaign_id=1, vk_user_id=i, community_vk_id=c)
+
+    assert [r.community_vk_id for r in out] == [-1, -2, -3, -1, -1]
+
+
+@pytest.mark.asyncio
+async def test_dry_run_and_channel_pause_do_not_burn_attempts(db_session):
+    camp = await _seed_running(db_session, dry_run=True, n=1)
+    await outreach.run_outreach_tick(
+        session_factory=_F(db_session), send=None, now_utc=NOW, interval=0
+    )
+    r = (await db_session.execute(select(AdOutreachRecipient))).scalar_one()
+    assert r.status == "dry_run" and r.attempts == 0
+    await db_session.refresh(camp)
+    assert camp.status == "running"

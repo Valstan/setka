@@ -28,7 +28,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from database.models import (
@@ -121,7 +121,11 @@ def request_mode(ar: AdRequest) -> str:
 
 
 async def build_audience(
-    session, *, months_back: int = 6, now_utc: Optional[datetime] = None
+    session,
+    *,
+    months_back: int = 6,
+    now_utc: Optional[datetime] = None,
+    exclude_campaign_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Список адресатов за ``months_back`` месяцев, по одному на человека.
 
@@ -139,7 +143,12 @@ async def build_audience(
                     AdRequest.origin.in_(("inbound_dm", "suggested")),
                     AdRequest.route == "ad_cabinet",  # не-реклама из ЛС идёт route=notifications
                     AdRequest.status != "deleted",
-                    AdRequest.detected_at >= since,
+                    # ЛС переоткрывается новым сообщением (updated_at), а detected_at —
+                    # первый контакт: считаем по последней активности.
+                    or_(
+                        AdRequest.detected_at >= since,
+                        and_(AdRequest.origin == "inbound_dm", AdRequest.updated_at >= since),
+                    ),
                     AdRequest.author_is_group.is_(False),
                 )
                 .order_by(AdRequest.detected_at.desc())
@@ -150,16 +159,14 @@ async def build_audience(
     )
     bl_rows = (await session.execute(select(AdOutreachBlacklist))).scalars().all()
     blacklist = {int(b.vk_user_id) for b in bl_rows if b.until is None or b.until > now_utc}
-    already = {
-        int(x)
-        for x in (
-            await session.execute(
-                select(AdOutreachRecipient.vk_user_id).where(
-                    AdOutreachRecipient.status.in_(SENT_STATUSES)
-                )
-            )
-        ).scalars()
-    }
+    # «Один контакт навсегда» + «один человек — в одной живой кампании»: мимо
+    # все, у кого есть строка в любом статусе, кроме failed/skipped.
+    busy_q = select(AdOutreachRecipient.vk_user_id).where(
+        AdOutreachRecipient.status.notin_(("failed", "skipped"))
+    )
+    if exclude_campaign_id is not None:  # своя кампания дедупится по существующим строкам
+        busy_q = busy_q.where(AdOutreachRecipient.campaign_id != int(exclude_campaign_id))
+    already = {int(x) for x in (await session.execute(busy_q)).scalars()}
     with_orders: set = set()
     for model in (AdScheduledPost, AdPayment, AdPublication):
         with_orders |= {
@@ -212,7 +219,12 @@ async def enroll_campaign(
 ) -> Dict[str, int]:
     """Набрать адресатов в кампанию (идемпотентно) и завести им кабинеты."""
     now_utc = now_utc or datetime.utcnow()
-    audience = await build_audience(session, months_back=campaign.months_back, now_utc=now_utc)
+    audience = await build_audience(
+        session,
+        months_back=campaign.months_back,
+        now_utc=now_utc,
+        exclude_campaign_id=campaign.id,
+    )
     existing = {
         int(x)
         for x in (
@@ -304,7 +316,10 @@ async def ensure_cabinets(
         r.client_id = client.id
         has_pkg = (
             await session.execute(
-                select(func.count(AdClientPackage.id)).where(AdClientPackage.client_id == client.id)
+                select(func.count(AdClientPackage.id)).where(
+                    AdClientPackage.client_id == client.id,
+                    AdClientPackage.is_active.is_(True),
+                )
             )
         ).scalar_one()
         if not has_pkg:
@@ -452,6 +467,38 @@ async def _sent_today(session, day_start_utc: datetime) -> Dict[Optional[int], i
     return out
 
 
+def _interleave_by_community(rows: Sequence[AdOutreachRecipient]) -> List[AdOutreachRecipient]:
+    """Чередовать сообщества (round-robin): большое ИНФО не «морит» остальные
+    при лимите на тик и на сообщество."""
+    buckets: Dict[int, List[AdOutreachRecipient]] = {}
+    order: List[int] = []
+    for r in rows:
+        cid = int(r.community_vk_id)
+        if cid not in buckets:
+            buckets[cid] = []
+            order.append(cid)
+        buckets[cid].append(r)
+    out: List[AdOutreachRecipient] = []
+    while any(buckets[c] for c in order):
+        for c in order:
+            if buckets[c]:
+                out.append(buckets[c].pop(0))
+    return out
+
+
+async def _queue_empty(session, campaign_id: int) -> bool:
+    """Нет ни авто-очереди, ни неразобранного ручного списка — кампанию можно закрыть."""
+    left = (
+        await session.execute(
+            select(func.count(AdOutreachRecipient.id)).where(
+                AdOutreachRecipient.campaign_id == int(campaign_id),
+                AdOutreachRecipient.status.in_(("pending", "claimed", "manual")),
+            )
+        )
+    ).scalar_one()
+    return not left
+
+
 async def _claim(session, recipient_id: int, now_utc: datetime) -> bool:
     res = await session.execute(
         update(AdOutreachRecipient)
@@ -584,7 +631,7 @@ async def run_outreach_tick(
             if tick_left <= 0:
                 stats["skipped"] = "tick-cap"
                 continue
-            pending = (
+            pending_rows = (
                 (
                     await session.execute(
                         select(AdOutreachRecipient)
@@ -594,23 +641,15 @@ async def run_outreach_tick(
                             AdOutreachRecipient.status == "pending",
                         )
                         .order_by(AdOutreachRecipient.id.asc())
-                        .limit(budget * 2)
+                        .limit(2000)
                     )
                 )
                 .scalars()
                 .all()
             )
+            pending = _interleave_by_community(pending_rows)
             if not pending:
-                still = (
-                    await session.execute(
-                        select(func.count(AdOutreachRecipient.id)).where(
-                            AdOutreachRecipient.campaign_id == camp.id,
-                            AdOutreachRecipient.mode == "auto",
-                            AdOutreachRecipient.status.in_(("pending", "claimed")),
-                        )
-                    )
-                ).scalar_one()
-                if not still and not camp.dry_run:
+                if not camp.dry_run and await _queue_empty(session, camp.id):
                     camp.status = "done"
                     camp.finished_at = now_utc
                     await session.commit()
@@ -635,6 +674,7 @@ async def run_outreach_tick(
                 r.body = render_offer(template, author_name=r.name, cabinet_id=r.client_id, **ctx)
                 if camp.dry_run:
                     r.status = "dry_run"
+                    r.attempts = max(0, int(r.attempts or 0) - 1)  # сухой прогон — не попытка
                     stats["dry_run"] += 1
                     tick_left -= 1
                     await session.commit()
@@ -686,6 +726,7 @@ async def run_outreach_tick(
                     # сообщества (dm_channel); остальные сообщества идут дальше в
                     # следующем тике. Этот тик по кампании — стоп, владельцу — алёрт.
                     r.status = "pending"
+                    r.attempts = max(0, int(r.attempts or 0) - 1)  # пауза канала — не попытка
                     r.error_code = int(code) if code else None
                     r.error = str(res.get("error") or "")[:300]
                     camp.paused_reason = f"VK {code} в {cid}: {res.get('error')}"[:300]
@@ -712,20 +753,10 @@ async def run_outreach_tick(
                 continue  # следующая кампания — другие сообщества, своя очередь
             # Очередь исчерпана в этом же тике (всё ушло/провалилось) — закрываем сразу,
             # не дожидаясь следующего пустого тика.
-            if not camp.dry_run:
-                left = (
-                    await session.execute(
-                        select(func.count(AdOutreachRecipient.id)).where(
-                            AdOutreachRecipient.campaign_id == camp.id,
-                            AdOutreachRecipient.mode == "auto",
-                            AdOutreachRecipient.status.in_(("pending", "claimed")),
-                        )
-                    )
-                ).scalar_one()
-                if not left:
-                    camp.status = "done"
-                    camp.finished_at = now_utc
-                    await session.commit()
+            if not camp.dry_run and await _queue_empty(session, camp.id):
+                camp.status = "done"
+                camp.finished_at = now_utc
+                await session.commit()
     return stats
 
 

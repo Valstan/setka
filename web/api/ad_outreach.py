@@ -104,9 +104,12 @@ async def get_campaign(campaign_id: int, db: AsyncSession = Depends(get_db_sessi
 @router.post("/campaigns/{campaign_id}/enroll")
 async def enroll(campaign_id: int, db: AsyncSession = Depends(get_db_session)):
     c = await _campaign(db, campaign_id)
-    if c.status in ("done", "stopped"):
-        raise HTTPException(status_code=409, detail="кампания завершена")
+    if c.status == "stopped":
+        raise HTTPException(status_code=409, detail="кампания остановлена")
     stats = await outreach.enroll_campaign(db, c)
+    if c.status == "done" and stats.get("auto"):
+        c.status = "running"  # добор новых адресатов возвращает кампанию в работу
+        c.finished_at = None
     await db.commit()
     return {"campaign_id": c.id, **stats, "counters": await outreach.campaign_counters(db, c.id)}
 
