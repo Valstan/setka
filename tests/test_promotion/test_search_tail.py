@@ -19,10 +19,22 @@ from modules.promotion.copy import render_group_description, render_search_tail
 class TestSearchTail:
     def test_topics_are_bound_to_the_city(self):
         tail = render_search_tail(city="Малмыж")
-        assert tail.startswith("Новости Малмыж:")
+        assert tail.startswith("Малмыж — новости,")
         assert "происшествия" in tail
         assert "расписание автобусов" in tail
         assert "подслушано" in tail
+
+    @pytest.mark.parametrize("city", ["Малмыж", "Тужа", "Нема", "Балтаси", "Уржум"])
+    def test_no_phrase_needs_a_declined_toponym(self, city):
+        """Падеж кодом не выводится — формулировка обязана его не требовать.
+
+        «Новости {город}» давало «Новости Малмыж», «Новости Тужа». Склонение
+        русских топонимов без словаря невозможно (Малмыж→Малмыжа, Тужа→Тужи,
+        Нема→Немы, Балтаси→Балтасей), а ошибка уезжает в публичное описание.
+        """
+        tail = render_search_tail(city=city)
+        assert f"Новости {city}" not in tail
+        assert tail.startswith(f"{city} — ")
 
     def test_localities_are_the_long_tail(self):
         tail = render_search_tail(city="Тужа", localities=["Азансола", "Артеково"])
@@ -65,5 +77,5 @@ class TestDescriptionKeepsBothHalves:
 
     def test_description_without_localities_still_has_topics(self):
         text = render_group_description(district_name="Балтасей", center_city="Балтаси")
-        assert "Новости Балтаси:" in text
+        assert "Балтаси — новости," in text
         assert "Населённые пункты" not in text
