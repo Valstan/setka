@@ -356,3 +356,25 @@ def test_main_if_merge_skips_ordinary_commands(tmp_path, monkeypatch):
     monkeypatch.setattr(sa, "publish_state", lambda *a, **k: called.append("state"))
     assert sa.main(["--sync", "--if-merge", "--force", "--quiet"]) == 0
     assert called == [] and not (root / sa.STATE_DIRNAME).exists()
+
+
+def test_state_marks_stale_wip_branch_when_tree_is_clean():
+    """Чистое дерево + оставшаяся ветка wip: снимок обязан сказать, что она устарела.
+
+    Иначе прошлогодний wip на origin неотличим от «работа осталась на той машине».
+    """
+    d = sa.digest_records([])
+    text = sa.render_redacted(d, _git(), now_iso="ts", machine="pc-test", stale_wip=True)
+    assert "устарела" in text and "wip/pc-test" in text
+    fresh = sa.render_redacted(d, _git(), now_iso="ts", machine="pc-test")
+    assert "устарела" not in fresh
+    dirty = sa.render_redacted(d, _git(dirty=[" M a.py"]), now_iso="ts", machine="pc-test")
+    assert "устарела" not in dirty  # работа есть — ветка актуальна
+
+
+def test_has_wip_branch_sees_local_ref(tmp_path):
+    root = _init_repo(tmp_path)
+    assert sa.has_wip_branch(root, "pc-test") is False
+    (root / "a.txt").write_text("два", encoding="utf-8")
+    assert sa.publish_worktree(root, "pc-test")
+    assert sa.has_wip_branch(root, "pc-test") is True
