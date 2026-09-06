@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import sys
+import time
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, Optional
@@ -152,6 +153,71 @@ def probe_write(tokens: Dict[str, str], link_url: str) -> Optional[str]:
     return None
 
 
+def read_screen_name(token: str, group_id: int) -> Optional[str]:
+    """Текущий короткий адрес сообщества — отдельным чтением."""
+    res = call(token, "groups.getById", {"group_id": group_id, "fields": "screen_name"})
+    if "ok" not in res:
+        return None
+    rows = res["ok"]
+    if isinstance(rows, dict):
+        rows = rows.get("groups", rows)
+    if not rows:
+        return None
+    return (rows[0] or {}).get("screen_name")
+
+
+def probe_screen_name(tokens: Dict[str, str]) -> Optional[str]:
+    """Умеет ли ``groups.edit`` менять короткий адрес (заказ владельца 06.09).
+
+    **Вердикт выносится чтением после записи, а не кодом ответа.** ВК может
+    принять параметр, вернуть ``response: 1`` и не сделать ничего — тогда
+    «успех» означал бы ровно противоположное. Ровно этот класс (#284, «гейт без
+    области») за один день 06.09 дал четыре инстанции подряд, две из них стоили
+    лишней итерации. Поэтому здесь: снять адрес → записать новый → **снять
+    снова** → сравнить, и только потом судить.
+
+    Адрес полигона восстанавливается в ``finally``: проба, упавшая посередине,
+    не должна оставить тест-группу под чужим именем.
+    """
+    logger.info("\n=== SCREEN_NAME на тест-полигоне %s ===", TEST_GROUP_ID)
+    probe_name = f"setkaprobe{int(time.time())}"
+
+    for name, token in tokens.items():
+        before = read_screen_name(token, TEST_GROUP_ID)
+        if before is None:
+            logger.info("  %-18s снимок адреса не взялся — пропуск", name)
+            continue
+        logger.info("  %-18s адрес до пробы: %s", name, before)
+
+        edited = call(
+            token,
+            "groups.edit",
+            {"group_id": TEST_GROUP_ID, "screen_name": probe_name},
+        )
+        logger.info("  %-18s groups.edit(screen_name) %s", name, describe(edited))
+        try:
+            after = read_screen_name(token, TEST_GROUP_ID)
+            logger.info("  %-18s адрес после записи: %s", name, after)
+            if after == probe_name:
+                logger.info("  %-18s ✅ адрес РЕАЛЬНО сменился", name)
+                return name
+            if "ok" in edited:
+                # Самый опасный исход: метод отчитался успехом, ничего не сделав.
+                logger.info(
+                    "  %-18s ⚠️ метод вернул успех, а адрес прежний — запись НЕ работает",
+                    name,
+                )
+            else:
+                logger.info("  %-18s ⛔ адрес не сменился", name)
+        finally:
+            if read_screen_name(token, TEST_GROUP_ID) not in (before, None):
+                restored = call(
+                    token, "groups.edit", {"group_id": TEST_GROUP_ID, "screen_name": before}
+                )
+                logger.info("  %-18s возврат адреса %s %s", name, before, describe(restored))
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -160,6 +226,11 @@ def main() -> int:
         help="выполнить пробу записи (по умолчанию только чтение)",
     )
     parser.add_argument("--link", default=None, help="какую ссылку пробовать добавить")
+    parser.add_argument(
+        "--screen-name",
+        action="store_true",
+        help="проба смены короткого адреса на полигоне (с --apply); адрес возвращается",
+    )
     args = parser.parse_args()
 
     from modules.secrets_bootstrap import bootstrap_secrets
@@ -177,6 +248,17 @@ def main() -> int:
     if not args.apply:
         logger.info("\nПроба записи пропущена (запусти с --apply).")
         return 0
+
+    if args.screen_name:
+        winner = probe_screen_name(tokens)
+        logger.info("")
+        if winner:
+            logger.info(
+                "ИТОГ: короткий адрес меняется под токеном %s — переименование возможно.", winner
+            )
+            return 0
+        logger.info("ИТОГ: короткий адрес через API не меняется — только руками в настройках.")
+        return 1
 
     from config.promo import get_network_list_url
 
