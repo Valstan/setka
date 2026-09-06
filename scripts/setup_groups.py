@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -71,8 +72,18 @@ def _genitive_from_zagolovki(zagolovki: Optional[dict]) -> Optional[str]:
     return None
 
 
-async def load_targets(codes: Optional[List[str]]) -> List[dict]:
-    """Активные районы с главной группой + брендинг-данные из region_configs."""
+async def load_targets(
+    codes: Optional[List[str]], kinds: Tuple[str, ...] = ("raion",)
+) -> List[dict]:
+    """Активные регионы с главной группой + брендинг-данные из region_configs.
+
+    ``kinds`` по умолчанию только районы — так исторически работали ``--apply`` и
+    ``--repair``. Областные группы (``kind='oblast'``) им не нужны: у них своё
+    оформление. Но описание и поисковый индекс нужны и им, поэтому режимы
+    ``--audit`` и ``--refresh-desc`` зовут с обоими видами: **«все группы
+    проекта» — это 41 район плюс 2 области**, и молчаливое сужение до районов
+    как раз и оставило бы области без индекса.
+    """
     from sqlalchemy import text
 
     from database.connection import AsyncSessionLocal
@@ -82,13 +93,14 @@ async def load_targets(codes: Optional[List[str]]) -> List[dict]:
             await session.execute(
                 text(
                     "SELECT r.id, r.code, r.name, r.neighbors, r.vk_group_id, "
-                    "       r.config, rc.zagolovki "
+                    "       r.config, r.kind, rc.zagolovki "
                     "FROM regions r "
                     "LEFT JOIN region_configs rc ON rc.region_code = r.code "
                     "WHERE r.is_active IS TRUE AND r.vk_group_id IS NOT NULL "
-                    "  AND r.kind = 'raion' "
+                    "  AND r.kind = ANY(:kinds) "
                     "ORDER BY r.code"
-                )
+                ),
+                {"kinds": list(kinds)},
             )
         ).fetchall()
     out = []
@@ -110,10 +122,14 @@ async def load_targets(codes: Optional[List[str]]) -> List[dict]:
                 "screen_name": (
                     (r.config or {}).get("screen_name") if isinstance(r.config, dict) else None
                 ),
-                # Сёла и посёлки района — длинный хвост поисковых запросов в
-                # описании. Есть не у всех: у mi и bal их ноль, у ur — 119.
+                "kind": r.kind,
+                # Места для поискового индекса в описании. `localities_top` —
+                # отранжированный список (см. --rank-localities); если ранга ещё
+                # нет, берём сырой алфавитный, он хуже, но лучше пустого.
                 "localities": (
-                    (r.config or {}).get("localities") if isinstance(r.config, dict) else None
+                    (r.config or {}).get("localities_top") or (r.config or {}).get("localities")
+                    if isinstance(r.config, dict)
+                    else None
                 )
                 or [],
             }
@@ -210,6 +226,14 @@ def build_texts(target: dict) -> dict:
         if info:
             neighbors.append(info)
 
+    # У области в поисковом индексе перечисляются районы, у района — сёла.
+    # Сущность разная, роль одна: длинный хвост запросов «<место> новости».
+    from modules.promotion.copy import _PLACES_LABEL_DISTRICTS, _PLACES_LABEL_LOCALITIES
+
+    places_label = (
+        _PLACES_LABEL_DISTRICTS if target.get("kind") == "oblast" else _PLACES_LABEL_LOCALITIES
+    )
+
     return {
         "title": title,
         "description": render_group_description(
@@ -217,6 +241,7 @@ def build_texts(target: dict) -> dict:
             center_city=title,
             site_url=site_url,
             localities=target.get("localities") or (),
+            places_label=places_label,
         ),
         "welcome": render_welcome_post(
             district_name=genitive, neighbors=neighbors, site_url=site_url
@@ -624,6 +649,109 @@ async def _journal_row_id(region_id: int, version: int) -> Optional[int]:
     return row
 
 
+async def run_rank_places(codes: Optional[List[str]], apply: bool) -> int:
+    """--rank-localities: отранжировать места для поискового индекса описания.
+
+    Заказ владельца 06.09: в хвост писать «те, которые самые густонаселённые».
+    **Данных о населении у нас нет** — локалитеты хранятся простым списком имён,
+    и выдумывать их порядок нельзя. Зато есть 115 тысяч собранных постов с
+    текстами, и частота упоминания села в ленте района — не хуже населения, а
+    для поискового индекса **лучше**: она отражает не сколько людей прописано, а
+    о чём люди пишут, то есть что они и ищут.
+
+    Проверка на Туже: алфавит давал «Азансола, Артеково, Ашеево, Безденежье»,
+    ранг даёт «Тужа (208 упоминаний), Ныр (42), Шешурга, Греково, Васькино».
+
+    У области мест другого рода — районы; их ранг берётся по числу подписчиков
+    районной группы (``region_member_snapshots``), потому что упоминаний района
+    в ленте самой области почти не бывает.
+
+    Оговорка про подсчёт: ``ILIKE '%имя%'`` ловит подстроку, поэтому «Пачи»
+    засчитывается и внутри «Большие Пачи». Для **ранжирования** это приемлемо —
+    короткое имя и правда популярнее, — но числа нельзя выдавать за перепись.
+    """
+    from sqlalchemy import text
+
+    from database.connection import AsyncSessionLocal
+
+    targets = await load_targets(codes, kinds=("raion", "oblast"))
+    if not targets:
+        logger.error("Нет целей")
+        return 1
+
+    logger.info(
+        "RANK-PLACES: регионов %d | режим: %s | только БД, ВК не трогаем",
+        len(targets),
+        "запись" if apply else "dry-run",
+    )
+
+    written = 0
+    async with AsyncSessionLocal() as session:
+        for target in targets:
+            code = target["code"]
+            if target.get("kind") == "oblast":
+                rows = (
+                    await session.execute(
+                        text(
+                            "SELECT r.name, s.members_count "
+                            "FROM regions r JOIN LATERAL ("
+                            "  SELECT members_count FROM region_member_snapshots "
+                            "  WHERE region_id = r.id ORDER BY snapshot_date DESC LIMIT 1"
+                            ") s ON TRUE "
+                            "WHERE r.kind='raion' AND r.is_active IS TRUE "
+                            "  AND r.parent_region_id = :pid "
+                            "ORDER BY s.members_count DESC LIMIT 12"
+                        ),
+                        {"pid": target["region_id"]},
+                    )
+                ).fetchall()
+                from modules.region_links import base_title
+
+                ranked = [base_title(r.name, None) for r in rows]
+            else:
+                rows = (
+                    await session.execute(
+                        text(
+                            "SELECT q.l AS place, count(*) AS hits FROM ("
+                            "  SELECT jsonb_array_elements_text((config->'localities')::jsonb) AS l"
+                            "  FROM regions WHERE id = :rid"
+                            ") q JOIN collected_post_audit a "
+                            "  ON a.region_code = :code AND a.post_text ILIKE '%' || q.l || '%' "
+                            "GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 12"
+                        ),
+                        {"rid": target["region_id"], "code": code},
+                    )
+                ).fetchall()
+                ranked = [r.place for r in rows]
+
+            if not ranked:
+                logger.info("  %-14s — нечего ранжировать", code)
+                continue
+            logger.info("  %-14s %s", code, ", ".join(ranked[:8]))
+            if not apply:
+                continue
+
+            region = (
+                await session.execute(
+                    text("SELECT config FROM regions WHERE id = :rid"),
+                    {"rid": target["region_id"]},
+                )
+            ).first()
+            cfg = dict(region.config) if isinstance(region.config, dict) else {}
+            cfg["localities_top"] = ranked
+            await session.execute(
+                text("UPDATE regions SET config = CAST(:cfg AS json) WHERE id = :rid"),
+                {"cfg": json.dumps(cfg, ensure_ascii=False), "rid": target["region_id"]},
+            )
+            written += 1
+        if apply:
+            await session.commit()
+
+    logger.info("")
+    logger.info("Готово: записано рангов %d", written)
+    return 0
+
+
 async def run_refresh_desc(codes: Optional[List[str]], apply: bool) -> int:
     """--refresh-desc: привести описания к шаблону v3, сохранив оригинал.
 
@@ -650,7 +778,8 @@ async def run_refresh_desc(codes: Optional[List[str]], apply: bool) -> int:
     from modules.promotion.branding import TEMPLATE_VERSION
     from modules.promotion.group_setup_vk import edit_description, get_current
 
-    targets = await load_targets(codes)
+    # Описание нужно и областным группам — «все группы проекта» это 41 + 2.
+    targets = await load_targets(codes, kinds=("raion", "oblast"))
     if not targets:
         logger.error("Нет целей")
         return 1
@@ -747,7 +876,7 @@ async def run_audit(codes: Optional[List[str]]) -> int:
 
     from modules.promotion.group_setup_vk import get_current
 
-    targets = await load_targets(codes)
+    targets = await load_targets(codes, kinds=("raion", "oblast"))
     if not targets:
         logger.error("Нет целей")
         return 1
@@ -963,6 +1092,12 @@ async def amain() -> int:
         action="store_true",
         help="привести описания к шаблону v3 (в т.ч. у авторских spot-групп); с --apply — запись",
     )
+    parser.add_argument(
+        "--rank-localities",
+        action="store_true",
+        help="отранжировать места для поискового индекса (район — по упоминаниям, область — "
+        "по подписчикам районов); с --apply пишет config.localities_top",
+    )
     parser.add_argument("--out", default=None, help="куда сложить превью картинок")
     parser.add_argument(
         "--force-cover",
@@ -983,6 +1118,9 @@ async def amain() -> int:
     if args.audit:
         codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
         return await run_audit(codes)
+    if args.rank_localities:
+        codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
+        return await run_rank_places(codes, apply=args.apply)
     if args.refresh_desc:
         codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
         return await run_refresh_desc(codes, apply=args.apply)
