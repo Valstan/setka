@@ -30,6 +30,7 @@ from fastapi.templating import Jinja2Templates  # noqa: E402
 from _version import __version__ as APP_VERSION  # noqa: E402
 from database.connection import close_db, init_db  # noqa: E402
 from middleware.auth_gate import AuthGateMiddleware  # noqa: E402
+from middleware.cache_headers import HtmlRevalidationMiddleware  # noqa: E402
 from middleware.metrics_middleware import MetricsMiddleware  # noqa: E402
 from middleware.rate_limiter import RateLimitMiddleware  # noqa: E402
 from modules.module_activity_notifier import notify_system_startup  # noqa: E402
@@ -151,6 +152,12 @@ app.add_middleware(
 
 # Metrics middleware (мониторинг производительности)
 app.add_middleware(MetricsMiddleware)
+
+# HTML нельзя показывать из кэша без переспроса: кэш-бастеры `?v=…` лежат ВНУТРИ
+# документа, поэтому старая страница просит старую статику и `no-cache` на самой
+# статике до дела не доходит. Замер 06.09 поймал ровно это. Добавлено последним —
+# значит, слой внешний и видит финальный ответ. Подробности — middleware/cache_headers.py.
+app.add_middleware(HtmlRevalidationMiddleware)
 
 # Setup templates and static files
 BASE_DIR = Path(__file__).resolve().parent
