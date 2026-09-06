@@ -110,11 +110,17 @@ _SEARCH_TOPICS = (
 # список превратил бы описание в простыню и читался бы как спам.
 _MAX_LOCALITIES = 8
 
+# Заголовок строки мест. У района это сёла и посёлки, у области — районы;
+# сущность разная, а роль в описании одна.
+_PLACES_LABEL_LOCALITIES = "Населённые пункты"
+_PLACES_LABEL_DISTRICTS = "Районы и округа"
+
 
 def render_search_tail(
     *,
     city: str,
     localities: Sequence[str] = (),
+    places_label: str = _PLACES_LABEL_LOCALITIES,
 ) -> str:
     """Хвост поисковых фраз — то, по чему сообщество находят во внутреннем поиске VK.
 
@@ -151,7 +157,7 @@ def render_search_tail(
     # иначе в описание уезжает «Населённые пункты: None.».
     picked = [str(x).strip() for x in (localities or []) if x and str(x).strip()][:_MAX_LOCALITIES]
     if picked:
-        lines.append("Населённые пункты: " + ", ".join(picked) + ".")
+        lines.append(f"{places_label}: " + ", ".join(picked) + ".")
     return "\n".join(lines)
 
 
@@ -161,6 +167,7 @@ def render_group_description(
     center_city: Optional[str] = None,
     site_url: Optional[str] = None,
     localities: Sequence[str] = (),
+    places_label: str = _PLACES_LABEL_LOCALITIES,
 ) -> str:
     """Описание сообщества для автооформления.
 
@@ -173,7 +180,9 @@ def render_group_description(
     center = (center_city or "").strip()
     where = f" Центр — {center}." if center else ""
     site = f"\nСписок всех районов сети: {site_url}" if site_url else ""
-    tail = render_search_tail(city=center or district_name, localities=localities)
+    tail = render_search_tail(
+        city=center or district_name, localities=localities, places_label=places_label
+    )
     tail_block = f"\n\n{tail}" if tail else ""
 
     return _clean(
