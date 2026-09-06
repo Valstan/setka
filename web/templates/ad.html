@@ -729,34 +729,51 @@
 
 {% block extra_scripts %}
 <script src="/static/vendor/chartjs/chart.umd.min.js"></script>
-<script src="/static/js/ad_cabinet.js?v=20260905_outreach"></script>
+<script src="/static/js/ad_cabinet.js?v=20260906_schedhash"></script>
 <script src="/static/js/ad_crm.js?v=20260902_cabinet_row2"></script>
 <script>
 // Единый рекламный кабинет: логика вкладок (С1).
+const AD_HASH_TABS = {
+    '#crm': 'tab-clients-btn',
+    '#clients': 'tab-clients-btn',
+    '#scheduler': 'tab-scheduler-btn',
+    '#stats': 'tab-stats-btn',
+    '#inbox': 'tab-inbox-btn',
+};
+
+// Ленивая инициализация вкладки: событие `shown.bs.tab` — НЕ единственный путь.
+// Bootstrap отдаёт его синхронно внутри `.show()`, когда панель ещё не видна и
+// анимировать нечего, поэтому вкладка, открытая по hash, успевала «показаться»
+// до того, как обработчик навешен, и планировщик навсегда оставался в
+// «— загрузка… —». Инициализаторы идемпотентны, поэтому зовём их и напрямую.
+const AD_TAB_INIT = {
+    'tab-scheduler-btn': () => (typeof initScheduler === 'function' ? initScheduler() : null),
+    'tab-cabinets-btn': () => (typeof initCabinets === 'function' ? initCabinets() : null),
+};
+
+function adShowTabByHash() {
+    const btnId = AD_HASH_TABS[location.hash];
+    if (!btnId || !window.bootstrap) return;
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    bootstrap.Tab.getOrCreateInstance(btn).show();
+    // Страховка от синхронного `shown.bs.tab`: обработчик мог не успеть.
+    if (AD_TAB_INIT[btnId]) AD_TAB_INIT[btnId]();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    // Ленивые инициализаторы вешаем ДО активации вкладки по hash — иначе
+    // событие показа уходит в пустоту (см. комментарий к AD_TAB_INIT).
+    Object.entries(AD_TAB_INIT).forEach(([btnId, init]) => {
+        const btn = document.getElementById(btnId);
+        if (btn) btn.addEventListener('shown.bs.tab', () => init(), { once: true });
+    });
     // Активировать вкладку по hash (#crm / #scheduler / #stats) — для редиректов
     // со старых /ad-cabinet, /ad-crm и in-app ссылок «открыть CRM».
-    const hashTab = {
-        '#crm': 'tab-clients-btn',
-        '#clients': 'tab-clients-btn',
-        '#scheduler': 'tab-scheduler-btn',
-        '#stats': 'tab-stats-btn',
-        '#inbox': 'tab-inbox-btn',
-    }[location.hash];
-    if (hashTab && window.bootstrap) {
-        const btn = document.getElementById(hashTab);
-        if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
-    }
-    // Планировщик грузит список сообществ лениво — при первом открытии вкладки.
-    const schBtn = document.getElementById('tab-scheduler-btn');
-    if (schBtn && typeof initScheduler === 'function') {
-        schBtn.addEventListener('shown.bs.tab', () => initScheduler(), { once: true });
-    }
-    // Кабинеты клиентов: модерация + чат, лениво при первом открытии.
-    const cabBtn = document.getElementById('tab-cabinets-btn');
-    if (cabBtn && typeof initCabinets === 'function') {
-        cabBtn.addEventListener('shown.bs.tab', () => initCabinets(), { once: true });
-    }
+    adShowTabByHash();
+    // Ссылка на #scheduler со страницы /ad меняет только hash — перезагрузки нет,
+    // DOMContentLoaded не повторяется, и без этого вкладка не переключалась.
+    window.addEventListener('hashchange', adShowTabByHash);
     // Бейдж «ждут одобрения» — сразу при загрузке страницы.
     if (typeof refreshCabinetsBadge === 'function') refreshCabinetsBadge();
     // Chart.js (responsive) в скрытой вкладке имеет нулевую ширину — подтолкнуть

@@ -735,9 +735,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = e.target.closest('.btn-del-date');
         if (btn) btn.closest('.sch-date-row').remove();
     });
-    // Ленивая инициализация при первом раскрытии секции (не грузим регионы зря).
-    const body = document.getElementById('scheduler-body');
-    if (body) body.addEventListener('shown.bs.collapse', initScheduler, { once: true });
+    // Ленивую инициализацию вешает ad.html на `shown.bs.tab` кнопки вкладки.
+    // Здесь раньше стоял слушатель `shown.bs.collapse` на #scheduler-body — но в
+    // едином кабинете это `tab-pane`, а не `collapse`, и событие не могло прийти
+    // никогда: гейт без области (#284). Дублирующей проводки быть не должно —
+    // иначе неясно, какая из двух работает.
 });
 
 async function initScheduler() {
