@@ -24,9 +24,18 @@ wall.delete, wall.pin) при лимите ``get_valstan_call_budget()`` — с�
 
 Запуск (на проде, под env приложения):
     python scripts/setup_groups.py                      # dry-run, отчёт
+    python scripts/setup_groups.py --audit              # только чтение: чего где нет
     python scripts/setup_groups.py --apply              # правки (гейт #025!)
     python scripts/setup_groups.py --apply --regions uni,falenki
+    python scripts/setup_groups.py --repair --by-snapshot   # дозалить недостающее
     python scripts/setup_groups.py --rollback oparino   # вернуть описание
+
+**Режим dry-run не отвечает на вопрос «у кого нет обложки или аватара».** Режим
+``full`` — конъюнкция (нет аватара И нет обложки И описание короткое), поэтому
+сообщество с обложкой и без аватара печатается как ``spot`` («авторское, не
+трогаем»). Для вопроса «чего недостаёт» есть ``--audit``, и он смотрит в ВК, а
+не в ``promo_group_setup``: журнал говорит, чем кончился прогон, а не что сейчас
+в сообществе, и расходился с явью уже дважды (01.09).
 """
 
 from __future__ import annotations
@@ -561,8 +570,160 @@ async def run_force_cover(codes: Optional[List[str]]) -> int:
     return 0
 
 
-async def run_repair(codes: Optional[List[str]]) -> int:
-    """--repair: пройти регионы с записью status='error' и дозалить поля."""
+async def run_audit(codes: Optional[List[str]]) -> int:
+    """--audit: чего фактически недостаёт каждому сообществу. Только чтение.
+
+    Зачем отдельный режим. Обычный dry-run печатает **режим** (``full``/``spot``),
+    а режим — конъюнкция: ``full`` = нет аватара И нет обложки И описание короткое.
+    Сообщество, у которого стоит обложка, но нет аватара, попадает в ``spot`` — и
+    отчёт говорит «авторское оформление, не трогаем», хотя недостающее поле есть.
+    То есть на вопрос «у кого нет обложки ИЛИ аватара» dry-run не отвечает в
+    принципе: его условие не покрывает область вопроса (#284).
+
+    Второй источник, ``promo_group_setup.status``, отвечает на другой вопрос —
+    «чем закончился прогон», а не «что сейчас в ВК». Он уже расходился с явью
+    дважды (01.09: у ``nagorsk`` аватар стоял при строке ``error``; у ``orichi``
+    строки не было вовсе). Поэтому здесь снимок берётся из ВК, а журнал
+    печатается рядом — расхождение видно глазами, а не выясняется постфактум.
+
+    User-бюджет не расходуется, пока у сообщества есть community-ключ:
+    ``groups.getById`` идёт им. Регионы без ключа считаются отдельно и помечены —
+    у них снимок стоит один user-вызов.
+    """
+    import vk_api
+
+    from modules.promotion.group_setup_vk import get_current
+
+    targets = await load_targets(codes)
+    if not targets:
+        logger.error("Нет целей")
+        return 1
+
+    journal = await load_journal_status()
+    user_token, community_tokens = await load_tokens()
+    user_api = vk_api.VkApi(token=user_token).get_api() if user_token else None
+
+    logger.info("AUDIT: сообществ %d | снимок из ВК, журнал — рядом для сверки", len(targets))
+    logger.info("  %-14s %-7s %-8s %-6s %s", "код", "аватар", "обложка", "опис.", "журнал")
+
+    missing_avatar: List[str] = []
+    missing_cover: List[str] = []
+    unseen: List[str] = []
+    user_calls = 0
+
+    for target in targets:
+        code = target["code"]
+        gid = abs(int(target["vk_group_id"]))
+        comm_token = community_tokens.get(gid)
+        api = vk_api.VkApi(token=comm_token).get_api() if comm_token else user_api
+        if api is None:
+            unseen.append(code)
+            logger.info("  %-14s %-7s %-8s %-6s %s", code, "?", "?", "?", "нет ключа")
+            continue
+        if not comm_token:
+            user_calls += 1
+        snap = await asyncio.to_thread(get_current, api, gid)
+        if not snap.ok:
+            # «Не смогли посмотреть» — это не «всё на месте»: пустой ответ и
+            # отсутствие поля должны выглядеть по-разному, иначе аудит начнёт
+            # молчать одинаково на «чисто» и на «не измерили».
+            unseen.append(code)
+            logger.info("  %-14s %-7s %-8s %-6s %s", code, "?", "?", "?", snap.detail)
+            continue
+        cur = snap.payload or {}
+        has_avatar = bool(cur.get("has_photo"))
+        has_cover = bool(cur.get("has_cover"))
+        if not has_avatar:
+            missing_avatar.append(code)
+        if not has_cover:
+            missing_cover.append(code)
+        logger.info(
+            "  %-14s %-7s %-8s %-6d %s",
+            code,
+            "✓" if has_avatar else "НЕТ",
+            "✓" if has_cover else "НЕТ",
+            len(cur.get("description") or ""),
+            journal.get(target["region_id"], "—"),
+        )
+
+    logger.info("")
+    logger.info("Недостаёт аватара: %d — %s", len(missing_avatar), ", ".join(missing_avatar) or "—")
+    logger.info("Недостаёт обложки: %d — %s", len(missing_cover), ", ".join(missing_cover) or "—")
+    if unseen:
+        # Отдельной строкой и всегда: неизмеренное не должно раствориться в «всё ок».
+        logger.info("НЕ ИЗМЕРЕНО: %d — %s", len(unseen), ", ".join(unseen))
+    todo = sorted(set(missing_avatar) | set(missing_cover))
+    logger.info(
+        "Чинить: %d — %s (потрачено user-вызовов на снимки: %d)",
+        len(todo),
+        ", ".join(todo) or "—",
+        user_calls,
+    )
+    return 0
+
+
+async def load_journal_status() -> Dict[int, str]:
+    """``region_id → status`` в журнале текущей версии шаблона (для сверки)."""
+    from sqlalchemy import select
+
+    from database.connection import AsyncSessionLocal
+    from database.models import PromoGroupSetup
+    from modules.promotion.branding import TEMPLATE_VERSION
+
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(PromoGroupSetup.region_id, PromoGroupSetup.status).where(
+                    PromoGroupSetup.setup_version == TEMPLATE_VERSION
+                )
+            )
+        ).all()
+    return {region_id: status for region_id, status in rows}
+
+
+async def select_repair_targets_by_snapshot(codes: Optional[List[str]]) -> List[dict]:
+    """Кого чинить — по живому снимку ВК, а не по строке журнала.
+
+    Журнал отвечает на «чем закончился прогон», а чинить надо то, чего **сейчас**
+    нет в ВК. Пока выбор шёл по ``status='error'``, сообщество с уцелевшей строкой
+    ``ok`` и пропавшим аватаром в ``--repair`` не попадало вообще: гейт стоял, был
+    зелёный и не покрывал область (#284).
+
+    Снимок берётся community-ключом, поэтому отбор почти не стоит user-бюджета;
+    сам ремонт всё равно решает по своему снимку внутри ``repair_region``.
+    """
+    import vk_api
+
+    from modules.promotion.group_setup_vk import get_current
+
+    targets = await load_targets(codes)
+    user_token, community_tokens = await load_tokens()
+    user_api = vk_api.VkApi(token=user_token).get_api() if user_token else None
+
+    out: List[dict] = []
+    for target in targets:
+        gid = abs(int(target["vk_group_id"]))
+        comm_token = community_tokens.get(gid)
+        api = vk_api.VkApi(token=comm_token).get_api() if comm_token else user_api
+        if api is None:
+            continue
+        snap = await asyncio.to_thread(get_current, api, gid)
+        if not snap.ok:
+            # Снимок не взялся — регион берём в работу: repair_region попробует
+            # снова и честно вернёт «снимок не взялся», а не тихо пропустит.
+            out.append(target)
+            continue
+        cur = snap.payload or {}
+        if not cur.get("has_photo") or not cur.get("has_cover"):
+            out.append(target)
+    return out
+
+
+async def run_repair(codes: Optional[List[str]], by_snapshot: bool = False) -> int:
+    """--repair: пройти регионы с записью status='error' и дозалить поля.
+
+    С ``--by-snapshot`` цели выбираются по живому состоянию ВК, а не по журналу.
+    """
     import vk_api
     from sqlalchemy import select
 
@@ -571,25 +732,31 @@ async def run_repair(codes: Optional[List[str]]) -> int:
     from database.models import PromoGroupSetup
     from modules.promotion.branding import TEMPLATE_VERSION
 
-    async with AsyncSessionLocal() as session:
-        rows = (
-            (
-                await session.execute(
-                    select(PromoGroupSetup.region_id).where(
-                        PromoGroupSetup.setup_version == TEMPLATE_VERSION,
-                        PromoGroupSetup.status == "error",
+    if by_snapshot:
+        targets = await select_repair_targets_by_snapshot(codes)
+        if not targets:
+            logger.info("По живому снимку недостающих аватаров и обложек нет — чинить нечего")
+            return 0
+    else:
+        async with AsyncSessionLocal() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(PromoGroupSetup.region_id).where(
+                            PromoGroupSetup.setup_version == TEMPLATE_VERSION,
+                            PromoGroupSetup.status == "error",
+                        )
                     )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-    broken_ids = set(rows)
-    if not broken_ids:
-        logger.info("Записей со статусом error нет — чинить нечего")
-        return 0
+        broken_ids = set(rows)
+        if not broken_ids:
+            logger.info("Записей со статусом error нет — чинить нечего")
+            return 0
 
-    targets = [t for t in await load_targets(codes) if t["region_id"] in broken_ids]
+        targets = [t for t in await load_targets(codes) if t["region_id"] in broken_ids]
     all_targets = await load_targets(None)
     nb_index = neighbor_index(all_targets)
     for t in targets:
@@ -628,6 +795,16 @@ async def amain() -> int:
     parser.add_argument(
         "--repair", action="store_true", help="дозалить упавшие аватары/обложки (status=error)"
     )
+    parser.add_argument(
+        "--audit",
+        action="store_true",
+        help="только чтение: у кого фактически нет аватара/обложки (снимок ВК + журнал рядом)",
+    )
+    parser.add_argument(
+        "--by-snapshot",
+        action="store_true",
+        help="с --repair: выбирать цели по живому снимку ВК, а не по строке журнала",
+    )
     parser.add_argument("--out", default=None, help="куда сложить превью картинок")
     parser.add_argument(
         "--force-cover",
@@ -645,9 +822,12 @@ async def amain() -> int:
     if args.force_cover:
         codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
         return await run_force_cover(codes)
+    if args.audit:
+        codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
+        return await run_audit(codes)
     if args.repair:
         codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
-        return await run_repair(codes)
+        return await run_repair(codes, by_snapshot=args.by_snapshot)
 
     import vk_api
 
