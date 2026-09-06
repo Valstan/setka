@@ -218,7 +218,12 @@ def _clip(text: str, limit: int) -> str:
 
 
 def render_redacted(
-    digest: Dict[str, Any], git: Dict[str, Any], *, now_iso: str, machine: str
+    digest: Dict[str, Any],
+    git: Dict[str, Any],
+    *,
+    now_iso: str,
+    machine: str,
+    stale_wip: bool = False,
 ) -> str:
     """Публикуемое состояние: факты и мои строки, БЕЗ дословных реплик владельца.
 
@@ -252,6 +257,11 @@ def render_redacted(
             lines.append(f"- …и ещё {len(dirty) - 30}")
     else:
         lines.append("**Незакоммичено:** ничего — рабочее дерево чистое.")
+        if stale_wip:
+            lines.append(
+                f"⚠️ Ветка `wip/{machine}` осталась от прошлого снимка и **устарела** — "
+                "работа с тех пор закоммичена, брать оттуда нечего."
+            )
     prs = digest.get("prs") or []
     if prs:
         shown = prs[-15:]
@@ -478,6 +488,14 @@ def publish_state(root: Path, body: str, machine: str) -> Optional[str]:
             pass
 
 
+def has_wip_branch(root: Path, machine: str) -> bool:
+    """Есть ли ветка снимка рабочего дерева (локально или на origin)."""
+    local = _git(root, "rev-parse", "-q", "--verify", f"refs/heads/wip/{machine}")
+    if local:
+        return True
+    return bool(_git(root, "ls-remote", "--heads", "origin", f"wip/{machine}"))
+
+
 def publish_worktree(root: Path, machine: str) -> Optional[str]:
     """Снимок рабочего дерева (включая неотслеживаемое) в ветку ``wip/<машина>``.
 
@@ -590,11 +608,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.sync or args.redacted or args.do_print:
         machine = _machine_name()
+        clean = not (git.get("dirty") or [])
         public = render_redacted(
             digest,
             git,
             now_iso=datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %z"),
             machine=machine,
+            # Ветку не удаляем: ошибка в определении «чисто» стёрла бы единственную
+            # копию работы. Вместо этого состояние честно помечает её устаревшей.
+            stale_wip=clean and has_wip_branch(root, machine),
         )
         if args.do_print:
             print(public)
