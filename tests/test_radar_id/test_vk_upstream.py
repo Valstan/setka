@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -188,6 +189,78 @@ async def test_inactive_linked_user_rejected(db_session):
     await db_session.commit()
     with pytest.raises(vku.VkUpstreamError):
         await vku.find_or_create_user(db_session, {"user_id": 5})
+
+
+# ---------------------------------------------------------------------------
+# Дозаполнение email при повторном входе (мандат brain 2026-09-05).
+#
+# email писался только при СОЗДАНИИ ряда: аккаунт, заведённый когда ВК адреса
+# не прислал, оставался без него навсегда — портал получал вход без claim'а
+# email, хотя scope его разрешает (G324). Ряд найден по тому же vk_user_id,
+# значит это тот же человек; привязка к чужому ряду по адресу остаётся только
+# через verified (ADR-0002 §2) и здесь не затрагивается.
+# ---------------------------------------------------------------------------
+
+
+class TestEmailBackfill:
+    @pytest.mark.asyncio
+    async def test_fills_empty_email_on_repeat_login(self, db_session, caplog):
+        u = RadarUser(role="radar", vk_user_id=201)  # соц-only, адреса нет
+        db_session.add(u)
+        await db_session.commit()
+
+        with caplog.at_level(logging.INFO, logger="radar_id.audit"):
+            out = await vku.find_or_create_user(db_session, {"user_id": 201, "email": "late@t.ru"})
+
+        assert out.id == u.id
+        assert out.email == "late@t.ru"
+        assert out.email_verified is True, "адрес пришёл от ВК — ВК его подтверждал"
+        assert "email backfilled" in caplog.text, (
+            "строка журнала обязательна: следующий ответ порталу должен быть "
+            "фактом из лога, а не рассуждением"
+        )
+
+    @pytest.mark.asyncio
+    async def test_does_not_overwrite_existing_email(self, db_session):
+        """Смена почты — заявленное действие владельца, не побочный эффект входа."""
+        u = RadarUser(role="radar", vk_user_id=202, email="mine@t.ru", email_verified=True)
+        db_session.add(u)
+        await db_session.commit()
+
+        out = await vku.find_or_create_user(db_session, {"user_id": 202, "email": "other@t.ru"})
+
+        assert out.email == "mine@t.ru"
+
+    @pytest.mark.asyncio
+    async def test_address_held_by_another_row_does_not_break_login(self, db_session, caplog):
+        """``lower(email)`` уникален: запись чужого адреса дала бы 500 на входе.
+
+        Вход важнее claim'а — пускаем, но оставляем след для разбора.
+        """
+        other = RadarUser(
+            login="own", password_hash=hash_password("p"), role="radar", email="dup@t.ru"
+        )
+        u = RadarUser(role="radar", vk_user_id=203)
+        db_session.add_all([other, u])
+        await db_session.commit()
+
+        with caplog.at_level(logging.WARNING, logger="radar_id.audit"):
+            out = await vku.find_or_create_user(db_session, {"user_id": 203, "email": "DUP@t.ru"})
+
+        assert out.id == u.id, "вход должен состояться"
+        assert out.email is None, "чужой адрес не занимаем"
+        assert "email backfill skipped" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_no_email_from_vk_changes_nothing(self, db_session):
+        u = RadarUser(role="radar", vk_user_id=204)
+        db_session.add(u)
+        await db_session.commit()
+
+        out = await vku.find_or_create_user(db_session, {"user_id": 204, "first_name": "A"})
+
+        assert out.email is None
+        assert out.email_verified is False
 
 
 # ---------------------------------------------------------------------------

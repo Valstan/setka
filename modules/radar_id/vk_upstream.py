@@ -415,8 +415,58 @@ async def fetch_vk_user(
 # ---------------------------------------------------------------------------
 
 
+async def _backfill_email(session, row: RadarUser, email: Optional[str]) -> None:
+    """Дозаполнить пустой ``email`` у найденного ряда (мандат brain 2026-09-05).
+
+    До этого ``email`` писался **только при создании ряда**: аккаунт, заведённый
+    когда ВК адреса не прислал, оставался без него навсегда, и портал получал
+    вход без claim'а ``email``, хотя scope его разрешает (G324). Из четырёх
+    аккаунтов ЕСА адреса не было ни у одного.
+
+    Дозаполнение безопасно, потому что ряд уже найден **по тому же
+    ``vk_user_id``** — это тот же человек, а не привязка чужой личности.
+    Привязка к *чужому* ряду по адресу остаётся там, где была: только через
+    ``email_verified`` (ADR-0002 §2).
+
+    Три вещи, которых здесь сознательно нет:
+
+    * **не перезаписываем непустой адрес.** Смена почты — заявленное действие
+      владельца аккаунта, а не побочный эффект входа;
+    * **не занимаем чужой адрес.** ``lower(email)`` уникален в БД, поэтому
+      адрес, уже принадлежащий другому ряду, вызвал бы ``IntegrityError`` —
+      то есть **500 на входе**, а не «claim не приехал». Проверяем до записи;
+    * **не молчим.** Строка журнала обязательна: следующий ответ порталу должен
+      быть фактом из лога, а не рассуждением.
+    """
+    if not email or row.email:
+        return
+
+    taken = (
+        await session.execute(
+            select(RadarUser.id).where(
+                func.lower(RadarUser.email) == email.lower(), RadarUser.id != row.id
+            )
+        )
+    ).scalar_one_or_none()
+    if taken is not None:
+        # Тот же адрес у другого ряда — запись упала бы на уникальном индексе.
+        # Вход важнее claim'а: пускаем, но оставляем след для разбора.
+        audit.warning(
+            "vk-login: email backfill skipped for sub=%s — address already held by id=%s",
+            row.sub,
+            taken,
+        )
+        return
+
+    row.email = email
+    row.email_verified = True  # адрес пришёл от ВК — ВК его подтверждал
+    await session.commit()
+    audit.info("vk-login: email backfilled for sub=%s vk_id=%s", row.sub, row.vk_user_id)
+
+
 async def find_or_create_user(session, vk_user: Dict[str, Any]) -> RadarUser:
-    """vk_user_id → существующий; по verified-email → привязка; иначе новый."""
+    """vk_user_id → существующий (+ дозаполнение email); по verified-email →
+    привязка; иначе новый."""
     vk_id = int(vk_user["user_id"])
     email = (vk_user.get("email") or "").strip() or None
     name = (
@@ -430,6 +480,7 @@ async def find_or_create_user(session, vk_user: Dict[str, Any]) -> RadarUser:
     if row is not None:
         if not row.is_active:
             raise VkUpstreamError("Аккаунт деактивирован")
+        await _backfill_email(session, row, email)
         return row
 
     if email:
