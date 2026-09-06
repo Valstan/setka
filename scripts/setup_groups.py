@@ -110,6 +110,12 @@ async def load_targets(codes: Optional[List[str]]) -> List[dict]:
                 "screen_name": (
                     (r.config or {}).get("screen_name") if isinstance(r.config, dict) else None
                 ),
+                # Сёла и посёлки района — длинный хвост поисковых запросов в
+                # описании. Есть не у всех: у mi и bal их ноль, у ur — 119.
+                "localities": (
+                    (r.config or {}).get("localities") if isinstance(r.config, dict) else None
+                )
+                or [],
             }
         )
     return out
@@ -207,7 +213,10 @@ def build_texts(target: dict) -> dict:
     return {
         "title": title,
         "description": render_group_description(
-            district_name=genitive, center_city=title, site_url=site_url
+            district_name=genitive,
+            center_city=title,
+            site_url=site_url,
+            localities=target.get("localities") or (),
         ),
         "welcome": render_welcome_post(
             district_name=genitive, neighbors=neighbors, site_url=site_url
