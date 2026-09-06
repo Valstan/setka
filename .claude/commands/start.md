@@ -126,6 +126,15 @@ gh pr list --state open --limit 20 2>/dev/null | head -20  # опц.
 
 Прочитай **полностью** в одном параллельном блоке:
 
+0. **Машинное состояние прошлой сессии** (пишут хуки, без участия модели):
+   - `.claude/session-state/latest.md` — полная выжимка на ЭТОЙ машине. SessionStart печатает
+     её сам, когда она свежее handoff'а, то есть прошлую сессию закрыли молча;
+   - `git show origin/session-state:SESSION_STATE.md` — то же состояние с ЛЮБОЙ машины владельца
+     (без дословных реплик), а `git log --oneline origin/wip/<машина>` — снимок незакоммиченной
+     работы, оставшейся на другом компьютере. Смотреть, если handoff протух, а на origin есть
+     свежие `session-state`/`wip/*` (после `git fetch` Шага 2).
+
+   Если handoff свежее машинного состояния — правда о нитке в нём, снимки игнорируем.
 1. [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md) — sticky-note с прошлой сессии: `Status`, текущая нитка, следующий шаг, failed approaches. **Если файла нет** или `Status: IDLE` — нет активной нитки, идём по обычному onboarding. Сверь `Updated:` с датой последнего коммита — устаревшему handoff (старше последних merged PR) не доверять слепо, ground truth — `git log`.
 2. [`AGENTS.md`](../../AGENTS.md) — **канон проектных правил** (границы, git-flow, mailbox, ярусы автономии, чего не делать). `CLAUDE.md` — тонкий адаптер к нему с нюансами Claude Code, читать после и только его.
 3. [`docs/AI_DEV_GUIDE.md`](../../docs/AI_DEV_GUIDE.md) — архитектурная картина

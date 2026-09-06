@@ -11,7 +11,9 @@
 - Исполняемые памятки процедур — [`.claude/commands/`](.claude/commands/), вызываются
   как slash-команды (`/start`, `/reliz`, `/close_session`, `/check`, `/celery`, `/logs`,
   `/sql`, `/distill`, `/deadcode`, `/discover_communities`, `/curate`).
-- Командная политика разрешений и SessionStart-хук git-sync — [`.claude/settings.json`](.claude/settings.json).
+- Командная политика разрешений и хуки — [`.claude/settings.json`](.claude/settings.json):
+  SessionStart (git-sync + печать состояния), **Stop/PreCompact/SessionEnd —
+  автоснимок сессии** ([`scripts/session_autosave.py`](scripts/session_autosave.py)).
   Файл общий, коммитится и разъезжается на все машины владельца.
 - Локальные разрешения конкретного компьютера — только в игнорируемом
   `.claude/settings.local.json`.
@@ -34,4 +36,20 @@
 - **Авто-архивацию сессий** (Claude Desktop → вкладка **Cowork** → «Classify session
   states») при желании отключить вручную — это UI-настройка, не ключ `settings.json`.
   Sync-гейт и SessionStart-хук защищают независимо от неё.
+- **Автоснимок сессии — два контура, оба без участия модели.**
+  1. *Локальный.* Хук `Stop` после каждого хода складывает полную выжимку нитки
+     (реплики владельца, последние слова агента, тронутые PR, состояние git) в
+     `.claude/session-state/` — каталог под `.gitignore`, наружу не уходит. Если
+     прошлую сессию закрыли молча, SessionStart её печатает; если handoff свежее —
+     не печатает, правда о нитке в нём.
+  2. *Публикуемый.* Хук `PostToolUse` после каждого `gh pr merge` / `git push`
+     (и `SessionEnd`) кладёт то же состояние **без дословных реплик владельца** в
+     ветку `session-state`, а незакоммиченное рабочее дерево — в `wip/<машина>`.
+     Обе ветки собираются через `commit-tree` мимо рабочего дерева: ни `checkout`,
+     ни `git add` в вашем индексе, `main` не задет. Push уходит отдельным процессом,
+     чтобы сеть не тормозила ход. Отсюда правило: **после мержа сессию можно
+     закрывать молча** — и работа, и нитка уже на GitHub.
+  Снимок отвечает на «что происходило», но **не заменяет** курируемую нитку из
+  [`/close_session`](.claude/commands/close_session.md): «почему так решили» и
+  «что дальше» машина не восстановит.
 - В коммитах подписывайся собой: `Co-Authored-By: <Имя модели и версия> <noreply@anthropic.com>`.
