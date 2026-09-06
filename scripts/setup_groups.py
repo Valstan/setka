@@ -82,7 +82,7 @@ async def load_targets(codes: Optional[List[str]]) -> List[dict]:
             await session.execute(
                 text(
                     "SELECT r.id, r.code, r.name, r.neighbors, r.vk_group_id, "
-                    "       rc.zagolovki "
+                    "       r.config, rc.zagolovki "
                     "FROM regions r "
                     "LEFT JOIN region_configs rc ON rc.region_code = r.code "
                     "WHERE r.is_active IS TRUE AND r.vk_group_id IS NOT NULL "
@@ -103,6 +103,13 @@ async def load_targets(codes: Optional[List[str]]) -> List[dict]:
                 "neighbors": r.neighbors,
                 "vk_group_id": r.vk_group_id,
                 "zagolovki": r.zagolovki,
+                # Красивый адрес группы: его кэширует ночная таска
+                # collect_member_snapshots в Region.config['screen_name'].
+                # Нужен, чтобы публичные тексты ссылались на vk.com/<имя>,
+                # а не на club<id> (закон о ссылках, AGENTS.md).
+                "screen_name": (
+                    (r.config or {}).get("screen_name") if isinstance(r.config, dict) else None
+                ),
             }
         )
     return out
@@ -212,11 +219,23 @@ def build_texts(target: dict) -> dict:
 
 
 def neighbor_index(targets: List[dict]) -> Dict[str, dict]:
+    """Ссылки на соседей для визитки — красивым адресом, если он известен.
+
+    Раньше здесь стояло ``community_url(id, None)``: второй аргумент был **всегда**
+    ``None``, поэтому закреплённая визитка во всех 41 сообществе ссылалась на
+    соседей как на ``vk.com/club241197723``. Красивый адрес при этом лежал
+    закэшированным в ``Region.config['screen_name']`` — то есть закон «наружу
+    красивая ссылка, внутрь числовой id» (``AGENTS.md``) нарушался ровно в том
+    месте, которое читают люди.
+
+    Фолбэк на ``club<id>`` остаётся: он рабочий всегда и не зависит от того,
+    добежала ли ночная таска.
+    """
     from modules.region_links import base_title, community_url
 
     out = {}
     for t in targets:
-        url = community_url(t["vk_group_id"], None)
+        url = community_url(t["vk_group_id"], t.get("screen_name"))
         if url:
             out[t["code"]] = {"name": f"{base_title(t['name'], None)} ИНФО", "url": url}
     return out
@@ -570,6 +589,131 @@ async def run_force_cover(codes: Optional[List[str]]) -> int:
     return 0
 
 
+async def _journal_row_id(region_id: int, version: int) -> Optional[int]:
+    """Строка журнала этой версии шаблона; создаётся, если её нет."""
+    from sqlalchemy import select
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from database.connection import AsyncSessionLocal
+    from database.models import PromoGroupSetup
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            pg_insert(PromoGroupSetup)
+            .values(region_id=region_id, setup_version=version, status="dry_run")
+            .on_conflict_do_nothing(index_elements=["region_id", "setup_version"])
+        )
+        await session.commit()
+        row = (
+            await session.execute(
+                select(PromoGroupSetup.id, PromoGroupSetup.before).where(
+                    PromoGroupSetup.region_id == region_id,
+                    PromoGroupSetup.setup_version == version,
+                )
+            )
+        ).first()
+    return row
+
+
+async def run_refresh_desc(codes: Optional[List[str]], apply: bool) -> int:
+    """--refresh-desc: привести описания к шаблону v3, сохранив оригинал.
+
+    Заказ владельца 06.09: «описания у групп надо подправить, если оно устаревшее
+    или маленькое, в том числе и у старых сообществ». Обычный ``--apply`` их не
+    берёт: старые сообщества идут в режиме ``spot`` («авторское оформление — не
+    трогаем»), и это правило про **аватар с обложкой**, которые у них авторские и
+    ценные. Описание владелец решил унифицировать отдельно.
+
+    Идёт **community-ключом**, то есть ноль user-вызовов VALSTAN.
+
+    Откат обеспечен и это не формальность: мы затираем авторские тексты на
+    500–1900 знаков шаблоном на ~250. Оригинал кладётся в ``before.description``
+    и достаётся командой ``--rollback <code>``. **Существующий ``before`` не
+    перезаписывается** — если в нём уже лежит снимок, сделанный до наших правок,
+    он и есть настоящий оригинал; затерев его вторым прогоном, мы бы подменили
+    точку отката шаблоном и откатывать стало бы не к чему.
+
+    Идемпотентность — по содержимому: если в ВК уже ровно тот текст, который мы
+    собираемся записать, регион пропускается и запись не идёт.
+    """
+    import vk_api
+
+    from modules.promotion.branding import TEMPLATE_VERSION
+    from modules.promotion.group_setup_vk import edit_description, get_current
+
+    targets = await load_targets(codes)
+    if not targets:
+        logger.error("Нет целей")
+        return 1
+
+    _, community_tokens = await load_tokens()
+    logger.info(
+        "REFRESH-DESC: сообществ %d | режим: %s | community-ключ, user-бюджет не расходуется",
+        len(targets),
+        "запись" if apply else "dry-run",
+    )
+
+    changed = skipped = failed = 0
+    for target in targets:
+        code = target["code"]
+        gid = abs(int(target["vk_group_id"]))
+        token = community_tokens.get(gid)
+        if not token:
+            logger.info("  %-14s ⛔ нет community-ключа", code)
+            failed += 1
+            continue
+        api = vk_api.VkApi(token=token).get_api()
+
+        snap = await asyncio.to_thread(get_current, api, target["vk_group_id"])
+        if not snap.ok:
+            logger.info("  %-14s ⛔ снимок не взялся: %s", code, snap.detail)
+            failed += 1
+            continue
+        old = (snap.payload or {}).get("description") or ""
+        new = build_texts(target)["description"]
+
+        if old.strip() == new.strip():
+            logger.info("  %-14s ✓ уже шаблонное (%d знаков)", code, len(old))
+            skipped += 1
+            continue
+
+        logger.info("  %-14s %d → %d знаков", code, len(old), len(new))
+        if not apply:
+            continue
+
+        res = await asyncio.to_thread(edit_description, api, target["vk_group_id"], new)
+        if not res.ok:
+            logger.info("  %-14s ⛔ запись не прошла: %s", code, res.detail)
+            failed += 1
+            continue
+
+        row = await _journal_row_id(target["region_id"], TEMPLATE_VERSION)
+        if row is not None:
+            before = row.before if isinstance(row.before, dict) else None
+            if not (before or {}).get("description"):
+                # Первый заход: оригинал ещё не сохранён — кладём живой текст.
+                before = dict(before or {})
+                before["description"] = old
+            await finish_setup(
+                row.id,
+                status="applied",
+                before=before,
+                after={"description": new},
+                applied_fields=["description"],
+            )
+        changed += 1
+        logger.info("  %-14s ✍ описание обновлено", code)
+
+    logger.info("")
+    logger.info(
+        "Готово: изменено %d, пропущено (уже шаблонные) %d, не вышло %d",
+        changed,
+        skipped,
+        failed,
+    )
+    return 0 if failed == 0 else 1
+
+
 async def run_audit(codes: Optional[List[str]]) -> int:
     """--audit: чего фактически недостаёт каждому сообществу. Только чтение.
 
@@ -805,6 +949,11 @@ async def amain() -> int:
         action="store_true",
         help="с --repair: выбирать цели по живому снимку ВК, а не по строке журнала",
     )
+    parser.add_argument(
+        "--refresh-desc",
+        action="store_true",
+        help="привести описания к шаблону v3 (в т.ч. у авторских spot-групп); с --apply — запись",
+    )
     parser.add_argument("--out", default=None, help="куда сложить превью картинок")
     parser.add_argument(
         "--force-cover",
@@ -825,6 +974,9 @@ async def amain() -> int:
     if args.audit:
         codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
         return await run_audit(codes)
+    if args.refresh_desc:
+        codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
+        return await run_refresh_desc(codes, apply=args.apply)
     if args.repair:
         codes = [c.strip() for c in args.regions.split(",")] if args.regions else None
         return await run_repair(codes, by_snapshot=args.by_snapshot)
