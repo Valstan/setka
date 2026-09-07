@@ -517,3 +517,86 @@ async def reject_post(session, post: AdScheduledPost, *, comment: str) -> AdSche
 
     await pkgs.refund_post(session, post)
     return post
+
+
+#: Статусы, из которых отменять нечего: пост уже вышел, уже снят или уже
+#: вернулся в пакет при сбое. ``failed`` здесь не по симметрии, а потому что
+#: возврат слота у него уже произошёл — второй ``refund`` вернул бы слот дважды
+#: (блокер adversarial-ревью 2026-08-26).
+CANCEL_TERMINAL_STATUSES = ("published", "cancelled", "rejected", "failed")
+
+
+async def cancel_own_post(
+    session,
+    client: AdClient,
+    post_id: int,
+    *,
+    source: str = "cabinet",
+) -> Dict[str, Any]:
+    """Отменить СВОЙ неопубликованный пост. Общий движок для веба и ВК-бота.
+
+    Вынесено из эндпойнта ``/api/advertiser/posts/{id}/cancel`` 07.09, когда
+    отмену понадобилось дать и боту. Копия здесь была бы ровно тем случаем, о
+    котором предупреждает канон: две реализации одного правила расходятся
+    молча — а расходиться им есть чем, тут три неочевидных условия подряд
+    (блокировка строки, терминальные статусы, снятие из VK-отложки).
+
+    Возвращает ``{"ok": bool, "reason": str|None, "row": AdScheduledPost|None,
+    "cancel_error": str|None}``:
+
+    * ``reason="not_found"`` — строки нет или она чужая (наружу — одинаково,
+      чтобы перебором id нельзя было узнать о чужих постах);
+    * ``reason="terminal"`` — отменять нечего, ``ok=True``, состояние отдаётся
+      как есть;
+    * ``cancel_error`` — ВК не снял пост из отложки; статус НЕ меняется, клиент
+      видит реальное состояние, а не желаемое.
+
+    Commit — на вызывающем.
+    """
+    from modules.ad_cabinet import packages as pkgs
+    from modules.ad_cabinet.interaction_log import log_interaction
+
+    # FOR UPDATE: реконсилер в этот же момент может фиксировать выход этой
+    # строки (аудит 2026-09-05) — без блокировки отмена снимала уже вышедший
+    # пост со стены, оставляя AdPublication и awaiting-платёж. На sqlite no-op.
+    row = (
+        await session.execute(
+            select(AdScheduledPost).where(AdScheduledPost.id == int(post_id)).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if row is None or row.client_id != client.id:
+        return {"ok": False, "reason": "not_found", "row": None, "cancel_error": None}
+    if row.status in CANCEL_TERMINAL_STATUSES:
+        return {"ok": True, "reason": "terminal", "row": row, "cancel_error": None}
+
+    if row.status == "scheduled" and row.vk_postponed_post_id:
+        from modules.publisher.vk_publisher_extended import VKPublisher
+
+        publisher = await VKPublisher.create_with_policy(
+            session, target_group_id=int(row.community_vk_id)
+        )
+        res = await publisher.delete_post(int(row.community_vk_id), int(row.vk_postponed_post_id))
+        if not res.get("success"):
+            return {
+                "ok": False,
+                "reason": "vk_error",
+                "row": row,
+                "cancel_error": res.get("error"),
+            }
+
+    row.status = "cancelled"
+    await pkgs.refund_post(session, row)  # пакетный пост возвращается в пакет
+    log_interaction(
+        session,
+        kind="cancelled",
+        client_id=client.id,
+        scheduled_post_id=row.id,
+        summary=(
+            "Клиент отменил пост из ВК-бота"
+            if source == "vk_bot"
+            else "Клиент отменил пост из кабинета"
+        ),
+        actor="client",
+        meta={"source": source},
+    )
+    return {"ok": True, "reason": None, "row": row, "cancel_error": None}

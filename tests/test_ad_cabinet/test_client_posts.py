@@ -9,6 +9,7 @@ published), причина отказа и ошибка показываются
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -139,9 +140,19 @@ async def test_menu_button_shows_posts(db_session):
         submit=submit,
         now_msk=NOW,
     )
-    assert state is None and replies[0][1] == dialog.MAIN_KEYBOARD
+    assert state is None
     assert "Мои посты" in replies[0][0] and "на одобрении" in replies[0][0]
     assert dialog.Incoming(peer_id=1, text="📋 Мои посты").command() == "posts"
+    # С 07.09 под последним куском списка висит клавиатура отмены, а не главное
+    # меню: пост в статусе pending клиент вправе снять сам, и раньше сделать это
+    # из бота было нечем (аудит кабинетов).
+    assert replies[-1][1] != dialog.MAIN_KEYBOARD
+    payloads = [
+        json.loads(b["action"]["payload"])
+        for row in json.loads(replies[-1][1])["buttons"]
+        for b in row
+    ]
+    assert any(p.get("cmd") == dialog.CMD_CANCEL_POST for p in payloads)
 
 
 @pytest.mark.asyncio

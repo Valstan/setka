@@ -704,42 +704,15 @@ async def cancel_post(post_id: int, request: Request, db: AsyncSession = Depends
     не меняем, клиент видит реальное состояние).
     """
     _user, client = await _current_client(request, db)
-    # FOR UPDATE: реконсилер в этот момент может фиксировать выход этой же строки
-    # (аудит 2026-09-05) — без блокировки отмена снимала уже вышедший пост со
-    # стены, оставляя AdPublication и awaiting-платёж. На sqlite — no-op.
-    row = (
-        await db.execute(
-            select(AdScheduledPost).where(AdScheduledPost.id == post_id).with_for_update()
-        )
-    ).scalar_one_or_none()
-    if not row or row.client_id != client.id:
+    # Движок общий с ВК-ботом (client_orders.cancel_own_post): блокировка
+    # строки, терминальные статусы и снятие из VK-отложки живут там в одном
+    # месте — второй копии этих трёх условий в проекте быть не должно.
+    res = await client_orders.cancel_own_post(db, client, post_id, source="cabinet")
+    if res["reason"] == "not_found":
         raise HTTPException(status_code=404, detail="Пост не найден")
-    # failed тоже терминален: он УЖЕ возвращён в пакет при сбое отправки —
-    # cancel по нему не должен ни зваться в VK, ни возвращать слот второй раз
-    # (блокер adversarial-ревью 2026-08-26; refund и сам идемпотентен).
-    if row.status in ("published", "cancelled", "rejected", "failed"):
-        return row.to_dict()
-    if row.status == "scheduled" and row.vk_postponed_post_id:
-        from modules.publisher.vk_publisher_extended import VKPublisher
-
-        publisher = await VKPublisher.create_with_policy(
-            db, target_group_id=int(row.community_vk_id)
-        )
-        res = await publisher.delete_post(int(row.community_vk_id), int(row.vk_postponed_post_id))
-        if not res.get("success"):
-            return {**row.to_dict(), "cancel_error": res.get("error")}
-    row.status = "cancelled"
-    from modules.ad_cabinet import packages as pkgs
-
-    await pkgs.refund_post(db, row)  # пакетный пост возвращается в пакет
-    log_interaction(
-        db,
-        kind="cancelled",
-        client_id=client.id,
-        scheduled_post_id=row.id,
-        summary="Клиент отменил пост из кабинета",
-        actor="client",
-    )
+    row = res["row"]
+    if res["cancel_error"]:
+        return {**row.to_dict(), "cancel_error": res["cancel_error"]}
     await db.commit()
     await db.refresh(row)
     return row.to_dict()
