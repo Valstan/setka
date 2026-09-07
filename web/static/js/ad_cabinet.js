@@ -429,10 +429,13 @@ async function publishNow(id) {
         // Временная авария ВК — не «ошибка публикации»: заявка цела, нужно
         // просто повторить. Красный цвет и слово «ошибка» здесь врали бы
         // оператору о том, что произошло и что делать.
+        // Своего префикса больше не добавляем: сервер присылает готовую фразу
+        // («ВКонтакте отклонил публикацию (код 214). …»), а «Ошибка публикации:»
+        // поверх неё была третьим подряд словом об одном и том же.
         if (e && e.transient) {
             _res(id, escapeHtml(e.message), 'warning');
         } else {
-            _res(id, 'Ошибка публикации: ' + escapeHtml(e.message), 'danger');
+            _res(id, escapeHtml(e.message), 'danger');
         }
     }
 }
@@ -714,6 +717,9 @@ async function submitAccept() {
     try {
         const r = await apiClient.acceptAdRequest(_acceptId, payload);
         let msg = `Запланировано: ${r.scheduled}` + (r.failed ? `, с ошибкой: ${r.failed}` : '');
+        if (r.vk_unavailable) {
+            msg += ' — ВКонтакте был временно недоступен, повторите раскладку (даты не заняты)';
+        }
         if (r.original_removed) msg += '; оригинал убран';
         if (r.reply && r.reply.success) msg += '; ответ отправлен';
         if (res) res.innerHTML = `<span class="text-success">${msg} ✓</span>`;
@@ -1158,6 +1164,12 @@ async function submitSchedule() {
     try {
         const res = await apiClient.createScheduledPosts(payload);
         let msg = `Запланировано: ${res.scheduled}` + (res.failed ? `, с ошибкой: ${res.failed}` : '');
+        // «ВК полежал» и «ВК отказал» требуют от оператора разного, а выглядели
+        // одинаково — «с ошибкой: N». Даты не заняты: строка со статусом failed
+        // не попадает под уникум «один пост клиента в сообщество в день».
+        if (res.vk_unavailable) {
+            msg += ' — ВКонтакте был временно недоступен, повторите раскладку (даты не заняты)';
+        }
         if (payload.remove_original) {
             msg += res.original_removed
                 ? '; оригинал убран из предложки, заявка → опубликовано'

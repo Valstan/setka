@@ -595,3 +595,73 @@ async def test_cancel_404():
     with pytest.raises(HTTPException) as exc:
         await api.cancel_scheduled(999, db=db)
     assert exc.value.status_code == 404
+
+
+# ------------------------------------------- отказ шлюза ВК против отказа ВК
+
+
+async def test_gateway_outage_is_reported_as_retryable(monkeypatch):
+    """«ВК полежал» и «ВК отказал» — разные события, и оператору нужно разное.
+
+    07.09 ВК отвечал 5xx полторы минуты. Строки раскладки вставали в ``failed``
+    с текстом «VK API error: Response code 502», и по нему нельзя было понять,
+    повторять раскладку или идти разбираться с правами.
+
+    Автоповтора здесь нет намеренно: отложенные посты живут в собственной
+    отложке ВК, celery-задачи, которая бы их дожимала, в проекте не
+    существует, — а заводить её ради полутора минут аварии значит завести
+    новый механизм с собственным риском дублей. Повторяет человек; ему и
+    говорим словами.
+    """
+    pub = _fake_publisher(
+        publish_result={
+            "success": False,
+            "error": "VK API error: Response code 502",
+            "transient": True,
+        }
+    )
+    _patch_publish(monkeypatch, pub)
+    db = _create_db()
+
+    out = await api.create_scheduled(
+        api.ScheduleCreateIn(community_vk_id=-100, text="реклама", dates=[_FUTURE]),
+        db=db,
+    )
+
+    assert out["vk_unavailable"] is True
+    assert out["scheduled"] == 0
+    row = out["created"][0]
+    # Статус остаётся failed СОЗНАТЕЛЬНО: только он выводит строку из-под
+    # уникума uq_ad_sched_client_day_slot (pending/scheduled/published), то
+    # есть повторная раскладка той же даты пройдёт, а не упрётся в 409.
+    assert row["status"] == "failed"
+    assert "повторите раскладку" in row["error_message"]
+    assert "502" not in row["error_message"], "человеку нужен не код шлюза, а действие"
+
+
+async def test_ordinary_refusal_is_not_dressed_up_as_an_outage(monkeypatch):
+    """Гвоздь: отказ ВК с кодом не должен предлагать «просто повторите».
+
+    Повтор раскладки на 214 («нет права постить») означал бы бесконечный круг
+    по кнопке вместо разбирательства с правами.
+    """
+    pub = _fake_publisher(
+        publish_result={
+            "success": False,
+            "error": "VK API error: [214] Access to adding post denied",
+            "vk_error_code": 214,
+        }
+    )
+    _patch_publish(monkeypatch, pub)
+    db = _create_db()
+
+    out = await api.create_scheduled(
+        api.ScheduleCreateIn(community_vk_id=-100, text="реклама", dates=[_FUTURE]),
+        db=db,
+    )
+
+    assert out["vk_unavailable"] is False
+    row = out["created"][0]
+    assert row["status"] == "failed"
+    assert "повторите" not in row["error_message"]
+    assert "214" in row["error_message"], "сырую строку с кодом в БД сохраняем как прежде"
