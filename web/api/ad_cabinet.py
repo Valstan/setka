@@ -767,6 +767,10 @@ async def create_scheduled(
         raise HTTPException(status_code=500, detail=f"Нет токена для публикации: {e}")
 
     created: List[AdScheduledPost] = []
+    # Хоть одна строка упала из-за недоступности ВК, а не из-за отказа в
+    # публикации. Разные события требуют от оператора разных действий: первое —
+    # «повторите», второе — «разбирайтесь».
+    vk_unavailable = False
     for naive_dt, unix in parsed:
         # Срок снятия (С2): явная дата (для всех) либо +N дней от публикации поста.
         if expire_at_dt is not None:
@@ -825,6 +829,23 @@ async def create_scheduled(
                     await publisher.set_post_comments(
                         gid, int(row.vk_postponed_post_id), enabled=False
                     )
+            elif res.get("transient"):
+                # Отказ ШЛЮЗА ВК, а не отказ в публикации. Статус остаётся
+                # ``failed`` СОЗНАТЕЛЬНО: только он выводит строку из-под
+                # уникума `uq_ad_sched_client_day_slot` (он покрывает
+                # pending/scheduled/published), а значит повторная раскладка
+                # той же даты пройдёт, а не упрётся в 409.
+                #
+                # Автоповтора здесь нет и не заводится: отложенные посты живут
+                # в собственной отложке ВК, celery-задачи, которая бы их
+                # дожимала, в проекте не существует. Придумывать её ради
+                # полутора минут аварии — новый механизм с собственным риском
+                # дублей. Повторяет человек, ему и говорим об этом словами.
+                vk_unavailable = True
+                row.status = "failed"
+                row.error_message = (
+                    "ВКонтакте был временно недоступен — повторите раскладку, " "дата не занята"
+                )
             else:
                 row.status = "failed"
                 row.error_message = str(res.get("error"))[:500]
@@ -901,6 +922,10 @@ async def create_scheduled(
         "original_removed": original_removed,
         "original_remove_error": original_remove_error,
         "client_id": effective_client_id,
+        # Отличает «ВК полежал» от «ВК отказал»: без этого признака оператор
+        # видел одинаковое «не встало N строк» в обоих случаях и не знал,
+        # повторять раскладку или идти разбираться с правами.
+        "vk_unavailable": vk_unavailable,
     }
 
 
@@ -964,7 +989,35 @@ async def accept_request(
         "failed": sched_res.get("failed", 0),
         "original_removed": sched_res.get("original_removed", False),
         "client_id": sched_res.get("client_id"),
+        # Признак обязан пройти сквозь композицию С5: иначе «оформить одной
+        # кнопкой» молча теряет ровно ту информацию, ради которой он заведён.
+        "vk_unavailable": sched_res.get("vk_unavailable", False),
     }
+
+
+def _publish_failure_detail(res: dict) -> str:
+    """Одна фраза оператору вместо трёх префиксов подряд.
+
+    07.09 человек прочёл «Ошибка публикации: Публикация не удалась: VK API
+    error: Response code 502»: три обёртки, каждая добавила своё, и ни одна не
+    сказала, что делать. Слоёв было шесть — vk_api → vk_client → ``_invoke`` →
+    ``VKPublishError`` → этот эндпойнт → фронт.
+
+    ⚠️ **Строку исключения при этом трогать нельзя.** ``str(VKPublishError)``
+    обязан остаться ``VK API error: [<код>] <текст>``: на формат завязаны
+    ``modules/promotion/vk_errors.extract_vk_error_code`` (вынимает код
+    регуляркой) и ``error_message`` строк планировщика в БД. Поэтому чиним не
+    исключение, а то, что показывают человеку: собираем фразу из уже
+    разобранных полей, а сырую строку оставляем логу и базе.
+    """
+    raw = str(res.get("error") or "").strip()
+    code = res.get("vk_error_code")
+    # «VK API error: » — служебный префикс исключения; человеку он не говорит
+    # ничего, а в детали дублирует слово «ошибка» из фразы вокруг.
+    body = raw[len("VK API error: ") :] if raw.startswith("VK API error: ") else raw
+    if code:
+        return f"ВКонтакте отклонил публикацию (код {code}). {body}"
+    return f"Публикация не удалась. {body}" if body else "Публикация не удалась."
 
 
 def _upload_request_photos(group_id: int, user_token, photo_urls) -> List[str]:
@@ -1054,7 +1107,7 @@ async def publish_request_now(
                 detail="ВКонтакте временно недоступен — попробуйте ещё раз через минуту. "
                 "Заявка не тронута, задвоить публикацию нельзя.",
             )
-        raise HTTPException(status_code=502, detail=f"Публикация не удалась: {res.get('error')}")
+        raise HTTPException(status_code=502, detail=_publish_failure_detail(res))
 
     # Пометить published СРАЗУ (отдельный commit) — защита от повторной публикации.
     ar.status = "published"
