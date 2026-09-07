@@ -18,7 +18,13 @@ const apiClient = {
             
             if (!response.ok) {
                 const error = await response.json().catch(() => ({ detail: response.statusText }));
-                throw new Error(error.detail || `HTTP ${response.status}`);
+                const err = new Error(error.detail || `HTTP ${response.status}`);
+                // 503 — «сторонний сервис прилёг, повторите», а не «мы отказали».
+                // Статус ехал только в текст, поэтому вызывающий не мог отличить
+                // временную аварию от настоящего отказа и красил всё в danger.
+                err.status = response.status;
+                err.transient = response.status === 503;
+                throw err;
             }
             
             return await response.json();

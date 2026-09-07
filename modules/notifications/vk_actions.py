@@ -31,7 +31,7 @@ import logging
 from typing import Dict, Optional
 
 import vk_api
-from vk_api.exceptions import ApiError, Captcha
+from vk_api.exceptions import ApiError, ApiHttpError, Captcha
 
 logger = logging.getLogger(__name__)
 
@@ -348,6 +348,25 @@ def send_message(
         if paused is not None:
             resp["paused_until"] = paused.isoformat()
         return resp
+    except ApiHttpError as e:
+        # Отказ ШЛЮЗА ВК (HTTP 5xx), а не ответ API. Отдельная ветка по той же
+        # причине, что и у капчи выше: ``ApiHttpError`` наследует ``VkApiError``,
+        # а не ``ApiError``, и без неё проваливался в generic-ветку с
+        # ``error_code 0`` — то есть выглядел как «ВК отказал», хотя ВК просто
+        # не ответил. Канал на этом паузить НЕЛЬЗЯ: лежит сторона ВК, а не наш
+        # поток, и ``note_error`` наказал бы здоровый токен за чужую аварию.
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        logger.warning(
+            "VK gateway error on messages.send (group %s): HTTP %s — транзиторно",
+            positive_group_id,
+            status,
+        )
+        return {
+            "success": False,
+            "error_code": 0,
+            "transient": True,
+            "error": "ВКонтакте временно недоступен — попробуйте ещё раз через минуту",
+        }
     except Exception as e:
         logger.error("Unexpected error sending message: %s", e)
         return {"success": False, "error_code": 0, "error": str(e)}

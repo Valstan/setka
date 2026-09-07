@@ -44,6 +44,45 @@ _PUBLISH_ROTATE_CODES = frozenset({5, 10, 17, 29})
 # ровно тот отказ, что описан выше. Инвариант закреплён тестом.
 _WALL_SCOPED_CODES = frozenset({214, 219, 220})
 
+# Отказ ШЛЮЗА ВК (HTTP 5xx) — не ответ API: у него нет ``error_code``, и весь
+# каскад токенов, который сравнивает коды, для него слеп. Повторять его другим
+# токеном бессмысленно вдвойне: лежит сторона ВК, а не право доступа.
+#
+# Повторяем МОЛЧА только методы, которые ничего не создают. Список — allowlist
+# по префиксу, а не «всё кроме записей»: забытая в denylist-е запись повторится
+# и задвоит пост, забытое в allowlist-е чтение всего лишь не получит повтора.
+# Цена ошибки в двух списках разная, поэтому и список такой.
+_TRANSIENT_RETRY_SAFE_PREFIXES = (
+    "wall.get",
+    "groups.get",
+    "users.get",
+    "utils.",
+    "photos.getWallUploadServer",
+    "photos.getMessagesUploadServer",
+)
+_TRANSIENT_RETRIES = 2
+_TRANSIENT_BACKOFF_SECONDS = 1.5
+
+
+def _is_retry_safe_method(method: str) -> bool:
+    """Можно ли молча повторить метод после отказа шлюза (ничего не создаёт)."""
+    return str(method or "").startswith(_TRANSIENT_RETRY_SAFE_PREFIXES)
+
+
+def _api_http_error_cls():
+    """``vk_api.exceptions.ApiHttpError`` или пустой кортеж, если библиотеки нет.
+
+    Импорт ленивый по той же причине, что и остальные в этом модуле: тестовые
+    фикстуры инстанцируют публикатор без vk_api. Пустой кортеж в ``except``
+    легален и не ловит ничего — путь просто остаётся прежним.
+    """
+    try:
+        from vk_api.exceptions import ApiHttpError
+
+        return ApiHttpError
+    except Exception:  # pragma: no cover — библиотека есть везде, кроме голых фикстур
+        return ()
+
 
 class VKPublisher:
     """
@@ -365,6 +404,9 @@ class VKPublisher:
                 # читают и пишут в БД двенадцать call-site'ов, её формат менять
                 # нельзя. Ключ добавочный и обратно совместимый.
                 "vk_error_code": _vk_error_code_of(e),
+                # Отказ шлюза ВК, а не отказ в публикации: вызывающий вправе
+                # предложить повтор вместо того, чтобы объявлять поражение.
+                "transient": bool(getattr(e, "transient", False)),
             }
 
     async def publish_suggested(
@@ -724,7 +766,7 @@ class VKPublisher:
                 return await self._try_publish_candidates(
                     method, params, via_prefix="publish-token"
                 )
-            raise VKPublishError(e.code, e.message) from e
+            raise VKPublishError(e.code, e.message, transient=e.transient) from e
 
     async def _try_community_candidates(
         self,
@@ -754,7 +796,7 @@ class VKPublisher:
                 # Явная проверка ДО ротации: «стенные» коды не пробуем другим
                 # токеном никогда, даже если кто-то добавит их в rotate_codes.
                 if e.code in _WALL_SCOPED_CODES or e.code not in rotate_codes:
-                    raise VKPublishError(e.code, e.message) from e
+                    raise VKPublishError(e.code, e.message, transient=e.transient) from e
                 logger.warning(
                     "community-token %s failed with code %s on %s — rotating",
                     name,
@@ -889,6 +931,40 @@ class VKPublisher:
             cls._last_publish_token_call = datetime.now()
 
     async def _invoke(self, target_client, method: str, params: Dict[str, Any]) -> Dict:
+        """VK API call с повтором на отказе шлюза; raises ``_VKApiCallError``.
+
+        **Повторяем только то, что ничего не создаёт.** HTTP 5xx от ВК означает
+        «шлюз не ответил», а не «ВК не выполнил»: ответ мог потеряться уже после
+        того, как запись прошла. Для чтения это неважно — повтор вернёт то же
+        самое; для ``wall.post`` слепой повтор — прямой путь к дублю в живом
+        канале, ровно тот класс #218, который 27.08 дал одинаковый пост каждые
+        полчаса в @gonba_life.
+
+        Поэтому у записей ошибка не гасится, а доезжает наверх с признаком
+        ``transient``: вызывающий говорит человеку «ВК временно недоступен,
+        повторите» и повторяет по его команде, когда состояние уже видно. Это
+        не полумера, а разделение: молча чинится то, что безопасно чинить молча.
+        """
+        attempts = _TRANSIENT_RETRIES + 1 if _is_retry_safe_method(method) else 1
+        for attempt in range(attempts):
+            try:
+                return await self._invoke_once(target_client, method, params)
+            except _VKApiCallError as e:
+                if not e.transient or attempt == attempts - 1:
+                    raise
+                delay = _TRANSIENT_BACKOFF_SECONDS * (attempt + 1)
+                logger.warning(
+                    "%s: отказ шлюза ВК (%s), повтор %d/%d через %.1f с",
+                    method,
+                    e.message,
+                    attempt + 1,
+                    attempts - 1,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _invoke_once(self, target_client, method: str, params: Dict[str, Any]) -> Dict:
         """Single VK API call; raises _VKApiCallError on VK error payload."""
         if hasattr(target_client, "api_call"):
             import asyncio
@@ -902,7 +978,14 @@ class VKPublisher:
                     None, api_call_method, method, params
                 )
         elif hasattr(target_client, "method"):
-            response = target_client.method(method, params)
+            # Сырая сессия vk_api: ApiHttpError прилетает ИСКЛЮЧЕНИЕМ, а не
+            # словарём, и мимо всей обработки ниже. Приводим к тому же классу,
+            # что и путь через api_call, — иначе признак transient был бы виден
+            # только у половины клиентов.
+            try:
+                response = target_client.method(method, params)
+            except _api_http_error_cls() as e:
+                raise _VKApiCallError(code=0, message=str(e), transient=True) from e
         else:
             raise NotImplementedError("VK client doesn't support API calls")
 
@@ -910,6 +993,7 @@ class VKPublisher:
             err = response.get("error", {}) or {}
             message = str(err.get("error_msg") or "Unknown error")
             code = int(err.get("error_code") or 0)
+            transient = bool(err.get("transient"))
             if code == 0:
                 # VKClient.api_call historically returned {'error': {'error_msg': str(ApiError)}}
                 # without an explicit error_code. The string form starts with "[NN] ..." —
@@ -919,7 +1003,7 @@ class VKPublisher:
                 m = re.match(r"^\[(\d+)\]", message)
                 if m:
                     code = int(m.group(1))
-            raise _VKApiCallError(code=code, message=message)
+            raise _VKApiCallError(code=code, message=message, transient=transient)
 
         if isinstance(response, dict) and "response" in response:
             return response["response"]
@@ -1040,10 +1124,15 @@ class VKPublisher:
 
 
 class _VKApiCallError(Exception):
-    def __init__(self, code: int, message: str):
+    def __init__(self, code: int, message: str, *, transient: bool = False):
         super().__init__(f"[{code}] {message}")
         self.code = code
         self.message = message
+        # ``transient`` — отказ ШЛЮЗА ВК (HTTP 5xx), а не ответ API. Отдельный
+        # признак, а не синтетический код: код 0 в этом классе означает «ВК
+        # ответил без error_code» (так приходит капча), и слить эти два случая
+        # значило бы снова потерять различие, ради которого признак и заведён.
+        self.transient = bool(transient)
 
 
 class VKPublishError(Exception):
@@ -1065,10 +1154,14 @@ class VKPublishError(Exception):
     рядом атрибут.
     """
 
-    def __init__(self, code: int, message: str):
+    def __init__(self, code: int, message: str, *, transient: bool = False):
         super().__init__(f"VK API error: {message}")
         self.code = int(code or 0)
         self.message = message
+        # Отказ шлюза ВК (HTTP 5xx): кода нет, повторять имеет смысл, а вот
+        # менять токен — нет. Признак идёт рядом со строкой, потому что саму
+        # строку трогать нельзя (см. предупреждение выше).
+        self.transient = bool(transient)
 
 
 def _vk_error_code_of(exc: BaseException) -> Optional[int]:

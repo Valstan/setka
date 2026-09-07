@@ -1043,6 +1043,17 @@ async def publish_request_now(
     publisher = await VKPublisher.create_with_policy(db, target_group_id=gid)
     res = await publisher.publish_bulletin(group_id=gid, text=text, attachments=attachments)
     if not res.get("success"):
+        # Отказ ШЛЮЗА ВК и отказ В ПУБЛИКАЦИИ — разные события, и человеку
+        # нужно разное действие. 07.09 ВК отвечал 5xx полторы минуты; оператор
+        # получил «Публикация не удалась: VK API error: Response code 502» и не
+        # мог понять, что достаточно нажать ещё раз. Заявка при этом осталась
+        # цела — проверено чтением стены, поста там не было.
+        if res.get("transient"):
+            raise HTTPException(
+                status_code=503,
+                detail="ВКонтакте временно недоступен — попробуйте ещё раз через минуту. "
+                "Заявка не тронута, задвоить публикацию нельзя.",
+            )
         raise HTTPException(status_code=502, detail=f"Публикация не удалась: {res.get('error')}")
 
     # Пометить published СРАЗУ (отдельный commit) — защита от повторной публикации.

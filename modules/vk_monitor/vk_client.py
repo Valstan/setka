@@ -763,6 +763,30 @@ class VKClient:
                     "error_msg": str(e),
                 }
             }
+        except vk_api.exceptions.ApiHttpError as e:
+            # Отказ ШЛЮЗА ВК (HTTP 5xx), а не логический ответ API. Ловится
+            # отдельной веткой, потому что ``ApiHttpError`` наследует
+            # ``VkApiError``, а НЕ ``ApiError``: до 2026-09-07 он проваливался
+            # в generic-ветку ниже и терял всякий признак класса. Наружу уходил
+            # голый текст «Response code 502» без кода, а весь механизм
+            # устойчивости публикатора (fallback на community-токен по 15/27,
+            # ротация publish-кандидата по 5/17/29) сравнивает именно код — ноль
+            # не совпадал ни с чем. Отказ ВК на полторы минуты 07.09 доехал до
+            # оператора тупиком именно так.
+            #
+            # Кода у HTTP-отказа нет и выдумывать его нельзя: синтетический код
+            # утёк бы в ``vk_error_code`` отчётов и читался бы как настоящий
+            # ответ ВК (см. ``_vk_error_code_of``). Поэтому класс несёт
+            # отдельный признак.
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            logger.warning(f"VK gateway error in {method}: HTTP {status} — транзиторно")
+            return {
+                "error": {
+                    "error_msg": str(e),
+                    "http_status": int(status) if status else None,
+                    "transient": True,
+                }
+            }
         except Exception as e:
             logger.error(f"Unexpected error in {method}: {e}")
             return {"error": {"error_msg": str(e)}}
