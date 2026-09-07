@@ -64,6 +64,10 @@ CMD_CONFIRM = "confirm"
 CMD_REGION = "rg"  # payload {"cmd":"rg","id":<region_id>} — переключить район
 CMD_REGION_PAGE = "rgpage"  # payload {"cmd":"rgpage","p":<n>} — страница списка
 CMD_REGIONS_DONE = "rgdone"  # выбор районов закончен
+#: payload {"cmd":"cxp","id":<post_id>} — отменить своё размещение (07.09).
+#: До этого отмена была только в веб-кабинете: клиент, который всё делает в
+#: переписке с ботом, заказать мог, а отменить — нет.
+CMD_CANCEL_POST = "cxp"
 
 #: Текст кнопки → команда. Нужен, потому что ВК шлёт ``payload`` не всегда
 #: (старые клиенты, ручной ввод) — текст кнопки распознаём тоже.
@@ -94,9 +98,10 @@ STEP_CHAT = "chat"
 VK_MSG_MAX = 4000  # запас до лимита 4096
 
 
-def _btn(label: str, cmd: str, color: str = "secondary") -> Dict[str, Any]:
+def _btn(label: str, cmd: str, color: str = "secondary", **extra: Any) -> Dict[str, Any]:
+    """Кнопка ВК. ``extra`` кладётся в payload рядом с ``cmd`` (например ``id``)."""
     return {
-        "action": {"type": "text", "label": label, "payload": json.dumps({"cmd": cmd})},
+        "action": {"type": "text", "label": label, "payload": json.dumps({"cmd": cmd, **extra})},
         "color": color,
     }
 
@@ -128,6 +133,14 @@ TEXT_DONE_KEYBOARD = keyboard(
     [[_btn("✅ Готово", CMD_REGIONS_DONE, "positive"), _btn("❌ Отмена", CMD_CANCEL, "negative")]]
 )
 ORDER_STEPS = (STEP_ORDER_TEXT, STEP_ORDER_REGIONS, STEP_ORDER_WHEN, STEP_ORDER_CONFIRM)
+
+#: Статусы, которые клиент вправе отменить сам. Терминальные (вышел, отменён,
+#: отклонён, сбойный) в кнопки не попадают — их отменять нечего, а ``failed``
+#: уже вернул слот в пакет.
+CANCELLABLE_STATUSES = ("pending", "draft", "scheduled")
+#: Сколько кнопок отмены вешаем под список. Клавиатура ВК не резиновая, а число
+#: заказов ничем не ограничено: показываем ближайшие, остальное — в кабинете.
+CANCEL_BUTTONS_MAX = 3
 
 
 # ---------------------------------------------------------------- модель
@@ -677,6 +690,41 @@ def _noted(note: Optional[str], replies: List[Reply]) -> List[Reply]:
     return [(note + "\n" + text, kb)] + list(replies[1:])
 
 
+def posts_keyboard(views: Sequence[Any]) -> str:
+    """Клавиатура под «Моими постами»: отмена ближайших отменяемых заказов.
+
+    Кнопка вешается на ЗАКАЗ, а не на строку. Клиент заказывал «три района»
+    одним действием и видит на экране один блок; строки внутри блока не
+    пронумерованы, поэтому построчные кнопки не с чем было бы сопоставить
+    глазами. Отмена заказа снимает все его неопубликованные строки.
+    """
+    groups: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for v in views:
+        if getattr(v, "status", None) not in CANCELLABLE_STATUSES:
+            continue
+        key = client_posts.order_key(v.id, v.order_ref)
+        g = groups.get(key)
+        if g is None:
+            groups[key] = {"n": 1, "first": v}
+            order.append(key)
+        else:
+            g["n"] += 1
+
+    rows: List[List[Dict[str, Any]]] = []
+    for key in order[:CANCEL_BUTTONS_MAX]:
+        g = groups[key]
+        v = g["first"]
+        when = f" от {v.publish_date:%d.%m}" if v.publish_date else ""
+        label = f"❌ Отменить{when}" if g["n"] == 1 else f"❌ Отменить{when} ({g['n']})"
+        extra = {"o": v.order_ref} if v.order_ref else {"id": int(v.id)}
+        rows.append([_btn(label[:40], CMD_CANCEL_POST, "negative", **extra)])
+    if not rows:
+        return MAIN_KEYBOARD
+    rows.append([_btn("🏠 Меню", CMD_CANCEL)])
+    return keyboard(rows)
+
+
 def _step_hint(step: Optional[str]) -> str:
     """Что делать дальше на шаге заказа — после сообщения «только фото»."""
     if step == STEP_ORDER_TEXT:
@@ -747,7 +795,71 @@ async def handle(
     if cmd == CMD_POSTS:
         views, hidden, exact = await client_posts.list_for_client(session, client.id)
         chunks = client_posts.render(views, hidden=hidden, hidden_exact=exact)
-        return [(chunk, MAIN_KEYBOARD) for chunk in chunks], None, events
+        # Кнопки отмены — только под ПОСЛЕДНИМ сообщением: в ВК клавиатура одна
+        # на диалог, и повесив её на каждый кусок, мы бы просто перезаписывали
+        # её же, а клиент видел бы кнопки под случайным куском списка.
+        cancel_kb = posts_keyboard(views)
+        replies = [(chunk, MAIN_KEYBOARD) for chunk in chunks[:-1]]
+        if chunks:
+            replies.append((chunks[-1], cancel_kb))
+        return replies, None, events
+
+    if cmd == CMD_CANCEL_POST:
+        payload = incoming.payload or {}
+        order_ref = payload.get("o") or None
+        try:
+            pid = int(payload.get("id"))
+        except (TypeError, ValueError):
+            pid = None
+        if not order_ref and pid is None:
+            return (
+                [("Не понял, какой заказ отменить — откройте «📋 Мои посты».", MAIN_KEYBOARD)],
+                None,
+                events,
+            )
+        views, _hidden, _exact = await client_posts.list_for_client(session, client.id)
+        targets = [
+            v
+            for v in views
+            if v.status in CANCELLABLE_STATUSES
+            and (v.order_ref == order_ref if order_ref else v.id == pid)
+        ]
+        if not targets:
+            # Не «ошибка»: заказ мог выйти или быть снят владельцем, пока клиент
+            # смотрел на экран. Говорим про состояние, а не про неудачу.
+            return (
+                [("Отменять нечего — заказ уже вышел или снят.", MAIN_KEYBOARD)],
+                None,
+                events,
+            )
+        done = 0
+        failures: List[str] = []
+        for v in targets:
+            res = await client_orders.cancel_own_post(session, client, v.id, source="vk_bot")
+            if res["ok"] and res["reason"] is None:
+                done += 1
+            elif res["cancel_error"]:
+                failures.append(f"{v.region_name}: {str(res['cancel_error'])[:60]}")
+        if done:
+            events.append("order_cancelled")
+        word = plural_ru(done, "размещение", "размещения", "размещений")
+        if done and not failures:
+            msg = f"Отменил {done} {word}. Если пост шёл в счёт пакета — вернул в пакет."
+        elif done and failures:
+            # Половинчатый исход называем половинчатым: молчаливое «отменил»
+            # оставило бы клиента в уверенности, что снято всё.
+            msg = (
+                f"Отменил {done} {word}, но не всё: {'; '.join(failures[:2])}. "
+                "Владелец уведомлён — разберётся."
+            )
+        else:
+            msg = (
+                f"ВК не дал снять размещение: {'; '.join(failures[:2]) or 'причина неизвестна'}. "
+                "Передал владельцу."
+            )
+        if failures:
+            events.append("cancel_failed")
+        return [(msg, MAIN_KEYBOARD)], None, events
     if cmd == CMD_PAY:
         return [(payments_text(), MAIN_KEYBOARD)], None, events
     if cmd == CMD_PAID:

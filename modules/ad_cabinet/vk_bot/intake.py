@@ -230,6 +230,19 @@ async def handle_one(
                 dedup_key=f"claim:{client.id if client else incoming.peer_id}",
                 dedup_ttl=600,
             )
+        elif ev == "order_cancelled":
+            # Отмена — не мелочь для владельца: освободился слот в отложке ВК и,
+            # если пост шёл в счёт пакета, вернулся слот пакета.
+            await notify.notify_owner(
+                f"🚫 ВК-бот: клиент {label} отменил размещение — слот освободился"
+            )
+        elif ev == "cancel_failed":
+            # Бот сказал клиенту «передал владельцу» — эта строка и есть то
+            # обещание. Без неё клиент ждал бы разбирательства, которого нет.
+            await notify.notify_owner(
+                f"⚠️ ВК-бот: у клиента {label} не снялось размещение из отложки ВК — "
+                "снять вручную в /ad → Кабинеты"
+            )
         elif ev == "signup":
             await notify.notify_owner(
                 f"🆕 ВК-бот: новый клиент {label} — карточка заведена автоматически",
