@@ -536,6 +536,29 @@ async def mark_repaired(region_id: int, version: int, summary: str, ok: bool) ->
         await session.commit()
 
 
+async def _regions_we_dressed() -> set:
+    """Регионы, которые оформлял ЭТОТ скрипт (журнал ``promo_group_setup``).
+
+    Вынесено из ``run_force_cover`` отдельной функцией, чтобы у режима вообще
+    появился шов для теста: без него первая же строка прогона идёт в БД, и
+    проверить хоть что-нибудь (темп, отбор) можно только на живой базе.
+
+    Берутся статусы ``applied`` И ``error`` — обоснование в докстринге вызывающего.
+    """
+    from sqlalchemy import select
+
+    from database.connection import AsyncSessionLocal
+    from database.models import PromoGroupSetup
+
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            select(PromoGroupSetup.region_id).where(
+                PromoGroupSetup.status.in_(("applied", "error"))
+            )
+        )
+    return set(rows.scalars().all())
+
+
 async def run_force_cover(codes: Optional[List[str]]) -> int:
     """``--force-cover``: перезалить обложку там, где её ставили МЫ.
 
@@ -567,24 +590,10 @@ async def run_force_cover(codes: Optional[List[str]]) -> int:
     Расход user-бюджета VALSTAN — **ноль**: обложка ставится community-ключом.
     """
     import vk_api
-    from sqlalchemy import select
 
-    from database.connection import AsyncSessionLocal
-    from database.models import PromoGroupSetup
     from modules.promotion.group_setup_vk import upload_cover
 
-    async with AsyncSessionLocal() as session:
-        ours = set(
-            (
-                await session.execute(
-                    select(PromoGroupSetup.region_id).where(
-                        PromoGroupSetup.status.in_(("applied", "error"))
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
+    ours = await _regions_we_dressed()
     if not ours:
         logger.info("Нет сообществ, оформленных этим скриптом — переливать нечего")
         return 0
@@ -605,6 +614,7 @@ async def run_force_cover(codes: Optional[List[str]]) -> int:
 
     logger.info("FORCE-COVER: сообществ %d (user-бюджет не расходуется)", len(targets))
     ok_count = 0
+    wrote_any = False
     for target in targets:
         gid = abs(int(target["vk_group_id"]))
         comm_token = community_tokens.get(gid)
@@ -613,6 +623,11 @@ async def run_force_cover(codes: Optional[List[str]]) -> int:
             continue
         community_api = vk_api.VkApi(token=comm_token).get_api()
         cover = build_texts(target)["cover"]
+        # Тот же темп, что у описаний: этот режим тоже проходит по всей сети
+        # подряд (31.08 — десять перезаливок), и квота у аккаунта общая.
+        if wrote_any:
+            await asyncio.sleep(interval())
+        wrote_any = True
         res = await asyncio.to_thread(upload_cover, community_api, gid, cover)
         if res.ok:
             ok_count += 1
@@ -772,6 +787,14 @@ async def run_refresh_desc(codes: Optional[List[str]], apply: bool) -> int:
 
     Идемпотентность — по содержимому: если в ВК уже ровно тот текст, который мы
     собираемся записать, регион пропускается и запись не идёт.
+
+    **Пауза между записями обязательна** (найдено 06.09 на живом прогоне): сорок
+    ``groups.edit`` подряд исчерпывают квоту аккаунта, и дальше молча перестаёт
+    срабатывать не только скрипт, но и ручная правка в браузере — на часы. Пауза
+    берётся из того же ``interval()``, что у ``process_region``/``repair_region``:
+    единственный рычаг темпа на весь скрипт, а не своя константа. До 07.09 паузу
+    держал агент снаружи, разбивая прогон на порции руками — правило жило в голове,
+    а не в коде, и следующий прогон терял его вместе со сменой сессии.
     """
     import vk_api
 
@@ -792,6 +815,7 @@ async def run_refresh_desc(codes: Optional[List[str]], apply: bool) -> int:
     )
 
     changed = skipped = failed = 0
+    wrote_any = False
     for target in targets:
         code = target["code"]
         gid = abs(int(target["vk_group_id"]))
@@ -818,6 +842,14 @@ async def run_refresh_desc(codes: Optional[List[str]], apply: bool) -> int:
         logger.info("  %-14s %d → %d знаков", code, len(old), len(new))
         if not apply:
             continue
+
+        # Пауза стоит ПЕРЕД записью и только между записями. Так у прогона нет
+        # висящего хвоста после последней группы, а пропущенные (уже шаблонные)
+        # сообщества не оплачиваются ожиданием: квоту тратит запись, а не обход.
+        # На срезе 07.09 это 34 пропуска из 43 — почти три минуты пустого сна.
+        if wrote_any:
+            await asyncio.sleep(interval())
+        wrote_any = True
 
         res = await asyncio.to_thread(edit_description, api, target["vk_group_id"], new)
         if not res.ok:
