@@ -426,7 +426,14 @@ async function publishNow(id) {
         _res(id, 'Опубликовано' + url, 'success');
         setTimeout(loadAdRequests, 500);
     } catch (e) {
-        _res(id, 'Ошибка публикации: ' + escapeHtml(e.message), 'danger');
+        // Временная авария ВК — не «ошибка публикации»: заявка цела, нужно
+        // просто повторить. Красный цвет и слово «ошибка» здесь врали бы
+        // оператору о том, что произошло и что делать.
+        if (e && e.transient) {
+            _res(id, escapeHtml(e.message), 'warning');
+        } else {
+            _res(id, 'Ошибка публикации: ' + escapeHtml(e.message), 'danger');
+        }
     }
 }
 
