@@ -235,3 +235,83 @@ class TestGatewayKeyBinding:
         with pytest.raises(ProvisioningError) as e:
             await _issue(None, owner_ids=[], screen_names=[])
         assert e.value.code == "bad_binding"
+
+
+class TestGatewayKeyPartialRebinding:
+    """Половина привязки не затирает вторую молча (найдено 2026-09-06).
+
+    Привязка пишется целиком, поэтому команда вида «правлю только имена»
+    фактически стирает owner_id'ы. У ``VMALMYZHE`` так пропало ``[-158787639]``,
+    и портал соседа получил бы ``403`` на любом owner-scoped вызове.
+    """
+
+    @staticmethod
+    def _bound_row(owner_ids=None, screen_names=None):
+        row = _key_row()
+        row.allowed_owner_ids = owner_ids
+        row.allowed_screen_names = screen_names
+        return row
+
+    @pytest.mark.asyncio
+    async def test_names_only_would_wipe_owner_ids(self):
+        """Ровно тот вызов, что стёр привязку 06.09."""
+        row = self._bound_row(owner_ids=[-158787639])
+        with pytest.raises(ProvisioningError) as e:
+            await _issue(row, allow_update=True, screen_names=["malmig_info", "malmyzh_info43"])
+        assert e.value.code == "partial_binding"
+        assert e.value.status == 400
+        assert "--owner-ids" in e.value.message
+        # Отказ до записи: старая привязка на месте.
+        assert row.allowed_owner_ids == [-158787639]
+
+    @pytest.mark.asyncio
+    async def test_owner_ids_only_would_wipe_names(self):
+        """Обратная половина той же дыры — гейт симметричен."""
+        row = self._bound_row(screen_names=["malmig_info"])
+        with pytest.raises(ProvisioningError) as e:
+            await _issue(row, allow_update=True, owner_ids=[-158787639])
+        assert e.value.code == "partial_binding"
+        assert "--screen-names" in e.value.message
+        assert row.allowed_screen_names == ["malmig_info"]
+
+    @pytest.mark.asyncio
+    async def test_both_halves_pass(self):
+        """Рабочая форма из памятки: передать обе половины."""
+        row = self._bound_row(owner_ids=[-158787639])
+        result = await _issue(
+            row,
+            allow_update=True,
+            owner_ids=[-158787639],
+            screen_names=["malmig_info"],
+        )
+        assert result.action == "rebound"
+        assert result.details["owner_ids"] == [-158787639]
+        assert result.details["screen_names"] == ["malmig_info"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_empty_clears_that_half(self):
+        """Пустой список — намерение, а не пропуск: очистка остаётся возможной.
+
+        Ради этого гейт и построен на ``is None``, а не на пустоте: оператор,
+        который правда хочет снять owner_id'ы, отличим от того, кто про них
+        забыл.
+        """
+        row = self._bound_row(owner_ids=[-158787639])
+        result = await _issue(row, allow_update=True, owner_ids=[], screen_names=["malmig_info"])
+        assert result.details["owner_ids"] == []
+        assert result.details["screen_names"] == ["malmig_info"]
+
+    @pytest.mark.asyncio
+    async def test_missing_half_is_empty_anyway_passes(self):
+        """Терять нечего — не мешаем: гейт срабатывает только на живой половине."""
+        row = self._bound_row(owner_ids=[], screen_names=None)
+        result = await _issue(row, allow_update=True, screen_names=["malmig_info"])
+        assert result.details["screen_names"] == ["malmig_info"]
+
+    @pytest.mark.asyncio
+    async def test_creation_with_one_half_is_fine(self):
+        """У новой строки затирать нечего — выдача одной половиной разрешена."""
+        result = await _issue(None, screen_names=["malmig_info"])
+        assert result.action == "created"
+        assert result.details["screen_names"] == ["malmig_info"]
+        assert result.details["owner_ids"] == []
