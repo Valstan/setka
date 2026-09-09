@@ -147,10 +147,18 @@ def notify_owner(text: str, *, dedup_key: str | None = None, dedup_ttl: int = 36
     """
     try:
         if dedup_key and not ping_dedup_pass(dedup_key, ttl=dedup_ttl):
+            logger.info("owner ping deduped: %s", dedup_key)
             return False
         sent = _send_telegram(text)
         if not sent and dedup_key:
             release_dedup(dedup_key)
+        if sent:
+            # Успех логируется наравне с отказом (приёмка 2026-09-09): раньше
+            # молчали только про удачу, и «пинг ушёл» нельзя было показать
+            # прямо — приходилось доказывать это окольно, наличием dedup-ключа
+            # в Redis с недоистёкшим TTL. Односторонний лог превращает
+            # отсутствие записи в неразличимое «сработало» / «не вызывалось».
+            logger.info("owner ping sent: %s", dedup_key or "<no dedup key>")
         return sent
     except Exception:  # noqa: BLE001 - уведомление не роняет действие клиента
         logger.warning("owner ping failed", exc_info=True)

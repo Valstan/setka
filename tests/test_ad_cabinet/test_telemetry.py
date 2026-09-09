@@ -134,6 +134,39 @@ class TestOwnerPing:
             assert op.notify_owner("a", dedup_key="k") is False
         release.assert_called_once_with("k")
 
+    def test_success_is_logged_not_only_failure(self, caplog):
+        """Успех пинга виден в логе (приёмка 2026-09-09).
+
+        Раньше ``owner_ping`` писал в лог только отказы. Пустой греп по логу
+        поэтому не различал «пинг ушёл» и «пинг не вызывался», и приёмку
+        планировщика пришлось доказывать окольно — наличием dedup-ключа в
+        Redis с недоистёкшим TTL. Односторонний лог — это отсутствующее
+        наблюдение, а не экономия строк.
+        """
+        with (
+            patch("modules.ad_cabinet.owner_ping.ping_dedup_pass", return_value=True),
+            patch("requests.post") as post,
+            patch("config.runtime.TELEGRAM_TOKENS", {"VALSTANBOT": "tok"}),
+            patch("config.runtime.TELEGRAM_ALERT_CHAT_ID", "-100"),
+            caplog.at_level("INFO", logger="modules.ad_cabinet.owner_ping"),
+        ):
+            post.return_value = SimpleNamespace(ok=True, status_code=200)
+            assert notify_owner("вышел пост", dedup_key="awaiting:14") is True
+        assert any(
+            "owner ping sent" in r.message and "awaiting:14" in r.message for r in caplog.records
+        )
+
+    def test_dedup_skip_is_logged_too(self, caplog):
+        """Заглушенный дедупом пинг тоже виден: «молчит» отличимо от «не звали»."""
+        with (
+            patch("modules.ad_cabinet.owner_ping.ping_dedup_pass", return_value=False),
+            patch("requests.post") as post,
+            caplog.at_level("INFO", logger="modules.ad_cabinet.owner_ping"),
+        ):
+            assert notify_owner("вышел пост", dedup_key="awaiting:14") is False
+        assert post.call_count == 0
+        assert any("owner ping deduped" in r.message for r in caplog.records)
+
     def test_stable_digest_is_stable(self):
         """Встроенный hash() солится на рестарте — отпечаток обязан быть детерминирован."""
         from modules.ad_cabinet.owner_ping import stable_digest
