@@ -38,7 +38,7 @@ pytest tests/ --cov=modules --cov=tasks  # с покрытием
 |--------|---------------|---------|
 | `scripts/test_vk_monitor.py` | VK мониторинг | БД, VK токены |
 | `scripts/test_publisher.py` | VK Publisher | БД, VK токены |
-| `scripts/test_full_workflow.py` | Полный workflow | БД, VK, Redis, Groq |
+| `scripts/test_full_workflow.py` | Полный workflow | БД, VK, Redis, DeepSeek |
 | `scripts/test_deduplication.py` | Дедупликация | БД |
 | `scripts/test_notifications_system.py` | Уведомления | БД, Redis, Telegram |
 | ... и другие | ... | ... |
