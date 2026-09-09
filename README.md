@@ -22,7 +22,7 @@
 SETKA - автоматизированная система для управления новостным контентом из социальных сетей (VK, Telegram, WordPress) с AI-анализом для 50 региональных новостных каналов.
 
 ### Ключевые возможности:
-- 🤖 **AI-анализ контента** (Groq API + keyword fallback)
+- 🤖 **AI-анализ контента** (DeepSeek API, D-024; sentiment — keyword-based, без нейросети)
 - 📡 **Мониторинг 1000+ сообществ VK**
 - 📤 **Автоматическая публикация** по расписанию
 - 📊 **Статистика и аналитика** постов
@@ -44,7 +44,7 @@ SETKA - автоматизированная система для управл�
 ```
 modules/
 ├── vk_monitor/      ✅ Мониторинг VK сообществ
-├── ai_analyzer/     ✅ AI анализ постов (Groq API)
+├── ai_analyzer/     ✅ Sentiment постов (keyword-based, русский)
 ├── monitoring/      ✅ Система мониторинга + Telegram
 ├── publisher/       ⏳ Публикация контента
 ├── telegram_bot/    ⏳ Telegram интеграция
@@ -161,7 +161,7 @@ SETKA/
 **Завершено:**
 - ✅ Инфраструктура и БД
 - ✅ VK мониторинг модуль
-- ✅ AI анализатор (Groq API)
+- ✅ Нейро-классификация (DeepSeek API, `modules/deepseek_client.py`)
 - ✅ Система мониторинга
 - ✅ Автоматические бэкапы
 - ✅ SSL сертификат
@@ -255,7 +255,7 @@ scripts/backup_database.sh
 
 - **API Docs:** https://сарафан.вмалмыже.рф/docs
 - **Старый проект:** https://github.com/Valstan/postopus
-- **Groq Console:** https://console.groq.com
+- **DeepSeek Platform:** https://platform.deepseek.com
 
 ---
 

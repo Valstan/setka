@@ -2,7 +2,7 @@
 
 ## 🎯 Назначение проекта
 
-**SETKA** — автоматизированная система парсинга, фильтрации, анализа и постинга контента из ВКонтакте для сети региональных новостных пабликов. Включает AI-анализ (Groq), дедупликацию, агрегацию, планирование публикаций и мониторинг.
+**SETKA** — автоматизированная система парсинга, фильтрации, анализа и постинга контента из ВКонтакте для сети региональных новостных пабликов. Включает AI-анализ (DeepSeek, D-024), дедупликацию, агрегацию, планирование публикаций и мониторинг.
 
 **Удалённый продакшен:** только **SSH** на хост SETKA. MCP не использовать для деплоя и отладки SETKA. Подробно: [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md).
 
@@ -29,7 +29,7 @@
 │   ├── filters/                # Модульная система фильтрации (11 типов фильтров)
 │   ├── deduplication/          # Дедупликация (detector, fingerprints)
 │   ├── aggregation/            # Агрегация контента (aggregator, content mixer)
-│   ├── ai_analyzer/            # AI анализ (Groq client, sentiment)
+│   ├── ai_analyzer/            # Sentiment (keyword-based, без нейросети)
 │   ├── publisher/              # Публикация (VK, Telegram, WordPress)
 │   ├── scheduler/              # Планировщик контента
 │   ├── notifications/          # Система уведомлений (VK checkers, storage)
@@ -65,7 +65,7 @@
 | `modules/filters/` | Пайплайн фильтрации (blacklist, ads, age, photo dedup...) |
 | `modules/aggregation/` | Агрегация и кластеризация контента |
 | `modules/publisher/` | Публикация в VK, Telegram, WordPress |
-| `modules/ai_analyzer/` | AI анализ через Groq |
+| `modules/ai_analyzer/` | Sentiment постов — keyword-based, нейросети здесь нет |
 | `modules/deduplication/` | LIP + media fingerprint дедупликация |
 | `modules/scheduler/` | Smart scheduler для оптимального времени публикаций |
 | `tasks/celery_app.py` | Celery app + beat schedule (27 Postopus тем + SETKA задачи) |
@@ -306,7 +306,7 @@ AI: "Финальное решение: X с обработкой ошибок �
 | **БД** | PostgreSQL 17.6 |
 | **Cache/Broker** | Redis 7.4 |
 | **Task Queue** | Celery 5.5 + Beat |
-| **AI** | Groq API |
+| **AI** | DeepSeek API (`modules/deepseek_client.py`, D-024) |
 | **VK API** | vk-api 11.10 |
 | **Telegram** | python-telegram-bot 22.5 |
 | **Monitoring** | Prometheus + Grafana |
