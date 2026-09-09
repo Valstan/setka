@@ -270,6 +270,53 @@ def _validate_gateway_binding(
     return (sorted(binding.owner_ids), sorted(binding.screen_names))
 
 
+def _refuse_partial_rebinding(
+    name: str,
+    *,
+    owner_ids: Optional[List[int]],
+    screen_names: Optional[List[str]],
+    current_owner_ids: List[int],
+    current_screen_names: List[str],
+) -> None:
+    """Не дать половине привязки затереть вторую молча (найдено 2026-09-06).
+
+    Привязка пишется целиком: ``KeyBinding.from_lists`` собирает её заново из
+    двух списков, и не переданная половина уезжает в базу пустой. Команда при
+    этом выглядит точечной — «правлю только имена», — а фактически стирает
+    owner_id'ы. Именно так 06.09 у ``VMALMYZHE`` пропало ``[-158787639]``: ни
+    ошибки, ни предупреждения, и портал соседа получил бы ``403`` на любом
+    owner-scoped вызове.
+
+    **Отказ, а не молчаливый мерж** — решение по разбору того же дня. Мерж
+    выглядит удобнее, но он скрывает и обратную ошибку: оператор, который
+    ДЕЙСТВИТЕЛЬНО хочет очистить половину, при мерже не смог бы этого сделать и
+    не узнал бы, почему. Отказ разводит два намерения, которые в одной команде
+    выглядят одинаково.
+
+    Гейт срабатывает ровно тогда, когда есть что терять: половина не передана
+    (``None``, а не пустой список) и в базе она непустая. Явная очистка
+    остаётся возможной — передать ``--owner-ids=`` / ``--screen-names=``
+    пустым значением, это ``[]``, а не ``None``.
+    """
+    missing = []
+    if owner_ids is None and current_owner_ids:
+        missing.append(("--owner-ids", "owner_ids", current_owner_ids))
+    if screen_names is None and current_screen_names:
+        missing.append(("--screen-names", "screen_names", current_screen_names))
+    if not missing:
+        return
+    parts = [
+        f"{field}={value!r} (передайте {flag}=<список> или {flag}= для явной очистки)"
+        for flag, field, value in missing
+    ]
+    raise ProvisioningError(
+        "partial_binding",
+        f"частичная перепривязка ключа {name!r} стёрла бы непереданную половину: "
+        + "; ".join(parts),
+        status=400,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Выдача клиента ЕСА (OIDC)
 # ---------------------------------------------------------------------------
@@ -480,6 +527,13 @@ async def provision_gateway_key(
             else:
                 action = "unchanged"
             if normalized_binding is not None:  # сюда доходит только оператор (гейт выше)
+                _refuse_partial_rebinding(
+                    name,
+                    owner_ids=owner_ids,
+                    screen_names=screen_names,
+                    current_owner_ids=list(row.allowed_owner_ids or []),
+                    current_screen_names=list(row.allowed_screen_names or []),
+                )
                 row.allowed_owner_ids = normalized_binding[0]
                 row.allowed_screen_names = normalized_binding[1]
                 if action == "unchanged":
