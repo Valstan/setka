@@ -172,10 +172,13 @@ async def fetch_pending(
     region_codes: Optional[Sequence[str]] = None,
     limit: int = 40,
     days: int = DEFAULT_SOURCE_DAYS,
+    text_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """Собранные посты без вердикта, одним батчем (рутина видит их вместе → merge).
 
     Источник — аудит сбора (обе стороны, ADR-0004) с fallback на журнал курации.
+    ``text_only`` — только посты, которые текстовый движок способен судить
+    (headless); облачной рутине бестекстовые отдаются, она смотрела вложения.
     """
     cand = await _recent_source(session, region_codes=region_codes, days=days)
     if not cand:
@@ -191,6 +194,25 @@ async def fetch_pending(
         ).all()
     }
     fresh = [c for lip, c in cand.items() if lip not in classified]
+    if text_only:
+        # Пост без текста движок пропускает и вердикта не пишет — значит, пост
+        # остаётся «свежим» всё окно и занимает место в батче на КАЖДОМ прогоне.
+        # Почти все такие посты kept, а kept стоят в очереди района первыми, то
+        # есть садятся в её голову. Замер 2026-09-10: из 200 мест батча 123–179
+        # уходило под бестекстовые, 403 отсеянных поста с текстом не помещались,
+        # и ~260 в сутки выпадали из окна без вердикта. Отсекать надо здесь, до
+        # лимита: в движке пост уже занял место. Условие — ``has_text`` движка,
+        # а не своя копия: разошедшиеся определения мерили бы не то.
+        from modules.classifier.headless import has_text
+
+        judgeable = [c for c in fresh if has_text(c)]
+        if len(judgeable) < len(fresh):
+            logger.info(
+                "classifier pending: без вердикта %d, из них без текста %d — в батч не идут",
+                len(fresh),
+                len(fresh) - len(judgeable),
+            )
+        fresh = judgeable
     return _fair_regional_batch(fresh, limit)
 
 
