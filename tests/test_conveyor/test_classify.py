@@ -236,6 +236,23 @@ class TestClassify:
         out = classify.classify(POST, sections=SECTIONS, api_key="k")
         assert not out["ok"] and out["reason"] == "llm_unparseable"
 
+    def test_length_cutoff_is_truncated_not_unparseable(self, monkeypatch):
+        """Оборванный по max_tokens JSON — отдельная причина (G334): она ляжет в
+        ``conveyor_deliveries.reason`` и должна отличаться от мусора в ответе."""
+        payload = {
+            "choices": [
+                {
+                    "message": {"content": '{"action": "accept", "title": "З'},
+                    "finish_reason": "length",
+                }
+            ],
+            "usage": {"total_tokens": 1200},
+        }
+        monkeypatch.setattr(classify, "_call_api", _api(200, payload))
+        out = classify.classify(POST, sections=SECTIONS, api_key="k")
+        assert not out["ok"] and out["reason"] == "truncated"
+        assert out["usage"]["total_tokens"] == 1200
+
     def test_empty_choices_is_reported(self, monkeypatch):
         monkeypatch.setattr(classify, "_call_api", _api(200, {"choices": []}))
         out = classify.classify(POST, sections=SECTIONS, api_key="k")
