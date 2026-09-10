@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from modules import telegram_http
 from modules.classifier import selection
 
 
@@ -141,9 +142,6 @@ def test_alert_needs_telegram_config():
 def test_alert_cooldown_is_per_region_not_per_theme(monkeypatch):
     """Фильтр встаёт сразу для всех тем; письмо на каждую волну каждой темы —
     способ научить владельца не читать эти алёрты."""
-    import sys
-    from types import SimpleNamespace
-
     r = FakeRedis()
     sent = []
 
@@ -154,8 +152,10 @@ def test_alert_cooldown_is_per_region_not_per_theme(monkeypatch):
         sent.append(kw)
         return Resp()
 
-    # Модуль импортирует requests внутри функции — подменяем сам пакет.
-    monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(post=fake_post))
+    # Патчим шов, через который алёрт реально уходит, а не sys.modules["requests"]:
+    # подменённый пакет ломал импорт telegram_http, если тот грузился впервые
+    # внутри этого теста (одиночный прогон), и тест зависел от порядка.
+    monkeypatch.setattr(telegram_http, "post", fake_post)
 
     first = selection.maybe_alert(
         mode=selection.MODE_SKIP_WAVE,

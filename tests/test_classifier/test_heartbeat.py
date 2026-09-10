@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from modules import telegram_http
 from modules.classifier import heartbeat as hb
 
 NOW = datetime(2026, 8, 19, 12, 0, 0)
@@ -52,14 +53,15 @@ def test_incident_shape_triggers_alert(monkeypatch):
         status_code = 200
         text = "ok"
 
-    class _Requests:
-        @staticmethod
-        def post(url, json=None, timeout=None):
-            sent["url"] = url
-            sent["text"] = json["text"]
-            return _Resp()
+    def fake_post(url, *, json=None, **_kw):
+        sent["url"] = url
+        sent["text"] = json["text"]
+        return _Resp()
 
-    monkeypatch.setitem(__import__("sys").modules, "requests", _Requests)
+    # Патчим шов, через который алёрт реально уходит, а не sys.modules["requests"]:
+    # подменённый пакет ломал импорт telegram_http, если тот грузился впервые
+    # внутри этого теста (одиночный прогон), и тест зависел от порядка.
+    monkeypatch.setattr(telegram_http, "post", fake_post)
     monkeypatch.setattr(hb, "_redis", lambda: None)
 
     status = hb.maybe_alert_stale_classifier(
