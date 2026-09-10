@@ -650,11 +650,14 @@ def classify_pending_posts(limit: int = 0):
             async with AsyncSessionLocal() as session:
                 codes = get_region_allowlist()
                 cap = get_pending_max()
+                # text_only: бестекстовые движок не судит, а в батче они
+                # занимали до 179 мест из 200 на каждом прогоне (2026-09-10).
                 posts = await service.fetch_pending(
                     session,
                     region_codes=codes or None,
                     limit=min(limit or cap, cap),
                     days=get_source_days(),
+                    text_only=True,
                 )
                 if not posts:
                     return {"status": "ok", "posts": 0}

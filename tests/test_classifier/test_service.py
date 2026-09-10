@@ -345,6 +345,41 @@ async def test_pending_round_robin_no_starvation(db_session):
     assert regions == sorted(regions)  # блоками по региону
 
 
+# ───────── бестекстовые не занимают батч (замер прода 2026-09-10) ─────────
+# Пост без текста headless не судит и вердикта не пишет, поэтому он «свеж» всё
+# окно. Будучи kept, он стоит в голове очереди района на каждом прогоне: на
+# проде 123–179 мест из 200, а отсеянные посты с текстом не помещались.
+
+
+@pytest.mark.asyncio
+async def test_text_only_textless_do_not_consume_the_limit(db_session):
+    # Форма прода: kept без текста впереди, отсеянные с текстом за ними.
+    for i in range(3):
+        await _seed_audit(db_session, lip=f"6_{i}", decision="kept", text="")
+        await _seed_audit(db_session, lip=f"7_{i}", decision="dropped", reason="advertisement")
+    out = await service.fetch_pending(db_session, limit=3, text_only=True)
+    assert sorted(p["lip"] for p in out) == ["7_0", "7_1", "7_2"]
+
+
+@pytest.mark.asyncio
+async def test_text_only_uses_the_engine_definition_of_text(db_session):
+    # Пробелы — не текст ровно так же, как для has_text движка: иначе пост
+    # прошёл бы сюда и всё равно был бы пропущен движком, заняв место.
+    await _seed_audit(db_session, lip="8_1", text="   \n ")
+    await _seed_audit(db_session, lip="8_2", text="новость")
+    out = await service.fetch_pending(db_session, limit=10, text_only=True)
+    assert [p["lip"] for p in out] == ["8_2"]
+
+
+@pytest.mark.asyncio
+async def test_default_pending_still_offers_textless(db_session):
+    # /api/classifier/pending (облачная рутина) смотрела вложения через
+    # media-прокси — ей бестекстовые по-прежнему отдаются.
+    await _seed_audit(db_session, lip="9_1", text="")
+    out = await service.fetch_pending(db_session, limit=10)
+    assert [p["lip"] for p in out] == ["9_1"]
+
+
 @pytest.mark.asyncio
 async def test_health_stats_backlog_and_throughput(db_session):
     await _seed_audit(db_session, lip="5_1", region="mi")
