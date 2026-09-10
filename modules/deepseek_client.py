@@ -33,6 +33,21 @@ from config.deepseek import get_api_key, get_base_url, get_max_tokens, get_model
 logger = logging.getLogger(__name__)
 
 
+def finish_reason(response: Dict[str, Any]) -> str:
+    """``finish_reason`` первого варианта ответа; пусто, если провайдер его не вернул.
+
+    ``length`` значит «модель упёрлась в ``max_tokens`` и замолчала на полуслове».
+    Это отдельная поломка, а не «пустой» или «неразбираемый» ответ: лечится она
+    бюджетом вывода, а не промптом. Слитая с ними в одну причину, она
+    неотличима от молчания модели — у соседнего проекта так две недели терялось
+    47 % вердиктов (G334, письмо brain 2026-09-10).
+    """
+    choices = response.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        return str(choices[0].get("finish_reason") or "")
+    return ""
+
+
 def log_cache_usage(label: str, response: Dict[str, Any]) -> None:
     """Записать долю префикс-кэша одной строкой (мандат brain 2026-08-30, R29).
 
@@ -50,6 +65,11 @@ def log_cache_usage(label: str, response: Dict[str, Any]) -> None:
     ``hit=- miss=-`` означает, что провайдер полей НЕ ВЕРНУЛ, и это не то же
     самое, что ``hit=0``. Первое — «померить нечем», второе — «кэш не сработал».
     Сложить их в один ноль значит получить приёмку, которая врёт.
+
+    Та же граница у бюджета вывода (письмо brain 2026-09-10, G334):
+    ``finish=length`` — вызов упёрся в ``max_tokens``; ``reasoning=`` — сколько
+    из ``completion`` съели раздумья модели. ``reasoning=-`` значит «поля нет»
+    (нерассуждающая модель его не присылает), а не «раздумий было ноль».
     """
     usage = response.get("usage")
     if not isinstance(usage, dict):
@@ -64,8 +84,12 @@ def log_cache_usage(label: str, response: Dict[str, Any]) -> None:
     else:
         share = "-"
 
+    details = usage.get("completion_tokens_details")
+    reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
+
     logger.info(
-        "deepseek-usage label=%s model=%s prompt=%s hit=%s miss=%s hit_pct=%s completion=%s",
+        "deepseek-usage label=%s model=%s prompt=%s hit=%s miss=%s hit_pct=%s completion=%s "
+        "reasoning=%s finish=%s",
         label,
         response.get("model") or "-",
         prompt if prompt is not None else "-",
@@ -73,6 +97,8 @@ def log_cache_usage(label: str, response: Dict[str, Any]) -> None:
         miss if miss is not None else "-",
         share,
         usage.get("completion_tokens") if usage.get("completion_tokens") is not None else "-",
+        reasoning if reasoning is not None else "-",
+        finish_reason(response) or "-",
     )
 
 
@@ -147,9 +173,15 @@ def chat(
     ``{ok: False, reason, detail?}``.
 
     Коды отказа: ``no_api_key`` | ``empty_prompt`` | ``network`` |
-    ``http_<код>`` | ``empty_response``. Они попадают в логи и в ответы UI,
-    поэтому стабильны — по ним же различаются «ключа нет» (чинит владелец) и
-    «модель промолчала» (повторить).
+    ``http_<код>`` | ``truncated`` | ``empty_response``. Они попадают в логи и
+    в ответы UI, поэтому стабильны — по ним же различаются «ключа нет» (чинит
+    владелец), «упёрлись в ``max_tokens``» (чинит бюджет вывода) и «модель
+    промолчала» (повторить).
+
+    ``truncated`` проверяется РАНЬШЕ пустоты: обрезанный ответ бывает и
+    непустым (оборванный JSON — наш случай), и пустым (раздумья съели весь
+    бюджет — случай соседа). Оба — одна поломка. Пустой ответ без ``length``
+    остаётся ``empty_response``.
 
     ``json_object=True`` включает у DeepSeek режим строгого JSON. Он не
     отменяет разбор на стороне вызывающего: режим гарантирует синтаксис, а не
@@ -191,8 +223,16 @@ def chat(
     content = ""
     if choices and isinstance(choices[0], dict):
         content = str((choices[0].get("message") or {}).get("content") or "").strip()
+    usage = response.get("usage") if isinstance(response.get("usage"), dict) else None
+    if finish_reason(response) == "length":
+        # Вызов оплачен — usage отдаём, чтобы расход не выпал из учёта.
+        return {
+            "ok": False,
+            "reason": "truncated",
+            "detail": f"max_tokens={body['max_tokens']}",
+            "usage": usage,
+        }
     if not content:
         return {"ok": False, "reason": "empty_response"}
 
-    usage = response.get("usage") if isinstance(response.get("usage"), dict) else None
     return {"ok": True, "content": content, "model": body["model"], "usage": usage}

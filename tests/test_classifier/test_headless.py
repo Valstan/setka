@@ -183,6 +183,24 @@ def test_unparseable_answer_is_reported_not_raised(monkeypatch):
     assert run["verdicts"] == []
 
 
+def test_truncated_chunk_is_its_own_failure_and_still_counted(monkeypatch):
+    """Упор в max_tokens — отдельная причина, не llm_unparseable (G334), а
+    оплаченный обрезанный вызов остаётся в учёте токенов прогона."""
+
+    def fake_chat(**_kw):
+        return {
+            "ok": False,
+            "reason": "truncated",
+            "detail": "max_tokens=220",
+            "usage": {"total_tokens": 7700},
+        }
+
+    monkeypatch.setattr(headless, "chat", fake_chat)
+    run = headless.classify_posts(POSTS[:1], postulates="x")
+    assert run["failures"] == ["truncated"]
+    assert run["tokens"] == 7700, "расход обрезанного вызова выпал из учёта"
+
+
 def test_model_name_is_stamped_on_verdicts(monkeypatch):
     _chat(monkeypatch, {"verdicts": [_verdict("1_10")]}, model="deepseek-chat")
     run = headless.classify_posts(POSTS[:1], postulates="x")

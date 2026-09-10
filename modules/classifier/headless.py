@@ -234,7 +234,8 @@ def classify_chunk(
             "detail": result.get("detail"),
             "verdicts": [],
             "problems": [],
-            "usage": None,
+            # Обрезанный по max_tokens вызов оплачен — его расход в учёт.
+            "usage": result.get("usage"),
         }
 
     payload = _extract_json(str(result.get("content") or ""))
