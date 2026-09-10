@@ -26,7 +26,7 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from config.deepseek import get_api_key, get_base_url, get_max_tokens, get_model, get_timeout
-from modules.deepseek_client import call_api
+from modules.deepseek_client import call_api, finish_reason
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +233,13 @@ def classify(
     if not (200 <= status < 300):
         return {"ok": False, "reason": f"http_{status}", "detail": response.get("error")}
 
+    usage = response.get("usage") if isinstance(response.get("usage"), dict) else None
+    if finish_reason(response) == "length":
+        # Упёрлись в max_tokens: JSON оборван. Отдельная причина, а не
+        # llm_unparseable — лечится бюджетом вывода, а не промптом (G334).
+        logger.warning("DeepSeek упёрся в max_tokens для %s", post.get("lip"))
+        return {"ok": False, "reason": "truncated", "usage": usage}
+
     choices = response.get("choices") or []
     content = ""
     if choices and isinstance(choices[0], dict):
@@ -243,7 +250,6 @@ def classify(
         return {"ok": False, "reason": "llm_unparseable"}
 
     verdict, refusal = parse_verdict(raw, post, sections=sections)
-    usage = response.get("usage") if isinstance(response.get("usage"), dict) else None
     if verdict is None:
         return {"ok": False, "reason": refusal, "usage": usage}
     return {"ok": True, "verdict": verdict, "usage": usage}

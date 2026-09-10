@@ -107,6 +107,40 @@ def test_a_genuine_cache_miss_is_reported_as_zero_not_as_unknown(caplog):
     assert "hit_pct=0.0" in line, f"{line}"
 
 
+def test_output_budget_fields_are_logged(caplog):
+    """Бюджет вывода виден в той же строке (письмо brain 2026-09-10, G334):
+    сколько съели раздумья и упёрся ли вызов в max_tokens."""
+    caplog.set_level(logging.INFO, logger="modules.deepseek_client")
+    log_cache_usage(
+        "headless",
+        {
+            "model": "deepseek-reasoner",
+            "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+            "usage": {
+                "prompt_tokens": 900,
+                "completion_tokens": 2000,
+                "completion_tokens_details": {"reasoning_tokens": 2000},
+            },
+        },
+    )
+    line = _line(caplog)
+    assert "reasoning=2000" in line, line
+    assert "finish=length" in line, line
+
+
+def test_absent_reasoning_field_is_unknown_not_zero(caplog):
+    """Нерассуждающая модель поля не присылает вовсе (проба на проде 10.09):
+    это «поля нет», а не «раздумий ноль» — та же граница, что у ``hit=-``."""
+    caplog.set_level(logging.INFO, logger="modules.deepseek_client")
+    log_cache_usage(
+        "conveyor",
+        {"model": "deepseek-flash", "usage": {"prompt_tokens": 100, "completion_tokens": 65}},
+    )
+    line = _line(caplog)
+    assert "reasoning=-" in line and "reasoning=0" not in line, line
+    assert "finish=-" in line, f"отсутствие finish_reason выдано за данные: {line}"
+
+
 def test_metric_never_breaks_an_already_paid_call(caplog):
     """Вызов оплачен — ответ важнее учёта."""
     caplog.set_level(logging.INFO, logger="modules.deepseek_client")

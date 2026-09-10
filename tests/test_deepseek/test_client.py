@@ -90,6 +90,46 @@ def test_missing_choices_is_empty_response(monkeypatch):
     assert dc.chat(user="вопрос")["reason"] == "empty_response"
 
 
+# ─── Бюджет вывода: обрезание по max_tokens (письмо brain 2026-09-10, G334) ──
+
+
+def _finished(content, finish, usage=None):
+    return {
+        "choices": [{"message": {"content": content}, "finish_reason": finish}],
+        "usage": usage or {"total_tokens": 42},
+    }
+
+
+def test_cut_json_at_length_is_truncated_not_success(monkeypatch):
+    """Наш случай, снят живой пробой на проде 10.09: нерассуждающая модель при
+    тесном лимите отдаёт НЕПУСТОЙ оборванный JSON с ``finish_reason: length``."""
+    cut = '{"lip": "x1", "theme": "инфраструктура", "action": "publish", "reasoning": "Позит'
+    monkeypatch.setattr(dc, "call_api", _api(200, _finished(cut, "length")))
+    out = dc.chat(user="вопрос", max_tokens=40)
+    assert out["ok"] is False
+    assert out["reason"] == "truncated"
+    assert out["detail"] == "max_tokens=40"
+    assert out["usage"] == {"total_tokens": 42}, "оплаченный вызов выпал из учёта"
+
+
+def test_blank_content_at_length_is_truncated_not_empty(monkeypatch):
+    """Случай соседа: раздумья съели весь бюджет, наружу пустой content."""
+    monkeypatch.setattr(dc, "call_api", _api(200, _finished("", "length")))
+    assert dc.chat(user="вопрос")["reason"] == "truncated"
+
+
+def test_blank_content_without_length_is_still_empty_response(monkeypatch):
+    """Контроль-негатив: без него «развели причины» неотличимо от «переименовали»."""
+    monkeypatch.setattr(dc, "call_api", _api(200, _finished("   ", "stop")))
+    assert dc.chat(user="вопрос")["reason"] == "empty_response"
+
+
+def test_normal_stop_is_success(monkeypatch):
+    monkeypatch.setattr(dc, "call_api", _api(200, _finished("ответ", "stop")))
+    out = dc.chat(user="вопрос")
+    assert out["ok"] is True and out["content"] == "ответ"
+
+
 def test_system_prompt_is_sent_first(monkeypatch):
     fake = _api(200, _completion("ok"))
     monkeypatch.setattr(dc, "call_api", fake)
