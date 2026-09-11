@@ -1,23 +1,46 @@
 /* Страница «Темы и доли»: план наполнения ленты против кандидатов и факта.
  *
- * Записи отсюда: доли тем (PUT) и приведение к 100% (POST /normalize). Обе
- * безопасны: доля — потолок в отборе, публикацию она не запускает.
+ * Запись отсюда одна: доли тем (PUT). Она безопасна: доля — потолок в отборе,
+ * публикацию она не запускает.
  *
  * Сумма долей НЕ приводится к 100 автоматически. Каждая доля — самостоятельный
  * потолок, движку сумма безразлична, а молча переписывать введённые владельцем
  * числа хуже, чем показать, что сумма не сошлась.
+ *
+ * «Привести к 100%» считает НА ЭКРАНЕ и ничего не пишет. До 2026-09-11 кнопка
+ * звала POST /normalize, а тот работает с СОХРАНЁННЫМИ долями: владелец набрал
+ * 130%, нажал её до сохранения и дважды получил «нечего нормализовать» — сервер
+ * не видел того, что видел он. Теперь нормализуются ровно видимые числа, а
+ * записываются той же кнопкой «Сохранить», что и всё остальное. Ручка
+ * /normalize осталась для curl и памяток.
+ *
+ * Сетевой отказ говорится словами. 11.09 оператор увидел голое «Failed to
+ * fetch»: ни что ничего не сохранилось, ни что делать дальше.
  */
 (function () {
     "use strict";
 
+    // fetch() отвергается TypeError-ом, когда ответа не было вовсе: обрыв связи,
+    // сброс соединения, блокировка расширением браузера. HTTP-ошибка — это ответ,
+    // она приходит с текстом сервера и обрабатывается отдельно.
+    class NetworkError extends Error {}
+
+    async function request(url, options) {
+        try {
+            return await fetch(url, options);
+        } catch (e) {
+            throw new NetworkError("нет связи с сервером");
+        }
+    }
+
     async function getJSON(url) {
-        const r = await fetch(url, { headers: { Accept: "application/json" } });
+        const r = await request(url, { headers: { Accept: "application/json" } });
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
     }
 
     async function sendJSON(url, method, payload) {
-        const r = await fetch(url, {
+        const r = await request(url, {
             method: method,
             headers: { "Content-Type": "application/json", Accept: "application/json" },
             body: payload === undefined ? undefined : JSON.stringify(payload),
@@ -52,6 +75,22 @@
     }
 
     let state = { themes: [], window_hours: 24, candidates_days: 7 };
+    // Есть ли на экране правки, которых нет на сервере. Без этой отметки
+    // нормализация «на экране» выглядела бы как уже применённая.
+    let dirty = false;
+
+    function setDirty(value) {
+        dirty = value;
+        document.getElementById("themes-dirty").classList.toggle("d-none", !value);
+    }
+
+    // На время запроса кнопки заблокированы: 11.09 «Привести к 100%» ушла на
+    // сервер дважды с разницей в четыре секунды.
+    function setBusy(busy) {
+        ["themes-save", "themes-normalize", "themes-refresh"].forEach(function (id) {
+            document.getElementById(id).disabled = busy;
+        });
+    }
 
     function rowHtml(t) {
         const id = encodeURIComponent(t.theme);
@@ -153,6 +192,7 @@
                 );
                 n.value = range.value;
                 renderSum();
+                setDirty(true);
             });
         });
         document.querySelectorAll(".themes-number").forEach(function (input) {
@@ -162,6 +202,7 @@
                 );
                 if (input.value !== "") r.value = input.value;
                 renderSum();
+                setDirty(true);
             });
         });
         document.querySelectorAll(".themes-unlimited").forEach(function (box) {
@@ -174,6 +215,7 @@
                 if (box.checked) number.value = "";
                 else if (number.value === "") number.value = range.value;
                 renderSum();
+                setDirty(true);
             });
         });
     }
@@ -194,13 +236,42 @@
         return shares;
     }
 
+    // Пропорционально, с округлением до десятых — как считал сервер. Темы «не
+    // ограничивать» и с пустым полем не трогаем («без потолка» — не ноль
+    // процентов), запрет (доля 0) остаётся нулём.
+    function normalizeOnScreen() {
+        const inputs = Array.prototype.filter.call(
+            document.querySelectorAll(".themes-number"),
+            function (input) {
+                return !input.disabled && input.value !== "" && Number(input.value) > 0;
+            }
+        );
+        const total = inputs.reduce(function (acc, input) {
+            return acc + Number(input.value);
+        }, 0);
+        if (!inputs.length || total <= 0) return false;
+        inputs.forEach(function (input) {
+            const value = Math.round((Number(input.value) / total) * 1000) / 10;
+            input.value = value;
+            const range = document.querySelector(
+                '.themes-range[data-theme="' + input.dataset.theme + '"]'
+            );
+            if (range) range.value = value;
+        });
+        return true;
+    }
+
     async function load() {
         try {
             render(await getJSON("/api/theme-quotas/"));
+            setDirty(false);
         } catch (e) {
+            const why = e instanceof NetworkError
+                ? "нет связи с сервером — нажмите «Обновить»"
+                : e.message;
             document.getElementById("themes-body").innerHTML =
                 '<tr><td colspan="4" class="text-danger p-3">Не удалось загрузить: ' +
-                escapeHtml(e.message) + "</td></tr>";
+                escapeHtml(why) + "</td></tr>";
         }
     }
 
@@ -212,26 +283,45 @@
 
     document.addEventListener("DOMContentLoaded", function () {
         load();
-        document.getElementById("themes-refresh").addEventListener("click", load);
+        document.getElementById("themes-refresh").addEventListener("click", async function () {
+            if (dirty && !window.confirm("Есть несохранённые изменения. Отбросить их и загрузить заново?")) {
+                return;
+            }
+            setBusy(true);
+            try {
+                await load();
+            } finally {
+                setBusy(false);
+            }
+        });
         document.getElementById("themes-save").addEventListener("click", async function () {
+            setBusy(true);
             note("Сохраняю…", true);
             try {
                 await sendJSON("/api/theme-quotas/", "PUT", { shares: collectShares() });
                 note("Сохранено", true);
+                setDirty(false);
                 await load();
             } catch (e) {
-                note(e.message, false);
+                note(
+                    e instanceof NetworkError
+                        ? "Нет связи с сервером: доли НЕ сохранены. Значения на экране на месте — " +
+                          "нажмите «Сохранить» ещё раз."
+                        : "Не сохранено: " + e.message,
+                    false
+                );
+            } finally {
+                setBusy(false);
             }
         });
-        document.getElementById("themes-normalize").addEventListener("click", async function () {
-            note("Нормализую…", true);
-            try {
-                await sendJSON("/api/theme-quotas/normalize", "POST");
-                note("Доли приведены к 100%", true);
-                await load();
-            } catch (e) {
-                note(e.message, false);
+        document.getElementById("themes-normalize").addEventListener("click", function () {
+            if (!normalizeOnScreen()) {
+                note("Нечего приводить: ни у одной темы нет доли больше нуля", false);
+                return;
             }
+            renderSum();
+            setDirty(true);
+            note("Доли приведены к 100% на экране — нажмите «Сохранить», чтобы применить", true);
         });
     });
 })();
