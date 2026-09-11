@@ -324,25 +324,69 @@ async def _fetch_theme_shares(session) -> Dict[str, Optional[float]]:
     }
 
 
+# Состояние квоты для поля «квота=» строки отбора. До 2026-09-11 там печаталось
+# «не применялась» в трёх разных случаях: гейт выключен; квота отработала и
+# ничего не срезала; квота срезала пост, а правило непустой волны его вернуло
+# (Малмыж, 11.09 12:21). По такой строке нельзя было отличить выключенную квоту
+# от работающей — ровно то, от чего эта строка должна была защищать.
+QUOTA_EMPTY = "empty"  # резать нечего: волна пуста ещё до квоты
+QUOTA_NO_SESSION = "no_session"  # без сессии БД (юнит-тесты политики деградации)
+QUOTA_OFF = "off"  # гейт выключен, и запретов (доля 0) нет
+QUOTA_NO_SHARES = "no_shares"  # гейт включён, но ни одной доли не задано
+QUOTA_BANS_ONLY = "bans_only"  # гейт выключен, действуют только запреты
+QUOTA_APPLIED = "applied"  # потолки отработали — срезали или нет
+QUOTA_RESCUED = "rescued"  # квота вычистила волну, правило непустой волны вернуло лучшее
+QUOTA_ERROR = "error"  # отказ, fail-open
+
+_QUOTA_LABELS = {
+    QUOTA_EMPTY: "резать нечего",
+    QUOTA_NO_SESSION: "без сессии БД",
+    QUOTA_OFF: "выключена",
+    QUOTA_NO_SHARES: "долей не задано",
+    QUOTA_ERROR: "сбой, fail-open",
+}
+
+
+def quota_log_label(state: str, dropped: Dict[str, int], rescued: int = 0) -> str:
+    """Текст поля «квота=» — по состоянию квоты, а не по пустоте словаря убранного.
+
+    Словарь убранного считается ПОСЛЕ правила непустой волны (он обязан сходиться
+    со сводкой), поэтому сам по себе не говорит, работала ли квота: волна из одного
+    срезанного и возвращённого поста даёт пустой словарь.
+    """
+    if state == QUOTA_RESCUED:
+        tail = f", убрано {dropped}" if dropped else ""
+        return f"волна опустела, возвращено {rescued}{tail}"
+    if state in (QUOTA_APPLIED, QUOTA_BANS_ONLY):
+        prefix = "только запреты: " if state == QUOTA_BANS_ONLY else ""
+        return prefix + (str(dropped) if dropped else "ничего не срезала")
+    return _QUOTA_LABELS.get(state, state)
+
+
 async def _apply_quota(
     session,
     selected,
     *,
     region_code: str,
     theme_of,
-) -> Tuple[list, Dict[str, int]]:
+) -> Tuple[list, Dict[str, int], str, int]:
     """Применить потолки долей тем. Fail-open: любой отказ → вход без изменений.
+
+    Возвращает ``(оставленные, убрано_по_темам, состояние, возвращено_спасением)``,
+    где состояние — одна из констант ``QUOTA_*`` выше; нужно для строки лога.
 
     Запрет темы (доля 0) работает ВСЕГДА, а потолки — только под гейтом
     ``CLASSIFIER_THEME_QUOTA_ENABLED``. Разделение нарочное: гейт нужен, чтобы
     журнал публикаций сутки поработал вхолостую и знаменатель перестал быть
     пустым, но запрет владельца ждать сутки не должен.
     """
+    if not selected:
+        return selected, {}, QUOTA_EMPTY, 0
     # Без сессии читать нечего: так зовут отбор юнит-тесты политики деградации,
     # и ERROR-лог в этом случае был бы ложной тревогой ровно того класса, который
     # приучает не читать логи.
-    if not selected or session is None:
-        return selected, {}
+    if session is None:
+        return selected, {}, QUOTA_NO_SESSION, 0
     try:
         from config.classifier import (
             get_theme_quota_min_posts,
@@ -352,16 +396,17 @@ async def _apply_quota(
         from modules.classifier.quota import HEADLINER_SLOTS, apply_theme_quota
         from modules.publication_journal import fetch_published_counts
 
+        gate = theme_quota_enabled()
         shares = await _fetch_theme_shares(session)
-        if not theme_quota_enabled():
+        if not gate:
             shares = {t: v for t, v in shares.items() if v is not None and float(v) <= 0}
         shares = {t: v for t, v in shares.items() if v is not None}
         if not shares:
-            return selected, {}
+            return selected, {}, (QUOTA_NO_SHARES if gate else QUOTA_OFF), 0
 
         published: Dict[str, int] = {}
         slots = HEADLINER_SLOTS
-        if theme_quota_enabled():
+        if gate:
             published = await fetch_published_counts(
                 session, region_code, window_hours=get_theme_quota_window_hours()
             )
@@ -378,7 +423,8 @@ async def _apply_quota(
         from utils.post_utils import post_rating_of
 
         alpha = get_rating_views_alpha()
-        return apply_theme_quota(
+        rescued: list = []
+        kept, dropped = apply_theme_quota(
             selected,
             theme_of=theme_of,
             rating_of=lambda p: post_rating_of(p, alpha=alpha),
@@ -386,10 +432,14 @@ async def _apply_quota(
             published=published,
             slots=slots,
             min_posts=get_theme_quota_min_posts(),
+            on_rescue=rescued.append,
         )
+        if rescued:
+            return kept, dropped, QUOTA_RESCUED, rescued[0]
+        return kept, dropped, (QUOTA_APPLIED if gate else QUOTA_BANS_ONLY), 0
     except Exception as e:  # noqa: BLE001 — квота не важнее волны
         logger.error("theme quota failed — fail-open: %s", e, exc_info=True)
-        return selected, {}
+        return selected, {}, QUOTA_ERROR, 0
 
 
 async def apply_wave_selection(
@@ -480,7 +530,7 @@ async def apply_wave_selection(
         # квоту без правок; только здесь на руках одновременно посты и их темы
         # (ниже, в BulletinBuilder, темы уже нет и сессии БД тоже); и это уже
         # слой редакционных решений, а не алгоритмических фильтров.
-        selected, quota_dropped = await _apply_quota(
+        selected, quota_dropped, quota_state, quota_rescued = await _apply_quota(
             session,
             selected,
             region_code=region_code,
@@ -507,10 +557,10 @@ async def apply_wave_selection(
             len(selected),
             removed,
             no_text,
-            # Пишем в ту же строку, что и режим отбора: квота живёт под гейтом
-            # CLASSIFIER_SELECTION_ENABLED, и её молчаливое отключение иначе
-            # выглядело бы точно так же, как «квота ничего не срезала».
-            quota_dropped or "не применялась",
+            # Пишем в ту же строку, что и режим отбора, и именно СОСТОЯНИЕ квоты:
+            # по одному словарю убранного не отличить «выключена» от «ничего не
+            # срезала» и от «срезала, но правило непустой волны вернуло пост».
+            quota_log_label(quota_state, quota_dropped, quota_rescued),
         )
         return selected, mode, removed
     except Exception as e:  # noqa: BLE001 — усилитель, не точка отказа

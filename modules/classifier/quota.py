@@ -102,8 +102,15 @@ def apply_theme_quota(
     published: Mapping[str, int],
     slots: int,
     min_posts: int = 1,
+    on_rescue: Optional[Callable[[int], None]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """Срезать посты сверх потолка темы. Возвращает ``(оставленные, убрано_по_темам)``.
+
+    ``on_rescue(n)`` зовётся, когда сработало правило непустой волны и вернуло
+    ``n`` постов. По словарю убранного спасение не видно: он считается ПОСЛЕ
+    спасения, и волна из одного срезанного и возвращённого поста даёт пустой
+    словарь — ровно как «ничего не срезала». Тому, кто пишет это в лог, нужен
+    отдельный сигнал.
 
     Порядок входа сохраняется: пересортировкой занимается сборщик сводки, а
     квота только вычитает — так её результат читается в логах рядом с отбором.
@@ -162,6 +169,8 @@ def apply_theme_quota(
             ranked = sorted(candidates, key=_sort_key, reverse=True)[:min_posts]
             keep = {index for index, _ in ranked}
             logger.info("theme quota: волна опустела, возвращено %d лучших постов", len(keep))
+            if on_rescue is not None:
+                on_rescue(len(keep))
 
     selected = [post for index, post in enumerate(posts) if index in keep]
 
