@@ -244,3 +244,204 @@ async def test_service_themes_get_no_cap(db_session, monkeypatch):
 
     shares = await selection._fetch_theme_shares(db_session)
     assert shares == {}
+
+
+# ───────── состояние квоты в строке лога (2026-09-11) ─────────
+#
+# До 11.09 поле «квота=» строки отбора печатало «не применялась» в трёх разных
+# случаях: гейт выключен; квота отработала и ничего не срезала; квота срезала
+# пост, а правило непустой волны его вернуло. В Малмыже 11.09 12:21 так и
+# вышло — лог сказал «не применялась», хотя квота волну вычистила.
+
+
+def test_rescue_is_reported_even_when_the_dropped_counter_is_empty():
+    """Гвоздь: волна из одного поста, срезанного и возвращённого, даёт ПУСТОЙ
+    словарь убранного — ровно как «ничего не срезала». Различить их можно только
+    по отдельному сигналу спасения."""
+    rescued = []
+    kept, dropped = apply_theme_quota(
+        [_post(1, "новости", 5)],
+        theme_of=_theme_of,
+        rating_of=_rating_of,
+        shares={"новости": 10},
+        published={"новости": 100},
+        slots=4,
+        min_posts=1,
+        on_rescue=rescued.append,
+    )
+    assert [p["id"] for p in kept] == [1]
+    assert dropped == {}
+    assert rescued == [1]
+
+
+def test_no_rescue_signal_when_the_wave_did_not_empty():
+    rescued = []
+    apply_theme_quota(
+        [_post(1, "новости", 5), _post(2, "объявления", 3)],
+        theme_of=_theme_of,
+        rating_of=_rating_of,
+        shares={"новости": 10},
+        published={"новости": 100},
+        slots=4,
+        on_rescue=rescued.append,
+    )
+    assert rescued == []
+
+
+def test_log_label_names_every_state():
+    from modules.classifier import selection as s
+
+    assert s.quota_log_label(s.QUOTA_OFF, {}) == "выключена"
+    assert s.quota_log_label(s.QUOTA_NO_SHARES, {}) == "долей не задано"
+    assert s.quota_log_label(s.QUOTA_EMPTY, {}) == "резать нечего"
+    assert s.quota_log_label(s.QUOTA_NO_SESSION, {}) == "без сессии БД"
+    assert s.quota_log_label(s.QUOTA_ERROR, {}) == "сбой, fail-open"
+    assert s.quota_log_label(s.QUOTA_APPLIED, {}) == "ничего не срезала"
+    assert s.quota_log_label(s.QUOTA_APPLIED, {"кругозор": 1}) == "{'кругозор': 1}"
+    assert s.quota_log_label(s.QUOTA_BANS_ONLY, {}) == "только запреты: ничего не срезала"
+    assert s.quota_log_label(s.QUOTA_RESCUED, {}, rescued=1) == "волна опустела, возвращено 1"
+
+
+def test_the_three_formerly_identical_states_now_read_differently():
+    from modules.classifier import selection as s
+
+    labels = {
+        s.quota_log_label(s.QUOTA_OFF, {}),
+        s.quota_log_label(s.QUOTA_APPLIED, {}),
+        s.quota_log_label(s.QUOTA_RESCUED, {}, rescued=1),
+    }
+    assert len(labels) == 3
+
+
+async def _quota_state(db_session, monkeypatch, *, gate, shares, published=None, posts=None):
+    """Прогнать _apply_quota на живой тестовой базе; вернуть (состояние, убрано, спасено)."""
+    from database.models_extended import ClassifierTheme
+    from modules import publication_journal
+    from modules.classifier import selection
+
+    for position, (name, share) in enumerate(shares.items(), start=1):
+        db_session.add(ClassifierTheme(name=name, position=position, share_percent=share))
+    await db_session.commit()
+    if gate:
+        monkeypatch.setenv("CLASSIFIER_THEME_QUOTA_ENABLED", "1")
+    else:
+        monkeypatch.delenv("CLASSIFIER_THEME_QUOTA_ENABLED", raising=False)
+
+    async def fake_counts(session, region_code, window_hours=24):
+        return dict(published or {})
+
+    monkeypatch.setattr(publication_journal, "fetch_published_counts", fake_counts)
+    wave = posts if posts is not None else [_post(1, "новости", 5)]
+    _kept, dropped, state, rescued = await selection._apply_quota(
+        db_session, wave, region_code="mi", theme_of=_theme_of
+    )
+    return state, dropped, rescued
+
+
+@pytest.mark.asyncio
+async def test_state_off_when_gate_is_off_and_nothing_is_banned(db_session, monkeypatch):
+    state, dropped, _ = await _quota_state(
+        db_session, monkeypatch, gate=False, shares={"новости": 10}
+    )
+    assert (state, dropped) == ("off", {})
+
+
+@pytest.mark.asyncio
+async def test_state_no_shares_when_gate_is_on_but_nothing_is_set(db_session, monkeypatch):
+    state, _, _ = await _quota_state(db_session, monkeypatch, gate=True, shares={"новости": None})
+    assert state == "no_shares"
+
+
+@pytest.mark.asyncio
+async def test_state_applied_when_the_cap_leaves_room(db_session, monkeypatch):
+    state, dropped, _ = await _quota_state(
+        db_session, monkeypatch, gate=True, shares={"новости": 50}, published={}
+    )
+    assert (state, dropped) == ("applied", {})
+
+
+@pytest.mark.asyncio
+async def test_state_rescued_is_not_confused_with_nothing_cut(db_session, monkeypatch):
+    """Сценарий Малмыжа 11.09: одна новость в волне, потолок исчерпан, правило
+    непустой волны её вернуло. Словарь убранного пуст — состояние обязано
+    сказать «спасено», а не «ничего не срезала»."""
+    state, dropped, rescued = await _quota_state(
+        db_session, monkeypatch, gate=True, shares={"новости": 10}, published={"новости": 100}
+    )
+    assert (state, dropped, rescued) == ("rescued", {}, 1)
+
+
+@pytest.mark.asyncio
+async def test_state_bans_only_when_the_gate_is_off(db_session, monkeypatch):
+    state, dropped, _ = await _quota_state(
+        db_session,
+        monkeypatch,
+        gate=False,
+        shares={"новости": 0},
+        posts=[_post(1, "новости", 5), _post(2, "объявления", 3)],
+    )
+    assert (state, dropped) == ("bans_only", {"новости": 1})
+
+
+@pytest.mark.asyncio
+async def test_state_error_keeps_the_wave_and_says_so(db_session, monkeypatch):
+    from modules.classifier import selection
+
+    async def boom(session):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(selection, "_fetch_theme_shares", boom)
+    wave = [_post(1, "новости", 5)]
+    kept, dropped, state, _ = await selection._apply_quota(
+        db_session, wave, region_code="mi", theme_of=_theme_of
+    )
+    assert (kept, dropped, state) == (wave, {}, "error")
+
+
+@pytest.mark.asyncio
+async def test_state_empty_and_no_session():
+    from modules.classifier import selection
+
+    empty = await selection._apply_quota(None, [], region_code="mi", theme_of=_theme_of)
+    no_session = await selection._apply_quota(
+        None, [_post(1, "новости")], region_code="mi", theme_of=_theme_of
+    )
+    assert empty[2] == "empty"
+    assert no_session[2] == "no_session"
+
+
+@pytest.mark.asyncio
+async def test_selection_log_line_says_rescued_not_unapplied(db_session, monkeypatch, caplog):
+    """Сквозная проверка строки лога — той самой, по которой 11.09 квоту сочли
+    неприменённой."""
+    import logging
+
+    from database.models_extended import ClassifierTheme
+    from modules import publication_journal
+    from modules.classifier import selection
+
+    db_session.add(ClassifierTheme(name="новости", position=1, share_percent=10))
+    await db_session.commit()
+    monkeypatch.setenv("CLASSIFIER_SELECTION_ENABLED", "1")
+    monkeypatch.setenv("CLASSIFIER_THEME_QUOTA_ENABLED", "1")
+
+    async def fake_map(session, region_code):
+        return {"100_1": "новости"}
+
+    async def fake_counts(session, region_code, window_hours=24):
+        return {"новости": 100}
+
+    monkeypatch.setattr(selection, "fetch_publish_map", fake_map)
+    monkeypatch.setattr(selection, "decide_mode", lambda **kw: (selection.MODE_VERDICTS, False))
+    monkeypatch.setattr(publication_journal, "fetch_published_counts", fake_counts)
+
+    posts = [{"owner_id": -100, "id": 1, "text": "районная новость"}]
+    with caplog.at_level(logging.INFO, logger=selection.logger.name):
+        out, _mode, removed = await selection.apply_wave_selection(
+            db_session, posts, region_code="mi", theme="admin"
+        )
+    assert [p["id"] for p in out] == [1]
+    assert removed == 0
+    line = next(r.getMessage() for r in caplog.records if "classifier selection:" in r.getMessage())
+    assert "квота=волна опустела, возвращено 1" in line
+    assert "не применялась" not in line
