@@ -664,6 +664,30 @@ async def _journal_row_id(region_id: int, version: int) -> Optional[int]:
     return row
 
 
+# Буквы и цифры, после которых имя места читается серединой другого слова
+# («научили» — не «Учили»). Татарские буквы — для районов Татарстана.
+_WORD_CHARS = "A-Za-zА-Яа-яЁё0-9ӘәӨөҮүҖҗҢңҺһ"
+# Спецсимволы регулярок Postgres (ARE): в имени места они значат сами себя.
+_ARE_SPECIALS = frozenset("\\.^$*+?()[]{}|")
+
+
+def mention_pattern(place: str) -> str:
+    """Регулярка Postgres «в тексте упомянуто это место» — для ранжирования.
+
+    Слева граница слова, справа свобода: «Шемордан» засчитывается и в
+    «Шемордане», и в «Шеморданом» (падежи), а «Учили» внутри «научили» — нет.
+    Регистр учитывается: имя села пишут с заглавной, а тот же набор букв со
+    строчной почти всегда слово языка («нас учили»). Спецсимволы экранируются,
+    чтобы точка или скобка в названии не стали частью регулярки.
+
+    Совпадения этой формулы — подмножество прежнего ``ILIKE '%имя%'``: она только
+    отбрасывает и ничего не добавляет. Цена — упоминания капсом («АРСК») не
+    засчитываются; для ранга это приемлемо.
+    """
+    escaped = "".join("\\" + ch if ch in _ARE_SPECIALS else ch for ch in place)
+    return f"(^|[^{_WORD_CHARS}])" + escaped
+
+
 async def run_rank_places(codes: Optional[List[str]], apply: bool) -> int:
     """--rank-localities: отранжировать места для поискового индекса описания.
 
@@ -681,9 +705,13 @@ async def run_rank_places(codes: Optional[List[str]], apply: bool) -> int:
     районной группы (``region_member_snapshots``), потому что упоминаний района
     в ленте самой области почти не бывает.
 
-    Оговорка про подсчёт: ``ILIKE '%имя%'`` ловит подстроку, поэтому «Пачи»
-    засчитывается и внутри «Большие Пачи». Для **ранжирования** это приемлемо —
-    короткое имя и правда популярнее, — но числа нельзя выдавать за перепись.
+    Подсчёт упоминаний — :func:`mention_pattern` (начало слова и регистр). До
+    11.09 здесь стоял ``ILIKE '%имя%'``, то есть подстрока, и он мерил язык, а не
+    место: у Арска в восьмёрку описания попало «Учили» — из «научили» и «нас
+    учили». Пока ранг только сортировал список, это было терпимо; с 06.09 он
+    пишется в публичное описание, которое читают люди и индексирует поиск ВК.
+    Числа по-прежнему нельзя выдавать за перепись: «Пачи» засчитывается и в
+    «Большие Пачи».
     """
     from sqlalchemy import text
 
@@ -724,19 +752,36 @@ async def run_rank_places(codes: Optional[List[str]], apply: bool) -> int:
 
                 ranked = [base_title(r.name, None) for r in rows]
             else:
-                rows = (
+                region_row = (
                     await session.execute(
-                        text(
-                            "SELECT q.l AS place, count(*) AS hits FROM ("
-                            "  SELECT jsonb_array_elements_text((config->'localities')::jsonb) AS l"
-                            "  FROM regions WHERE id = :rid"
-                            ") q JOIN collected_post_audit a "
-                            "  ON a.region_code = :code AND a.post_text ILIKE '%' || q.l || '%' "
-                            "GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 12"
-                        ),
-                        {"rid": target["region_id"], "code": code},
+                        text("SELECT config FROM regions WHERE id = :rid"),
+                        {"rid": target["region_id"]},
                     )
-                ).fetchall()
+                ).first()
+                cfg_now = region_row.config if region_row else None
+                places = [str(p) for p in ((cfg_now or {}).get("localities") or [])]
+                rows = []
+                if places:
+                    # Шаблон собирается в Python (mention_pattern) и едет парой к
+                    # имени: экранирование проверено юнит-тестом, а не живёт
+                    # строкой внутри SQL.
+                    rows = (
+                        await session.execute(
+                            text(
+                                "SELECT p.place, count(*) AS hits "
+                                "FROM unnest(CAST(:places AS text[]), CAST(:patterns AS text[])) "
+                                "  AS p(place, pattern) "
+                                "JOIN collected_post_audit a "
+                                "  ON a.region_code = :code AND a.post_text ~ p.pattern "
+                                "GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 12"
+                            ),
+                            {
+                                "places": places,
+                                "patterns": [mention_pattern(p) for p in places],
+                                "code": code,
+                            },
+                        )
+                    ).fetchall()
                 ranked = [r.place for r in rows]
 
             if not ranked:
