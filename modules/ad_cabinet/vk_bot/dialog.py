@@ -439,7 +439,7 @@ def prices_text(*, discount: Optional[Dict[str, int]] = None, package=None) -> s
 
 
 def payments_text() -> str:
-    from config.ad_landing import PAYMENTS
+    from config.ad_landing import PAYMENTS, RECEIPT_NOTE
 
     lines = ["💳 Оплата переводом по номеру телефона:"]
     for p in PAYMENTS:
@@ -448,6 +448,7 @@ def payments_text() -> str:
         "\nПосле перевода нажмите «✅ Оплатил» — владелец увидит и подтвердит оплату, "
         "подтверждение придёт сюда."
     )
+    lines.append(RECEIPT_NOTE)
     return "\n".join(lines)
 
 

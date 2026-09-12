@@ -846,7 +846,10 @@ async def _thank_client(db, client_id: int, amount: float) -> None:
     from modules.ad_cabinet.vk_bot import notify as vk_notify
 
     await vk_notify.notify_client(
-        db, int(client_id), f"✅ Оплата {amount:g} ₽ получена — спасибо! Баланс обновлён."
+        db,
+        int(client_id),
+        f"✅ Оплата {amount:g} ₽ получена — спасибо! Баланс обновлён. "
+        "Нужен чек самозанятого — скажите, пришлём.",
     )
 
 
