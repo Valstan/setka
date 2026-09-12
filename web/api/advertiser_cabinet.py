@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config.ad_landing import PAYMENTS, build_price_table
+from config.ad_landing import PAYMENTS, RECEIPT_NOTE, build_price_table
 from database.connection import get_db_session
 from database.models import AdClient, AdPayment, AdPublication, AdScheduledPost, Region
 from modules.ad_cabinet import advertiser_link, chat, client_orders, client_photos, impersonation
@@ -739,7 +739,11 @@ async def my_payments(request: Request, db: AsyncSession = Depends(get_db_sessio
         .scalars()
         .all()
     )
-    return {"payments": [r.to_dict() for r in rows], "requisites": PAYMENTS}
+    return {
+        "payments": [r.to_dict() for r in rows],
+        "requisites": PAYMENTS,
+        "receipt_note": RECEIPT_NOTE,
+    }
 
 
 class ClaimIn(BaseModel):

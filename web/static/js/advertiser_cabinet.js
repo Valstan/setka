@@ -457,6 +457,7 @@
             $('money-requisites').innerHTML = (data.requisites || []).map(function (r) {
                 return '<div class="small">' + esc(r.bank) + ': <a href="' + esc(r.phone_url) + '">' + esc(r.phone) + '</a> — ' + esc(r.holder) + '</div>';
             }).join('');
+            $('money-receipt-note').textContent = data.receipt_note || '';
             var unclaimed = (data.payments || []).filter(function (p) { return p.status === 'awaiting' && !p.claimed_at; });
             $('money-list').innerHTML = (data.payments || []).map(function (p) {
                 var status;
