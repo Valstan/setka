@@ -135,7 +135,7 @@ All crontab entries from old_postopus are now Celery Beat schedules:
 | Theme | Schedule | Task |
 |-------|----------|------|
 | **Reklama** | 10:05, 14:05, 19:05 | `run_all_regions_theme('reklama')` |
-| **Sosed** | 10:20, 20:20 | `run_all_regions_theme('sosed')` |
+| ~~**Sosed**~~ | снята 2026-09-14 | пустые прогоны: ноль сводок за 30 дней, см. `tasks/celery_app.py` |
 | **Novost** | 6:40, 11:40, 12:40, 16:40, 18:40, 20:40 | `run_all_regions_theme('novost')` |
 | **Kultura** | 7:20, 13:20, 16:20, 19:20, 21:20 | `run_all_regions_theme('kultura')` |
 | **Sport** | 12:30, 19:30 | `run_all_regions_theme('sport')` |

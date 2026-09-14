@@ -2168,23 +2168,28 @@ app.conf.beat_schedule = {
         "args": ("reklama",),
         "options": {"expires": 3600},
     },
-    # Sosed (neighbor news): 15 10,20 * * *
-    "postopus-sosed-10": {
-        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
-        "schedule": crontab(minute=20, hour=10),
-        "args": ("sosed",),
-        "options": {"expires": 3600},
-    },
-    "postopus-sosed-20": {
-        "task": "tasks.parsing_scheduler_tasks.run_all_regions_theme",
-        "schedule": crontab(minute=20, hour=20),
-        "args": ("sosed",),
-        "options": {"expires": 3600},
-    },
+    # Тема "sosed" (два слота 10:20 и 20:20) СНЯТА 2026-09-14 по решению владельца.
+    #
+    # Соседский обмен новостями существовал в двух механиках, и работала из них
+    # одна. Замер за 30 дней перед снятием:
+    #   * тема "sosed" (парсинг сообществ category="sosed" ВНУТРИ своего района):
+    #     собрано 4109 постов, оставлено фильтром 25, опубликовано сводок — НОЛЬ;
+    #     сообществ такой категории во всей сети всего два;
+    #   * "bulletin-share-neighbors-daily" ниже (репост #Новости с главных групп
+    #     соседних районов): 25 опубликованных сводок за то же окно.
+    # Два слота в сутки тратили вызовы ВК и работу фильтров, не давая ничего.
+    #
+    # Владелец: «соседи обмениваются новостями с ближними соседями, по одной в
+    # день, чтобы друг друга поддерживать; если это делается разными путями —
+    # оставь один работающий, остальное удали». Оставлен тот, что и описывает
+    # эту функцию: cross-region обмен раз в сутки.
+    #
+    # Имя темы нигде не удалено — оно остаётся валидным ключом переопределений
+    # (POSTOPUS_BULLETIN_THEMES) и меткой классификатора. Снят только запуск.
+    #
     # Соседский обмен новостями (cross-region): раз в сутки утром. Каждый регион
     # с непустым Region.neighbors репостит #Новости с главных групп соседей.
-    # Это НЕ тема "sosed" выше (та — парсинг сообществ category="sosed" внутри
-    # региона). Движок — modules.cascaded_bulletin.run_neighbor_bulletin.
+    # Движок — modules.cascaded_bulletin.run_neighbor_bulletin.
     "bulletin-share-neighbors-daily": {
         "task": "tasks.parsing_scheduler_tasks.run_all_regions_neighbor_share",
         "schedule": crontab(minute=30, hour=8),
