@@ -307,3 +307,82 @@ async def test_published_at_reaches_the_caller(db_session):
     assert out[0]["published_at"] == when
     snaps = await source.fetch_audit_snapshots(db_session, lips=["1_10"])
     assert snaps["1_10"]["published_at"] == when
+
+
+# ───────── ловля по словам во всём потоке района (заказ владельца 2026-09-14) ─────────
+
+FAIR_TEXT = (
+    "В эти выходные в Малмыже пройдёт ярмарка «Казанская»: торговые ряды на площади, "
+    "выступления коллективов и детская программа. Начало в десять утра."
+)
+OFF_TOPIC = (
+    "Библиотека Малмыжа объявила запись в кружок краеведения. Занятия начнутся "
+    "в октябре, ведёт их сотрудник музея, записаться можно по телефону."
+)
+
+
+class TestSourceFilter:
+    def test_own_public_passes_without_keywords(self):
+        """Свой паблик отдаёт всё: слова к нему не применяются."""
+        assert source.passes_source_filter(
+            "217788511_10", OFF_TOPIC, owner_ids=(217788511,), keywords=("сабантуй",)
+        )
+
+    def test_foreign_public_passes_on_keyword(self):
+        assert source.passes_source_filter(
+            "999_10", FAIR_TEXT, owner_ids=(217788511,), keywords=("ярмарк",)
+        )
+
+    def test_foreign_public_without_keyword_is_dropped(self):
+        assert not source.passes_source_filter(
+            "999_10", OFF_TOPIC, owner_ids=(217788511,), keywords=("ярмарк",)
+        )
+
+    def test_no_restrictions_means_everything(self):
+        assert source.passes_source_filter("999_10", OFF_TOPIC, owner_ids=(), keywords=())
+
+    def test_substring_catches_word_forms(self):
+        """«ярмарк» ловит склонения и не зависит от регистра — морфологии у нас нет."""
+        for word in ("на ярмарке", "ЯРМАРКА", "ярмарки не будет"):
+            assert source.matches_keywords(word, ("ярмарк",))
+
+    def test_stem_alternation_needs_its_own_entry(self):
+        """Граница подстрочного подхода, найденная тестом: в «ярмарочный» идёт
+        чередование к→ч, и корень «ярмарк» его НЕ ловит. Поэтому в конфиге сайта
+        стоят оба корня — это не опечатка."""
+        assert not source.matches_keywords("ярмарочный день", ("ярмарк",))
+        assert source.matches_keywords("ярмарочный день", ("ярмароч",))
+
+    def test_empty_keywords_never_match(self):
+        assert not source.matches_keywords(FAIR_TEXT, ())
+
+
+@pytest.mark.asyncio
+async def test_keywords_widen_source_beyond_named_publics(db_session):
+    """Профильный пост ЧУЖОГО паблика доезжает, непрофильный — нет.
+
+    Замер 14.09 показал, зачем это: у тематического сайта свои паблики сезонные
+    (стена «Сабантуя» — 153 поста за два года, все в мае–августе), и без ловли
+    по словам сайт выглядел бы мёртвым десять месяцев в году.
+    """
+    await seed_pair(db_session, lip="217788511_10", text=OFF_TOPIC)  # свой паблик
+    await seed_pair(db_session, lip="999_20", text=FAIR_TEXT)  # чужой, но про ярмарку
+    await seed_pair(db_session, lip="888_30", text=OFF_TOPIC)  # чужой и не про то
+    site = dict(
+        SITE,
+        key="kazanskaya",
+        source_owner_ids=(217788511,),
+        source_keywords=("ярмарк", "сабантуй"),
+    )
+    out = await source.fetch_pending_for_site(db_session, site)
+    assert sorted(p["lip"] for p in out) == ["217788511_10", "999_20"]
+
+
+@pytest.mark.asyncio
+async def test_without_keywords_behaviour_is_unchanged(db_session):
+    """У сайта без ловли (портал) отбор работает ровно как раньше."""
+    await seed_pair(db_session, lip="217788511_10", text=OFF_TOPIC)
+    await seed_pair(db_session, lip="999_20", text=FAIR_TEXT)
+    site = dict(SITE, key="kazanskaya", source_owner_ids=(217788511,))
+    out = await source.fetch_pending_for_site(db_session, site)
+    assert [p["lip"] for p in out] == ["217788511_10"]

@@ -87,6 +87,47 @@ def _published_lips(
     return out
 
 
+def _norm_keywords(keywords: Sequence[str]) -> List[str]:
+    """Слова ловли в нижнем регистре, пустые выброшены."""
+    return [k.strip().lower() for k in (keywords or ()) if str(k).strip()]
+
+
+def matches_keywords(text: str, keywords: Sequence[str]) -> bool:
+    """Есть ли в тексте хоть одно слово ловли. Пустой список слов → ``False``.
+
+    Подстрокой, а не по границам слов, и это осознанно: «ярмарк» обязан ловить
+    «ярмарка/ярмарке/ярмарочный», а морфологии у нас здесь нет и заводить её
+    ради четырёх слов незачем. Плата за подстроку — ложные срабатывания на
+    длинных словах; для тематического сайта это дешевле пропуска, потому что
+    дальше стоит LLM с правилами сайта, которая лишнее отклонит.
+    """
+    body = (text or "").lower()
+    if not body:
+        return False
+    return any(k in body for k in _norm_keywords(keywords))
+
+
+def passes_source_filter(
+    lip: str,
+    text: str,
+    *,
+    owner_ids: Sequence[int],
+    keywords: Sequence[str],
+) -> bool:
+    """Годится ли пост тематическому сайту: свой паблик **ИЛИ** профильное слово.
+
+    Ни того, ни другого не задано → берём всё (поведение сайта без сужений).
+    Задано только одно → работает только оно.
+    """
+    wanted_owners = {str(abs(int(x))) for x in (owner_ids or ()) if str(x).strip()}
+    words = _norm_keywords(keywords)
+    if not wanted_owners and not words:
+        return True
+    if wanted_owners and lip.partition("_")[0] in wanted_owners:
+        return True
+    return bool(words) and matches_keywords(text, words)
+
+
 def _only_owners(lip_theme: Dict[str, str], owner_ids: Sequence[int]) -> Dict[str, str]:
     """Оставить посты только названных пабликов. Пустой список — без ограничения.
 
@@ -150,8 +191,14 @@ async def fetch_pending_for_site(
         .scalars()
         .all()
     )
+    owner_ids = site.get("source_owner_ids") or ()
+    keywords = site.get("source_keywords") or ()
     lip_theme = _published_lips(runs, site.get("skip_themes") or ())
-    lip_theme = _only_owners(lip_theme, site.get("source_owner_ids") or ())
+    # Сузить по пабликам ДО выборки текстов можно только когда ловли по словам
+    # нет: со словами кандидатом становится весь район, и решает уже текст,
+    # которого на этом шаге ещё нет.
+    if owner_ids and not keywords:
+        lip_theme = _only_owners(lip_theme, owner_ids)
     if not lip_theme:
         return []
 
@@ -180,6 +227,10 @@ async def fetch_pending_for_site(
         seen.add(r.lip)
         text = (r.post_text or "").strip()
         if not text:
+            continue
+        if keywords and not passes_source_filter(
+            r.lip, text, owner_ids=owner_ids, keywords=keywords
+        ):
             continue
         out.append(
             {
