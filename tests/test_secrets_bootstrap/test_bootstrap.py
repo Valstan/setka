@@ -455,3 +455,48 @@ def test_ensure_secret_never_pulls_bootstrap_config(monkeypatch):
     env = {"SECRETS_TOKEN": "tok"}
     assert sb.ensure_secret("SECRETS_VAULT_URL", env=env) is False
     assert "SECRETS_VAULT_URL" not in env
+
+
+def test_site_publish_key_reaches_the_process(monkeypatch):
+    """D-091: ``<SITE>_PUBLISH_KEY`` обязан доезжать из комнаты в процесс.
+
+    Регрессия на живом случае 2026-09-14: выдача была принята штатно, а ключ
+    остался в комнате — суффикс `_PUBLISH_KEY` не входил в allowlist, и в логе
+    это было одной строкой «вне allowlist, проигнорированы». Наружу выглядело
+    как «портал не публикует», хотя мандат D-091 был исполнен целиком.
+    """
+    env = {"SECRETS_TOKEN": "tok"}
+    monkeypatch.setattr(
+        sb,
+        "_fetch_secrets",
+        lambda token, url: {
+            "DATABASE_URL": "postgresql+asyncpg://u:p@h/db",
+            "REDIS_URL": "redis://h:1/0",
+            "VMALMYZHE_PUBLISH_KEY": "publish-key",
+        },
+    )
+
+    res = sb.bootstrap_secrets(env=env)
+    assert env["VMALMYZHE_PUBLISH_KEY"] == "publish-key"
+    assert res["ignored"] == []
+
+
+def test_publish_suffix_does_not_open_the_door_to_gateway_names(monkeypatch):
+    """Правило осталось узким: направление по-прежнему читается из имени."""
+    env = {"SECRETS_TOKEN": "tok"}
+    monkeypatch.setattr(
+        sb,
+        "_fetch_secrets",
+        lambda token, url: {
+            "DATABASE_URL": "postgresql+asyncpg://u:p@h/db",
+            "REDIS_URL": "redis://h:1/0",
+            "GATEWAY_KEY_VMALMYZHE": "wrong-direction",
+            "PUBLISH_KEY": "без имени сайта",
+            "SECRETS_TOKEN_PUBLISH_KEY": "bootstrap-имя с хвостом",
+        },
+    )
+
+    res = sb.bootstrap_secrets(env=env)
+    assert "GATEWAY_KEY_VMALMYZHE" in res["ignored"]
+    assert "GATEWAY_KEY_VMALMYZHE" not in env
+    assert env["SECRETS_TOKEN"] == "tok"  # bootstrap-имя не перетёрто
