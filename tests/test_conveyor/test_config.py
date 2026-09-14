@@ -135,3 +135,25 @@ class TestKazanskaya:
     def test_both_sites_can_be_active_together(self, monkeypatch):
         monkeypatch.setenv("CONVEYOR_SITES", "vmalmyzhe,kazanskaya")
         assert [s["key"] for s in cc.get_active_sites()] == ["vmalmyzhe", "kazanskaya"]
+
+
+class TestPublishKey:
+    """D-091: право публиковать выражено ключом, а не флагом в конфиге."""
+
+    def test_publish_key_read_from_named_env(self, monkeypatch):
+        monkeypatch.setenv("VMALMYZHE_PUBLISH_KEY", "pub")
+        site = cc.get_site("vmalmyzhe")
+        assert cc.get_publish_key(site) == "pub" and cc.wants_publish(site) is True
+
+    def test_no_key_means_draft_only(self, monkeypatch):
+        monkeypatch.delenv("VMALMYZHE_PUBLISH_KEY", raising=False)
+        site = cc.get_site("vmalmyzhe")
+        assert cc.get_publish_key(site) == "" and cc.wants_publish(site) is False
+
+    def test_kazanskaya_has_no_publish_key_at_all(self, monkeypatch):
+        """Ключа публикации Казанская не выдавала — даже выставленный в env
+        посторонний секрет не должен включить ей автопубликацию."""
+        monkeypatch.setenv("KAZANSKAYA_PUBLISH_KEY", "подброшено")
+        site = cc.get_site("kazanskaya")
+        assert "publish_key_env" not in site
+        assert cc.wants_publish(site) is False

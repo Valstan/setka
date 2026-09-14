@@ -37,8 +37,16 @@ log = logging.getLogger(__name__)
 # Имена, которые мы согласны принять в свою комнату, и от кого. Пустой набор
 # источников = от любой комнаты; иначе — только от перечисленных slug'ов.
 # Первый — ключ приёмника Казанской (mandate brain 2026-09-02/03, D-015).
+#
+# ``VMALMYZHE_PUBLISH_KEY`` — ключ ПУБЛИКАЦИИ портала (D-091, mandate brain
+# 2026-09-14). Он не заменяет ``VMALMYZHE_INGEST_KEY``, а ходит рядом с ним:
+# ingest-ключ открывает приёмник, publish-ключ поднимает черновик до
+# публикации. Два имени, потому что права разные и отзываются порознь — портал
+# может закрыть автопубликацию одним ``DELETE`` на grant, не разрывая доставку
+# (решение #124, повторено в D-091).
 GRANT_ALLOWLIST: Dict[str, frozenset] = {
     "KAZANSKAYA_INGEST_KEY": frozenset({"kazanskayamalmyzh"}),
+    "VMALMYZHE_PUBLISH_KEY": frozenset({"vmalmyzhe"}),
 }
 
 _TIMEOUT_SEC = 10

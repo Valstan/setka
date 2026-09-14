@@ -22,13 +22,42 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import select
 
 from database.models_extended import BulletinCurationRun, CollectedPostAudit, ConveyorDelivery
+from modules.deduplication.fingerprints import jaccard_similarity, text_token_set
 
 logger = logging.getLogger(__name__)
+
+# --- Дедуп «одна новость от разных пабликов» (recommend brain 2026-09-14) -----
+#
+# Школа, ДК и районная газета постят одно событие — портал режет такое по
+# нормализованному заголовку за 7 дней и отвечает ``duplicateOf``. У нас это
+# решается раньше и дешевле: до LLM-вызова и до того, как приёмник пойдёт качать
+# те же фотографии второй раз.
+#
+# **Порог подобран замером, а не на глаз.** 315 доставок портала за 30 дней,
+# все пары внутри окна: сигнал ``max(Jaccard по тексту, Jaccard по лиду)``
+# ловит 18 пар при 0.5, и ближайшая пара-НЕ-дубль лежит на 0.32 («Отключение
+# воды» против «Отключение электроэнергии»). То есть между порогом и шумом
+# полторы десятых запаса.
+#
+# Почему два сигнала, а не один. Полный текст ловит дословную перепечатку, но
+# проваливает пересказ с разным хвостом: одинаковые заголовки «Педагоги
+# Малмыжского района участвуют в областных туристских соревнованиях» дают по
+# полному тексту всего 0.48, а по лиду — 0.62. Лид, в свою очередь, слеп к
+# перепечатке с переписанным началом. Максимум из двух ловит оба класса.
+#
+# Почему порог осознанно строгий. Цены ошибок несимметричны: наш пропуск
+# подхватит дедуп портала по заголовку (новость всё равно не задвоится), а наш
+# ложный срез — это местная новость, которой на сайте не будет никогда, потому
+# что строка журнала закроет её от следующих прогонов. Поэтому берём запас.
+DUP_WINDOW_DAYS = 7
+DUP_THRESHOLD = 0.5
+DUP_FULL_CHARS = 1200
+DUP_LEAD_CHARS = 300
 
 
 def _published_lips(
@@ -160,11 +189,112 @@ async def fetch_pending_for_site(
                 "media": r.media or [],
                 "theme": lip_theme.get(r.lip, ""),
                 "region_code": r.region_code,
+                # Дата поста В ВК (миграция 080). Уезжает в ``date`` приёмника —
+                # по ней сортируется лента портала (D-091). ``None`` у постов
+                # из бэклога до миграции 080; на свежих сборах заполнено.
+                "published_at": r.published_at,
             }
         )
         if len(out) >= max(1, limit):
             break
     return out
+
+
+def dup_signature(text: str) -> Tuple[frozenset, frozenset]:
+    """Подпись текста для near-dup: ``(слова тела, слова лида)``.
+
+    Обе половины — множества слов от ``text_token_set`` (тот же разбор, что у
+    дедупа сводок: свой второй токенайзер разошёлся бы с первым молча).
+    """
+    body = (text or "").strip()
+    return text_token_set(body[:DUP_FULL_CHARS]), text_token_set(body[:DUP_LEAD_CHARS])
+
+
+def dup_similarity(a: Tuple[frozenset, frozenset], b: Tuple[frozenset, frozenset]) -> float:
+    """Схожесть двух подписей — максимум из «по телу» и «по лиду». См. порог выше."""
+    return max(jaccard_similarity(a[0], b[0]), jaccard_similarity(a[1], b[1]))
+
+
+def split_near_duplicates(
+    posts: Sequence[Dict[str, Any]],
+    *,
+    recent: Sequence[Tuple[str, Tuple[frozenset, frozenset]]] = (),
+    threshold: float = DUP_THRESHOLD,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Разделить партию на ``(к работе, дубли)``. У дубля проставлен ``dup_of``.
+
+    Два прохода сравнения, и оба нужны:
+
+    * против уже доставленного за окно (``recent``) — новость, которая вчера
+      уехала от газеты, сегодня приезжает от школы;
+    * внутри самой партии — один прогон часто забирает обе копии разом.
+
+    **Внутри партии выигрывает более длинный текст**, а не первый по порядку.
+    Порядок здесь — ``collected_at desc``, то есть про качество он не говорит
+    ничего; длина же говорит: полный пересказ события даёт модели больше, чем
+    короткая заметка о том же. Сравнение по длине делает выбор воспроизводимым —
+    иначе результат зависел бы от того, чей парсер отработал первым.
+    """
+    kept: List[Dict[str, Any]] = []
+    kept_sigs: List[Tuple[frozenset, frozenset]] = []
+    dropped: List[Dict[str, Any]] = []
+
+    for post in posts:
+        sig = dup_signature(str(post.get("text") or ""))
+
+        twin = next(
+            (lip for lip, prev in recent if dup_similarity(sig, prev) >= threshold),
+            None,
+        )
+        if twin:
+            dropped.append({**post, "dup_of": twin})
+            continue
+
+        hit = next(
+            (i for i, prev in enumerate(kept_sigs) if dup_similarity(sig, prev) >= threshold),
+            None,
+        )
+        if hit is None:
+            kept.append(post)
+            kept_sigs.append(sig)
+            continue
+
+        rival = kept[hit]
+        if len(str(post.get("text") or "")) > len(str(rival.get("text") or "")):
+            kept[hit], kept_sigs[hit] = post, sig
+            dropped.append({**rival, "dup_of": str(post.get("lip") or "")})
+        else:
+            dropped.append({**post, "dup_of": str(rival.get("lip") or "")})
+
+    return kept, dropped
+
+
+async def fetch_recent_signatures(
+    session,
+    *,
+    site: str,
+    days: int = DUP_WINDOW_DAYS,
+) -> List[Tuple[str, Tuple[frozenset, frozenset]]]:
+    """Подписи постов, уже уехавших на сайт за окно — для дедупа между прогонами.
+
+    Берём только ``delivered``: ``rejected`` модель уже отвергла, и новая копия
+    той же новости заслуживает такого же вердикта, а не наследования чужого.
+    Окно считаем по дате поста в ВК, как её считает и приёмник.
+    """
+    site_key = (site or "").strip().lower()
+    if not site_key:
+        return []
+    cutoff = datetime.utcnow() - timedelta(days=max(1, days))
+    rows = (
+        await session.execute(
+            select(CollectedPostAudit.lip, CollectedPostAudit.post_text)
+            .join(ConveyorDelivery, ConveyorDelivery.lip == CollectedPostAudit.lip)
+            .where(ConveyorDelivery.site == site_key)
+            .where(ConveyorDelivery.status == "delivered")
+            .where(CollectedPostAudit.collected_at >= cutoff)
+        )
+    ).all()
+    return [(lip, dup_signature(text or "")) for lip, text in rows if (text or "").strip()]
 
 
 async def record_selection(
@@ -229,6 +359,7 @@ async def fetch_audit_snapshots(session, *, lips: Sequence[str]) -> Dict[str, Di
             "url": r.post_url or "",
             "media": r.media or [],
             "region_code": r.region_code,
+            "published_at": r.published_at,
         }
         for r in rows
     }
