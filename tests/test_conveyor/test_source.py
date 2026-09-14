@@ -379,6 +379,21 @@ async def test_keywords_widen_source_beyond_named_publics(db_session):
 
 
 @pytest.mark.asyncio
+async def test_keywords_alone_filter_every_public_equally(db_session):
+    """Разводка по темам (уточнение владельца 2026-09-14): без ``source_owner_ids``
+    профильное слово решает у ВСЕХ источников одинаково — и у своего паблика тоже.
+
+    Прежде лента ДК отдавалась сайту ярмарки целиком, и его афиша шла в модель
+    только затем, чтобы получить отказ по одному вызову за пост."""
+    await seed_pair(db_session, lip="217788511_10", text=OFF_TOPIC)  # свой паблик, не по теме
+    await seed_pair(db_session, lip="217788511_11", text=FAIR_TEXT)  # свой паблик, по теме
+    await seed_pair(db_session, lip="999_20", text=FAIR_TEXT)  # чужой, по теме
+    site = dict(SITE, key="kazanskaya", source_owner_ids=(), source_keywords=("ярмарк",))
+    out = await source.fetch_pending_for_site(db_session, site)
+    assert sorted(p["lip"] for p in out) == ["217788511_11", "999_20"]
+
+
+@pytest.mark.asyncio
 async def test_without_keywords_behaviour_is_unchanged(db_session):
     """У сайта без ловли (портал) отбор работает ровно как раньше."""
     await seed_pair(db_session, lip="217788511_10", text=OFF_TOPIC)

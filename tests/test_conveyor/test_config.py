@@ -122,10 +122,26 @@ class TestKazanskaya:
             "other",
         )
 
-    def test_source_is_rckd_public_in_malmyzh(self):
+    def test_source_is_the_district_feed_filtered_by_topic(self):
+        """Сужение по пабликам снято 2026-09-14 — тему решает слово, а не источник.
+
+        Прежде сайт брал ленту ДК (217788511) целиком. Владелец заменил это
+        правилом по теме для всех источников сразу: «со всех пабликов… если
+        попадёт что по теме, публиковать, но не всё одинаково, а отсеивать».
+        """
         site = cc.get_site("kazanskaya")
         assert site["source_region"] == "mi"
-        assert 217788511 in site["source_owner_ids"]
+        assert not site.get("source_owner_ids")
+        assert site["source_keywords"]
+
+    def test_sabantuy_is_not_caught_by_the_fair_site(self):
+        """«Про сабантуй — в сабантуй, про казанскую — в казанскую, мешать не надо».
+
+        У Сабантуя свой сайт; слово не должно стоять в ловле ярмарки, иначе его
+        новости уедут не туда — а это ровно то, что владелец запретил.
+        """
+        words = cc.get_site("kazanskaya")["source_keywords"]
+        assert not any("сабантуй" in w.lower() for w in words)
 
     def test_owner_ids_are_ints_everywhere(self):
         for s in cc.SITES:
