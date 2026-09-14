@@ -66,7 +66,9 @@ async def seed_run(
     return run
 
 
-async def seed_audit(session, *, lip, region="mi", text="текст поста", media=None):
+async def seed_audit(
+    session, *, lip, region="mi", text="текст поста", media=None, published_at=None
+):
     row = CollectedPostAudit(
         lip=lip,
         region_code=region,
@@ -75,6 +77,7 @@ async def seed_audit(session, *, lip, region="mi", text="текст поста",
         has_media=bool(media),
         media=media,
         decision="kept",
+        published_at=published_at,
     )
     session.add(row)
     await session.commit()

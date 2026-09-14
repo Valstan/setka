@@ -9,9 +9,13 @@
 Всё, что случилось, попадает в ``conveyor_deliveries`` — включая отказы, потому
 что «почему этой новости нет на сайте» должно иметь ответ строкой в журнале.
 
-Shadow-фаза (§D плана): приёмник создаёт **только черновики**, публикует человек.
-Автопубликация появится не здесь, а на стороне сайта — и только когда agree-rate
-этого сайта наберётся на реальном потоке.
+**Публикация (D-091, 2026-09-14).** Shadow-фаза кончилась: портал попросил, а
+владелец решил, что публикует конвейер, а не человек. Ожидание «автопубликация
+появится на стороне сайта, когда наберётся agree-rate» не сбылось буквально —
+agree-rate набрался (портал оценил разбивку и заголовки как «заметно лучше
+ручного импорта»), но публиковать оказалось некому: за 32 дня из 379 черновиков
+вышло 0. Право выражено ключом, а не флагом — сайт без выданного ключа
+(Казанская) по-прежнему получает только черновики.
 """
 
 from __future__ import annotations
@@ -20,7 +24,13 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from config.content_conveyor import get_batch_max, get_ingest_key, get_source_days
+from config.content_conveyor import (
+    get_batch_max,
+    get_ingest_key,
+    get_publish_key,
+    get_source_days,
+    wants_publish,
+)
 from modules.conveyor import classify as classify_mod
 from modules.conveyor import delivery as delivery_mod
 from modules.conveyor import source as source_mod
@@ -55,12 +65,14 @@ async def run_site(
     stats: Dict[str, Any] = {
         "site": site_key,
         "selected": 0,
+        "deduped": 0,
         "delivered": 0,
         "rejected": 0,
         "held": 0,
         "failed": 0,
         "unknown_sections": [],
         "tokens": 0,
+        "publish": bool(wants_publish(site)),
         "dry_run": bool(dry_run),
     }
 
@@ -70,9 +82,18 @@ async def run_site(
         days=days if days is not None else get_source_days(),
         limit=limit if limit is not None else get_batch_max(),
     )
-    stats["selected"] = len(posts)
     if not posts:
+        stats["selected"] = 0
         return stats
+
+    # Дубли снимаем ДО LLM и до доставки — в этом вся экономия (recommend brain
+    # 2026-09-14). Одна новость от школы, ДК и газеты иначе стоила бы трёх
+    # вызовов модели и трёх скачиваний одних и тех же фотографий приёмником.
+    recent = await source_mod.fetch_recent_signatures(session, site=site_key)
+    posts, dups = source_mod.split_near_duplicates(posts, recent=recent)
+    stats["selected"] = len(posts)
+    stats["deduped"] = len(dups)
+
     if dry_run:
         stats["preview"] = [
             {
@@ -83,18 +104,50 @@ async def run_site(
             }
             for p in posts
         ]
+        stats["preview_duplicates"] = [
+            {"lip": p["lip"], "dup_of": p.get("dup_of", "")} for p in dups
+        ]
+        return stats
+    if not posts and not dups:
         return stats
 
     key = get_ingest_key(site)
+    publish_key = get_publish_key(site)
     sections = site.get("sections") or ()
-    await source_mod.record_selection(session, site=site_key, lips=[p["lip"] for p in posts])
+    await source_mod.record_selection(session, site=site_key, lips=[p["lip"] for p in posts + dups])
+    # Дубль закрываем строкой журнала сразу: без неё следующий прогон подберёт
+    # его как новый пост и заплатит за ту же новость второй раз. Причина несёт
+    # lip победителя — «почему этой новости нет на сайте» обязано иметь ответ.
+    for dup in dups:
+        await source_mod.update_delivery(
+            session,
+            site=site_key,
+            lip=str(dup.get("lip") or ""),
+            status="rejected",
+            reason=f"dup:{dup.get('dup_of') or '?'}",
+        )
     await session.commit()
+    if dups:
+        logger.info(
+            "конвейер %s: снято дублей до LLM — %d (%s)",
+            site_key,
+            len(dups),
+            ", ".join(f"{d.get('lip')}→{d.get('dup_of')}" for d in dups[:5]),
+        )
 
     results: List[Dict[str, Any]] = []
     for i, post in enumerate(posts):
         if i and pace and sleep is not None:
             sleep(pace)
-        outcome = await _process_one(session, site, post, key=key, sections=sections, rules=rules)
+        outcome = await _process_one(
+            session,
+            site,
+            post,
+            key=key,
+            sections=sections,
+            rules=rules,
+            publish_key=publish_key,
+        )
         results.append(outcome)
         stats[outcome["bucket"]] = stats.get(outcome["bucket"], 0) + 1
         stats["tokens"] += outcome.get("tokens") or 0
@@ -137,6 +190,7 @@ async def retry_failed(
 
     site_key = str(site.get("key") or "").strip().lower()
     key = get_ingest_key(site)
+    publish_key = get_publish_key(site)
     stats = {"site": site_key, "retried": 0, "delivered": 0, "held": 0, "failed": 0}
 
     rows = (
@@ -164,7 +218,12 @@ async def retry_failed(
         if i and pace and sleep is not None:
             sleep(pace)
         stats["retried"] += 1
-        body = delivery_mod.build_payload(post, row.verdict or {})
+        body = delivery_mod.build_payload(
+            post,
+            row.verdict or {},
+            date_iso=delivery_mod.iso_date(post.get("published_at")),
+            publish=bool(publish_key),
+        )
         bad = delivery_mod.check_invariant(body)
         if bad:
             await source_mod.update_delivery(
@@ -173,7 +232,7 @@ async def retry_failed(
             stats["held"] += 1
             await session.commit()
             continue
-        res = delivery_mod.deliver(site, key, body, sleep=time.sleep)
+        res = delivery_mod.deliver(site, key, body, sleep=time.sleep, publish_key=publish_key)
         await source_mod.update_delivery(
             session,
             site=site_key,
@@ -198,6 +257,7 @@ async def _process_one(
     key: str,
     sections,
     rules: str,
+    publish_key: str = "",
 ) -> Dict[str, Any]:
     """Путь одного поста. Никогда не бросает — падение на одном не рушит прогон."""
     site_key = str(site.get("key") or "").strip().lower()
@@ -224,7 +284,12 @@ async def _process_one(
         return {"bucket": bucket, "tokens": tokens, "classify": verdict_res}
 
     verdict = verdict_res["verdict"]
-    body = delivery_mod.build_payload(post, verdict)
+    body = delivery_mod.build_payload(
+        post,
+        verdict,
+        date_iso=delivery_mod.iso_date(post.get("published_at")),
+        publish=bool(publish_key),
+    )
     bad = delivery_mod.check_invariant(body)
     if bad:
         # Задержан, а не выброшен: строка в журнале со статусом held — это то,
@@ -234,7 +299,7 @@ async def _process_one(
         )
         return {"bucket": "held", "tokens": tokens, "classify": verdict_res}
 
-    res = delivery_mod.deliver(site, key, body, sleep=time.sleep)
+    res = delivery_mod.deliver(site, key, body, sleep=time.sleep, publish_key=publish_key)
     if res.get("ok"):
         await source_mod.update_delivery(
             session,

@@ -17,6 +17,16 @@ LONG_TEXT = (
     "подрядчик уложил новое покрытие и обновил разметку у школы номер один."
 )
 
+# Второй пост там, где тест про ДВА независимых поста. Раньше оба сеялись одним
+# и тем же ``LONG_TEXT``, и это перестало быть безобидным, когда отбор научился
+# снимать дубли до LLM: партия из двух копий одной новости схлопывалась в одну —
+# ровно так, как и задумано. Текст обязан быть про другое событие, иначе тест
+# проверяет не то, что написано в его имени.
+OTHER_TEXT = (
+    "Библиотека Малмыжа объявила запись в кружок краеведения. Занятия начнутся "
+    "в октябре, ведёт их сотрудник музея, записаться можно по телефону."
+)
+
 
 def _accept(**over):
     v = {"action": "accept", "section": "novosti", "title": "Заголовок", "text": LONG_TEXT}
@@ -148,7 +158,7 @@ async def test_one_bad_post_does_not_stop_the_run(db_session, wired, monkeypatch
 
     monkeypatch.setattr(runner.classify_mod, "classify", boom)
     await seed_pair(db_session, lip="1_10", text=LONG_TEXT)
-    await seed_pair(db_session, lip="1_20", text=LONG_TEXT)
+    await seed_pair(db_session, lip="1_20", text=OTHER_TEXT)
     stats = await runner.run_site(db_session, SITE)
     assert stats["selected"] == 2 and stats["delivered"] == 1 and stats["failed"] == 1
     assert (await _journal(db_session, "1_10")).reason == "classify_crashed"
@@ -158,7 +168,7 @@ async def test_one_bad_post_does_not_stop_the_run(db_session, wired, monkeypatch
 async def test_tokens_are_accounted(db_session, wired, monkeypatch):
     monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
     await seed_pair(db_session, lip="1_10", text=LONG_TEXT)
-    await seed_pair(db_session, lip="1_20", text=LONG_TEXT)
+    await seed_pair(db_session, lip="1_20", text=OTHER_TEXT)
     stats = await runner.run_site(db_session, SITE)
     assert stats["tokens"] == 200
 
@@ -252,3 +262,139 @@ async def test_retry_without_audit_snapshot_is_skipped(db_session, wired, monkey
     await db_session.commit()
     stats = await runner.retry_failed(db_session, SITE)
     assert stats["retried"] == 0 and wired["deliver"] == []
+
+
+# ───────── дата поста и публикация (D-091) ─────────
+
+
+@pytest.mark.asyncio
+async def test_vk_date_reaches_the_receiver(db_session, wired, monkeypatch):
+    """Первые 379 доставок ушли с ``date: null``, и лента портала сортировалась
+    по моменту доставки. Дата обязана доезжать — с явным UTC."""
+    from datetime import datetime
+
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    bodies = []
+    monkeypatch.setattr(
+        runner.delivery_mod,
+        "deliver",
+        lambda site, key, body, **kw: bodies.append(body)
+        or {"ok": True, "status": 201, "attempts": 1, "remote_id": "r1"},
+    )
+    await seed_pair(
+        db_session, lip="1_10", text=LONG_TEXT, published_at=datetime(2026, 9, 14, 8, 30, 0)
+    )
+    await runner.run_site(db_session, SITE)
+    assert bodies[0]["date"] == "2026-09-14T08:30:00Z"
+
+
+@pytest.mark.asyncio
+async def test_post_without_date_still_delivers(db_session, wired, monkeypatch):
+    """Бэклог до миграции 080 даты не имеет. Подставлять «сейчас» нельзя, но и
+    ронять доставку не за что: приёмник честно ответит ``date missing``."""
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    bodies = []
+    monkeypatch.setattr(
+        runner.delivery_mod,
+        "deliver",
+        lambda site, key, body, **kw: bodies.append(body)
+        or {"ok": True, "status": 201, "attempts": 1, "remote_id": "r1"},
+    )
+    await seed_pair(db_session, lip="1_10", text=LONG_TEXT, published_at=None)
+    stats = await runner.run_site(db_session, SITE)
+    assert stats["delivered"] == 1 and "date" not in bodies[0]
+
+
+@pytest.mark.asyncio
+async def test_publish_key_turns_on_publication(db_session, wired, monkeypatch):
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    monkeypatch.setenv("VMALMYZHE_PUBLISH_KEY", "pub")
+    seen = {}
+    monkeypatch.setattr(
+        runner.delivery_mod,
+        "deliver",
+        lambda site, key, body, **kw: seen.update(body=body, publish_key=kw.get("publish_key"))
+        or {"ok": True, "status": 201, "attempts": 1, "remote_id": "r1"},
+    )
+    site = dict(SITE, publish_key_env="VMALMYZHE_PUBLISH_KEY")
+    await seed_pair(db_session, lip="1_10", text=LONG_TEXT)
+    stats = await runner.run_site(db_session, site)
+    assert stats["publish"] is True
+    assert seen["body"]["publish"] is True and seen["publish_key"] == "pub"
+
+
+@pytest.mark.asyncio
+async def test_site_without_publish_key_stays_draft(db_session, wired, monkeypatch):
+    """Казанская ключа публикации не выдавала — её поток обязан остаться черновиками."""
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    monkeypatch.delenv("VMALMYZHE_PUBLISH_KEY", raising=False)
+    seen = {}
+    monkeypatch.setattr(
+        runner.delivery_mod,
+        "deliver",
+        lambda site, key, body, **kw: seen.update(body=body, publish_key=kw.get("publish_key"))
+        or {"ok": True, "status": 201, "attempts": 1, "remote_id": "r1"},
+    )
+    await seed_pair(db_session, lip="1_10", text=LONG_TEXT)
+    stats = await runner.run_site(db_session, SITE)
+    assert stats["publish"] is False
+    assert "publish" not in seen["body"] and not seen["publish_key"]
+
+
+# ───────── дедуп до LLM (recommend brain 2026-09-14) ─────────
+
+SAME_EVENT = (
+    "В лицее стартовал месячник безопасности дорожного движения: первоклассников "
+    "посвятили в пешеходы, а инспектор ГИБДД рассказал школьникам о правилах."
+)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_never_reaches_the_model(db_session, wired, monkeypatch):
+    """Вся экономия в том, что дубль снимается ДО вызова модели и до того, как
+    приёмник пойдёт качать те же фотографии второй раз."""
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    await seed_pair(db_session, lip="1_10", text=LONG_TEXT)
+    await seed_pair(db_session, lip="2_20", text=LONG_TEXT + " Подрядчик сдал работу в срок.")
+    stats = await runner.run_site(db_session, SITE)
+    assert stats["deduped"] == 1 and stats["selected"] == 1
+    assert len(wired["classify"]) == 1 and len(wired["deliver"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_dropped_duplicate_is_journalled_and_does_not_return(db_session, wired, monkeypatch):
+    """Без строки журнала следующий прогон подберёт дубль как новый пост и
+    заплатит за ту же новость второй раз."""
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    await seed_pair(db_session, lip="1_10", text=LONG_TEXT)
+    await seed_pair(db_session, lip="2_20", text=LONG_TEXT + " Подрядчик сдал работу в срок.")
+    await runner.run_site(db_session, SITE)
+    loser = "1_10" if len(LONG_TEXT) < len(LONG_TEXT + " Подрядчик сдал работу в срок.") else "2_20"
+    row = await _journal(db_session, loser)
+    assert row.status == "rejected" and row.reason.startswith("dup:")
+    assert await source.fetch_pending_for_site(db_session, SITE) == []
+
+
+@pytest.mark.asyncio
+async def test_duplicate_of_earlier_run_is_dropped(db_session, wired, monkeypatch):
+    """Вчера уехало от газеты, сегодня приезжает от школы — окно семь дней."""
+    monkeypatch.setenv("VMALMYZHE_INGEST_KEY", "k")
+    await seed_pair(db_session, lip="1_10", text=SAME_EVENT)
+    await runner.run_site(db_session, SITE)
+    await seed_pair(
+        db_session,
+        lip="2_20",
+        text=SAME_EVENT.replace("В лицее", "В лицее Малмыжа"),
+    )
+    stats = await runner.run_site(db_session, SITE)
+    assert stats["deduped"] == 1 and stats["selected"] == 0
+    assert len(wired["classify"]) == 1  # второй прогон модель не звал
+
+
+@pytest.mark.asyncio
+async def test_dry_run_shows_duplicates_without_journalling(db_session, wired):
+    await seed_pair(db_session, lip="1_10", text=LONG_TEXT)
+    await seed_pair(db_session, lip="2_20", text=LONG_TEXT + " Подрядчик сдал работу в срок.")
+    stats = await runner.run_site(db_session, SITE, dry_run=True)
+    assert stats["deduped"] == 1 and len(stats["preview_duplicates"]) == 1
+    assert await source.site_status_counts(db_session, site="vmalmyzhe") == {}

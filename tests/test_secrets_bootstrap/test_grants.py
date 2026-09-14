@@ -145,3 +145,12 @@ def test_zero_pending_is_a_noop():
 
 def test_real_allowlist_has_kazanskaya_from_its_own_room():
     assert sg.GRANT_ALLOWLIST["KAZANSKAYA_INGEST_KEY"] == frozenset({"kazanskayamalmyzh"})
+
+
+def test_real_allowlist_has_portal_publish_key_from_its_own_room():
+    """D-091: ключ публикации портала принимаем только из комнаты ``vmalmyzhe``.
+
+    Имя отдельное от ``VMALMYZHE_INGEST_KEY`` намеренно — права разные, и
+    автопубликация отзывается одним ``DELETE`` на grant, не разрывая доставку.
+    """
+    assert sg.GRANT_ALLOWLIST["VMALMYZHE_PUBLISH_KEY"] == frozenset({"vmalmyzhe"})

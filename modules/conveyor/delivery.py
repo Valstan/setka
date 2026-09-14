@@ -4,9 +4,22 @@
 ``vMalmyzhe/web/src/app/api/ingest/posts/route.ts``):
 
   ``POST <ingest_url>``, заголовок ``X-Gateway-Key``, тело —
-  ``{vkPostId, sourceUrl, title?, text?, section?, date?, images?}``.
-  Приёмник **всегда создаёт черновик**, публикует человек; повторная доставка
-  того же ``vkPostId`` обновляет черновик и не трогает опубликованное.
+  ``{vkPostId, sourceUrl, title?, text?, section?, date?, images?, publish?}``.
+  Повторная доставка того же ``vkPostId`` обновляет запись и не трогает
+  опубликованное.
+
+**Публикация (D-091, mandate brain 2026-09-14).** «Всегда черновик» больше не
+верно для портала: владелец 12.09 решил, что конвейер публикует сам. Право
+публиковать выражается ключом ``X-Publish-Key`` рядом с ``X-Gateway-Key`` и
+полем ``publish: true`` в теле. Без заголовка или с неверным приёмник примет
+черновиком и вернёт ``warnings: ["publish ignored: …"]`` — штатная деградация,
+а не отказ. Поэтому ``publish`` мы шлём ровно тогда, когда ключ на руках
+(``config.content_conveyor.wants_publish``), и warning'и приёмника пишем в лог:
+по их исчезновению видно, что право доехало.
+
+**Дата.** ``date`` — ISO-дата **оригинального поста ВК**, не момент доставки:
+лента портала сортируется по ней. Первые 379 доставок ушли с ``date: null``,
+приёмник подставлял своё время и отвечал ``date missing``.
 
 Отсюда два следствия, которые здесь и реализованы:
 
@@ -28,6 +41,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
@@ -106,17 +120,59 @@ def check_invariant(payload: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def iso_date(value: Any) -> Optional[str]:
+    """``datetime`` поста ВК → ``2026-09-14T08:30:00Z``. Не дата → ``None``.
+
+    В БД времена наивные и **всегда UTC** (``utils.post_utils.vk_post_datetime``
+    так их и кладёт). Наивную строку приёмник был бы вправе прочитать в своём
+    часовом поясе, и новость сдвинулась бы на три часа — поэтому суффикс ``Z``
+    ставится явно, а не «и так понятно».
+
+    ``None`` на входе — штатный случай: у постов, собранных до миграции 080,
+    даты нет вовсе. Подставлять «сейчас» нельзя — это ровно то враньё, от
+    которого мандат и избавляется; пусть приёмник честно скажет ``date missing``.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        return None
+    dt = value.astimezone(timezone.utc) if value.tzinfo is not None else value
+    return dt.replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
+
+
+def response_warnings(response: Any) -> List[str]:
+    """Warning'и приёмника из ответа — список строк; чего-то другого нет → пусто.
+
+    Приёмник сообщает ими про неизвестную рубрику, пропущенную дату и
+    проигнорированную публикацию. Это единственный канал, по которому он
+    говорит «принял, но не так, как ты просил», и молча терять его нельзя:
+    именно в нём видно, доехало ли право публикации.
+    """
+    if not isinstance(response, dict):
+        return []
+    raw = response.get("warnings")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(w).strip() for w in raw if str(w or "").strip()]
+
+
 def build_payload(
     post: Dict[str, Any],
     verdict: Dict[str, Any],
     *,
     date_iso: Optional[str] = None,
+    publish: bool = False,
 ) -> Dict[str, Any]:
     """Собрать тело запроса из поста (источник) и вердикта LLM (рубрика, заголовок, текст).
 
     Текст берём отредактированный, если он есть, иначе исходный: правило «фактов
     не добавлять» действует в промпте, а здесь мы просто не теряем пост, если
     редактура почему-то не вернулась.
+
+    ``date_iso`` пустой — поле не кладём вовсе: приёмник отличает «нет даты» от
+    «дата пустая», и второе он вправе счесть ошибкой тела.
     """
     images: List[str] = []
     for m in post.get("media") or []:
@@ -143,6 +199,8 @@ def build_payload(
         body["date"] = date_iso
     if images:
         body["images"] = images
+    if publish:
+        body["publish"] = True
     return body
 
 
@@ -191,17 +249,24 @@ def _post_once(
     body: Dict[str, Any],
     *,
     timeout: float,
+    publish_key: str = "",
 ) -> Tuple[int, Dict[str, Any]]:
     """Один HTTP-вызов. Возвращает ``(http_status, ответ)``; сетевой сбой → ``(0, {...})``."""
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "X-Gateway-Key": key,
+    }
+    # Заголовок кладём только с непустым значением: ``X-Publish-Key: `` пустой
+    # строкой — это «неверный ключ» для приёмника, то есть warning на ровном
+    # месте вместо отсутствия запроса на публикацию.
+    if publish_key:
+        headers["X-Publish-Key"] = publish_key
     req = urllib.request.Request(
         idna_url(url),
         data=data,
         method="POST",
-        headers={
-            "Content-Type": "application/json; charset=utf-8",
-            "X-Gateway-Key": key,
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -230,6 +295,7 @@ def deliver(
     timeout: float = 20.0,
     attempts: int = 3,
     sleep=None,
+    publish_key: str = "",
 ) -> Dict[str, Any]:
     """Доставить один пост. Возвращает ``{ok, status, attempts, remote_id?, reason?, response}``.
 
@@ -249,13 +315,25 @@ def deliver(
     tries = max(1, attempts)
     status, response = 0, {}
     for i in range(1, tries + 1):
-        status, response = _post_once(url, key, body, timeout=timeout)
+        status, response = _post_once(url, key, body, timeout=timeout, publish_key=publish_key)
         if 200 <= status < 300:
+            warnings = response_warnings(response)
+            if warnings:
+                # Приёмник принял, но не так, как просили. Это не отказ — и
+                # именно поэтому единственный шанс узнать о расхождении здесь:
+                # статус 2xx, строка журнала «delivered», и только warning
+                # говорит, что публикация не состоялась или дата не доехала.
+                logger.info(
+                    "конвейер %s: приёмник ответил warning'ами — %s",
+                    str(site.get("key") or "?"),
+                    "; ".join(warnings),
+                )
             return {
                 "ok": True,
                 "status": status,
                 "attempts": i,
                 "remote_id": str(response.get("id") or response.get("docId") or "") or None,
+                "warnings": warnings,
                 "response": response,
             }
         if status not in RETRIABLE_STATUS and status != 0:

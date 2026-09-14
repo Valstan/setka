@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from modules.conveyor import delivery
@@ -151,6 +153,80 @@ class TestBuildPayload:
     def test_absent_optional_fields_are_omitted(self):
         body = delivery.build_payload({"lip": "1_10", "url": "u", "text": "t"}, {})
         assert "section" not in body and "images" not in body and "date" not in body
+        assert "publish" not in body
+
+
+# ───────── дата поста и публикация (D-091) ─────────
+
+
+class TestIsoDate:
+    def test_naive_db_time_is_marked_utc(self):
+        """Времена в БД наивные и всегда UTC — суффикс обязан быть явным.
+
+        Без ``Z`` приёмник вправе прочитать строку в своём поясе, и новость
+        уедет в ленте на три часа. Ошибка при этом не видна ниоткуда: доставка
+        успешна, дата есть, просто не та.
+        """
+        assert delivery.iso_date(datetime(2026, 9, 14, 8, 30, 0)) == "2026-09-14T08:30:00Z"
+
+    def test_aware_time_is_converted_to_utc(self):
+        msk = timezone(timedelta(hours=3))
+        got = delivery.iso_date(datetime(2026, 9, 14, 11, 30, 0, tzinfo=msk))
+        assert got == "2026-09-14T08:30:00Z"
+
+    @pytest.mark.parametrize("value", [None, "", "2026-09-14", 0, 1757836800])
+    def test_non_datetime_gives_none_not_now(self, value):
+        """Подставленная «сейчас» — то самое враньё, от которого избавляется D-091."""
+        assert delivery.iso_date(value) is None
+
+
+class TestPublishFlag:
+    def test_publish_true_lands_in_body(self):
+        body = delivery.build_payload(
+            {"lip": "1_10", "url": "u", "text": "t"}, {"title": "З"}, publish=True
+        )
+        assert body["publish"] is True
+
+    def test_publish_key_goes_as_header(self, monkeypatch):
+        caller = _Caller([(201, {"id": "d1"})])
+        monkeypatch.setattr(delivery, "_post_once", caller)
+        delivery.deliver(SITE, "gate", _payload(), publish_key="pub")
+        assert caller.publish_keys == ["pub"]
+
+    def test_empty_publish_key_is_not_sent(self, monkeypatch):
+        """Пустой ``X-Publish-Key`` приёмник прочтёт как неверный ключ и ответит
+        warning'ом — шум на ровном месте вместо отсутствия запроса."""
+        sent = {}
+
+        class _Req:
+            def __init__(self, url, data=None, method=None, headers=None):
+                sent.update(headers or {})
+
+        monkeypatch.setattr(delivery.urllib.request, "Request", _Req)
+        monkeypatch.setattr(
+            delivery.urllib.request,
+            "urlopen",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop")),
+        )
+        delivery._post_once("https://x/api", "gate", {"a": 1}, timeout=1, publish_key="")
+        assert "X-Publish-Key" not in sent and sent["X-Gateway-Key"] == "gate"
+
+
+class TestResponseWarnings:
+    def test_warnings_are_returned_on_success(self, monkeypatch):
+        """Приёмник принял, но не опубликовал — узнать об этом можно только
+        из warning'а: статус 2xx, журнал «delivered», расхождение молчит."""
+        caller = _Caller([(201, {"id": "d1", "warnings": ["publish ignored: bad key"]})])
+        monkeypatch.setattr(delivery, "_post_once", caller)
+        out = delivery.deliver(SITE, "k", _payload())
+        assert out["ok"] and out["warnings"] == ["publish ignored: bad key"]
+
+    @pytest.mark.parametrize("raw", [None, {}, {"warnings": None}, {"warnings": 5}, "строка"])
+    def test_garbage_shapes_give_empty_list(self, raw):
+        assert delivery.response_warnings(raw) == []
+
+    def test_single_string_is_wrapped(self):
+        assert delivery.response_warnings({"warnings": "date missing"}) == ["date missing"]
 
 
 # ───────── доставка и ретраи ─────────
@@ -163,10 +239,12 @@ class _Caller:
         self.results = list(results)
         self.calls = 0
         self.headers = None
+        self.publish_keys = []
 
-    def __call__(self, url, key, body, *, timeout):
+    def __call__(self, url, key, body, *, timeout, publish_key=""):
         self.calls += 1
         self.headers = key
+        self.publish_keys.append(publish_key)
         return self.results[min(self.calls - 1, len(self.results) - 1)]
 
 

@@ -190,3 +190,120 @@ def test_only_owners_matches_by_abs_value():
     lt = {"217788511_1": "k", "111_2": "n", "2177885110_3": "n"}
     assert source._only_owners(lt, (217788511,)) == {"217788511_1": "k"}
     assert source._only_owners(lt, ("-217788511",)) == {"217788511_1": "k"}
+
+
+# ───────── дедуп «одна новость от разных пабликов» (recommend brain 2026-09-14) ─────────
+
+# Одно событие глазами двух пабликов: школа и районная газета. Тексты разные
+# дословно, событие одно — ровно тот класс, который портал ловил у себя по
+# заголовку и просил снимать раньше.
+DUP_A = (
+    "В лицее Малмыжа стартовал месячник безопасности дорожного движения. "
+    "Первоклассников посвятили в пешеходы, инспектор ГИБДД рассказал о правилах."
+)
+DUP_B = (
+    "В лицее стартовал месячник безопасности дорожного движения: первоклассников "
+    "посвятили в пешеходы, а инспектор ГИБДД рассказал школьникам о правилах."
+)
+DIFFERENT = (
+    "Библиотека Малмыжа объявила запись в кружок краеведения. Занятия начнутся "
+    "в октябре, ведёт их сотрудник музея, записаться можно по телефону."
+)
+
+
+class TestSplitNearDuplicates:
+    def test_same_event_from_two_publics_collapses(self):
+        posts = [{"lip": "1_10", "text": DUP_A}, {"lip": "2_20", "text": DUP_B}]
+        kept, dropped = source.split_near_duplicates(posts)
+        assert len(kept) == 1 and len(dropped) == 1
+        assert dropped[0]["dup_of"] == kept[0]["lip"]
+
+    def test_longer_text_wins_regardless_of_order(self):
+        """Порядок партии — ``collected_at desc``, про качество он не говорит
+        ничего. Победитель обязан определяться содержимым, иначе результат
+        зависит от того, чей парсер отработал первым."""
+        short = {"lip": "1_10", "text": DUP_A}
+        long = {"lip": "2_20", "text": DUP_B + " Мероприятие продолжится до конца месяца."}
+        kept_a, _ = source.split_near_duplicates([short, long])
+        kept_b, _ = source.split_near_duplicates([long, short])
+        assert kept_a[0]["lip"] == "2_20" and kept_b[0]["lip"] == "2_20"
+
+    def test_different_news_survive_both(self):
+        posts = [{"lip": "1_10", "text": DUP_A}, {"lip": "2_20", "text": DIFFERENT}]
+        kept, dropped = source.split_near_duplicates(posts)
+        assert len(kept) == 2 and dropped == []
+
+    def test_duplicate_of_already_delivered_is_dropped(self):
+        """Вчера уехало от газеты, сегодня приезжает от школы — платить второй раз незачем."""
+        recent = [("9_99", source.dup_signature(DUP_A))]
+        kept, dropped = source.split_near_duplicates(
+            [{"lip": "1_10", "text": DUP_B}], recent=recent
+        )
+        assert kept == [] and dropped[0]["dup_of"] == "9_99"
+
+    def test_threshold_is_above_the_measured_noise_floor(self):
+        """Замер на 315 живых доставках: ближайшая пара-НЕ-дубль лежит на 0.32.
+        Порог ниже неё срезал бы настоящие новости, и навсегда — строка журнала
+        закрывает пост от следующих прогонов."""
+        assert source.DUP_THRESHOLD > 0.32
+
+    def test_lead_signal_catches_what_full_text_misses(self):
+        """Два сигнала, а не один: одинаковое начало при разном хвосте даёт по
+        полному тексту меньше порога, по лиду — больше. Это измеренный случай
+        (одинаковые заголовки «Педагоги … соревнованиях»: 0.48 против 0.62)."""
+        # Общий лид длиннее окна лида, дальше тексты расходятся совсем.
+        head = (
+            "Педагоги Малмыжского района участвуют в областных туристских соревнованиях "
+            "учителей-организаторов туристско-краеведческой работы. Сборная команда "
+            "выехала в областной центр в четверг утром, соревнования продлятся три дня "
+            "и завершатся в воскресенье подведением итогов на общем построении команд района. "
+        )
+        assert len(head) > source.DUP_LEAD_CHARS
+        tail_a = (
+            "Программа включает контрольный туристский маршрут, спортивное ориентирование, "
+            "конкурс краеведческих находок, вечернюю игровую эстафету и защиту проектов. "
+            "Судейская коллегия оценивает скорость прохождения этапов, точность отметок "
+            "на контрольных пунктах, качество снаряжения и слаженность действий группы. "
+            "Отдельная номинация посвящена методическим разработкам педагогов-краеведов. "
+        )
+        tail_b = (
+            "Организаторы благодарят спонсоров, предоставивших призы лучшим участникам, "
+            "а также водителей автобусов, доставивших делегации со всех уголков региона. "
+            "Фотографии выложат в группе профсоюза работников образования после закрытия. "
+            "Победители получат путёвки на всероссийский слёт, который пройдёт весной. "
+            "Заявки на следующий сезон принимают до пятнадцатого декабря текущего года. "
+        )
+        a = {"lip": "1_10", "text": head + tail_a}
+        b = {"lip": "2_20", "text": head + tail_b}
+        sig_a, sig_b = source.dup_signature(a["text"]), source.dup_signature(b["text"])
+        from modules.deduplication.fingerprints import jaccard_similarity
+
+        assert jaccard_similarity(sig_a[0], sig_b[0]) < source.DUP_THRESHOLD
+        assert source.dup_similarity(sig_a, sig_b) >= source.DUP_THRESHOLD
+        assert len(source.split_near_duplicates([a, b])[0]) == 1
+
+
+@pytest.mark.asyncio
+async def test_recent_signatures_take_delivered_only(db_session):
+    """``rejected`` в окно не входит: новая копия заслуживает своего вердикта,
+    а не унаследованного чужого."""
+    await seed_audit(db_session, lip="1_10", text=DUP_A)
+    await seed_audit(db_session, lip="2_20", text=DIFFERENT)
+    db_session.add(ConveyorDelivery(site="vmalmyzhe", lip="1_10", status="delivered"))
+    db_session.add(ConveyorDelivery(site="vmalmyzhe", lip="2_20", status="rejected"))
+    await db_session.commit()
+    got = await source.fetch_recent_signatures(db_session, site="vmalmyzhe")
+    assert [lip for lip, _ in got] == ["1_10"]
+
+
+@pytest.mark.asyncio
+async def test_published_at_reaches_the_caller(db_session):
+    """Дата поста в ВК — то, по чему сортируется лента портала (D-091)."""
+    from datetime import datetime
+
+    when = datetime(2026, 9, 14, 8, 30, 0)
+    await seed_pair(db_session, lip="1_10", published_at=when)
+    out = await source.fetch_pending_for_site(db_session, SITE)
+    assert out[0]["published_at"] == when
+    snaps = await source.fetch_audit_snapshots(db_session, lips=["1_10"])
+    assert snaps["1_10"]["published_at"] == when
