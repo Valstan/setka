@@ -568,3 +568,43 @@ async def test_audience_respects_operator_skipped(db_session):
     await db_session.flush()
     rows = await outreach.build_audience(db_session, months_back=6, now_utc=NOW)
     assert {r["vk_user_id"] for r in rows} == {100}
+
+
+# ───────── ручная ветка запоминает отправленный текст (найдено 2026-09-14) ─────────
+
+
+@pytest.mark.asyncio
+async def test_manual_list_stores_the_text_it_hands_out(db_session):
+    """Авто-ветка писала ``body`` с самого начала, ручная — нигде.
+
+    Замер на проде 14.09: 16 из 16 записей ``sent/auto`` с текстом, и 0 из 42
+    ручных (28 ``done_manual`` + 14 ждущих). На вопрос «что мы ему писали»
+    ответа не было ни у нас, ни в CRM.
+    """
+    camp = await _seed_running(db_session, dry_run=False, n=1)
+    rows = (await db_session.execute(select(AdOutreachRecipient))).scalars().all()
+    for r in rows:
+        r.mode, r.status, r.body = "manual", "manual", None
+    await db_session.commit()
+
+    manual = await outreach.manual_list(db_session, camp.id)
+    assert manual and manual[0]["body"]
+
+    stored = (await db_session.execute(select(AdOutreachRecipient))).scalars().all()
+    assert stored[0].body == manual[0]["body"]
+
+
+@pytest.mark.asyncio
+async def test_manual_list_does_not_overwrite_an_earlier_text(db_session):
+    """Первым победил текст, который реально ушёл: шаблон с тех пор мог смениться,
+    и перерисовать карточку по сегодняшнему — значит записать не тот предмет."""
+    camp = await _seed_running(db_session, dry_run=False, n=1)
+    rows = (await db_session.execute(select(AdOutreachRecipient))).scalars().all()
+    for r in rows:
+        r.mode, r.status, r.body = "manual", "manual", "то, что ушло на самом деле"
+    await db_session.commit()
+
+    manual = await outreach.manual_list(db_session, camp.id)
+    assert manual[0]["body"] == "то, что ушло на самом деле"
+    kept = (await db_session.execute(select(AdOutreachRecipient))).scalars().all()
+    assert kept[0].body == "то, что ушло на самом деле"
