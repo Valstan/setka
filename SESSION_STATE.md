@@ -6,20 +6,25 @@
 > (её пишет `/close_session`): здесь есть «что происходило», но нет «почему так
 > решили». Дословные реплики владельца остаются на его машине и сюда не едут.
 
-**Обновлено:** 2026-09-14 14:25:28 +0300
+**Обновлено:** 2026-09-14 14:36:14 +0300
 **Машина:** `pc79`
 **Ветка:** `feat/conveyor-publish-d091`
 **HEAD:** ba0a2f0 chore(session): handoff 14.09 — оффер закрыт, третья порция Татарстана заведена и засеяна (#703)
 **Ходов агента:** 0, реплик владельца: 0
-**Незакоммичено файлов:** 8 — снимок рабочего дерева в ветке `wip/pc79`:
+**Незакоммичено файлов:** 13 — снимок рабочего дерева в ветке `wip/pc79`:
 - `M config/content_conveyor.py`
 - ` M modules/conveyor/delivery.py`
 - ` M modules/conveyor/runner.py`
 - ` M modules/conveyor/source.py`
 - ` M modules/secrets_grants.py`
+- ` M rules/_base.md`
+- ` M rules/vmalmyzhe.md`
 - ` M tests/test_conveyor/conftest.py`
+- ` M tests/test_conveyor/test_config.py`
 - ` M tests/test_conveyor/test_delivery.py`
 - ` M tests/test_conveyor/test_runner.py`
+- ` M tests/test_conveyor/test_source.py`
+- ` M tests/test_secrets_bootstrap/test_grants.py`
 
 ## Где остановился агент (его собственные слова)
 
