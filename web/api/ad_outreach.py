@@ -243,6 +243,14 @@ async def manual(campaign_id: int, db: AsyncSession = Depends(get_db_session)):
 
 @router.post("/recipients/{recipient_id}/done")
 async def manual_done(recipient_id: int, db: AsyncSession = Depends(get_db_session)):
+    """Отметить ручную отправку сделанной.
+
+    Текст здесь **намеренно не рендерится**: его запомнил ``manual_list`` в тот
+    момент, когда отдал оператору именно ту строку, которую тот скопировал.
+    Отрендерить заново тут — значит записать в карточку текст по СЕГОДНЯШНЕМУ
+    шаблону и выдать его за отправленный. Пустой ``body`` у старых записей — это
+    честное «не знаем», и чинить его подстановкой нельзя.
+    """
     r = await db.get(AdOutreachRecipient, int(recipient_id))
     if r is None:
         raise HTTPException(status_code=404, detail="recipient not found")

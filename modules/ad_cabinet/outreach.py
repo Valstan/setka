@@ -845,7 +845,23 @@ async def build_default_sender() -> Sender:  # pragma: no cover - сеть
 
 
 async def manual_list(session, campaign_id: int) -> List[Dict[str, Any]]:
-    """Ручной список: адресаты ``manual`` с готовым текстом и deeplink."""
+    """Ручной список: адресаты ``manual`` с готовым текстом и deeplink.
+
+    **Отданный текст запоминается здесь же** (найдено 2026-09-14). Авто-ветка
+    пишет ``body`` с самого начала, ручная не писала его нигде: 42 записи из 58
+    остались без текста, и на вопрос «что мы ему писали» ответа не было ни у нас,
+    ни в CRM — а встаёт он ровно тогда, когда человек отвечает через неделю.
+
+    Почему запоминаем в момент выдачи, а не в момент отметки «отправлено».
+    Оператор копирует **ровно эту** строку. Отрендерить её заново при отметке
+    было бы дешевле, но шаблон к тому времени мог смениться (строка про чек
+    самозанятого добавлена 12.09, две «двери» — 14.09), и в карточке оказался бы
+    текст, которого адресат не получал. Запись, называющая не тот предмет, хуже
+    пустой записи: пустую видно ([#303](https://github.com/Valstan/brain_matrica)).
+
+    Поэтому же ``r.body`` не перезаписывается, если он уже есть: первым победил
+    тот текст, который реально ушёл.
+    """
     camp = await session.get(AdOutreachCampaign, int(campaign_id))
     if camp is None:
         return []
@@ -867,12 +883,18 @@ async def manual_list(session, campaign_id: int) -> List[Dict[str, Any]]:
     )
     out = []
     cache: Dict[int, Dict[str, Any]] = {}
+    stored = 0
     for r in rows:
         ctx = await _render_context(session, r, cache)
         body = r.body or render_offer(template, author_name=r.name, cabinet_id=r.client_id, **ctx)
+        if body and not (r.body or "").strip():
+            r.body = body
+            stored += 1
         d = r.to_dict()
         d["body"] = body
         out.append(d)
+    if stored:
+        await session.commit()
     return out
 
 
