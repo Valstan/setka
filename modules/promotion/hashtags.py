@@ -43,12 +43,14 @@ DISTRICT_ADJECTIVES: Dict[str, str] = {
     "bogorodskoe": "богородский",
     "chepetsk": "кирово_чепецкий",
     "darovskoy": "даровской",
+    "elabuga": "елабужский",
     "falenki": "фалёнский",
     "kiknur": "кикнурский",
     "klz": "кильмезский",
     "kotelnich": "котельничский",
     "kukmor": "кукморский",
     "kumyony": "кумёнский",
+    "laishevo": "лаишевский",
     "leb": "лебяжский",
     "luza": "лузский",
     "mamadysh": "мамадышский",
@@ -82,6 +84,7 @@ DISTRICT_ADJECTIVES: Dict[str, str] = {
     "vysokaya_gora": "высокогорский",
     "yaransk": "яранский",
     "yurya": "юрьянский",
+    "zelenodolsk": "зеленодольский",
     "zuevka": "зуевский",
 }
 
