@@ -121,29 +121,58 @@ async def _load_targets(codes: Optional[List[str]]) -> List[Tuple[str, int]]:
     return [(code, int(gid)) for code, gid in rows]
 
 
-def pick_outsider(tokens: List[Tuple[str, str]], probe_gid: int) -> Optional[Tuple[str, str]]:
-    """Токен аккаунта, который в пробном сообществе НЕ админ и НЕ подписчик.
+def vantage_of(item: Dict[str, Any]) -> Optional[str]:
+    """Чьими глазами получился этот ответ: ``outsider`` / ``subscriber`` / None.
 
-    Выбор по измерению, а не по имени: аккаунт мог стать админом вчера.
-    ``member_status=0`` и ``can_post=0`` — ровно тот, чьими глазами мы хотим
-    видеть кнопку «Предложить новость».
+    * ``outsider`` — не подписан и писать не может: ровно тот, для кого мы и
+      спрашиваем «видна ли кнопка «Предложить новость»»;
+    * ``subscriber`` — подписан, но не пишет на стену. Ответ слабее: он
+      говорит про права подписчика, а настройка различает «всех» и «только
+      подписчиков», то есть у постороннего может быть иначе;
+    * ``None`` — админ/редактор (``can_post=1``). Его ``can_suggest`` равен
+      нулю всегда и не значит ничего.
     """
-    for name, token in tokens:
-        res = call(token, "groups.getById", {"group_id": probe_gid, "fields": FIELDS})
+    member = item.get("member_status")
+    can_post = item.get("can_post")
+    if can_post == 1:
+        return None
+    if member == 0:
+        return "outsider"
+    if member == 1:
+        return "subscriber"
+    return None
+
+
+def measure(
+    tokens: List[Tuple[str, str]], gid: int, prefer: Optional[str]
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
+    """Снять ``can_suggest`` по сообществу лучшим доступным взглядом.
+
+    Возвращает ``(item, vantage, token_name)``; ``vantage is None`` — мерить
+    было нечем (все доступные аккаунты — свои в этом сообществе).
+
+    **Почему выбор делается для КАЖДОГО сообщества, а не один раз на прогон.**
+    Первая версия выбирала «постороннего» по первому району и дальше считала
+    его посторонним везде. На `vp` это развалилось: аккаунт оказался
+    подписчиком именно там — и скрипт, вместо того чтобы измерить остальные 52,
+    отказался мерить вообще. Членство — свойство пары (аккаунт, сообщество),
+    а не аккаунта.
+    """
+    ordered = sorted(tokens, key=lambda t: t[0] != prefer)
+    fallback: Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]] = (None, None, None)
+    for name, token in ordered:
+        res = call(token, "groups.getById", {"group_id": abs(gid), "fields": FIELDS})
         time.sleep(THROTTLE_SECONDS)
         if "ok" not in res:
-            logger.info("  %-10s пропущен: %s", name, res["err"])
             continue
         item = _first_group(res["ok"])
-        if item.get("member_status") == 0 and item.get("can_post") == 0:
-            return name, token
-        logger.info(
-            "  %-10s не годится: member_status=%s can_post=%s (свой человек в сообществе)",
-            name,
-            item.get("member_status"),
-            item.get("can_post"),
-        )
-    return None
+        vantage = vantage_of(item)
+        if vantage == "outsider":
+            return item, vantage, name
+        if vantage == "subscriber" and fallback[1] is None:
+            # Держим как запасной вариант, но ищем дальше настоящего постороннего.
+            fallback = (item, vantage, name)
+    return fallback
 
 
 async def main(argv=None) -> int:
@@ -161,44 +190,44 @@ async def main(argv=None) -> int:
         logger.error("В хранилище нет user-токенов — пробу снять нечем")
         return 1
 
-    logger.info("Ищу аккаунт-постороннего среди %d user-токенов:", len(tokens))
-    outsider = pick_outsider(tokens, abs(targets[0][1]))
-    if outsider is None:
-        # Честный отказ вместо вердикта: измерять правами админа бессмысленно,
-        # а «0 у всех» выглядело бы как «предложки нет нигде».
-        logger.error(
-            "Все доступные аккаунты — свои в этом сообществе. Пробу снять нечем: "
-            "can_suggest у админа/подписчика не описывает права постороннего."
-        )
-        return 1
-    name, token = outsider
-    logger.info("Пробу снимаю токеном %s\n", name)
+    logger.info(
+        "user-токенов в хранилище: %d — взгляд выбирается по каждому сообществу\n", len(tokens)
+    )
 
-    header = f"{'код':<18}{'тип':>7}{'wall':>6}{'предложка':>12}"
+    header = f"{'код':<18}{'тип':>7}{'wall':>6}{'предложка':>12}  чьими глазами"
     logger.info(header)
     logger.info("-" * (len(header) + 6))
 
     without: List[str] = []
     unknown: List[str] = []
+    subscriber_only: List[str] = []
+    prefer: Optional[str] = None
     for code, gid in targets:
-        res = call(token, "groups.getById", {"group_id": abs(gid), "fields": FIELDS})
-        time.sleep(THROTTLE_SECONDS)
-        if "ok" not in res:
+        item, vantage, token_name = measure(tokens, gid, prefer)
+        if vantage == "outsider":
+            # Следующему сообществу пробуем этот же токен первым: обычно он и
+            # там посторонний, и тогда прогон стоит один вызов на район.
+            prefer = token_name
+        if item is None or vantage is None:
             unknown.append(code)
-            logger.info("%-18s%s", code, res["err"])
+            logger.info("%-18s%7s%6s%12s  %s", code, "?", "?", "?", "мерить нечем — все свои")
             continue
-        item = _first_group(res["ok"])
         can_suggest = item.get("can_suggest")
         if can_suggest is None:
             unknown.append(code)
         elif not can_suggest:
             without.append(code)
+        if vantage == "subscriber" and can_suggest:
+            # «Подписчик может» не означает «может любой»: настройка различает
+            # «От всех пользователей» и «Только от подписчиков».
+            subscriber_only.append(code)
         logger.info(
-            "%-18s%7s%6s%12s",
+            "%-18s%7s%6s%12s  %s",
             code,
             item.get("type", "?"),
             item.get("wall", "?"),
             "?" if can_suggest is None else ("✓" if can_suggest else "НЕТ"),
+            "посторонний" if vantage == "outsider" else f"подписчик ({token_name})",
         )
 
     logger.info("")
@@ -207,6 +236,12 @@ async def main(argv=None) -> int:
         len(without),
         ", ".join(without) or "—",
     )
+    if subscriber_only:
+        logger.info(
+            "✓ но глазами ПОДПИСЧИКА (про постороннего не доказано): %d — %s",
+            len(subscriber_only),
+            ", ".join(subscriber_only),
+        )
     if without:
         logger.info(
             "Лечение (только руками владельца): Управление → Настройки → Разделы → "
