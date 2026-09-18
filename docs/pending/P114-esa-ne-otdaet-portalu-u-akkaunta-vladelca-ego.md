@@ -1,0 +1,27 @@
+# 🟡 ЕСА не отдаёт `email` порталу — у аккаунта владельца его нет, и повторный вход его не дозаполняет (вопрос портала через мозг 2026-09-04)
+
+> Запись `P114` реестра [PENDING_FOLLOWUPS](../PENDING_FOLLOWUPS.md). Индекс грепается, запись читается целиком, реестр целиком не читается никогда ([D-097](../../AGENTS.md)).
+
+`⏱ 2026-09-04 · snooze 0 · fresh`
+
+Чтение прод-БД 04.09: у клиента `portal` scope `openid profile email` — `email` разрешён.
+Все OIDC-входы владельца (портал 03.09, ПОЗВОНИ, КАРМАН) — под соц-only аккаунтом `id=2`
+(только `vk_user_id`), у него `email` пуст, `email_verified=false`. Из четырёх аккаунтов
+ЕСА email нет ни у одного. Claim пропускается по `modules/radar_id/service.py:219`
+(`if "email" in scopes and user.email`).
+
+**Корень:** `find_or_create_user` в `modules/radar_id/vk_upstream.py` пишет `email` только
+при создании ряда; найденный по `vk_user_id` ряд возвращается как есть. Формы «указать
+e-mail» в ЕСА нет. Пустой email — навсегда, даже если ВК теперь его присылает.
+
+- ✅ **(агент) Дозаполнение при повторном входе — СДЕЛАНО 2026-09-06** (мандат brain 05.09).
+  `_backfill_email` в `modules/radar_id/vk_upstream.py`: ряд найден по тому же `vk_user_id`,
+  `email` пуст, ВК прислал → запись с `email_verified=true` и audit-строкой `email backfilled`.
+  Непустой адрес **не перезаписывается** (смена почты — заявленное действие владельца аккаунта,
+  а не побочный эффект входа). Адрес, уже занятый другим рядом, **не занимается**: на проде есть
+  `uq_radar_users_email_lower` (проверен), и запись дала бы `IntegrityError`, то есть **500 на
+  входе**, а не «claim не приехал» — вход важнее claim'а, пускаем и пишем `email backfill skipped`.
+  Четыре теста в `tests/test_radar_id/test_vk_upstream.py::TestEmailBackfill`.
+- 🖐 **(владелец)** после выката — один вход в портал через ЕСА: если email всё равно пуст,
+  ВК его не отдаёт, и тогда это scope ВК-приложения / форма профиля (юр-трек).
+- Письмо мозгу: `mailbox/to-brain/2026-09-04-portal-scope-has-email-but-owner-account-has-none-and-cannot-get-it.md`.
