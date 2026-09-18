@@ -33,6 +33,12 @@
                 {% if logged_out %}
                 <div class="alert alert-success small" role="status">Вы вышли из всех сервисов Малмыжа.</div>
                 {% endif %}
+                {% if reauth %}
+                <div class="alert alert-warning small" id="reauth-note" role="status">
+                    {{ brand.title if brand and brand.title else 'Сервис' }} просит подтвердить, что это вы.
+                    Войдите ещё раз — сессия останется прежней.
+                </div>
+                {% endif %}
                 {% if current_login %}
                 <div class="alert alert-info small" id="already-in" role="status">
                     Вы уже вошли как <strong>{{ current_login }}</strong>.

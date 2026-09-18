@@ -161,3 +161,52 @@ def verify_session_token(token: str, _now: Optional[float] = None) -> Optional[D
         return payload
     except (ValueError, TypeError, json.JSONDecodeError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# Метка «этот запрос уже отправлял переспросить вход» (OIDC prompt=login)
+# ---------------------------------------------------------------------------
+#
+# Зачем она вообще. `prompt=login` означает «пусть человек войдёт ЗАНОВО,
+# в рамках этого запроса». Живая сессия требование не выполняет, поэтому
+# authorize уводит на /login — и на возврате должен отличить «вошёл только
+# что» от «пришёл с той же старой сессией». Без точки отсчёта получается
+# петля: старая сессия снова не годится, снова редирект, и так навсегда.
+#
+# Точка отсчёта едет в самом URL, поэтому она ПОДПИСАНА: без подписи любой
+# желающий поставил бы `_reauth=0` и обошёл требование клиента, ничего не
+# вводя. Секрет — тот же, что у сессионной куки; метка коротко живёт и ничего
+# не значит сама по себе (в ней только момент времени).
+
+REAUTH_MARKER_TTL_SECONDS = 15 * 60
+
+
+def issue_reauth_marker(_now: Optional[float] = None) -> str:
+    """Подписанная метка «переспрашиваем вход, отсчёт отсюда»."""
+    now = int(time.time() if _now is None else _now)
+    sig = hmac.new(_secret(), str(now).encode(), hashlib.sha256).digest()
+    return f"{now}.{_b64e(sig)}"
+
+
+def read_reauth_marker(raw: Optional[str], _now: Optional[float] = None) -> Optional[float]:
+    """Момент из метки, если подпись валидна и метка не протухла; иначе None.
+
+    ``None`` читается вызывающим как «метки нет» — то есть требование
+    `prompt=login` ещё не выполнено. Протухшую метку (человек ушёл пить чай)
+    отбрасываем так же: лучше переспросить второй раз, чем засчитать вход,
+    случившийся неизвестно когда.
+    """
+    if not raw:
+        return None
+    try:
+        ts_raw, sig_b64 = raw.split(".")
+        expected = hmac.new(_secret(), ts_raw.encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(expected, _b64d(sig_b64)):
+            return None
+        ts = float(int(ts_raw))
+    except (ValueError, TypeError):
+        return None
+    now = time.time() if _now is None else _now
+    if ts > now + 60 or ts < now - REAUTH_MARKER_TTL_SECONDS:
+        return None
+    return ts
