@@ -125,9 +125,23 @@ def issue_session_token(
     ttl_seconds: int = SESSION_TTL_SECONDS,
     _now: Optional[float] = None,
 ) -> str:
-    """Подписанный токен сессии: payload.signature (оба — b64url)."""
+    """Подписанный токен сессии: payload.signature (оба — b64url).
+
+    ``iat`` — момент, когда человек РЕАЛЬНО аутентифицировался; из него ЕСА
+    берёт `auth_time` в ID-токене (шаг 1 порядка, согласованного с мозгом
+    15.09). До 18.09 в payload его не было вовсе, и `auth_time` подставлялся
+    из «сейчас» — то есть ЕСА утверждал время входа, которого не знал.
+    Старая cookie без ``iat`` остаётся валидной: `auth_time` тогда просто
+    **не заявляется** (молчать честнее, чем угадывать).
+    """
     now = time.time() if _now is None else _now
-    payload = {"uid": user_id, "role": role, "pf": pwd_fragment, "exp": int(now + ttl_seconds)}
+    payload = {
+        "uid": user_id,
+        "role": role,
+        "pf": pwd_fragment,
+        "iat": int(now),
+        "exp": int(now + ttl_seconds),
+    }
     payload_b64 = _b64e(json.dumps(payload, separators=(",", ":")).encode())
     sig = hmac.new(_secret(), payload_b64.encode(), hashlib.sha256).digest()
     return f"{payload_b64}.{_b64e(sig)}"

@@ -158,8 +158,17 @@ async def issue_auth_code(
     code_challenge: Optional[str],
     code_challenge_method: Optional[str],
     nonce: Optional[str],
+    auth_time: Optional[datetime] = None,
 ) -> str:
-    """Выдать одноразовый authorization code (возвращает сырой код)."""
+    """Выдать одноразовый authorization code (возвращает сырой код).
+
+    ``auth_time`` — когда человек РЕАЛЬНО аутентифицировался (``iat`` его
+    сессии). До 2026-09-18 здесь стояло ``auth_time=now``, то есть момент
+    ВЫДАЧИ КОДА выдавался за момент входа: клиент, доверившийся claim'у,
+    считал свежей сессию недельной давности. ``None`` (старая cookie без
+    ``iat``) сохраняется как ``NULL`` и в ID-токен не попадает — отсутствующий
+    claim честнее подставленного.
+    """
     if code_challenge:
         if (code_challenge_method or "S256") != "S256":
             raise OidcError("invalid_request", "only S256 code_challenge_method is supported")
@@ -179,7 +188,7 @@ async def issue_auth_code(
             code_challenge=code_challenge,
             code_challenge_method="S256" if code_challenge else None,
             nonce=nonce,
-            auth_time=now,
+            auth_time=auth_time,
             expires_at=now + timedelta(seconds=get_auth_code_ttl()),
         )
     )
@@ -201,8 +210,21 @@ def _sign(payload: Dict[str, Any]) -> str:
 
 
 def _id_token_claims(
-    user: RadarUser, client_id: str, scope: str, *, nonce: Optional[str], auth_time: datetime
+    user: RadarUser,
+    client_id: str,
+    scope: str,
+    *,
+    nonce: Optional[str],
+    auth_time: Optional[datetime],
 ) -> Dict[str, Any]:
+    """Claims ID-токена. ``auth_time`` заявляется, только если он известен.
+
+    OIDC Core §2 делает `auth_time` обязательным лишь когда клиент попросил
+    (`max_age` / `auth_time` в essential claims) — а вот НЕВЕРНЫЙ `auth_time`
+    не разрешён никогда: на нём клиент строит решение «пора ли переспросить
+    пароль». Поэтому неизвестное время входа (сессия, выданная до появления
+    ``iat``) даёт отсутствующий claim, а не подставленное «сейчас».
+    """
     now = int(time.time())
     claims: Dict[str, Any] = {
         "iss": get_issuer(),
@@ -210,8 +232,9 @@ def _id_token_claims(
         "aud": client_id,
         "iat": now,
         "exp": now + get_access_token_ttl(),
-        "auth_time": int(auth_time.timestamp()),
     }
+    if auth_time is not None:
+        claims["auth_time"] = int(auth_time.timestamp())
     if nonce:
         claims["nonce"] = nonce
     scopes = scope.split()
@@ -246,7 +269,15 @@ async def _new_refresh_token(
     scope: str,
     family_id: Optional[str] = None,
     rotated_from: Optional[int] = None,
+    auth_time: Optional[datetime] = None,
 ) -> str:
+    """Новый refresh-токен. ``auth_time`` едет по цепочке ротаций неизменным.
+
+    Обновление токена — не аутентификация: человек в этот момент ничего не
+    доказывает, работает машина клиента. Поэтому время входа **переносится**
+    из погашенного токена, а не берётся от «сейчас», иначе через сутки
+    обновлений `auth_time` будет утверждать, что вход только что состоялся.
+    """
     raw = secrets.token_urlsafe(48)
     session.add(
         OAuthRefreshToken(
@@ -256,6 +287,7 @@ async def _new_refresh_token(
             client_id=client_id,
             scope=scope,
             rotated_from=rotated_from,
+            auth_time=auth_time,
             expires_at=_utcnow() + timedelta(days=get_refresh_ttl_days()),
         )
     )
@@ -308,7 +340,11 @@ async def exchange_code(
 
     row.used_at = _utcnow()
     refresh_raw = await _new_refresh_token(
-        session, user_id=user.id, client_id=client.client_id, scope=row.scope
+        session,
+        user_id=user.id,
+        client_id=client.client_id,
+        scope=row.scope,
+        auth_time=row.auth_time,
     )
     await session.commit()
 
@@ -374,6 +410,7 @@ async def refresh_grant(session, *, client: OAuthClient, raw_refresh: str) -> To
         scope=row.scope,
         family_id=row.family_id,
         rotated_from=row.id,
+        auth_time=row.auth_time,
     )
     await session.commit()
 
@@ -381,7 +418,7 @@ async def refresh_grant(session, *, client: OAuthClient, raw_refresh: str) -> To
     return TokenBundle(
         access_token=_sign(_access_token_claims(user, client.client_id, row.scope)),
         id_token=_sign(
-            _id_token_claims(user, client.client_id, row.scope, nonce=None, auth_time=_utcnow())
+            _id_token_claims(user, client.client_id, row.scope, nonce=None, auth_time=row.auth_time)
         ),
         refresh_token=new_raw,
         expires_in=get_access_token_ttl(),
