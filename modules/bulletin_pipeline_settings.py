@@ -43,9 +43,21 @@ POSTOPUS_BULLETIN_THEMES: List[str] = [
 ]
 
 # Значения по умолчанию, если в БД пусто
+#
+# ``max_posts_per_bulletin = 1`` — решение владельца 2026-09-18 (запись P168).
+# Замер по сети (55 регионов, 12 039 постов, 940 дней, где обе формы вышли в один
+# день одного района): новость, положенная в сводку третьей, получает 7.7 просмотров
+# вместо 17 у одиночной — на элемент одиночный пост выигрывает в 2.11 раза и в 84 %
+# дней. Виральность — свойство отдельной новости, а не поста-контейнера: сводка
+# выигрывает «на пост» только потому, что в неё сложили втрое больше материала.
+#
+# Цена решения названа явно: конвейер строит ОДНУ сводку за прогон, поэтому потолок
+# в 1 ограничивает и число новостей за слот. В районах с тонким потоком (63 %
+# сводок и так несли один элемент) не меняется ничего; в богатых часть кандидатов
+# уедет в следующий прогон и может состариться по ``max_post_age_hours``.
 DEFAULT_PIPELINE: Dict[str, Any] = {
     "max_post_age_hours": 72.0,
-    "max_posts_per_bulletin": 3,
+    "max_posts_per_bulletin": 1,
     "min_rafinad_len_core_dedup": 50,
     "text_similarity_threshold": 0.90,
     "min_rafinad_len_similarity_dedup": 80,
@@ -82,7 +94,7 @@ def get_effective_pipeline_settings(region_config: Any, theme: str) -> Dict[str,
         topic_ov = by_topic[theme]
     merged = {**base_defaults, **topic_ov}
     merged["max_post_age_hours"] = _coerce_float(merged.get("max_post_age_hours"), 72.0)
-    merged["max_posts_per_bulletin"] = _coerce_int(merged.get("max_posts_per_bulletin"), 3)
+    merged["max_posts_per_bulletin"] = _coerce_int(merged.get("max_posts_per_bulletin"), 1)
     merged["min_rafinad_len_core_dedup"] = _coerce_int(merged.get("min_rafinad_len_core_dedup"), 50)
     merged["text_similarity_threshold"] = _coerce_float(
         merged.get("text_similarity_threshold"), 0.90

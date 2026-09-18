@@ -9,7 +9,9 @@ def test_effective_uses_defaults():
     rc = SimpleNamespace(bulletin_filters=None)
     eff = get_effective_pipeline_settings(rc, "novost")
     assert eff["max_post_age_hours"] == 72.0
-    assert eff["max_posts_per_bulletin"] == 3
+    # 1 с 2026-09-18 (решение владельца по замеру P168): одиночный пост даёт новости
+    # 2.11× просмотров против той же новости внутри сводки.
+    assert eff["max_posts_per_bulletin"] == 1
     assert eff["text_similarity_threshold"] == 0.90
     assert eff["min_rafinad_len_similarity_dedup"] == 80
 
