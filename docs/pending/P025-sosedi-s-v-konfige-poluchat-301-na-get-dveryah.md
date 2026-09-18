@@ -1,0 +1,12 @@
+# Соседи с `http://вход.вмалмыже.рф` в конфиге получат 301 на GET-дверях
+
+> Запись `P025` реестра [PENDING_FOLLOWUPS](../PENDING_FOLLOWUPS.md). Индекс грепается, запись читается целиком, реестр целиком не читается никогда ([D-097](../../AGENTS.md)).
+
+- 🟡 `⏱ 2026-08-02 · snooze 0 · watch · условие: ответы проектов` Редирект на https ограничен
+  GET/HEAD, поэтому server-to-server POST (`/oidc/token`, `/api/gateway/`, `/api/ecosystem/`,
+  `/api/classifier/`) не задет вовсе. Но GET-двери — `/.well-known/openid-configuration`,
+  `/.well-known/jwks.json`, `/oidc/userinfo` — теперь отвечают 301, если сосед прописал у себя
+  голый `http://вход…`. В нашем репозитории таких строк нет ни одной (сплошной greп 2026-08-02:
+  везде https, а `modules/ecosystem/provisioning.py` вообще запрещает не-https `redirect_uri`),
+  и любой конформный OIDC-клиент и так обязан ходить на issuer по https. **Если сосед пожалуется на
+  внезапный 301 — ответ: перевести базовый URL на https**, а не откатывать редирект.

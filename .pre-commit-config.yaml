@@ -64,3 +64,14 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit]
+
+      # Гейт раскладки PENDING (D-097): индекс и записи не должны расходиться.
+      # Молчаливая сирота (файл записи без строки индекса) выглядит как целая
+      # память, а на деле запись больше не находится — читают-то индекс.
+      - id: pending-layout
+        name: pending layout (index == entries)
+        entry: python scripts/pending_gate.py
+        language: system
+        pass_filenames: false
+        files: ^docs/(PENDING_FOLLOWUPS\.md|pending/)
+        stages: [pre-commit]
