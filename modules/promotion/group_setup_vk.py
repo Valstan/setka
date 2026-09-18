@@ -74,7 +74,8 @@ def get_current(api, group_id: int) -> SetupResult:
     gid = abs(int(group_id))
     try:
         rows = api.groups.getById(
-            group_id=gid, fields="description,status,city,has_photo,cover,screen_name"
+            group_id=gid,
+            fields="description,status,city,has_photo,cover,screen_name,type,wall",
         )
         if isinstance(rows, dict):
             rows = rows.get("groups", rows)
@@ -89,10 +90,57 @@ def get_current(api, group_id: int) -> SetupResult:
                 "has_photo": row.get("has_photo"),
                 "has_cover": bool((row.get("cover") or {}).get("enabled")),
                 "screen_name": row.get("screen_name"),
+                "type": row.get("type"),
+                "wall": row.get("wall"),
             },
         )
     except Exception as exc:  # noqa: BLE001
         return _vk_error(exc)
+
+
+# Значения поля ``wall`` у ``groups.getById``: 0 выключена, 1 открытая,
+# 2 ограниченная, 3 закрытая. Предложка живёт ровно на «ограниченной».
+WALL_RESTRICTED = 2
+
+
+def accepts_suggestions(payload: Optional[Dict[str, Any]]) -> Optional[bool]:
+    """Может ли посторонний человек предложить новость в это сообщество.
+
+    ``None`` — «не измерено» (в снимке нет ``type``/``wall``); не путать с
+    ``False``, иначе «не посмотрели» сольётся с «нельзя» (#284).
+
+    **Дискриминатор — тип сообщества, а не подписчики и не настройки стены**
+    (замер 2026-09-18 на живом ВК, не чтение доки). ``groups.getById`` полем
+    ``can_suggest`` отдаёт права **того, чьим токеном спросили**, поэтому у
+    владельца оно 0 везде и ничего не значит. Спросили токеном постороннего
+    аккаунта (не подписан, не админ) — картина однозначна:
+
+    ========================  =========  ===========  ============
+    сообщество                can_post   can_suggest  предложка
+    ========================  =========  ===========  ============
+    ``page`` + wall=2            0            1       есть
+    ``group`` + wall=2           0            0       НЕТ
+    ``group`` + wall=1           1            0       нет (пишут прямо на стену)
+    ========================  =========  ===========  ============
+
+    Сверено с историей приёма: все 13 наших ``page`` имеют заявки из предложки
+    (``ad_requests.origin='suggested'``), все 40 ``group`` — ноль за всё время.
+    Порог подписчиков ни при чём: ``verhoshizhem`` — ``page`` с 38 подписчиками
+    и живыми заявками, ``vp`` — ``group`` с 497 и нулём.
+
+    Починить программно нельзя: ``groups.edit`` менять тип не умеет, а
+    ``groups.getSettings`` ВК вообще выпилил (``[3] Unknown method passed``,
+    проверено на всех 53). Перевод «группа → публичная страница» делает только
+    владелец из веб-интерфейса. Поэтому здесь не лечение, а **гейт**: новое
+    сообщество обязано родиться ``page``, и аудит обязан это печатать.
+    """
+    if not payload:
+        return None
+    gtype = payload.get("type")
+    wall = payload.get("wall")
+    if gtype is None or wall is None:
+        return None
+    return str(gtype) == "page" and int(wall) == WALL_RESTRICTED
 
 
 def edit_description(community_api, group_id: int, description: str) -> SetupResult:

@@ -951,7 +951,7 @@ async def run_audit(codes: Optional[List[str]]) -> int:
     """
     import vk_api
 
-    from modules.promotion.group_setup_vk import get_current
+    from modules.promotion.group_setup_vk import accepts_suggestions, get_current
 
     targets = await load_targets(codes, kinds=("raion", "oblast"))
     if not targets:
@@ -963,10 +963,19 @@ async def run_audit(codes: Optional[List[str]]) -> int:
     user_api = vk_api.VkApi(token=user_token).get_api() if user_token else None
 
     logger.info("AUDIT: сообществ %d | снимок из ВК, журнал — рядом для сверки", len(targets))
-    logger.info("  %-14s %-7s %-8s %-6s %s", "код", "аватар", "обложка", "опис.", "журнал")
+    logger.info(
+        "  %-14s %-7s %-8s %-6s %-9s %s",
+        "код",
+        "аватар",
+        "обложка",
+        "опис.",
+        "предложка",
+        "журнал",
+    )
 
     missing_avatar: List[str] = []
     missing_cover: List[str] = []
+    no_suggestions: List[str] = []
     unseen: List[str] = []
     user_calls = 0
 
@@ -977,7 +986,7 @@ async def run_audit(codes: Optional[List[str]]) -> int:
         api = vk_api.VkApi(token=comm_token).get_api() if comm_token else user_api
         if api is None:
             unseen.append(code)
-            logger.info("  %-14s %-7s %-8s %-6s %s", code, "?", "?", "?", "нет ключа")
+            logger.info("  %-14s %-7s %-8s %-6s %-9s %s", code, "?", "?", "?", "?", "нет ключа")
             continue
         if not comm_token:
             user_calls += 1
@@ -987,27 +996,40 @@ async def run_audit(codes: Optional[List[str]]) -> int:
             # отсутствие поля должны выглядеть по-разному, иначе аудит начнёт
             # молчать одинаково на «чисто» и на «не измерили».
             unseen.append(code)
-            logger.info("  %-14s %-7s %-8s %-6s %s", code, "?", "?", "?", snap.detail)
+            logger.info("  %-14s %-7s %-8s %-6s %-9s %s", code, "?", "?", "?", "?", snap.detail)
             continue
         cur = snap.payload or {}
         has_avatar = bool(cur.get("has_photo"))
         has_cover = bool(cur.get("has_cover"))
+        suggests = accepts_suggestions(cur)
         if not has_avatar:
             missing_avatar.append(code)
         if not has_cover:
             missing_cover.append(code)
+        if suggests is False:
+            no_suggestions.append(code)
         logger.info(
-            "  %-14s %-7s %-8s %-6d %s",
+            "  %-14s %-7s %-8s %-6d %-9s %s",
             code,
             "✓" if has_avatar else "НЕТ",
             "✓" if has_cover else "НЕТ",
             len(cur.get("description") or ""),
+            "✓" if suggests else ("?" if suggests is None else f"НЕТ/{cur.get('type')}"),
             journal.get(target["region_id"], "—"),
         )
 
     logger.info("")
     logger.info("Недостаёт аватара: %d — %s", len(missing_avatar), ", ".join(missing_avatar) or "—")
     logger.info("Недостаёт обложки: %d — %s", len(missing_cover), ", ".join(missing_cover) or "—")
+    if no_suggestions:
+        # Отдельной строкой: у сообщества типа «группа» предложки нет как
+        # функции, и оформление этого не лечит. Перевод в публичную страницу —
+        # ручной ход владельца из веб-интерфейса (см. accepts_suggestions).
+        logger.info(
+            "БЕЗ ПРЕДЛОЖКИ (тип «группа», людям нечем прислать новость): %d — %s",
+            len(no_suggestions),
+            ", ".join(no_suggestions),
+        )
     if unseen:
         # Отдельной строкой и всегда: неизмеренное не должно раствориться в «всё ок».
         logger.info("НЕ ИЗМЕРЕНО: %d — %s", len(unseen), ", ".join(unseen))
