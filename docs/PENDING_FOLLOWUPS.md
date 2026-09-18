@@ -93,6 +93,7 @@
 
 ## 🟡 Техдолги
 
+- **P167** [🟡 Кирс: рост 5 → 114 — причина найдена (вирусный пост 26.08), но ни один наш журнал её не записал (разбор 2026-09-18)](pending/P167-kirs-24-kratnyy-rost-prichina-ne-zapisana-nigde.md) · `⏱ 2026-09-18 · snooze 0 · fresh`
 - **P166** [🟡 ДК Малмыжа нем не по поломке — он ретранслятор; конвейер отработал верно (замер 2026-09-18)](pending/P166-dk-malmyzha-nem-ne-po-polomke-on-retranslyator.md) · `⏱ 2026-09-18 · snooze 0 · fresh`
 - **P165** [🟡 D-097 — одна память экосистемы: реестр разложен, остался канон 71 КБ (mandate brain 2026-09-18)](pending/P165-d-097-odna-pamyat-ekosistemy-raskladka-reestra.md) · `⏱ 2026-09-18 · snooze 0 · fresh`
 - **P038** [🟡 Авто-зеркалирование секретов в комнату КАРМАНа — не выбран носитель (сценарий B)](pending/P038-avto-zerkalirovanie-sekretov-v-komnatu-karmana.md) · `⏱ 2026-09-09 · snooze 0 · fresh · вынесено ре-триажем из секции «Клиент vault КАРМАНа»`
