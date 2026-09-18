@@ -27,6 +27,16 @@ if [ -f "$HANDOFF" ]; then
   cat "$HANDOFF"
 fi
 
+# Будильник обещанных дат (#152, D-096): печатает просроченное и близкое, молчит
+# об остальном. Своего интерпретатора не требует — берём любой доступный python;
+# нет ни одного → молча дальше, старт сессии этим ронять нельзя.
+for PY in "venv/Scripts/python.exe" "venv/bin/python" python3 python; do
+  if command -v "$PY" >/dev/null 2>&1 || [ -x "$PY" ]; then
+    "$PY" scripts/tickler.py 2>/dev/null
+    break
+  fi
+done
+
 if [ -f "$AUTOSAVE" ]; then
   if [ ! -f "$HANDOFF" ] || [ "$AUTOSAVE" -nt "$HANDOFF" ]; then
     echo "--- ⚠️ Прошлую сессию закрыли без /close_session: автоснимок свежее handoff'а"
