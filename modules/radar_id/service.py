@@ -144,6 +144,92 @@ def validate_redirect_uri(client: OAuthClient, redirect_uri: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Свежесть аутентификации: prompt и max_age (шаг 3, OIDC Core §3.1.2.1)
+# ---------------------------------------------------------------------------
+
+# Что ЕСА умеет на самом деле. `consent` и `select_account` сюда не входят
+# СОЗНАТЕЛЬНО: consent-экрана нет (клиенты first-party, ADR-0002 §8), выбора
+# аккаунта нет тоже. Спек в этом случае требует не «тихо проигнорировать», а
+# вернуть клиенту честный отказ — `consent_required` / `account_selection_required`.
+PROMPT_SUPPORTED = frozenset({"none", "login"})
+PROMPT_KNOWN = PROMPT_SUPPORTED | frozenset({"consent", "select_account"})
+
+_PROMPT_REFUSAL = {
+    "consent": ("consent_required", "consent screen is not implemented"),
+    "select_account": ("account_selection_required", "account selection is not implemented"),
+}
+
+
+def parse_prompt(raw: Optional[str]) -> frozenset:
+    """Разобрать параметр ``prompt`` (space-delimited, регистрозависимый).
+
+    Неизвестное значение — `invalid_request`: молча съесть его нельзя, иначе
+    клиент решит, что его требование выполнено. По той же причине `none`
+    вместе с чем-либо ещё — ошибка: «не показывай UI» и «покажи UI»
+    одновременно неисполнимы.
+    """
+    values = frozenset((raw or "").split())
+    if not values:
+        return frozenset()
+    unknown = values - PROMPT_KNOWN
+    if unknown:
+        raise OidcError("invalid_request", f"unsupported prompt value: {' '.join(sorted(unknown))}")
+    if "none" in values and len(values) > 1:
+        raise OidcError("invalid_request", "prompt=none cannot be combined with other values")
+    for value, (error, description) in _PROMPT_REFUSAL.items():
+        if value in values:
+            raise OidcError(error, description)
+    return values
+
+
+def parse_max_age(raw: Optional[str]) -> Optional[int]:
+    """``max_age`` в секундах: неотрицательное целое либо отсутствует."""
+    if raw is None or raw == "":
+        return None
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError):
+        raise OidcError("invalid_request", "max_age must be an integer number of seconds")
+    if seconds < 0:
+        raise OidcError("invalid_request", "max_age must not be negative")
+    return seconds
+
+
+def needs_reauth(
+    *,
+    prompt: frozenset,
+    max_age: Optional[int],
+    auth_time: Optional[datetime],
+    now: Optional[datetime] = None,
+    reauth_since: Optional[datetime] = None,
+) -> bool:
+    """Нужна ли СВЕЖАЯ аутентификация для этого запроса.
+
+    Два независимых требования, оба сводятся к «вход должен быть новее X»:
+
+    * ``max_age=N`` — вход не старше N секунд. Неизвестное время входа
+      (сессия без ``iat``) требование **не выполняет**: доказать свежесть
+      нечем, а клиент попросил именно доказательство;
+    * ``prompt=login`` — вход должен произойти **заново, в рамках этого
+      запроса**. Точка отсчёта приезжает в ``reauth_since`` (подписанная
+      метка, поставленная при первом заходе на этот же authorize). Без метки
+      требование не выполнено никогда — иначе достаточно старой сессии, и
+      `prompt=login` превращается в украшение.
+
+    Функция ничего не делает и ни на что не смотрит, кроме аргументов, —
+    решение о редиректе принимает HTTP-слой.
+    """
+    now = now or _utcnow()
+    if max_age is not None:
+        if auth_time is None or (now - auth_time).total_seconds() > max_age:
+            return True
+    if "login" in prompt:
+        if auth_time is None or reauth_since is None or auth_time < reauth_since:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Authorization code
 # ---------------------------------------------------------------------------
 
@@ -538,6 +624,10 @@ def discovery_document() -> Dict[str, Any]:
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["RS256"],
         "code_challenge_methods_supported": ["S256"],
+        # Объявляем ровно то, что исполняем. `consent`/`select_account` сюда не
+        # попадают: экранов нет, и запрос с ними получает честный отказ, а не
+        # тихо проигнорированный параметр (см. PROMPT_SUPPORTED).
+        "prompt_values_supported": sorted(PROMPT_SUPPORTED),
         "token_endpoint_auth_methods_supported": [
             "client_secret_post",
             "client_secret_basic",

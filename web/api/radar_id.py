@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from config.radar_id import radar_id_disabled
 from database.connection import AsyncSessionLocal
+from modules.radar.auth import issue_reauth_marker, read_reauth_marker
 from modules.radar_id import service
 from modules.radar_id.keys import get_public_jwks
 from modules.radar_id.service import OidcError
@@ -107,6 +108,36 @@ def _error_redirect(redirect_uri: str, error: str, description: str, state: Opti
     return RedirectResponse(f"{redirect_uri}{sep}{urlencode(params)}", status_code=302)
 
 
+# Имя нашего служебного параметра в URL authorize. Клиент его не присылает и
+# не видит: ЕСА сам дописывает его, уводя человека переспрашивать вход, и сам
+# же читает на возврате. Подчёркивание в начале — чтобы не столкнуться с
+# будущим параметром спека.
+REAUTH_PARAM = "_reauth"
+
+
+def _is_prompt_none(raw: Optional[str]) -> bool:
+    """`prompt=none` буквально, без разбора остального.
+
+    Нужен ДО валидации клиента (AuthGate уже пустил гостя сюда), поэтому
+    разбирать полноценно нечем и незачем: ошибки формата обработает
+    ``service.parse_prompt`` ниже, когда будет куда их отправить.
+    """
+    return "none" in (raw or "").split()
+
+
+def _reauth_redirect(request: Request):
+    """Увести на /login с подписанной меткой «отсчёт свежести — отсюда».
+
+    Возвращаемся ровно на этот же authorize (со всеми параметрами клиента),
+    дописав метку. Без метки на возврате старая сессия снова не годилась бы —
+    и человек ходил бы по кругу login → authorize → login.
+    """
+    params = [(k, v) for k, v in request.query_params.multi_items() if k != REAUTH_PARAM]
+    params.append((REAUTH_PARAM, issue_reauth_marker()))
+    back = f"{request.url.path}?{urlencode(params)}"
+    return RedirectResponse(f"/login?next={quote(back, safe='')}&reauth=1", status_code=302)
+
+
 @router.get("/oidc/authorize")
 async def authorize(
     request: Request,
@@ -118,13 +149,21 @@ async def authorize(
     nonce: Optional[str] = None,
     code_challenge: Optional[str] = None,
     code_challenge_method: Optional[str] = None,
+    prompt: Optional[str] = None,
+    max_age: Optional[str] = None,
 ):
     _check_enabled()
     _enforce_ip_rate(request, "authorize")
 
     user = getattr(request.state, "user", None)
-    if user is None:
-        # AuthGate обязан был аутентифицировать (маршрут не в PUBLIC).
+    # `user is None` возможен ровно в одном случае — `prompt=none` у гостя:
+    # AuthGate пропускает такой запрос сюда вместо редиректа на /login, потому
+    # что «не показывать UI» и «показать страницу входа» несовместимы. Ответ
+    # гостю даётся ниже, ПОСЛЕ проверки client_id и redirect_uri: раньше
+    # отвечать некуда, не проверенный uri — это open-redirect.
+    unauthenticated = user is None
+    if unauthenticated and not _is_prompt_none(prompt):
+        # Маршрут не в PUBLIC — сюда без сессии попасть иначе нельзя.
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     async with AsyncSessionLocal() as session:
@@ -144,11 +183,33 @@ async def authorize(
             )
         try:
             granted = service.resolve_scope(client, scope)
+            # `prompt`/`max_age` — требования клиента к СВЕЖЕСТИ входа.
+            # Неизвестный prompt и `consent`/`select_account` (их у нас нет)
+            # бросают OidcError и уезжают клиенту ошибкой, а не молча теряются.
+            wanted_prompt = service.parse_prompt(prompt)
+            wanted_max_age = service.parse_max_age(max_age)
             # Время входа берём из сессии (её `iat`), а не из «сейчас»: момент
             # выдачи кода — это момент, когда клиент прислал пользователя, а не
             # когда тот доказал, кто он. Cookie без `iat` (выдана до 18.09) даёт
             # None → claim `auth_time` не заявляется.
             session_iat = getattr(request.state, "session_iat", None)
+            auth_time = datetime.utcfromtimestamp(session_iat) if session_iat else None
+
+            if unauthenticated:
+                # prompt=none у гостя: показывать нечего, врать нечем.
+                raise OidcError("login_required", "no active session and prompt=none")
+
+            reauth_at = read_reauth_marker(request.query_params.get(REAUTH_PARAM))
+            if service.needs_reauth(
+                prompt=wanted_prompt,
+                max_age=wanted_max_age,
+                auth_time=auth_time,
+                reauth_since=(datetime.utcfromtimestamp(reauth_at) if reauth_at else None),
+            ):
+                if "none" in wanted_prompt:
+                    raise OidcError("login_required", "authentication is too old and prompt=none")
+                return _reauth_redirect(request)
+
             raw_code = await service.issue_auth_code(
                 session,
                 client=client,
@@ -158,7 +219,7 @@ async def authorize(
                 code_challenge=code_challenge,
                 code_challenge_method=code_challenge_method,
                 nonce=nonce,
-                auth_time=(datetime.utcfromtimestamp(session_iat) if session_iat else None),
+                auth_time=auth_time,
             )
         except OidcError as e:
             return _error_redirect(redirect_uri, e.error, e.description, state)

@@ -365,6 +365,9 @@ async def login_page(request: Request):
             "safe_next": safe_next,
             "current_login": current_login,
             "logged_out": request.query_params.get("logged_out") == "1",
+            # Сервис попросил переспросить вход (OIDC prompt=login / max_age):
+            # человек уже залогинен, и без объяснения форма выглядит поломкой.
+            "reauth": request.query_params.get("reauth") == "1",
         },
     )
 

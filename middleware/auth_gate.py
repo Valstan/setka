@@ -494,6 +494,17 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
 
         user = await self._authenticate(request)
         if user is None:
+            # Единственное исключение из «нет сессии → на /login»: OIDC-запрос
+            # с `prompt=none`. Клиент этим параметром говорит «проверь тихо, UI
+            # не показывай»; редирект на форму входа — ровно то, что он
+            # запретил, и в iframe он выглядит как молчаливое зависание вместо
+            # честного `login_required`. Пускаем запрос к эндпоинту: тот
+            # проверит client_id и redirect_uri и вернёт ошибку КЛИЕНТУ, а не
+            # человеку. Данных это не открывает — ответом будет только
+            # redirect с `error=login_required`.
+            if request.method == "GET" and path in FRONT_CHANNEL_GET_PATHS:
+                if "none" in (request.query_params.get("prompt") or "").split():
+                    return await call_next(request)
             # Редирект на login для браузерного GET, а также для front-channel
             # GET-путей (OIDC authorize) даже без браузерного Accept — они
             # достижимы только через redirect user-agent'а, 401 там бессмыслен.
