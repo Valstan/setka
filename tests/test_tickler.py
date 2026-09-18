@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import List
 
 from scripts.tickler import Item, main, overdue, parse, render, upcoming
 
@@ -98,16 +99,37 @@ class TestRender:
 
 
 class TestCheckClosesTheLoop:
-    def test_check_passes_for_open_date_in_the_real_file(self):
-        """Проверка на замыкание по живому docs/TICKLER.md, не по фикстуре."""
-        assert main(["--check", "2026-10-02"]) == 0
+    """Проверка на замыкание — по живому `docs/TICKLER.md`, но не по конкретной дате.
+
+    ⚠️ Первая версия этих тестов держала литералы `2026-10-02` (открыта) и
+    `2026-09-19` (закрыта) — и покраснела в тот же день: PR, закрывший 02.10,
+    сделал тест ложным. Гейт сработал как надо, а тест был неправ: он проверял
+    **состояние документа**, а не **поведение инструмента**. Дата в будильнике —
+    движущаяся величина by design, привязываться к ней нельзя.
+    """
+
+    def _live(self) -> List[Item]:
+        from scripts.tickler import TICKLER
+
+        return parse(TICKLER.read_text(encoding="utf-8"))
+
+    def test_check_passes_for_an_open_date_from_the_file(self):
+        rows = [i for i in self._live() if not i.done]
+        assert rows, "в будильнике нет ни одного открытого пункта — проверять нечего"
+        assert main(["--check", str(rows[0].due)]) == 0
 
     def test_check_fails_for_absent_date(self):
         assert main(["--check", "2031-01-01"]) == 1
 
-    def test_check_fails_for_closed_date(self):
+    def test_check_fails_for_a_closed_date_from_the_file(self):
         """Закрытая дата обещанием больше не является."""
-        assert main(["--check", "2026-09-19"]) == 1
+        closed = [i for i in self._live() if i.done]
+        assert closed, "в будильнике нет закрытых пунктов — проверять нечего"
+        # Дата, у которой ВСЕ строки закрыты: иначе откроется соседняя с тем же днём.
+        open_days = {i.due for i in self._live() if not i.done}
+        fully_closed = [i for i in closed if i.due not in open_days]
+        assert fully_closed, "у каждой закрытой даты есть открытый сосед — пропускаем"
+        assert main(["--check", str(fully_closed[0].due)]) == 1
 
     def test_check_rejects_garbage(self):
         assert main(["--check", "позавчера"]) == 2
