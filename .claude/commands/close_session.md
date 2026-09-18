@@ -56,7 +56,8 @@ bash scripts/git_sync_check.sh --gate || true       # текущее состо�
 
 Параллельно:
 - `Read` `docs/SESSION_HANDOFF.md` (если есть) — сравнить факт vs план начала сессии.
-- `Read` `docs/PENDING_FOLLOWUPS.md` (первые 60 строк) — что синхронизировать.
+- `Read` `docs/PENDING_FOLLOWUPS.md` — это **индекс** (строка на запись), читается целиком;
+  тело правимой записи — `docs/pending/P<NNN>-*.md`, открывается точечно.
 - `TaskList` (если использовался) — состояние tasks сессии.
 
 Если `git_sync_check.sh --gate` уже даёт **exit 0** (дерево чистое, всё запушено), последний handoff-коммит — сегодня, и в TaskList нет открытых задач — сказать «всё уже на GitHub и handoff свежий, закрывать нечего» и завершиться.
@@ -164,9 +165,17 @@ bash scripts/git_sync_check.sh --gate || true       # текущее состо�
 
 ## Шаг 5. Синхронизировать `PENDING_FOLLOWUPS.md` (если нужно)
 
-- **Закрыли** пункты — удалить строку или `~~...~~ закрыто в PR #N`.
-- **Появились новые** техдолги/идеи — добавить с приоритетом 🔴⏳🟡🟢.
-- **Изменился приоритет** — переставить.
+Реестр разложен на индекс + файл на запись (D-097). **Строка индекса и файл записи ходят парой** —
+гейт [`scripts/pending_gate.py`](../../scripts/pending_gate.py) в pre-commit валит коммит, если они
+разошлись.
+
+- **Закрыли** пункт — проставить ✅ в теге тела и перенести строку индекса из
+  `PENDING_FOLLOWUPS.md` в [`docs/pending/CLOSED.md`](../../docs/pending/CLOSED.md).
+  Файл записи и номер **не удалять**: закрытая запись остаётся адресом.
+- **Появился новый** техдолг/идея — завести `docs/pending/P<NNN>-<slug>.md` со следующим
+  свободным номером (`ls docs/pending | tail -1`) **и** строку в нужной секции индекса
+  с приоритетом 🔴⏳🟡🟢.
+- **Изменился приоритет** — переставить строку индекса (тело не трогать).
 
 Не дублировать содержимое handoff'а — handoff **ссылается** на пункты PENDING, не повторяет.
 
@@ -189,7 +198,7 @@ bash scripts/git_sync_check.sh --gate || true       # текущее состо�
 
 ```bash
 # mailbox/to-brain/ — если Шаг 5.5 написал письмо-находку; иначе no-op.
-git add docs/SESSION_HANDOFF.md docs/PENDING_FOLLOWUPS.md mailbox/to-brain/
+git add docs/SESSION_HANDOFF.md docs/PENDING_FOLLOWUPS.md docs/pending/ mailbox/to-brain/
 git commit -F <scratchpad>/handoffmsg.txt
 git push
 ```
@@ -245,7 +254,7 @@ bash scripts/git_sync_check.sh --gate
 Если PR — **только** про доки (изменены **только** `docs/SESSION_HANDOFF.md`, `docs/PENDING_FOLLOWUPS.md` и/или письмо-находка `mailbox/to-brain/*.md` с Шага 5.5), его можно авто-смёрджить после CI. Письма в `mailbox/to-brain/` — чистые доки (brain читает их read-only), кода не несут.
 
 **Не делать авто-merge, если:**
-- В PR есть **любые** файлы кроме `docs/SESSION_HANDOFF.md` / `docs/PENDING_FOLLOWUPS.md` / `mailbox/to-brain/*.md` (например, в ветке есть feature-коммиты с Шага 2 — это код, ему нужно ревью / `/reliz`).
+- В PR есть **любые** файлы кроме `docs/SESSION_HANDOFF.md` / `docs/PENDING_FOLLOWUPS.md` / `docs/pending/*.md` / `mailbox/to-brain/*.md` (например, в ветке есть feature-коммиты с Шага 2 — это код, ему нужно ревью / `/reliz`).
 - В PR-ветке несколько коммитов с кодом.
 - `--no-automerge` в `$ARGUMENTS`.
 
@@ -258,11 +267,13 @@ PR_NUM=<номер открытого PR>
 # и без него фильтр отбраковывал заведомо doc-only PR.
 # docs/REGION_REFRESH_LOG.md сюда НЕ добавлять: он исторически едет вместе с
 # миграциями и конфигами регионов, то есть такой PR не doc-only.
+# docs/pending/** — тела записей PENDING после раскладки D-097: такие же доки,
+# и без них doc-only PR отбраковывался бы каждый раз, когда правится запись.
 ALLOWED='docs/SESSION_HANDOFF.md docs/PENDING_FOLLOWUPS.md docs/ops/DISTILL_LOG.md'
 files=$(gh pr view "$PR_NUM" --json files --jq '.files[].path')
 extra=$(echo "$files" \
   | grep -v -F -x -f <(echo "$ALLOWED" | tr ' ' '\n') \
-  | grep -v '^mailbox/to-brain/.*\.md$' || true)
+  | grep -v '^mailbox/to-brain/.*\.md$' \n  | grep -v '^docs/pending/.*\.md$' || true)
 ```
 
 Если `extra` непустой — пропустить авто-merge, доложить: «PR содержит код — merge руками после ревью или через `/reliz`: `gh pr merge $PR_NUM --squash --delete-branch`».

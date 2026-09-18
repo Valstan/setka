@@ -1,0 +1,5 @@
+# Прочее
+
+> Запись `P013` реестра [PENDING_FOLLOWUPS](../PENDING_FOLLOWUPS.md). Индекс грепается, запись читается целиком, реестр целиком не читается никогда ([D-097](../../AGENTS.md)).
+
+- ~~**`logs/app.log` не пишется с 2026-05-22**~~ Закрыто 2026-05-25: разбор показал, что app.log не был «сломан» — `FileHandler` работал, файл был открыт, но `LOG_LEVEL=WARNING` в `/etc/setka/setka.env` отсекал 99% событий, а WARNING'ов с тех пор просто не было (`metrics_middleware` slow-request threshold 1.0s, а `/api/health/full` стабильно отдаёт ~1.01s). Параллельно содержимое app.log 100% дублировалось в `uvicorn_production.log` через systemd `StandardOutput/Error=append:`. Решение — убрать FileHandler из `main.py` полностью, оставить единственный канал через stderr → systemd-редирект → `uvicorn_production.log`. Дефолт `LOG_LEVEL` поднят с `WARNING` до `INFO`. На проде убран `LOG_LEVEL=WARNING` из `setka.env`, старый `app.log` архивирован. Doc-ссылки на `app.log` обновлены во всех `.md` / `.claude/commands/`.
