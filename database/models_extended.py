@@ -503,7 +503,10 @@ class OAuthAuthCode(Base):
     code_challenge = Column(String(128), nullable=True)
     code_challenge_method = Column(String(10), nullable=True)  # S256
     nonce = Column(String(255), nullable=True)
-    auth_time = Column(DateTime, nullable=False)
+    # Когда человек реально аутентифицировался (``iat`` его сессии), а не когда
+    # выдан код. NULL — время входа неизвестно (сессия старше миграции 105):
+    # тогда ЕСА не заявляет `auth_time` вовсе, а не подставляет «сейчас».
+    auth_time = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=False, index=True)
     used_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -537,6 +540,10 @@ class OAuthRefreshToken(Base):
     client_id = Column(String(64), nullable=False)
     scope = Column(String(255), nullable=False)
     rotated_from = Column(BigInteger, nullable=True)
+    # Время входа едет по цепочке ротаций неизменным: обновление токена — не
+    # аутентификация. NULL — вход случился до миграции 105 либо сессия не
+    # несла ``iat``; `auth_time` тогда не заявляется (миграция 105).
+    auth_time = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

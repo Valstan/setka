@@ -590,4 +590,10 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         # считаем от пустой строки, семантика инвалидации сохраняется.
         if payload.get("pf") != password_fragment(user.password_hash or ""):
             return None
+        # Время реального входа — из сессии, не из «сейчас»: ЕСА кладёт его в
+        # `auth_time` ID-токена (modules/radar_id/service.issue_auth_code).
+        # Cookie, выданная до 2026-09-18, `iat` не несёт → None, и тогда
+        # `auth_time` не заявляется вовсе.
+        session_iat = payload.get("iat")
+        request.state.session_iat = int(session_iat) if session_iat else None
         return user

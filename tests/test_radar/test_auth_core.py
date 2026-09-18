@@ -53,8 +53,13 @@ def test_token_roundtrip():
         "uid": 7,
         "role": "operator",
         "pf": "abcdef123456",
+        # `iat` — время реального входа; из него ЕСА берёт `auth_time` ID-токена
+        # (миграция 105). Сверяется точным значением в
+        # tests/test_radar_id/test_auth_time_is_honest.py.
+        "iat": payload["iat"],
         "exp": payload["exp"],
     }
+    assert payload["iat"] <= payload["exp"]
 
 
 def test_token_expiry():

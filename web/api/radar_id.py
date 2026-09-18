@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+from datetime import datetime
 from typing import Optional
 from urllib.parse import quote, urlencode
 
@@ -143,6 +144,11 @@ async def authorize(
             )
         try:
             granted = service.resolve_scope(client, scope)
+            # Время входа берём из сессии (её `iat`), а не из «сейчас»: момент
+            # выдачи кода — это момент, когда клиент прислал пользователя, а не
+            # когда тот доказал, кто он. Cookie без `iat` (выдана до 18.09) даёт
+            # None → claim `auth_time` не заявляется.
+            session_iat = getattr(request.state, "session_iat", None)
             raw_code = await service.issue_auth_code(
                 session,
                 client=client,
@@ -152,6 +158,7 @@ async def authorize(
                 code_challenge=code_challenge,
                 code_challenge_method=code_challenge_method,
                 nonce=nonce,
+                auth_time=(datetime.utcfromtimestamp(session_iat) if session_iat else None),
             )
         except OidcError as e:
             return _error_redirect(redirect_uri, e.error, e.description, state)
