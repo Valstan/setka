@@ -150,16 +150,26 @@ if [[ "$NO_PROD" == "1" ]]; then
     echo "  ${C_DIM}— пропущено (--no-prod)${C_RST}"
 elif ! command -v ssh >/dev/null 2>&1; then
     warn "ssh не найден в PATH"
-elif ! grep -qiE '^host[[:space:]]+setka([[:space:]]|$)' "$HOME/.ssh/config" 2>/dev/null; then
-    warn "alias 'setka' не найден в ~/.ssh/config"
-    hint "см. docs/REMOTE_ACCESS.md — прод-доступ только по SSH через alias setka"
+elif ! grep -qiE '^host[[:space:]]+sarafan([[:space:]]|$)' "$HOME/.ssh/config" 2>/dev/null; then
+    warn "alias 'sarafan' не найден в ~/.ssh/config"
+    hint "см. docs/REMOTE_ACCESS.md — прод-доступ только по SSH через alias sarafan"
 else
-    ok "alias 'setka' есть в ~/.ssh/config"
-    if ssh -o ConnectTimeout=8 -o BatchMode=yes sarafan 'test -f /home/valstan/SETKA/main.py && echo OK' 2>/dev/null | grep -q OK; then
+    ok "alias 'sarafan' есть в ~/.ssh/config"
+    # `| grep -q` здесь был миной: файл поднимает `set -o pipefail` (строка 17), а
+    # `grep -q` выходит на первом совпадении → левая часть получает EPIPE, конвейер
+    # отдаёт 141, и найденное засчитывается как НЕнайденное (erratum к G322, замер
+    # соседей: 49 ложных из 1800 на 1 vCPU). Дискриминатор ловушки — не «медленно»,
+    # а «чем быстрее нашлось, тем вероятнее ложь». Лечение — `case` без пайпа:
+    # подстановка команды конвейера не создаёт вовсе.
+    prod_probe=$(ssh -o ConnectTimeout=8 -o BatchMode=yes sarafan 'test -f ~/SETKA/main.py && echo OK' 2>/dev/null || true)
+    case "$prod_probe" in
+    *OK*)
         ok "прод достижим, это SETKA (main.py на месте)"
-    else
+        ;;
+    *)
         warn "прод не ответил за 8с / BatchMode (норма, если нужен пароль/2FA или ты офлайн)"
-    fi
+        ;;
+    esac
 fi
 
 # --- Итог ---
