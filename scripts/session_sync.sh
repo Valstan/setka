@@ -20,7 +20,17 @@ PAYLOAD=""
 if [ "$MODE" != "--always" ]; then
   # stdin может отсутствовать (ручной запуск) — тогда публиковать нечего.
   PAYLOAD=$(cat 2>/dev/null || true)
-  printf '%s' "$PAYLOAD" | tr -d '\n' | grep -qiE 'gh pr merge|git push|git merge' || exit 0
+  # Фильтр держится `case`, а не `… | grep -qiE`. Здесь нет `pipefail`, поэтому
+  # мины G355 сегодня нет — но этот конвейер решает, уедет ли состояние сессии на
+  # GitHub, и его ложное «не найдено» теряло бы нитку МОЛЧА. Одна строка `set -o
+  # pipefail`, добавленная когда-нибудь в шапку, включила бы потерю (erratum к
+  # G322: `grep -q` выходит на первом совпадении → EPIPE → 141 → «не найдено»).
+  # `case` от порядка строк в шапке не зависит вовсе.
+  FLAT=$(printf '%s' "$PAYLOAD" | tr -d '\n' | tr '[:upper:]' '[:lower:]')
+  case "$FLAT" in
+  *"gh pr merge"* | *"git push"* | *"git merge"*) : ;;
+  *) exit 0 ;;
+  esac
 fi
 
 for candidate in \
