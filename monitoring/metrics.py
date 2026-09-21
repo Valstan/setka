@@ -248,7 +248,7 @@ def track_digest_published(region: str, topic: str, result: str = "success") -> 
         try:
             from modules.bulletin_heartbeat import mark_published
 
-            mark_published(topic)
+            mark_published(topic, region=region)
         except Exception:  # pragma: no cover - наблюдаемость не должна валить публикацию
             logger.warning("bulletin heartbeat write failed (topic=%s)", topic, exc_info=True)
 

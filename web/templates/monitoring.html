@@ -454,7 +454,7 @@ async function loadHeartbeat() {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const json = await resp.json();
         if (!json.success || !json.data) throw new Error(json.error || 'нет данных');
-        const { topics, watchdog } = json.data;
+        const { topics, watchdog, regions } = json.data;
 
         // watchdog novost (строгий 6ч-порог)
         const wd = _HB_STATUS[watchdog.status] || _HB_STATUS.unknown;
@@ -481,6 +481,24 @@ async function loadHeartbeat() {
                     </tr></thead>
                     <tbody>${tbody}</tbody>
                 </table></div>`;
+        }
+        // Районы без novost дольше порога (P169): тема жива, район — нет.
+        if (regions && regions.rows) {
+            const stale = regions.rows.filter(r => r.status === 'stale');
+            const total = regions.rows.length;
+            let block;
+            if (!total) {
+                block = '<div class="small text-muted px-3 py-2">По районам данных ещё нет.</div>';
+            } else if (!stale.length) {
+                block = `<div class="small text-success px-3 py-2">Все ${total} районов с novost моложе ${regions.max_age_hours} ч.</div>`;
+            } else {
+                const items = stale.map(r =>
+                    `<li><code>${_esc(r.region)}</code> — ${_agoFromSeconds(r.age_seconds)}</li>`).join('');
+                block = `<div class="alert alert-warning m-3 mb-0 py-2 small">
+                    <strong>Районы без novost дольше ${regions.max_age_hours} ч (${stale.length} из ${total}):</strong>
+                    <ul class="mb-0 mt-1">${items}</ul></div>`;
+            }
+            content.innerHTML += block;
         }
         content.style.display = 'block';
         loading.style.display = 'none';
