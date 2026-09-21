@@ -11,6 +11,17 @@
 Ключ ``setka:digest_last_published:<topic>`` (Redis db=1, как у
 ``NotificationsStorage`` — переиспользуем его клиент, чтобы не плодить
 коннект-параметры).
+
+**Второй ключ — по региону** (P169, 2026-09-21):
+``setka:digest_last_published:region:<region>:<topic>``. Тематический ключ
+слеп к региону: пока хоть один район публикует ``novost``, сторож рапортует
+``fresh`` — 20–21.08 Арбаж и Подосиновец просидели сутки без единой сводки
+из шести слотов, и сторож не покраснел ни разу. Порог по региону —
+``DEFAULT_REGION_MAX_AGE_HOURS``: все районы ходят по одним шести слотам
+``novost`` в сутки, так что «пропущены все слоты подряд» = сутки с запасом.
+Регион без ключа не алёртит (тот же принцип, что у темы: тонкий район или
+свежий регион ≠ поломка); отключённые регионы отсекаются вызывающим по
+списку активных, чтобы ключ с TTL 14 дней не кричал после выключения.
 """
 
 from __future__ import annotations
@@ -34,6 +45,14 @@ ALERT_COOLDOWN_SECONDS = 6 * 3600
 # (6:40/11:40/12:40/16:40/18:40/20:40 MSK), макс. дневной зазор ~5ч
 # (6:40→11:40) → 6ч с запасом не даёт ложных срабатываний.
 DEFAULT_MAX_AGE_HOURS = 6
+
+# Порог простоя ОДНОГО региона (часы). У всех районов одни и те же 6 слотов
+# novost в сутки; последняя удача в 6:40 + пропуск всех шести следующих слотов
+# = ~27.4 ч к утренней проверке. 26 ч = «все слоты подряд пропущены», и это
+# же число — порог свежести дашборда.
+DEFAULT_REGION_MAX_AGE_HOURS = 26
+
+_REGION_SEGMENT = "region"
 
 _redis_client = None
 _redis_pid: Optional[int] = None
@@ -66,10 +85,16 @@ def _redis():
     return _redis_client
 
 
-def mark_published(topic: str, *, ts: Optional[float] = None) -> None:
+def _region_key(region: str, topic: str) -> str:
+    return f"{KEY_PREFIX}:{_REGION_SEGMENT}:{region}:{topic}"
+
+
+def mark_published(topic: str, *, region: Optional[str] = None, ts: Optional[float] = None) -> None:
     """Отметить успешную публикацию сводки темы (best-effort, не падает).
 
     Вызывается из ``track_digest_published`` при ``result == "success"``.
+    С ``region`` пишется и второй ключ — по паре регион/тема (P169); без него
+    только тематический, как раньше.
     """
     if not topic:
         return
@@ -80,11 +105,10 @@ def mark_published(topic: str, *, ts: Optional[float] = None) -> None:
             # пишется, хотя публикация прошла (инцидент 2026-06-05).
             logger.warning("bulletin heartbeat skipped: redis unavailable (topic=%s)", topic)
             return
-        client.setex(
-            f"{KEY_PREFIX}:{topic}",
-            _HEARTBEAT_TTL_SECONDS,
-            str(int(ts if ts is not None else time.time())),
-        )
+        value = str(int(ts if ts is not None else time.time()))
+        client.setex(f"{KEY_PREFIX}:{topic}", _HEARTBEAT_TTL_SECONDS, value)
+        if region:
+            client.setex(_region_key(region, topic), _HEARTBEAT_TTL_SECONDS, value)
     except Exception:  # pragma: no cover - наблюдаемость не должна ломать публикацию
         # WARNING (не debug): на проде LOG_LEVEL=INFO глушил debug, из-за чего
         # «heartbeat не пишется» оставалось незамеченным (инцидент 2026-06-05).
@@ -124,8 +148,13 @@ def all_heartbeats() -> dict[str, int]:
         for raw in keys:
             key = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
             topic = key[len(prefix) :]
-            # cooldown-ключи начинаются с "stale_alert_cooldown:" — не темы
-            if not topic or topic.startswith("stale_alert_cooldown"):
+            # cooldown-ключи начинаются с "stale_alert_cooldown:", региональные —
+            # с "region:" — не темы
+            if (
+                not topic
+                or topic.startswith("stale_alert_cooldown")
+                or topic.startswith(_REGION_SEGMENT + ":")
+            ):
                 continue
             val = client.get(key)
             if val is None:
@@ -137,6 +166,146 @@ def all_heartbeats() -> dict[str, int]:
     except Exception:  # pragma: no cover - инфраструктурный сбой
         logger.debug("bulletin heartbeat scan failed", exc_info=True)
     return out
+
+
+def all_region_heartbeats(topic: str) -> dict[str, int]:
+    """``region → unix-ts`` последней успешной публикации темы по регионам (P169).
+
+    Best-effort: ``{}`` при любом сбое. Регион без ключа в словарь не попадает —
+    «никогда не публиковал» и «свежий деплой» здесь неразличимы и не считаются
+    отказом (тот же принцип, что у тематического watchdog'а).
+    """
+    out: dict[str, int] = {}
+    if not topic:
+        return out
+    try:
+        client = _redis()
+        if client is None:
+            return out
+        prefix = f"{KEY_PREFIX}:{_REGION_SEGMENT}:"
+        suffix = f":{topic}"
+        scan_iter = getattr(client, "scan_iter", None)
+        keys = (
+            scan_iter(match=f"{prefix}*{suffix}")
+            if callable(scan_iter)
+            else client.keys(f"{prefix}*")
+        )
+        for raw in keys:
+            key = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+            if not key.endswith(suffix):
+                continue
+            region = key[len(prefix) : -len(suffix)]
+            if not region or ":" in region:
+                continue
+            val = client.get(key)
+            if val is None:
+                continue
+            try:
+                out[region] = int(val)
+            except (TypeError, ValueError):
+                continue
+    except Exception:  # pragma: no cover - инфраструктурный сбой
+        logger.debug("bulletin region heartbeat scan failed", exc_info=True)
+    return out
+
+
+def stale_regions(
+    topic: str = "novost",
+    *,
+    max_age_hours: float = DEFAULT_REGION_MAX_AGE_HOURS,
+    active_regions: Optional[set[str]] = None,
+    now: Optional[float] = None,
+) -> list[tuple[str, int]]:
+    """Регионы, у которых последняя удача темы старше порога: ``[(region, age_s)]``.
+
+    ``active_regions`` — фильтр по живым регионам: ключ живёт 14 дней и без
+    фильтра выключенный район кричал бы две недели. ``None`` = не фильтровать.
+    Сортировка — самые давние сверху.
+    """
+    current = now if now is not None else time.time()
+    out: list[tuple[str, int]] = []
+    for region, ts in all_region_heartbeats(topic).items():
+        if active_regions is not None and region not in active_regions:
+            continue
+        age = current - ts
+        if age >= max_age_hours * 3600:
+            out.append((region, int(age)))
+    out.sort(key=lambda item: -item[1])
+    return out
+
+
+def maybe_alert_stale_regions(
+    *,
+    topic: str = "novost",
+    max_age_hours: float = DEFAULT_REGION_MAX_AGE_HOURS,
+    active_regions: Optional[set[str]] = None,
+    telegram_token: Optional[str] = None,
+    chat_id: Optional[str] = None,
+    dashboard_url: Optional[str] = None,
+    now: Optional[float] = None,
+) -> str:
+    """Один Telegram-алёрт со списком районов, где тема протухла дольше порога.
+
+    Статусы: ``fresh`` (протухших нет) | ``skipped:no-telegram-config`` |
+    ``skipped:cooldown`` | ``alert-sent:<N>`` | ``error:…``. Cooldown общий на
+    список (``…:stale_alert_cooldown:regions:<topic>``), тот же 6 ч.
+    """
+    stale = stale_regions(
+        topic, max_age_hours=max_age_hours, active_regions=active_regions, now=now
+    )
+    if not stale:
+        return "fresh"
+
+    if not telegram_token or not chat_id:
+        return "skipped:no-telegram-config"
+
+    client = _redis()
+    cooldown_key = f"{KEY_PREFIX}:stale_alert_cooldown:{_REGION_SEGMENT}s:{topic}"
+    try:
+        if client is not None and client.get(cooldown_key):
+            return "skipped:cooldown"
+    except Exception:
+        pass
+
+    lines = [f"• <b>{region}</b> — {age / 3600.0:.1f} ч" for region, age in stale]
+    parts = [
+        "⚠️ <b>SETKA: районы без сводок</b>\n",
+        f"Тема <b>{topic}</b> не выходила дольше <b>{max_age_hours:g} ч</b> "
+        f"(все слоты подряд) в {len(stale)} рег.:",
+        "\n".join(lines),
+        "\nОбщий поток жив — смотреть сам район: пул источников, "
+        "кандидаты после отбора, ключ COMM_&lt;id&gt;.",
+    ]
+    if dashboard_url:
+        parts.append(f"\n🔗 <a href='{dashboard_url}'>Открыть SETKA</a>")
+    message = "\n".join(parts)
+
+    try:
+        from modules import telegram_http as tg_http
+
+        resp = tg_http.post(
+            f"https://api.telegram.org/bot{telegram_token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+        )
+        if resp.status_code != 200:
+            logger.warning("stale-regions alert failed: %s %s", resp.status_code, resp.text[:200])
+            return "error:http-" + str(resp.status_code)
+        if client is not None:
+            client.setex(cooldown_key, ALERT_COOLDOWN_SECONDS, "1")
+        logger.info(
+            "Sent stale-regions alert for topic=%s regions=%s",
+            topic,
+            ",".join(region for region, _ in stale),
+        )
+        return f"alert-sent:{len(stale)}"
+    except Exception as exc:
+        logger.error("Failed to send stale-regions alert: %s", exc)
+        return "error:" + str(exc)
 
 
 def maybe_alert_stale_bulletin(

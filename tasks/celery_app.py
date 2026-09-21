@@ -1471,6 +1471,20 @@ def check_recent_comments():
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+async def _active_region_codes() -> set:
+    """Коды активных регионов с VK-группой — те, что вообще ходят в волны."""
+    from sqlalchemy import select
+
+    from database.connection import AsyncSessionLocal
+    from database.models import Region
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Region.code).where(Region.is_active.is_(True), Region.vk_group_id.isnot(None))
+        )
+        return set(result.scalars().all())
+
+
 @app.task(name="tasks.celery_app.check_bulletin_heartbeat")
 def check_bulletin_heartbeat():
     """Watchdog «давно нет сводок»: алёрт, если novost давно не публиковался.
@@ -1479,10 +1493,15 @@ def check_bulletin_heartbeat():
     публикации). Если тема ``novost`` протухла дольше порога — Telegram-алёрт
     с собственным cooldown (см. ``modules.bulletin_heartbeat``). Beat гоняет днём
     (10:00–22:00); ночью простой 20:40→6:40 легитимен и не проверяется.
+
+    Вторая проверка — по регионам (P169): тематический ключ слеп к району, а
+    район без единой сводки за все слоты суток — отказ, на который сторож
+    обязан покраснеть. Список активных регионов берётся из БД, чтобы
+    выключенный район не кричал, пока не истечёт TTL ключа.
     """
     try:
         from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
-        from modules.bulletin_heartbeat import maybe_alert_stale_bulletin
+        from modules.bulletin_heartbeat import maybe_alert_stale_bulletin, maybe_alert_stale_regions
 
         token = TELEGRAM_TOKENS.get("VALSTANBOT") or TELEGRAM_TOKENS.get("ALERT")
         chat_id = TELEGRAM_ALERT_CHAT_ID
@@ -1496,7 +1515,28 @@ def check_bulletin_heartbeat():
             dashboard_url=f"https://{domain}/",
         )
         logger.info("bulletin heartbeat watchdog: %s", status)
-        return {"success": True, "status": status, "timestamp": datetime.now().isoformat()}
+
+        active_regions = None
+        try:
+            active_regions = run_coro(_active_region_codes())
+        except Exception:  # pragma: no cover - БД недоступна → не фильтруем
+            logger.warning(
+                "active regions lookup failed, region watchdog unfiltered", exc_info=True
+            )
+        regions_status = maybe_alert_stale_regions(
+            topic="novost",
+            active_regions=active_regions,
+            telegram_token=token,
+            chat_id=chat_id,
+            dashboard_url=f"https://{domain}/",
+        )
+        logger.info("bulletin heartbeat watchdog (regions): %s", regions_status)
+        return {
+            "success": True,
+            "status": status,
+            "regions_status": regions_status,
+            "timestamp": datetime.now().isoformat(),
+        }
     except Exception as e:
         logger.error(f"check_bulletin_heartbeat failed: {e}", exc_info=True)
         return {"success": False, "timestamp": datetime.now().isoformat(), "error": str(e)}

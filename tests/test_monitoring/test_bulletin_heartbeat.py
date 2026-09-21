@@ -281,3 +281,116 @@ def test_prometheus_failure_does_not_block_heartbeat(monkeypatch):
     # Не должно бросить наружу и ОБЯЗАНО записать heartbeat несмотря на сбой метрик.
     metrics.track_digest_published(region="tuzha", topic="novost", result="success")
     assert marked.get("topic") == "novost"
+
+
+# --------------------------------------------------------------------------- #
+# P169: heartbeat по регионам — сторож обязан краснеть на районе без сводок
+# --------------------------------------------------------------------------- #
+
+
+def test_mark_published_with_region_writes_both_keys():
+    dh.mark_published("novost", region="arbazh", ts=1000.0)
+    store = dh._redis_client.store
+    assert store["setka:digest_last_published:novost"] == "1000"
+    assert store["setka:digest_last_published:region:arbazh:novost"] == "1000"
+
+
+def test_all_heartbeats_excludes_region_keys():
+    dh.mark_published("novost", region="arbazh", ts=1000.0)
+    assert dh.all_heartbeats() == {"novost": 1000}
+
+
+def test_all_region_heartbeats_filters_by_topic():
+    dh.mark_published("novost", region="arbazh", ts=1000.0)
+    dh.mark_published("novost", region="mi", ts=2000.0)
+    dh.mark_published("sport", region="arbazh", ts=3000.0)
+    assert dh.all_region_heartbeats("novost") == {"arbazh": 1000, "mi": 2000}
+    assert dh.all_region_heartbeats("sport") == {"arbazh": 3000}
+    assert dh.all_region_heartbeats("") == {}
+
+
+def test_stale_regions_only_past_threshold_sorted_oldest_first():
+    now = 100 * 3600.0
+    dh.mark_published("novost", region="fresh1", ts=now - 3600)
+    dh.mark_published("novost", region="old1", ts=now - 27 * 3600)
+    dh.mark_published("novost", region="old2", ts=now - 40 * 3600)
+    stale = dh.stale_regions("novost", max_age_hours=26, now=now)
+    assert [r for r, _ in stale] == ["old2", "old1"]
+    assert stale[0][1] == 40 * 3600
+
+
+def test_stale_regions_respects_active_filter():
+    now = 100 * 3600.0
+    dh.mark_published("novost", region="off", ts=now - 40 * 3600)
+    dh.mark_published("novost", region="on", ts=now - 40 * 3600)
+    stale = dh.stale_regions("novost", max_age_hours=26, active_regions={"on"}, now=now)
+    assert [r for r, _ in stale] == ["on"]
+
+
+def test_topic_fresh_but_region_stale_is_caught():
+    """Суть P169: общий поток жив (кто-то публикует), Арбаж молчит сутки — краснеем."""
+    now = 100 * 3600.0
+    dh.mark_published("novost", region="arbazh", ts=now - 30 * 3600)
+    dh.mark_published("novost", region="mi", ts=now - 1800)  # тематический ключ — свежий
+    assert (
+        dh.maybe_alert_stale_bulletin(topic="novost", telegram_token="t", chat_id="c", now=now)
+        == "fresh"
+    )
+    assert dh.maybe_alert_stale_regions(
+        topic="novost", telegram_token=None, chat_id=None, now=now
+    ) == ("skipped:no-telegram-config")
+
+
+def test_stale_regions_alert_once_with_cooldown(monkeypatch):
+    sent = []
+
+    class _Resp:
+        status_code = 200
+        text = "ok"
+
+    def _fake_post(url, **kwargs):
+        sent.append(kwargs.get("json"))
+        return _Resp()
+
+    import requests
+
+    monkeypatch.setattr(requests, "post", _fake_post)
+
+    now = 100 * 3600.0
+    dh.mark_published("novost", region="arbazh", ts=now - 30 * 3600)
+    dh.mark_published("novost", region="podosinovets", ts=now - 50 * 3600)
+    first = dh.maybe_alert_stale_regions(topic="novost", telegram_token="t", chat_id="42", now=now)
+    second = dh.maybe_alert_stale_regions(topic="novost", telegram_token="t", chat_id="42", now=now)
+    assert first == "alert-sent:2"
+    assert second == "skipped:cooldown"
+    assert len(sent) == 1
+    text = sent[0]["text"]
+    assert "podosinovets" in text and "arbazh" in text
+    assert text.index("podosinovets") < text.index("arbazh")  # самый давний — первым
+    assert (
+        "setka:digest_last_published:stale_alert_cooldown:regions:novost" in dh._redis_client.store
+    )
+
+
+def test_no_stale_regions_is_fresh():
+    now = 100 * 3600.0
+    dh.mark_published("novost", region="mi", ts=now - 3600)
+    assert (
+        dh.maybe_alert_stale_regions(topic="novost", telegram_token="t", chat_id="c", now=now)
+        == "fresh"
+    )
+
+
+def test_track_digest_published_passes_region(monkeypatch):
+    seen = {}
+
+    def _mark(topic, **kw):
+        seen["topic"] = topic
+        seen["region"] = kw.get("region")
+
+    monkeypatch.setattr(dh, "mark_published", _mark)
+
+    from monitoring import metrics
+
+    metrics.track_digest_published(region="arbazh", topic="novost", result="success")
+    assert seen == {"topic": "novost", "region": "arbazh"}

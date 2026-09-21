@@ -797,6 +797,23 @@ async def get_bulletin_heartbeat():
         wd_age = (now_ts - wd_ts) if wd_ts is not None else None
         wd_status = _classify_heartbeat_age(wd_age, fresh_hours=dh.DEFAULT_MAX_AGE_HOURS)
 
+        # По регионам (P169): кто из районов давно не выпускал novost. Регион без
+        # ключа сюда не попадает — «никогда не публиковал» отказом не считается.
+        region_rows = []
+        for region, ts in dh.all_region_heartbeats("novost").items():
+            age = now_ts - ts
+            region_rows.append(
+                {
+                    "region": region,
+                    "last_published_ts": ts,
+                    "age_seconds": int(age),
+                    "status": _classify_heartbeat_age(
+                        age, fresh_hours=dh.DEFAULT_REGION_MAX_AGE_HOURS
+                    ),
+                }
+            )
+        region_rows.sort(key=lambda r: (_status_order.get(r["status"], 3), -r["age_seconds"]))
+
         return {
             "success": True,
             "data": {
@@ -806,6 +823,12 @@ async def get_bulletin_heartbeat():
                     "max_age_hours": dh.DEFAULT_MAX_AGE_HOURS,
                     "status": wd_status,
                     "age_seconds": int(wd_age) if wd_age is not None else None,
+                },
+                "regions": {
+                    "topic": "novost",
+                    "max_age_hours": dh.DEFAULT_REGION_MAX_AGE_HOURS,
+                    "rows": region_rows,
+                    "stale_count": sum(1 for r in region_rows if r["status"] == "stale"),
                 },
                 "fresh_hours": _HEARTBEAT_FRESH_HOURS,
                 "timestamp": now_moscow().isoformat(),
