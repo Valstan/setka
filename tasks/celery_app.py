@@ -1496,8 +1496,12 @@ def check_bulletin_heartbeat():
 
     Вторая проверка — по регионам (P169): тематический ключ слеп к району, а
     район без единой сводки за все слоты суток — отказ, на который сторож
-    обязан покраснеть. Список активных регионов берётся из БД, чтобы
-    выключенный район не кричал, пока не истечёт TTL ключа.
+    обязан покраснеть. Список активных регионов берётся из БД — это
+    единственное, что не даёт выключенному району кричать. Если БД недоступна,
+    список не подставляется, и региональная проверка **молчит**
+    (``skipped:no-active-regions``): нефильтрованный алёрт назвал бы давно
+    погашенные районы, а при лежащей БД волна всё равно не идёт и тематический
+    сторож покраснеет сам.
     """
     try:
         from config.runtime import SERVER, TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
@@ -1519,10 +1523,8 @@ def check_bulletin_heartbeat():
         active_regions = None
         try:
             active_regions = run_coro(_active_region_codes())
-        except Exception:  # pragma: no cover - БД недоступна → не фильтруем
-            logger.warning(
-                "active regions lookup failed, region watchdog unfiltered", exc_info=True
-            )
+        except Exception:  # pragma: no cover - БД недоступна → сторож молчит
+            logger.warning("active regions lookup failed, region watchdog silenced", exc_info=True)
         regions_status = maybe_alert_stale_regions(
             topic="novost",
             active_regions=active_regions,
