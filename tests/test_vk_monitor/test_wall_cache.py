@@ -179,3 +179,72 @@ def test_entry_under_the_cap_is_stored(_fake_redis, monkeypatch):
 def test_history_ttl_defaults_to_half_an_hour():
     """Полчаса — сознательный компромисс между экономией вызовов и памятью бокса."""
     assert wc.wall_history_ttl_seconds() == 1800
+
+
+# --------------------------------------------------------------------------- #
+# История своей стены: кэшируется РЕЗУЛЬТАТ, а не сырьё
+# --------------------------------------------------------------------------- #
+
+
+def test_history_lips_roundtrip(_fake_redis):
+    """Список lip'ов вместо снимка стены — килобайты вместо мегабайта.
+
+    Первая редакция кэшировала стену целиком, упиралась в потолок записи и
+    молча не кэшировала ничего: в Redis не было ни одного ключа своей стены, а
+    в логе ни одной жалобы. Нашлось замером, не чтением кода.
+    """
+    wc.store_history_lips(-1, {"111_1", "222_2"})
+
+    assert wc.get_cached_history_lips(-1) == ["111_1", "222_2"]
+
+
+def test_history_lips_miss_is_none_not_empty_list():
+    """Промах и «ссылок нет» — разные вещи: первый требует идти в ВК, второй нет."""
+    assert wc.get_cached_history_lips(-999) is None
+
+
+def test_empty_history_is_cached_unlike_an_empty_wall(_fake_redis):
+    """«В наших сводках нет ссылок» — осмысленный факт о районе, а не отказ ВК."""
+    wc.store_history_lips(-1, set())
+
+    assert wc.get_cached_history_lips(-1) == []
+
+
+def test_history_is_not_stored_when_ttl_is_zero(_fake_redis, monkeypatch):
+    monkeypatch.setenv("WALL_HISTORY_CACHE_TTL_SECONDS", "0")
+
+    wc.store_history_lips(-1, {"1_1"})
+
+    assert _fake_redis.store == {}
+    assert wc.get_cached_history_lips(-1) is None
+
+
+def test_invalidate_clears_both_the_snapshot_and_the_history(_fake_redis):
+    """Забыть одну запись и оставить вторую — та же несвежесть, ради которой сброс."""
+    wc.store_wall(-1, 20, _posts(20))
+    wc.store_history_lips(-1, {"1_1"})
+
+    wc.invalidate_wall(-1)
+
+    assert wc.get_cached_wall(-1, 20) is None
+    assert wc.get_cached_history_lips(-1) is None
+
+
+def test_broken_history_payload_is_a_miss(_fake_redis):
+    _fake_redis.store[wc._history_key(-1)] = "{не json"
+
+    assert wc.get_cached_history_lips(-1) is None
+
+
+def test_oversized_rejection_is_visible_at_info(_fake_redis, monkeypatch, caplog):
+    """Отказ по потолку обязан быть виден при прод-уровне логов INFO.
+
+    Именно невидимость этого отказа выключила кэш на самом ценном случае и
+    прожила до первого замера в Redis.
+    """
+    monkeypatch.setenv("WALL_CACHE_MAX_ENTRY_BYTES", "1024")
+
+    with caplog.at_level("INFO", logger="modules.vk_monitor.wall_cache"):
+        wc.store_wall(-1, 20, [{"id": i, "text": "я" * 500} for i in range(20)])
+
+    assert any("не кэширована" in r.getMessage() for r in caplog.records)
