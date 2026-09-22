@@ -65,11 +65,40 @@ def wall_cache_ttl_seconds() -> int:
 
 
 def wall_history_ttl_seconds() -> int:
-    """TTL собственной стены района (история публикаций, только текст)."""
+    """TTL собственной стены района (история публикаций, только текст).
+
+    Полчаса, а не час, и причина — память БОКСА, а не Redis.
+
+    Кэш платит оперативной памятью за вызовы ВК, а платить ей здесь особенно
+    нечем: на боксе 1536 МБ, свободно около 274 МБ, у Redis **не выставлен
+    maxmemory** и политика ``noeviction`` — то есть он просто растёт. Ровно на
+    этом боксе ядро убивает celery по памяти (P164), и сделать кэш новой
+    причиной тех же убийств было бы обидно.
+
+    Полчаса ловят главное — волны, стоящие в расписании кучно (на :20 три темы,
+    на :30 три темы): своя стена читается один раз на такую кучу вместо трёх.
+    Час дал бы сверх этого немного, а резидентную часть кэша увеличил бы вдвое.
+
+    Поднять — одна переменная окружения, после того как замер на проде покажет
+    реальный размер (``redis-cli info memory`` до и после).
+    """
     try:
-        return max(0, int(float(_getenv("WALL_HISTORY_CACHE_TTL_SECONDS", "3600"))))
+        return max(0, int(float(_getenv("WALL_HISTORY_CACHE_TTL_SECONDS", "1800"))))
     except ValueError:
-        return 3600
+        return 1800
+
+
+def wall_cache_max_entry_bytes() -> int:
+    """Потолок одной записи. Стена жирнее — не кэшируется вовсе.
+
+    Страховка от патологии: пост с полусотней вложений или стена, где ВК отдал
+    неожиданно много, не должны в одиночку занять десяток мегабайт на боксе,
+    где их 274. Промах дешевле разросшегося Redis.
+    """
+    try:
+        return max(0, int(float(_getenv("WALL_CACHE_MAX_ENTRY_BYTES", "262144"))))
+    except ValueError:
+        return 262144
 
 
 def _redis():
@@ -171,6 +200,14 @@ def store_wall(
             ensure_ascii=False,
             default=str,
         )
+        cap = wall_cache_max_entry_bytes()
+        if cap and len(payload.encode("utf-8")) > cap:
+            logger.debug(
+                "wall cache: стена %s больше потолка записи (%d Б) — не кэшируем",
+                owner_id,
+                cap,
+            )
+            return
         client.setex(_key(owner_id), effective_ttl, payload)
     except Exception:
         logger.debug("wall cache: запись не удалась", exc_info=True)

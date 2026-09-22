@@ -126,7 +126,7 @@ def test_invalidate_forgets_the_wall():
 def test_history_ttl_is_used_when_asked(_fake_redis):
     wc.store_wall(-1, 100, _posts(100), ttl=wc.wall_history_ttl_seconds())
 
-    assert _fake_redis.ttls[wc._key(-1)] == 3600
+    assert _fake_redis.ttls[wc._key(-1)] == wc.wall_history_ttl_seconds()
 
 
 def test_broken_redis_is_a_miss_not_an_exception(monkeypatch):
@@ -151,4 +151,31 @@ def test_ttl_env_garbage_falls_back_to_defaults(monkeypatch):
     monkeypatch.setenv("WALL_HISTORY_CACHE_TTL_SECONDS", "час")
 
     assert wc.wall_cache_ttl_seconds() == 300
-    assert wc.wall_history_ttl_seconds() == 3600
+    assert wc.wall_history_ttl_seconds() == 1800
+
+
+def test_oversized_wall_is_not_cached(_fake_redis, monkeypatch):
+    """Кэш не имеет права стать причиной нехватки памяти на боксе.
+
+    У Redis на проде не выставлен maxmemory и стоит noeviction, свободно около
+    274 МБ, и ровно на этом боксе ядро убивает celery по памяти (P164). Одна
+    патологическая стена не должна занимать мегабайты: промах дешевле.
+    """
+    monkeypatch.setenv("WALL_CACHE_MAX_ENTRY_BYTES", "1024")
+
+    wc.store_wall(-1, 20, [{"id": i, "text": "я" * 500} for i in range(20)])
+
+    assert _fake_redis.store == {}
+
+
+def test_entry_under_the_cap_is_stored(_fake_redis, monkeypatch):
+    monkeypatch.setenv("WALL_CACHE_MAX_ENTRY_BYTES", "1048576")
+
+    wc.store_wall(-1, 20, _posts(20))
+
+    assert wc._key(-1) in _fake_redis.store
+
+
+def test_history_ttl_defaults_to_half_an_hour():
+    """Полчаса — сознательный компромисс между экономией вызовов и памятью бокса."""
+    assert wc.wall_history_ttl_seconds() == 1800
