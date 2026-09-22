@@ -70,7 +70,13 @@ class VKCommentsChecker(BaseVKChecker):
                     owner_id=owner_id,
                     post_id=post_id,
                     need_likes=0,
-                    extended=1,  # join profiles[]/groups[] (для имени автора)
+                    # extended=0 сознательно. Прежний extended=1 тянул
+                    # profiles[]/groups[] на КАЖДОЙ странице каждого поста
+                    # каждого региона, а читаем мы из ответа ровно items и
+                    # count: имя автора нигде не берётся, в уведомление уходит
+                    # только from_id (см. _build_comment_notification). Это был
+                    # трафик и память под данные, которые тут же выбрасывались.
+                    extended=0,
                     thread_items=1,  # вернуть thread.items (ответы на коммент)
                     count=self._PAGE_SIZE,
                     offset=_offset,
@@ -265,7 +271,13 @@ class VKCommentsChecker(BaseVKChecker):
             "from_id": c.get("from_id"),
             "likes_count": (c.get("likes") or {}).get("count", 0),
             "has_attachments": bool(c.get("attachments")),
-            "text": text,
+            # Потолок ровно 1500, а не круглая тысяча: столько берёт самый
+            # жадный потребитель этого поля — черновик ответа ИИ
+            # (``ai_drafter.build_prompt``, ``original_text[:1500]``). Лента в
+            # UI показывает 120 символов превью. Значит на 1500 не теряет
+            # никто, а длинный комментарий ВК перестаёт лежать в памяти задачи
+            # целиком.
+            "text": text[:1500],
             "post_url": post_url,
             "commented_at": datetime.utcfromtimestamp(int(c_date)).isoformat() if c_date else None,
             "checked_at": now_iso,
@@ -283,6 +295,7 @@ class VKCommentsChecker(BaseVKChecker):
         max_posts_per_group: int = 50,
         max_comments_per_post: int = 100,  # back-compat; per-post pagination
         max_total_comments: int = 5000,
+        max_comments_per_region: int = 500,
     ) -> List[Dict[str, Any]]:
         """
         Собрать комментарии за последние 24 часа из главных региональных групп (ИНФО).
@@ -291,6 +304,14 @@ class VKCommentsChecker(BaseVKChecker):
         Сейчас `max_total_comments` — только safety-кап от raw-памяти.
         Каждый пост сканируется полностью через `check_post_comments_since`,
         включая ответы первого уровня (`thread.items`).
+
+        `max_comments_per_region` — не про память, а про справедливость, и это
+        разные вещи. Общий кап 5000 обрывает обход ЦЕЛИКОМ и делает это в
+        порядке обхода регионов: один район с виральной веткой мог выбрать весь
+        лимит и оставить остальные сорок с лишним вовсе непрочитанными, причём
+        в логе это выглядело как «дошли до капа», а не как «потеряли сорок
+        районов». Региональный кап отрезает хвост шумного района (с
+        предупреждением, в котором есть его код) и пускает обход дальше.
         """
         notifications: List[Dict[str, Any]] = []
         now_iso = datetime.utcnow().isoformat()
@@ -307,7 +328,12 @@ class VKCommentsChecker(BaseVKChecker):
                 count=max_posts_per_group,
             )
 
+            region_notifications: List[Dict[str, Any]] = []
+            region_is_full = False
+
             for p in recent_posts:
+                if region_is_full:
+                    break
                 post_id = p.get("id")
                 if not post_id:
                     continue
@@ -331,11 +357,21 @@ class VKCommentsChecker(BaseVKChecker):
                     "community_name": g.get("region_name"),
                 }
                 for c in comments:
-                    if len(notifications) >= max_total_comments:
+                    if len(region_notifications) >= max_comments_per_region:
+                        logger.warning(
+                            "%s: больше %d комментариев за сутки — хвост района "
+                            "обрезан, обход продолжается по остальным",
+                            g.get("region_code") or owner_id,
+                            max_comments_per_region,
+                        )
+                        region_is_full = True
+                        break
+                    if len(notifications) + len(region_notifications) >= max_total_comments:
                         logger.warning(
                             f"Reached max_total_comments safety cap "
                             f"({max_total_comments}); truncating output"
                         )
+                        notifications.extend(region_notifications)
                         return self._sort_newest_first(notifications)
                     notif = self._build_comment_notification(
                         c,
@@ -346,7 +382,9 @@ class VKCommentsChecker(BaseVKChecker):
                         now_iso=now_iso,
                     )
                     if notif is not None:
-                        notifications.append(notif)
+                        region_notifications.append(notif)
+
+            notifications.extend(region_notifications)
 
         logger.info(
             f"Found {len(notifications)} recent comments notifications "

@@ -51,7 +51,10 @@ def test_single_page_under_100_no_pagination():
     assert kwargs["offset"] == 0
     assert kwargs["count"] == 100
     assert kwargs["thread_items"] == 1
-    assert kwargs["extended"] == 1
+    # extended=0: profiles[]/groups[] из ответа не читает никто (в уведомление
+    # уходит только from_id), а тянулись они на каждой странице каждого поста
+    # каждого района. Гейт, чтобы «для имени автора» не вернулось по привычке.
+    assert kwargs["extended"] == 0
 
 
 def test_pagination_three_pages():

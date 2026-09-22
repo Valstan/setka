@@ -456,3 +456,80 @@ async def test_apply_metrics_counts_an_already_dated_row_once(db_session):
     ).scalar_one()
     assert row.published_at == existing_date  # дата поста не меняется
     assert row.views == 20
+
+
+@pytest.mark.asyncio
+async def test_load_published_lips_narrows_to_candidates(db_session):
+    """Вопрос задаётся только про кандидатов окна — ответ от этого не меняется.
+
+    Без сужения функция поднимала в память ВСЮ колонку work_tables.lip, то
+    есть всю историю публикаций сети, хотя вызывающему нужно пересечение с
+    7,8 тыс. кандидатов окна. На боксе с 1536 МБ и без swap это разница,
+    которая достаётся даром: drop_already_published всё равно смотрит только
+    на кандидатов.
+    """
+    WorkTable = await _make_work_tables(db_session)
+    db_session.add_all(
+        [_work(WorkTable, ["1_10", "2_20"], "novost"), _work(WorkTable, ["3_30"], "sport")]
+    )
+    await db_session.commit()
+
+    from modules.classifier.metrics_refresh import load_published_lips
+
+    out = await load_published_lips(db_session, {"2_20", "9_99"})
+
+    assert out == {"2_20"}
+
+
+@pytest.mark.asyncio
+async def test_load_published_lips_without_candidates_keeps_old_behaviour(db_session):
+    """Без аргумента — прежний полный ответ: сужение не должно быть обязательным."""
+    WorkTable = await _make_work_tables(db_session)
+    db_session.add_all([_work(WorkTable, ["1_10", "2_20"], "novost")])
+    await db_session.commit()
+
+    from modules.classifier.metrics_refresh import load_published_lips
+
+    assert await load_published_lips(db_session) == {"1_10", "2_20"}
+
+
+@pytest.mark.asyncio
+async def test_load_published_lips_with_empty_candidates_asks_nothing(db_session):
+    """Пустое множество кандидатов — не повод ходить в БД."""
+    WorkTable = await _make_work_tables(db_session)
+    db_session.add_all([_work(WorkTable, ["1_10"], "novost")])
+    await db_session.commit()
+
+    from modules.classifier.metrics_refresh import load_published_lips
+
+    assert await load_published_lips(db_session, set()) == set()
+
+
+@pytest.mark.asyncio
+async def test_refresh_metrics_asks_only_about_window_candidates(db_session, monkeypatch):
+    """refresh_metrics обязан передавать кандидатов, иначе сужение мертво.
+
+    Легко сделать функцию с необязательным аргументом и забыть его передать:
+    тесты самой функции останутся зелёными, а на проде ничего не изменится.
+    """
+    from unittest.mock import AsyncMock
+
+    from modules import vk_token_router as token_router_mod
+    from modules.classifier import metrics_refresh as mod
+
+    seen = {}
+
+    async def _fake_candidates(session, *, hours):
+        return ([((-100, 7), "100_7")], 0)
+
+    async def _fake_published(session, candidate_lips=None):
+        seen["candidates"] = candidate_lips
+        return set()
+
+    monkeypatch.setattr(mod, "select_refresh_candidates", _fake_candidates)
+    monkeypatch.setattr(mod, "load_published_lips", _fake_published)
+    monkeypatch.setattr(token_router_mod, "get_healthy_read_token", AsyncMock(return_value=None))
+
+    await mod.refresh_metrics(db_session)
+
+    assert seen["candidates"] == {"100_7"}

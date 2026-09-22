@@ -826,6 +826,32 @@ class AdvancedVKParser:
                 return True
         return False
 
+    def release_wave_state(self) -> None:
+        """Отпустить память волны: кэш стен и все множества дедупа.
+
+        Экземпляр парсера живёт ровно одну волну, и сборщик мусора забрал бы
+        это сам — но когда дойдут руки. На боксе с 1536 МБ и без swap важно не
+        «когда-нибудь», а «до фазы публикации»: районы идут в одном дочернем
+        процессе подряд, и хвост предыдущей волны складывается с пиком
+        следующей (P164).
+
+        Зовётся ПОСЛЕ ``get_stats()`` и чтения ``_skipped_duplicates``: это
+        части того же состояния, и порядок здесь — не стилистика. Повторный
+        вызов безвреден, ``parse_posts_from_communities`` переинициализирует
+        всё, чего касается.
+        """
+        self._wall_cache = {}
+        self._batch_lips = set()
+        self._batch_lip_by_key = {}
+        self._batch_text_fps = set()
+        self._batch_core_fps = set()
+        self._batch_media_sigs = set()
+        self._batch_text_simhashes = set()
+        self._batch_token_sets = []
+        self._historical_text_simhashes = []
+        self._skipped_duplicates = []
+        self._blocked_lips = set()
+
     def get_stats(self) -> Dict[str, Any]:
         """Get parsing statistics (for stat_mode)."""
         return self.stats.copy()
