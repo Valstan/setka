@@ -3,7 +3,13 @@
 from modules.publisher.bulletin_builder import BulletinBuilder
 
 
-def test_empty_header_starts_with_post_marker_not_default_title():
+def test_post_starts_with_the_news_text_itself():
+    """Ни шапки, ни маркера — пост начинается тем, ради чего его читают.
+
+    Маркер ✍ снят 22.09 вместе с шапками (решение владельца: «чистые посты, как
+    в оригинале»). Первый экран — официально названный сигнал выдачи ВК, и
+    занимать его служебным символом нечем.
+    """
     posts = [
         {
             "owner_id": -100,
@@ -17,7 +23,9 @@ def test_empty_header_starts_with_post_marker_not_default_title():
     b = BulletinBuilder(header="", hashtags=["тест"], local_hashtag="#тест", max_text_length=4096)
     r = b.build_bulletin(posts, group_names={"100": "Группа тест"})
     assert not r.text.startswith("📰")
-    assert r.text.startswith("✍ ")
+    assert "✍" not in r.text
+    assert r.text.startswith("Текст новости")
+    # Атрибуция остаётся: владелец просил убрать шапки, а не ссылки на источник.
     assert "[https://vk.com/wall-100_1|Группа тест]" in r.text
     assert "#тест" in r.text
 
