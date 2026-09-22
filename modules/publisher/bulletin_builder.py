@@ -61,8 +61,21 @@ class BulletinBuilder:
     # Default header
     DEFAULT_HEADER = "📰 Сводка новостей"
 
-    # Post separator emoji (from old_postopus style)
-    POST_MARKER = "✍ "
+    # Маркер ✍ перед каждым элементом СНЯТ 2026-09-22 (решение владельца).
+    #
+    # Он достался от old_postopus и разделял новости внутри сводки. После
+    # перехода на одну новость в посте (P168) разделять ему нечего: он стал
+    # просто первым символом каждой публикации — а со снятием шапок тем в тот
+    # же день ещё и единственным, что отличало наш пост от оригинала.
+    # Владелец: «оставь чистые посты, как они есть в оригинале».
+    #
+    # Разделение элементов в многоэлементной сводке не пострадало: между ними
+    # и раньше стояла пустая строка, маркер был украшением поверх неё.
+    #
+    # ⚠️ На маркере считал элементы прибор `scripts/probe_post_form_reach.py`
+    # (замер «одиночный пост против сводки», P168). Он переведён на подсчёт
+    # ссылок-атрибуций — иначе молча считал бы все посты после 22.09 «не нашей
+    # вёрсткой» и выбрасывал бы их из замера.
 
     def __init__(
         self,
@@ -120,11 +133,11 @@ class BulletinBuilder:
         Format (old_postopus style):
             {HEADER}
 
-            ✍ {post_text_1}
+            {post_text_1}
 
             @https://vk.com/wall-... (source_name)
 
-            ✍ {post_text_2}
+            {post_text_2}
 
             @https://vk.com/wall-... (source_name)
 
@@ -271,10 +284,10 @@ class BulletinBuilder:
         group_name: str,
     ) -> str:
         """
-        Format a single post entry with ✍ marker, text, and source attribution.
+        Format a single post entry: text and source attribution.
 
         Format:
-            ✍ {post_text}
+            {post_text}
 
             @https://vk.com/wall{owner_id}_{post_id} (group_name)
 
@@ -292,10 +305,9 @@ class BulletinBuilder:
 
         # Post marker + text
         if post_text:
-            parts.append(f"{self.POST_MARKER}{post_text}")
+            parts.append(post_text)
         else:
-            # Text-only post with marker
-            parts.append(f"{self.POST_MARKER}[без текста]")
+            parts.append("[без текста]")
 
         # Empty line between text and attribution only when attribution is present
         if not post_data.get("hide_attribution"):

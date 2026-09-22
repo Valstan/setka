@@ -38,6 +38,31 @@ class TestForm:
     def test_foreign_post_is_not_classified(self):
         """Чужая вёрстка (репост, ручной пост) — не наша форма, в замер не идёт."""
         assert post_form("просто текст") is None
+
+    def test_posts_after_the_marker_was_dropped_still_count(self):
+        """22.09 маркер ✍ сняли — прибор обязан пережить эту границу.
+
+        Считать только по маркеру значило бы с этой даты возвращать 0 на каждом
+        нашем посте: замер тихо объявил бы всю новую вёрстку чужой и выбросил её
+        из сравнения, ничем этого не выдав. Признак после границы —
+        ссылка-атрибуция, по одной на элемент.
+        """
+        one = "Текст новости\n\n[https://vk.com/wall-100_1|Группа]"
+        two = (
+            "Первая\n\n[https://vk.com/wall-100_1|Группа]\n\n"
+            "Вторая\n\n[https://vk.com/wall-200_2|Другая]"
+        )
+
+        assert item_count(one) == 1
+        assert post_form(one) == "single"
+        assert item_count(two) == 2
+        assert post_form(two) == "digest"
+
+    def test_marker_still_wins_for_historical_posts(self):
+        """У постов до границы есть и маркер, и атрибуции — считаем по маркеру."""
+        text = f"{MARK} раз\n[https://vk.com/wall-1_1|Г]\n{MARK} два"
+
+        assert item_count(text) == 2
         assert post_form("") is None
 
 
