@@ -80,7 +80,23 @@ def region_display_name(region: Any, heshteg_local: Optional[dict]) -> str:
 def resolve_bulletin_header(region_config: Any, theme: str, region: Any) -> str:
     """
     Заголовок сводки: из zagolovki[theme], иначе русский шаблон по теме и региону.
+
+    **По умолчанию шапки нет вовсе** (решение владельца 2026-09-22): пустая
+    строка — это «публиковать без заголовка», ``BulletinBuilder`` понимает её
+    именно так (``None`` дал бы дефолтную шапку, поэтому здесь важно вернуть
+    именно ``""``).
+
+    Почему убрали и чего это НЕ даёт — у флага
+    ``config.runtime.bulletin_header_enabled``. Возврат к шапкам — одна
+    переменная окружения, включая районы с собственными ``zagolovki``: флаг
+    стоит ПЕРЕД чтением конфига, иначе «убрали шапки» означало бы «убрали у
+    всех, кроме тех, кто настраивал их руками», то есть ровно не то.
     """
+    from config.runtime import bulletin_header_enabled
+
+    if not bulletin_header_enabled():
+        return ""
+
     z = getattr(region_config, "zagolovki", None) or {}
     if isinstance(z, dict) and theme in z:
         raw = z.get(theme)

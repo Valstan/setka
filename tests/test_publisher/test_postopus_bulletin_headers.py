@@ -1,4 +1,9 @@
-"""postopus_bulletin_headers fallbacks."""
+"""postopus_bulletin_headers: шапка выключена по умолчанию, шаблоны живы под флагом.
+
+Шапки сняты решением владельца 2026-09-22 («место занимают, текст новости в
+ленте скрыт, читателю не за что зацепиться»). Сами шаблоны не удалены — возврат
+одной переменной окружения, поэтому тесты шаблонов включают флаг явно.
+"""
 
 from types import SimpleNamespace
 
@@ -9,7 +14,34 @@ from modules.publisher.postopus_bulletin_headers import (
 )
 
 
-def test_resolve_header_fallback_sport_russian():
+def test_header_is_empty_by_default(monkeypatch):
+    """Дефолт — пост без шапки, как оригинал.
+
+    Пустая строка, а не None: ``BulletinBuilder`` читает "" как «без
+    заголовка», а None — как «поставь дефолтный». Разница молчаливая.
+    """
+    monkeypatch.delenv("BULLETIN_HEADER_ENABLED", raising=False)
+    rc = SimpleNamespace(zagolovki={}, heshteg_local={"raicentr": "лебяжье"})
+    region = SimpleNamespace(name="Лебяжье", code="leb")
+
+    assert resolve_bulletin_header(rc, "sport", region) == ""
+
+
+def test_flag_beats_a_region_with_its_own_headers(monkeypatch):
+    """Район с собственными zagolovki тоже остаётся без шапки.
+
+    Иначе «убрали шапки» означало бы «убрали у всех, кроме тех, кто настраивал
+    их руками» — то есть у самых обжитых районов шапки бы и остались.
+    """
+    monkeypatch.delenv("BULLETIN_HEADER_ENABLED", raising=False)
+    rc = SimpleNamespace(zagolovki={"sport": "Свой заголовок"}, heshteg_local={})
+    region = SimpleNamespace(name="Лебяжье", code="leb")
+
+    assert resolve_bulletin_header(rc, "sport", region) == ""
+
+
+def test_resolve_header_fallback_sport_russian(monkeypatch):
+    monkeypatch.setenv("BULLETIN_HEADER_ENABLED", "1")
     rc = SimpleNamespace(zagolovki={}, heshteg_local={"raicentr": "лебяжье"})
     region = SimpleNamespace(name="Лебяжье", code="leb")
     h = resolve_bulletin_header(rc, "sport", region)
@@ -25,7 +57,8 @@ def test_resolve_hashtags_fallback_combined_and_local():
     assert loc == "#лебяжье"
 
 
-def test_resolve_header_oblast_fallback():
+def test_resolve_header_oblast_fallback(monkeypatch):
+    monkeypatch.setenv("BULLETIN_HEADER_ENABLED", "1")
     rc = SimpleNamespace(zagolovki={}, heshteg_local={"raicentr": "киров"})
     region = SimpleNamespace(name="Кировская область", code="kirov_obl")
     h = resolve_bulletin_header(rc, "oblast", region)
@@ -38,3 +71,13 @@ def test_resolve_mourning_bulletin_format_is_plain_text_only():
     assert header == ""
     assert tags == []
     assert local == ""
+
+
+def test_hashtags_and_attribution_are_not_headers(monkeypatch):
+    """Снятие шапки не трогает хэштеги — владелец просил оставить их внизу."""
+    monkeypatch.delenv("BULLETIN_HEADER_ENABLED", raising=False)
+    rc = SimpleNamespace(heshteg={}, heshteg_local={"raicentr": "лебяжье"})
+
+    tags, loc = resolve_bulletin_hashtags(rc, "sport")
+
+    assert tags and loc == "#лебяжье"
