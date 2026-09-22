@@ -154,7 +154,7 @@ def test_ttl_env_garbage_falls_back_to_defaults(monkeypatch):
     monkeypatch.setenv("WALL_HISTORY_CACHE_TTL_SECONDS", "час")
 
     assert wc.wall_cache_ttl_seconds() == 0
-    assert wc.wall_history_ttl_seconds() == 1800
+    assert wc.wall_history_ttl_seconds() == 21600
 
 
 def test_oversized_wall_is_not_cached(_fake_redis, monkeypatch):
@@ -179,9 +179,16 @@ def test_entry_under_the_cap_is_stored(_fake_redis, monkeypatch):
     assert wc._key(-1) in _fake_redis.store
 
 
-def test_history_ttl_defaults_to_half_an_hour():
-    """Полчаса — сознательный компромисс между экономией вызовов и памятью бокса."""
-    assert wc.wall_history_ttl_seconds() == 1800
+def test_history_ttl_is_long_because_the_entry_is_tiny():
+    """Шесть часов, а не полчаса, и это следствие переделки хранения.
+
+    Полчаса выбирались, когда в кэше лежал снимок стены (около мегабайта на
+    район). После перехода на хранение результата запись весит ~2 КБ — все 57
+    районов около 114 КБ. Причина ограничения исчезла, а короткий TTL гнал
+    волны в ВК за историей, которая между публикациями не меняется по
+    определению: её сбрасывает сама публикация.
+    """
+    assert wc.wall_history_ttl_seconds() == 6 * 3600
 
 
 # --------------------------------------------------------------------------- #
@@ -269,7 +276,7 @@ def test_history_cache_stays_on_by_default(monkeypatch):
     """А работающая половина остаётся: 53 района из 57, ~2 КБ на запись."""
     monkeypatch.delenv("WALL_HISTORY_CACHE_TTL_SECONDS", raising=False)
 
-    assert wc.wall_history_ttl_seconds() == 1800
+    assert wc.wall_history_ttl_seconds() == 21600
 
 
 def test_donor_store_is_a_noop_while_off(_fake_redis, monkeypatch):
