@@ -589,6 +589,25 @@ def parse_and_publish_theme(
                         attachments=hl_attachments,
                     )
                     results.append(("headliner", hl_bulletin, hl_result))
+                    # Heartbeat и с этого пути тоже. Хедлайнер пишет строку в
+                    # published_posts (kind='headliner'), но ключ сторожа до
+                    # 2026-09-22 не обновлял: волна, где прошёл ТОЛЬКО он,
+                    # оставляла живой район без свежего ключа, и сторож краснел
+                    # на работающем — ложная тревога, не пропуск. При MIN_POOL=3
+                    # (modules/publisher/headliner.py) сценарий почти
+                    # недостижим, но цена строки нулевая, а режим отказа реален.
+                    try:
+                        from monitoring.metrics import publish_result_label, track_digest_published
+
+                        track_digest_published(
+                            region=region.code,
+                            topic=theme,
+                            result=publish_result_label(hl_result),
+                        )
+                    except (
+                        Exception
+                    ):  # pragma: no cover - metrics никогда не должны валить публикацию
+                        logger.warning("track_digest_published failed (headliner)", exc_info=True)
                     logger.info(
                         "Headliner published (region=%s theme=%s chars=%d atts=%d)",
                         region.code,

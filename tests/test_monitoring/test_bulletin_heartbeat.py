@@ -18,9 +18,13 @@ class _FakeRedis:
 
     def __init__(self):
         self.store = {}
+        # TTL запоминаем: срок жизни ключа — предмет отдельного теста
+        # (амнезия сторожа, 2026-09-22), а не деталь, которую можно выбросить.
+        self.ttls = {}
 
-    def setex(self, key, ttl, value):  # noqa: ARG002 — ttl не моделируем
+    def setex(self, key, ttl, value):
         self.store[key] = str(value)
+        self.ttls[key] = ttl
 
     def get(self, key):
         return self.store.get(key)
@@ -337,7 +341,11 @@ def test_topic_fresh_but_region_stale_is_caught():
         == "fresh"
     )
     assert dh.maybe_alert_stale_regions(
-        topic="novost", telegram_token=None, chat_id=None, now=now
+        topic="novost",
+        active_regions={"arbazh", "mi"},
+        telegram_token=None,
+        chat_id=None,
+        now=now,
     ) == ("skipped:no-telegram-config")
 
 
@@ -359,8 +367,13 @@ def test_stale_regions_alert_once_with_cooldown(monkeypatch):
     now = 100 * 3600.0
     dh.mark_published("novost", region="arbazh", ts=now - 30 * 3600)
     dh.mark_published("novost", region="podosinovets", ts=now - 50 * 3600)
-    first = dh.maybe_alert_stale_regions(topic="novost", telegram_token="t", chat_id="42", now=now)
-    second = dh.maybe_alert_stale_regions(topic="novost", telegram_token="t", chat_id="42", now=now)
+    active = {"arbazh", "podosinovets"}
+    first = dh.maybe_alert_stale_regions(
+        topic="novost", active_regions=active, telegram_token="t", chat_id="42", now=now
+    )
+    second = dh.maybe_alert_stale_regions(
+        topic="novost", active_regions=active, telegram_token="t", chat_id="42", now=now
+    )
     assert first == "alert-sent:2"
     assert second == "skipped:cooldown"
     assert len(sent) == 1
@@ -376,9 +389,96 @@ def test_no_stale_regions_is_fresh():
     now = 100 * 3600.0
     dh.mark_published("novost", region="mi", ts=now - 3600)
     assert (
-        dh.maybe_alert_stale_regions(topic="novost", telegram_token="t", chat_id="c", now=now)
+        dh.maybe_alert_stale_regions(
+            topic="novost",
+            active_regions={"mi"},
+            telegram_token="t",
+            chat_id="c",
+            now=now,
+        )
         == "fresh"
     )
+
+
+def test_active_region_without_key_is_not_alerted():
+    """Записанный компромисс: «ключа нет» ≠ «отказ» — теперь защёлкнут тестом.
+
+    До 2026-09-22 инвариант жил только в прозе докстрингов, и запись P169
+    утверждала покрытие, которого в тестах не было. Цена компромисса измерена
+    (район, чей поток умер до выката ключа, невидим, пока не опубликует), и
+    менять его — решение владельца; пока он в силе, он обязан быть виден
+    падением теста, а не чтением комментария.
+    """
+    now = 100 * 3600.0
+    dh.mark_published("novost", region="publishes", ts=now - 3600)
+    stale = dh.stale_regions(
+        "novost", max_age_hours=26, active_regions={"publishes", "silent"}, now=now
+    )
+    assert stale == []
+
+
+def test_region_key_ttl_outlives_long_outage():
+    """Ключ должен пережить долгий отказ, а не истечь посреди него.
+
+    Защёлка от возврата к 14 суткам: при пороге 26 ч ключ с коротким TTL
+    истекал раньше, чем кончался отказ, район выпадал из скана и сторож
+    возвращался к ``fresh`` — см. ``test_region_stale_after_long_silence``.
+    """
+    dh.mark_published("novost", region="r", ts=1000.0)
+    ttl = dh._redis_client.ttls["setka:digest_last_published:region:r:novost"]
+    assert ttl >= 60 * 24 * 3600, "TTL короче двух месяцев возвращает амнезию сторожа"
+    assert ttl == dh._HEARTBEAT_TTL_SECONDS
+
+
+def test_region_stale_after_long_silence_still_alerts(monkeypatch):
+    """Регресс на амнезию: молчащий 20 суток район всё ещё в списке.
+
+    С прежним TTL 14 суток ключа в Redis к этому моменту уже не было бы,
+    ``all_region_heartbeats`` его бы не увидел и сторож сказал бы ``fresh`` —
+    по району, о котором двумя неделями раньше кричал.
+    """
+    sent = []
+
+    class _Resp:
+        status_code = 200
+        text = "ok"
+
+    import requests
+
+    monkeypatch.setattr(requests, "post", lambda url, **kw: (sent.append(kw), _Resp())[1])
+
+    ts = 1_000_000.0
+    dh.mark_published("novost", region="dead", ts=ts)
+    now = ts + 20 * 24 * 3600
+    status = dh.maybe_alert_stale_regions(
+        topic="novost", active_regions={"dead"}, telegram_token="t", chat_id="42", now=now
+    )
+    assert status == "alert-sent:1"
+    assert "dead" in sent[0]["json"]["text"]
+
+
+def test_region_alert_skipped_when_active_regions_unknown(monkeypatch):
+    """Fail-closed: без списка активных сторож молчит, а не кричит нефильтрованно.
+
+    ``active_regions=None`` приходит только когда БД недоступна
+    (``tasks.celery_app._active_region_codes`` упал). Нефильтрованный список
+    назвал бы давно погашенные районы — с TTL в 90 суток надолго.
+    """
+    sent = []
+
+    import requests
+
+    monkeypatch.setattr(requests, "post", lambda url, **kw: sent.append(kw))
+
+    now = 100 * 3600.0
+    dh.mark_published("novost", region="off", ts=now - 40 * 3600)
+    status = dh.maybe_alert_stale_regions(
+        topic="novost", active_regions=None, telegram_token="t", chat_id="42", now=now
+    )
+    assert status == "skipped:no-active-regions"
+    assert sent == []
+    # stale_regions семантику None сохраняет — на ней дашборд.
+    assert [r for r, _ in dh.stale_regions("novost", max_age_hours=26, now=now)] == ["off"]
 
 
 def test_track_digest_published_passes_region(monkeypatch):
