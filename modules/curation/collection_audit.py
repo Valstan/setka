@@ -14,8 +14,20 @@
 том же порядке — чтобы не трогать логику фильтра (нулевой риск для публикации).
 Coupling с ``_filter_post`` отмечен в ADR-0004: при изменении фильтров синхронить.
 
-Механические дропы (возраст / дедуп / black_id) и region_words (MVP-лимит) →
-``reason=None`` → НЕ пишем: это не «пере-фильтрация», а корректный шум.
+Механические дропы (возраст / дедуп / black_id / blocked_lips) и region_words
+(MVP-лимит) → ``reason=None`` → НЕ пишем: это не «пере-фильтрация», а корректный
+шум. **Следствие, за которое уже заплачено:** «в таблице нет дропов» НЕ значит
+«постов не отбрасывали» — самый частый слой отсева здесь невидим по замыслу.
+
+**Таблица непригодна для сравнения регионов и тем по ОБЪЁМУ сбора.** ``lip``
+уникален ГЛОБАЛЬНО (``CollectedPostAudit.lip``, ``unique=True``), а дедуп в
+``record_collection_audit`` фильтрует по ``lip`` без предиката на ``region_code``
+и ``theme``: пост записывается один раз в жизни — на ту пару (регион, тема), чья
+волна увидела его первой во всей сети. У района, чьи стены читают волны восьми
+тем в сутки, счётчик по одной теме систематически обнуляется в пользу более
+ранней волны. Объём сбора мерить по ``parsing_stats.total_posts_scanned``
+(P171, разбор 2026-09-22: сравнение районов по этой таблице дало неверный
+диагноз — «6 против медианы 90» оказалось артефактом дедупа).
 """
 
 from __future__ import annotations
@@ -26,7 +38,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from config.runtime import collection_audit_shadow_enabled, get_collection_audit_region_codes
 from modules.filters.ads_filter import is_marked_advertisement
 from utils.post_utils import clear_copy_history, lip_of_post, vk_post_datetime
-from utils.text_utils import check_blacklist, is_advertisement, is_hard_spam
+from utils.text_utils import check_blacklist, is_advertisement, is_hard_spam, is_neighbor_bulletin
 from utils.vk_attachments import summarize_media
 
 logger = logging.getLogger(__name__)
@@ -73,6 +85,14 @@ def _derive_drop_reason(post: Dict[str, Any], theme: str, region_config: Any) ->
     # _filter_post шаг 5a). Проверяем первым — совпадает с порядком фильтра.
     if is_hard_spam(text):
         return "hard_spam"
+    # Шаг 5b: своя же соседская сводка — конечный продукт, обратно в оборот не
+    # берём никогда (матрёшка «сводка в сводке», Малмыж 2026-07-27). Это
+    # content-дроп, а не механический, поэтому по ADR-0004 он обязан быть виден
+    # классификатору — до 2026-09-22 шаг существовал в фильтре
+    # (advanced_parser, счётчик posts_filtered_neighbor_bulletin) и отсутствовал
+    # здесь, то есть соседские сводки выбрасывались без следа (P171).
+    if is_neighbor_bulletin(text):
+        return "neighbor_bulletin"
     # Шаг 5c: чужая РАЗМЕЧЕННАЯ реклама — тоже для всех тем, включая reklama.
     # Порядок и определение те же, что в _filter_post (coupling ADR-0004).
     if is_marked_advertisement(post):
@@ -196,38 +216,70 @@ async def record_collection_audit(
             collected=collected or [],
             kept=kept or [],
         )
-        if not records:
-            return
-
-        from sqlalchemy import select
-
-        from database.connection import AsyncSessionLocal
-        from database.models_extended import CollectedPostAudit
-
-        lips = [r["lip"] for r in records]
-        async with AsyncSessionLocal() as session:
-            existing = {
-                lip
-                for (lip,) in (
-                    await session.execute(
-                        select(CollectedPostAudit.lip).where(CollectedPostAudit.lip.in_(lips))
-                    )
-                ).all()
-            }
-            added = 0
-            for r in records:
-                if r["lip"] in existing:
-                    continue
-                existing.add(r["lip"])
-                session.add(CollectedPostAudit(**r))
-                added += 1
-            if added:
-                await session.commit()
+        added = 0
+        if records:
+            added = await _persist(records)
+        # Печатаем ВСЕГДА и четырьмя числами. До 2026-09-22 строка стояла после
+        # раннего `return` при пустых records, и журнал получался инвертирован:
+        # «постов не было» не печаталось ВООБЩЕ, а `recorded 0` означало
+        # противоположное — «посты пришли, прошли фильтр, но все их lip уже в
+        # таблице». На этой инверсии разбор 22.09 построил неверный вывод о
+        # пуле источников Подосиновца (P171). Теперь четыре случая различимы:
+        #   collected=0                    — ВК не отдал ничего;
+        #   collected=N records=0          — всё ушло в механические дропы;
+        #   collected=N records=M added=0  — всё уже записано раньше (dup=M);
+        #   added>0                        — записали новое.
         logger.info(
-            "collection audit: recorded %d (region=%s theme=%s; kept + content-drops)",
+            "collection audit: collected=%d kept=%d records=%d added=%d dup=%d "
+            "(region=%s theme=%s; records = kept + content-drops)",
+            len(collected or []),
+            len(kept or []),
+            len(records),
             added,
+            len(records) - added,
             region_code,
             theme,
         )
     except Exception:  # pragma: no cover — аудит НИКОГДА не валит сбор
-        logger.warning("record_collection_audit failed (shadow, ignored)", exc_info=True)
+        # region/theme в сообщении: без них упавший аудит неатрибутируем, и
+        # «регион молчит» неотличимо от «аудит по региону падает».
+        logger.warning(
+            "record_collection_audit failed (shadow, ignored; region=%s theme=%s)",
+            region_code,
+            theme,
+            exc_info=True,
+        )
+
+
+async def _persist(records: List[Dict[str, Any]]) -> int:
+    """Записать новые снимки, вернуть сколько добавлено. Идемпотентно по ``lip``.
+
+    Дедуп по ``lip`` БЕЗ предиката на регион и тему — так задумано (first-seen
+    wins), но именно поэтому таблица не годится для сравнения объёмов; см.
+    докстринг модуля.
+    """
+    from sqlalchemy import select
+
+    from database.connection import AsyncSessionLocal
+    from database.models_extended import CollectedPostAudit
+
+    lips = [r["lip"] for r in records]
+    async with AsyncSessionLocal() as session:
+        existing = {
+            lip
+            for (lip,) in (
+                await session.execute(
+                    select(CollectedPostAudit.lip).where(CollectedPostAudit.lip.in_(lips))
+                )
+            ).all()
+        }
+        added = 0
+        for r in records:
+            if r["lip"] in existing:
+                continue
+            existing.add(r["lip"])
+            session.add(CollectedPostAudit(**r))
+            added += 1
+        if added:
+            await session.commit()
+    return added
