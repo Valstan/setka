@@ -75,8 +75,14 @@ def test_new_themes_registered(theme):
 
 
 @pytest.mark.parametrize("theme", NEW_OBLAST_THEMES)
-def test_new_themes_have_human_header(theme):
-    """У каждой новой темы есть человекочитаемый заголовок (не голый '📰 <theme>')."""
+def test_new_themes_have_human_header(theme, monkeypatch):
+    """У каждой новой темы есть человекочитаемый шаблон (не голый '📰 <theme>').
+
+    Шапки сняты с постов решением владельца 2026-09-22, но ШАБЛОНЫ не удалены:
+    возврат — одна переменная окружения, и вернуться должно к человеческому
+    заголовку, а не к заглушке. Поэтому флаг здесь включается явно.
+    """
+    monkeypatch.setenv("BULLETIN_HEADER_ENABLED", "1")
     region = SimpleNamespace(name="КИРОВСКАЯ ОБЛАСТЬ - ИНФО", code="kirov_obl")
     region_config = SimpleNamespace(zagolovki={}, heshteg={}, heshteg_local={})
     header = resolve_bulletin_header(region_config, theme, region)
