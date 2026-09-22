@@ -219,3 +219,28 @@ def test_post_without_date_is_treated_as_fresh(monkeypatch):
     builder = BulletinBuilder()
     out = builder._sort_by_popularity([stale, undated])
     assert [p["id"] for p in out] == [2, 1]
+
+
+def test_freshness_threshold_stays_inside_the_candidate_window(monkeypatch):
+    """Порог «свежего» обязан быть МЕНЬШЕ окна кандидатов, иначе он ничего не делит.
+
+    Пока окно было 72 часа, порог 24 честно делил кандидатов на две группы.
+    С окном в сутки (решение владельца 2026-09-22) порог в те же сутки делает
+    признак «свежий» истинным для ВСЕХ допущенных постов: ключ сортировки
+    вырождается, и «свежак первым» молча превращается в чистый рейтинг — то
+    есть ровно в то, от чего владелец уходил, сокращая окно.
+
+    Тест сторожит соотношение, а не числа: двигать можно оба, схлопывать — нет.
+    """
+    monkeypatch.delenv("BULLETIN_FRESH_HOURS", raising=False)
+
+    from config.runtime import get_bulletin_fresh_hours
+    from modules.vk_monitor.advanced_parser import BULLETIN_MAX_POST_AGE_HOURS
+
+    fresh = get_bulletin_fresh_hours()
+
+    assert fresh > 0, "ноль отключает деление на свежие и несвежие совсем"
+    assert fresh < BULLETIN_MAX_POST_AGE_HOURS, (
+        f"порог свежести {fresh} ч не меньше окна кандидатов "
+        f"{BULLETIN_MAX_POST_AGE_HOURS} ч — деление вырождается"
+    )
