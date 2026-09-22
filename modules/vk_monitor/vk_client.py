@@ -89,9 +89,14 @@ class VKClient:
 
     def __init__(self, token: str):
         """Initialize VK client with token"""
+        from modules.vk_monitor.wall_cache import WallCacheStats
+
         self.token = token
         self.session = None
         self.vk = None
+        # Счётчики кэша стен — чтобы волна могла сказать в логе, сработал ли он.
+        # Без этой строки «кэш включён» и «кэш помогает» были бы неразличимы.
+        self.wall_cache_stats = WallCacheStats()
         self._init_session()
 
     @classmethod
@@ -134,7 +139,12 @@ class VKClient:
             raise
 
     def get_wall_posts(
-        self, owner_id: int, count: int = 10, offset: int = 0
+        self,
+        owner_id: int,
+        count: int = 10,
+        offset: int = 0,
+        *,
+        cache_ttl: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get posts from VK community wall
@@ -143,16 +153,41 @@ class VKClient:
             owner_id: VK group ID (negative for communities)
             count: Number of posts to fetch (max 100)
             offset: Offset for pagination
+            cache_ttl: срок жизни записи в кэше стен, секунды. ``None`` — общий
+                дефолт (``WALL_CACHE_TTL_SECONDS``), ``0`` — явный обход кэша
+                для вызывающего, которому нужны свежие счётчики любой ценой.
 
         Returns:
             List of posts
+
+        Кэш проверяется ДО тормоза rate-limit: попадание не должно ни ждать
+        своей очереди к токену, ни тратить его квоту — иначе экономия вызовов
+        превратилась бы в экономию, которая всё равно стоит времени.
+
+        ``offset > 0`` кэш обходит: пагинация читает разные куски стены, а
+        ключ здесь один на владельца.
         """
+        from modules.vk_monitor.wall_cache import get_cached_wall, store_wall
+
+        use_cache = offset == 0 and (cache_ttl is None or cache_ttl > 0)
+        if use_cache:
+            cached = get_cached_wall(owner_id, min(count, 100))
+            if cached is not None:
+                self.wall_cache_stats.hits += 1
+                logger.debug("wall cache hit: %s (%d постов)", owner_id, len(cached))
+                return cached
+            self.wall_cache_stats.misses += 1
+        else:
+            self.wall_cache_stats.bypass += 1
+
         try:
             self._enforce_rate_limit("wall.get")
             response = self.vk.wall.get(owner_id=owner_id, count=min(count, 100), offset=offset)
 
             posts = response.get("items", [])
             logger.info(f"Fetched {len(posts)} posts from {owner_id}")
+            if use_cache:
+                store_wall(owner_id, min(count, 100), posts, ttl=cache_ttl)
             return posts
 
         except vk_api.exceptions.ApiError as e:
@@ -190,11 +225,34 @@ class VKClient:
         owner_id берётся из самих постов, а индекс служит только для тех групп,
         которые не отдали ни одного поста.
         """
+        from modules.vk_monitor.wall_cache import get_cached_wall, store_wall
+
         out: Dict[int, List[Dict[str, Any]]] = {oid: [] for oid in owner_ids}
         if not owner_ids:
             return out
 
         per_call = min(int(count), 100)
+
+        # Сначала кэш, в ВК — только за промахами. Смысл именно в этом: волна
+        # соседней темы того же района читает те же донорские стены, и без
+        # отсева попаданий ``execute`` снова сходил бы за всеми.
+        pending: List[int] = []
+        for oid in owner_ids:
+            cached = get_cached_wall(oid, per_call)
+            if cached is not None:
+                out[int(oid)] = cached
+                self.wall_cache_stats.hits += 1
+            else:
+                self.wall_cache_stats.misses += 1
+                pending.append(oid)
+        if not pending:
+            logger.info(
+                "execute batch: %d групп целиком из кэша, запросов к ВК 0",
+                len(owner_ids),
+            )
+            return out
+        owner_ids = pending
+
         for i in range(0, len(owner_ids), self.EXECUTE_BATCH_SIZE):
             chunk = owner_ids[i : i + self.EXECUTE_BATCH_SIZE]
             ids_literal = ",".join(str(int(o)) for o in chunk)
@@ -233,13 +291,15 @@ class VKClient:
                 if owner is None:
                     continue
                 out.setdefault(int(owner), []).extend(posts)
+                store_wall(int(owner), per_call, posts)
 
         total = sum(len(v) for v in out.values())
         logger.info(
-            "execute batch: %d групп за %d запрос(ов), постов %d",
+            "execute batch: %d групп за %d запрос(ов), постов %d (%s)",
             len(owner_ids),
             (len(owner_ids) + self.EXECUTE_BATCH_SIZE - 1) // self.EXECUTE_BATCH_SIZE,
             total,
+            self.wall_cache_stats.summary(),
         )
         return out
 

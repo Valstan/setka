@@ -1,0 +1,194 @@
+"""Кэш стен ВК: одна стена читается один раз, а не каждой подсистемой заново.
+
+**Зачем.** Заказ владельца 2026-09-22: «возможно, какие-то вещи делаются два
+раза, три раза — сбор, парсинг». Разбор подтвердил: одни и те же стены читают
+независимо друг от друга районные волны (по теме на каждую из ~26 тем в сутки),
+каскад области, радар, copy/setka, Кругозор, зеркало Telegram, еженедельная
+перепроверка сообществ и проверки уведомлений. Общего места, где лежит уже
+прочитанное, не было вовсе.
+
+Самый крупный и самый бессмысленный повтор — **собственная ИНФО-стена района**:
+её сканирует КАЖДЫЙ прогон темы (сто постов), причём берётся из неё только
+текст, ради вытаскивания ссылок на уже опубликованное (дедуп). На 44 районах
+это около 1100 одинаковых вызовов в сутки.
+
+**Чего этот модуль НЕ делает.** Он не превращает сеть в «единое хранилище
+постов»: посты по-прежнему не складываются в общую таблицу, и подсистемы
+по-прежнему ходят каждая за своим. Это дешёвый слой поверх клиента ВК, снимающий
+повторное чтение ОДНОЙ И ТОЙ ЖЕ стены в пределах короткого окна.
+
+**Два TTL, и разница между ними содержательная.**
+
+* ``WALL_CACHE_TTL_SECONDS`` (дефолт 300) — донорские стены. Пять минут выбраны
+  не «на глаз»: радар опрашивает источники раз в 10 минут, то есть ни один его
+  проход не голодает, а счётчики поста (просмотры, лайки), по которым считается
+  рейтинг, успевают состариться максимум на эти пять минут.
+* ``WALL_HISTORY_CACHE_TTL_SECONDS`` (дефолт 3600) — собственная стена района.
+  Из неё читается только текст опубликованных сводок, счётчики не нужны вовсе,
+  поэтому час безопасен. Кэш при этом **сбрасывается явно** сразу после
+  успешной публикации (``invalidate_wall``), иначе следующая тема не увидела бы
+  только что вышедшую сводку и могла бы опубликовать её содержимое повторно.
+
+**Ноль отключает кэш полностью** — откат без деплоя, одной переменной окружения.
+
+**Fail-open во всём.** Redis недоступен, ключ битый, json не разобрался — это
+промах кэша, а не ошибка: подсистема идёт в ВК, как ходила раньше. Кэш обязан
+уметь исчезнуть бесследно.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+KEY_PREFIX = "setka:wall_cache"
+
+_redis_client = None
+_redis_pid: Optional[int] = None
+_warned_once = False
+
+
+def _getenv(name: str, default: str) -> str:
+    return (os.getenv(name) or default).strip()
+
+
+def wall_cache_ttl_seconds() -> int:
+    """TTL донорских стен. 0 — кэш выключен целиком."""
+    try:
+        return max(0, int(float(_getenv("WALL_CACHE_TTL_SECONDS", "300"))))
+    except ValueError:
+        return 300
+
+
+def wall_history_ttl_seconds() -> int:
+    """TTL собственной стены района (история публикаций, только текст)."""
+    try:
+        return max(0, int(float(_getenv("WALL_HISTORY_CACHE_TTL_SECONDS", "3600"))))
+    except ValueError:
+        return 3600
+
+
+def _redis():
+    """Лениво-кэшированный, fork-safe Redis-клиент (db=1, decode_responses).
+
+    PID-guard как у ``bulletin_heartbeat._redis``: пул соединений redis-py не
+    переживает fork, а Celery-воркер форкается на каждой переработке ребёнка.
+
+    Предупреждение печатается ОДИН раз на процесс: кэш зовётся на каждой стене,
+    и строка на каждый промах утопила бы лог ровно тогда, когда Redis лежит.
+    """
+    global _redis_client, _redis_pid, _warned_once
+    pid = os.getpid()
+    if _redis_client is None or _redis_pid != pid:
+        try:
+            from modules.notifications.storage import NotificationsStorage
+
+            _redis_client = NotificationsStorage().redis_client
+            _redis_pid = pid
+            _warned_once = False
+        except Exception:  # pragma: no cover - инфраструктурный сбой
+            if not _warned_once:
+                logger.warning("wall cache: redis недоступен, работаем без кэша", exc_info=True)
+                _warned_once = True
+            _redis_client = None
+            return None
+    return _redis_client
+
+
+def _key(owner_id: int) -> str:
+    return f"{KEY_PREFIX}:{int(owner_id)}"
+
+
+class WallCacheStats:
+    """Счётчики одного клиента ВК — чтобы волна могла сказать, сработал ли кэш."""
+
+    __slots__ = ("hits", "misses", "bypass")
+
+    def __init__(self) -> None:
+        self.hits = 0
+        self.misses = 0
+        self.bypass = 0
+
+    def summary(self) -> str:
+        return f"wall_cache hits={self.hits} misses={self.misses} bypass={self.bypass}"
+
+
+def get_cached_wall(owner_id: int, count: int) -> Optional[List[Dict[str, Any]]]:
+    """Посты стены из кэша, либо ``None`` (промах).
+
+    Запись, сделанная под больший ``count``, обслуживает и меньший запрос:
+    сотня постов собственной стены закрывает и чтение двадцати каскадом, и
+    двадцати радаром. Обратное неверно — под меньший ``count`` в кэше просто
+    нет нужных постов, это промах.
+    """
+    if wall_cache_ttl_seconds() <= 0 and wall_history_ttl_seconds() <= 0:
+        return None
+    client = _redis()
+    if client is None:
+        return None
+    try:
+        raw = client.get(_key(owner_id))
+        if not raw:
+            return None
+        payload = json.loads(raw)
+        stored_count = int(payload.get("count") or 0)
+        items = payload.get("items")
+        if not isinstance(items, list) or stored_count < int(count):
+            return None
+        return items[: int(count)]
+    except Exception:
+        logger.debug("wall cache: чтение не удалось", exc_info=True)
+        return None
+
+
+def store_wall(
+    owner_id: int,
+    count: int,
+    posts: List[Dict[str, Any]],
+    *,
+    ttl: Optional[int] = None,
+) -> None:
+    """Положить стену в кэш. Пустой ответ НЕ кэшируется.
+
+    Пустая стена — это обычно временный отказ ВК (группа закрыта, токен в
+    бане, ошибка сети), и запомнить его на пять минут значило бы превратить
+    одну неудачу в серию: следующие подсистемы получили бы «постов нет» уже из
+    кэша, не сходив в ВК.
+    """
+    effective_ttl = wall_cache_ttl_seconds() if ttl is None else int(ttl)
+    if effective_ttl <= 0 or not posts:
+        return
+    client = _redis()
+    if client is None:
+        return
+    try:
+        payload = json.dumps(
+            {"count": int(count), "items": posts},
+            ensure_ascii=False,
+            default=str,
+        )
+        client.setex(_key(owner_id), effective_ttl, payload)
+    except Exception:
+        logger.debug("wall cache: запись не удалась", exc_info=True)
+
+
+def invalidate_wall(owner_id: int) -> None:
+    """Забыть стену. Зовётся после публикации в неё.
+
+    Без этого следующая тема района читала бы историю публикаций из кэша и не
+    видела только что вышедшую сводку — то есть могла бы выпустить её содержимое
+    второй раз. Дедуп по ``work_tables.lip`` остаётся основным курсором и такой
+    повтор поймал бы, но полагаться на второй рубеж там, где первый чинится
+    одной строкой, неправильно.
+    """
+    client = _redis()
+    if client is None:
+        return
+    try:
+        client.delete(_key(owner_id))
+    except Exception:
+        logger.debug("wall cache: сброс не удался", exc_info=True)

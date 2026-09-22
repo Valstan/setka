@@ -401,11 +401,16 @@ async def run_cascaded_bulletin(
         "regular_posts_ready": 0,
     }
     try:
+        # Своя стена — только ради текста вышедших сводок, счётчики не нужны:
+        # длинный TTL, сброс после публикации. Как в районной волне.
+        from modules.vk_monitor.wall_cache import wall_history_ttl_seconds
+
         target_group_posts = await asyncio.to_thread(
             vk.get_wall_posts,
             -abs(int(region.vk_group_id)),
             TARGET_GROUP_POSTS_SCAN_LIMIT,
             0,
+            cache_ttl=wall_history_ttl_seconds(),
         )
         region_lips.update(extract_source_lips_from_target_group_posts(target_group_posts))
     except Exception as e:

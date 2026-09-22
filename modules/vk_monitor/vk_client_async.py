@@ -161,7 +161,12 @@ class VKClientAsync:
             raise VKAPIException(str(e))
 
     async def get_wall_posts(
-        self, owner_id: int, count: int = 10, offset: int = 0
+        self,
+        owner_id: int,
+        count: int = 10,
+        offset: int = 0,
+        *,
+        cache_ttl: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get posts from VK community wall
@@ -170,10 +175,26 @@ class VKClientAsync:
             owner_id: VK group ID (negative for communities)
             count: Number of posts to fetch (max 100)
             offset: Offset for pagination
+            cache_ttl: срок жизни записи в кэше стен (``0`` — обойти кэш).
 
         Returns:
             List of posts
+
+        Кэш общий с синхронным клиентом: радар и зеркало Telegram читают те же
+        стены, что и волны публикации, и делить между ними нечего. Обращения к
+        Redis уводятся в поток, чтобы не блокировать цикл событий.
         """
+        import asyncio as _asyncio
+
+        from modules.vk_monitor.wall_cache import get_cached_wall, store_wall
+
+        use_cache = offset == 0 and (cache_ttl is None or cache_ttl > 0)
+        if use_cache:
+            cached = await _asyncio.to_thread(get_cached_wall, owner_id, min(count, 100))
+            if cached is not None:
+                logger.debug("wall cache hit (async): %s (%d постов)", owner_id, len(cached))
+                return cached
+
         try:
             response = await self._make_request(
                 "wall.get", {"owner_id": owner_id, "count": min(count, 100), "offset": offset}
@@ -181,6 +202,10 @@ class VKClientAsync:
 
             posts = response.get("items", [])
             logger.debug(f"Fetched {len(posts)} posts from {owner_id}")
+            if use_cache and posts:
+                await _asyncio.to_thread(
+                    store_wall, owner_id, min(count, 100), posts, ttl=cache_ttl
+                )
             return posts
 
         except VKAPIException as e:
