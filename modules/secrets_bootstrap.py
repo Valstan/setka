@@ -90,6 +90,14 @@ ACCEPTED_NAMES: frozenset = frozenset(
         # на прод-бокс руками он не кладётся — ровно для этого комната и заводилась.
         "DEEPSEEK_API_KEY",
         "DEEPSEEK_MODEL",
+        # Anthropic — ЗАПАСНОЙ движок на время отказа DeepSeek (402 с 2026-09-22).
+        # Включается переключателем LLM_PROVIDER=anthropic; без него не
+        # используется. Ключ — из комнаты, как DEEPSEEK_API_KEY: имя обязано
+        # быть здесь, иначе vault-клиент молча его проигнорирует (так ключ
+        # DeepSeek не доехал до воркера 2026-08-17).
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_MODEL",
+        "LLM_PROVIDER",
         # контент-конвейер ВК → сайты (D-015)
         "CONVEYOR_DISABLED",
         "CONVEYOR_SITES",

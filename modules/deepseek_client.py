@@ -186,7 +186,37 @@ def chat(
     ``json_object=True`` включает у DeepSeek режим строгого JSON. Он не
     отменяет разбор на стороне вызывающего: режим гарантирует синтаксис, а не
     схему.
+
+    **Диспетчер провайдера.** При ``LLM_PROVIDER=anthropic`` вызов уходит в
+    ``modules.anthropic_client`` с тем же контрактом ответа (подпорка на время
+    отказа DeepSeek, 2026-09-22 — см. ``config/anthropic_llm``). Дефолт
+    неизменен: без явного переключения работает DeepSeek (D-024). Развилка
+    стоит ЗДЕСЬ, в единственной общей точке, а не у пяти потребителей — иначе
+    переключать пришлось бы пять мест, и они разъехались бы молча, ровно как
+    разъехались бы копии ``_call_api``, ради чего этот модуль и заводился.
+
+    Переключается только то, что ходит через ``chat()``. ``conveyor/classify``
+    зовёт ``call_api`` напрямую и остаётся на DeepSeek — контент-конвейеру
+    нужен свой разбор ответа, и трогать его этой подпоркой не будем.
     """
+    from config.anthropic_llm import PROVIDER_ANTHROPIC, get_provider
+
+    if get_provider() == PROVIDER_ANTHROPIC:
+        from modules.anthropic_client import chat as _anthropic_chat
+
+        return _anthropic_chat(
+            user=user,
+            system=system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_object=json_object,
+            # Ключ DeepSeek запасному движку не отдаём: у него свой из комнаты.
+            api_key=None,
+            model=None,
+            timeout=timeout,
+            label=label,
+        )
+
     key = api_key if api_key is not None else get_api_key()
     if not key:
         return {"ok": False, "reason": "no_api_key"}
