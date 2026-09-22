@@ -661,7 +661,12 @@ class CollectedPostAudit(Base):
     # media-прокси. NULL = вложений нет / собрано до миграции.
     media = Column(JSON, nullable=True)
     decision = Column(String(12), nullable=False)  # kept | dropped
-    # advertisement | blacklist_text | no_region_words | no_attachments (NULL для kept)
+    # Фактический набор (пере-вывод в modules/curation/collection_audit.py,
+    # порядок как в _filter_post): hard_spam | neighbor_bulletin | marked_ad |
+    # advertisement | blacklist_text | no_attachments. NULL — для kept.
+    # `no_region_words` здесь НЕ бывает, хотя раньше был указан: механические
+    # дропы и region_words пере-выводом не покрыты (MVP-лимит), см. докстринг
+    # модуля аудита. Перечень править вместе с `_derive_drop_reason` (ADR-0004).
     drop_reason = Column(String(32), nullable=True)
     collected_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
