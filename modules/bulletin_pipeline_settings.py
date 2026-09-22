@@ -55,8 +55,20 @@ POSTOPUS_BULLETIN_THEMES: List[str] = [
 # в 1 ограничивает и число новостей за слот. В районах с тонким потоком (63 %
 # сводок и так несли один элемент) не меняется ничего; в богатых часть кандидатов
 # уедет в следующий прогон и может состариться по ``max_post_age_hours``.
+#
+# ``max_post_age_hours = 24`` — решение владельца 2026-09-22: всё старше суток в
+# ленту не берём, чтобы у сегодняшних постов был шанс пробиться в повестку.
+# Подробности и почему одного рейтинга для этого мало — у константы
+# ``BULLETIN_MAX_POST_AGE_HOURS`` в ``modules/vk_monitor/advanced_parser.py``.
+#
+# ⚠️ Этот дефолт доезжает НЕ до всех районов. Сохранение настроек в UI пишет в
+# ``region_configs.bulletin_filters`` весь блок defaults целиком (см.
+# ``web/api/filtration._normalize_bulletin_filters``), то есть замораживает в БД
+# то значение, что было дефолтом на момент сохранения. У такого района правка
+# этого файла молча не действует. Кто именно закреплён — смотреть запросом из
+# записи P178.
 DEFAULT_PIPELINE: Dict[str, Any] = {
-    "max_post_age_hours": 72.0,
+    "max_post_age_hours": 24.0,
     "max_posts_per_bulletin": 1,
     "min_rafinad_len_core_dedup": 50,
     "text_similarity_threshold": 0.90,
@@ -93,7 +105,9 @@ def get_effective_pipeline_settings(region_config: Any, theme: str) -> Dict[str,
     if isinstance(by_topic, dict) and theme in by_topic and isinstance(by_topic[theme], dict):
         topic_ov = by_topic[theme]
     merged = {**base_defaults, **topic_ov}
-    merged["max_post_age_hours"] = _coerce_float(merged.get("max_post_age_hours"), 72.0)
+    merged["max_post_age_hours"] = _coerce_float(
+        merged.get("max_post_age_hours"), DEFAULT_PIPELINE["max_post_age_hours"]
+    )
     merged["max_posts_per_bulletin"] = _coerce_int(merged.get("max_posts_per_bulletin"), 1)
     merged["min_rafinad_len_core_dedup"] = _coerce_int(merged.get("min_rafinad_len_core_dedup"), 50)
     merged["text_similarity_threshold"] = _coerce_float(
