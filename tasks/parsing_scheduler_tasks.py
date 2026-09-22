@@ -278,16 +278,31 @@ def parse_and_publish_theme(
             community_ids = [row[0] for row in communities_result.fetchall()]
 
             if not community_ids and not is_community_sourced_oblast:
-                logger.warning(
-                    f"No communities found for {region_code}/{theme}; "
-                    "falling back to all active communities in region"
-                )
-                fallback_result = await session.execute(
-                    select(Community.vk_id).where(
-                        Community.region_id == region.id, Community.is_active.is_(True)
+                # Запасной путь: у темы нет своих сообществ — читаем весь пул.
+                # Выглядит аварийным, а кормит вторую по объёму тему сети
+                # (``addons``: своих сообществ нет ни у одного района, 1752
+                # публикации за 7 дней). Флаг — для замера и аварии, дефолт ON;
+                # цену повтора снимает кэш стен, а не отключение (P180).
+                from config.runtime import theme_fallback_all_communities_enabled
+
+                if theme_fallback_all_communities_enabled():
+                    logger.warning(
+                        f"No communities found for {region_code}/{theme}; "
+                        "falling back to all active communities in region"
                     )
-                )
-                community_ids = [row[0] for row in fallback_result.fetchall()]
+                    fallback_result = await session.execute(
+                        select(Community.vk_id).where(
+                            Community.region_id == region.id, Community.is_active.is_(True)
+                        )
+                    )
+                    community_ids = [row[0] for row in fallback_result.fetchall()]
+                else:
+                    logger.warning(
+                        "No communities found for %s/%s; запасной путь выключен "
+                        "(PARSE_THEME_FALLBACK_ALL_COMMUNITIES=0) — волна пропущена",
+                        region_code,
+                        theme,
+                    )
             if not community_ids:
                 # Для community-mode области это норма: просто нет источников
                 # этой темы (не публикуем «не свою» тему из общих пабликов).
@@ -332,11 +347,19 @@ def parse_and_publish_theme(
 
             skipped_lips = await fetch_skipped_lips(session, region_code)
             try:
+                # Своя ИНФО-стена: из неё берётся ТОЛЬКО текст уже вышедших
+                # сводок (ссылки на источники для дедупа), счётчики не нужны —
+                # поэтому час TTL вместо общих пяти минут. Без кэша эта сотня
+                # постов перечитывалась на каждом из ~26 прогонов темы в сутки.
+                # Кэш сбрасывается сразу после публикации в эту же стену.
+                from modules.vk_monitor.wall_cache import wall_history_ttl_seconds
+
                 target_group_posts = await asyncio.to_thread(
                     vk_client.get_wall_posts,
                     -abs(int(region.vk_group_id)),
                     TARGET_GROUP_POSTS_SCAN_LIMIT,
                     0,
+                    cache_ttl=wall_history_ttl_seconds(),
                 )
                 region_lips.update(extract_source_lips_from_target_group_posts(target_group_posts))
             except Exception as e:

@@ -383,6 +383,26 @@ class VKPublisher:
             # Track last post time
             self._last_post_time[target_group_id] = datetime.now()
 
+            # Забыть кэш этой стены: следующая тема района читает её как
+            # историю публикаций (дедуп), и увидеть там устаревший снимок
+            # значило бы не заметить только что вышедшую сводку. Дедуп по
+            # ``work_tables.lip`` такой повтор поймал бы вторым рубежом, но
+            # полагаться на него там, где первый чинится одной строкой,
+            # неправильно. Сбой кэша публикацию не трогает.
+            #
+            # Почему здесь и НЕ надо рассыпать сброс по другим путям публикации
+            # (реклама, одобренная предложка, репосты): скан своей стены ищет в
+            # ней ссылки на посты-источники ВНУТРИ НАШИХ СВОДОК
+            # (``extract_source_lips_from_target_group_posts``). Сводки и
+            # хедлайнер выходят только отсюда; у рекламы и предложки таких
+            # ссылок нет, и не увидеть их в снимке ничего не меняет.
+            try:
+                from modules.vk_monitor.wall_cache import invalidate_wall
+
+                invalidate_wall(-abs(int(target_group_id)))
+            except Exception:  # pragma: no cover - кэш не важнее публикации
+                logger.debug("wall cache invalidate failed", exc_info=True)
+
             return {
                 "success": True,
                 "post_id": post_id,
