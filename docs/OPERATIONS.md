@@ -120,6 +120,18 @@ tail -n 200 logs/uvicorn_production.log
 curl http://127.0.0.1:8000/api/health/
 ```
 
+Если воркер Celery молча «моргнул» (`WorkerLostError` в логе, задача повторилась):
+
+```bash
+bash scripts/oom_probe.sh
+```
+
+**`journalctl` здесь слеп** — за 30 дней ноль строк при восьми убийствах, видимых в
+`dmesg` (P164). Скрипт смотрит туда, где они есть, и заодно показывает RSS живых
+процессов, срабатывания порога памяти и строки прибора `mem: task=…` — по ним видно,
+какая задача поднимает потолок памяти. Бокс: 1536 МБ, **swap завести нельзя**
+(OpenVZ, P163), поэтому единственная защита — не дать процессу дорасти.
+
 ## 8) Hot-fix runbook — branch protection
 
 С 2026-05-23 на `main` GitHub-репо включена branch protection ([ADR-0002](../../brain_matrica/adr/0002-pr-only-flow-no-direct-push.md) §D):

@@ -1097,7 +1097,22 @@ try:
         """Celery task: health-check для одного региона (ad-hoc, без beat)."""
         return _run_coro(recheck_communities_for_region_async(region_id))
 
-    @_celery_app.task(name="tasks.discovery_tasks.recheck_all_active_regions")
+    @_celery_app.task(
+        name="tasks.discovery_tasks.recheck_all_active_regions",
+        # Свой лимит вместо общего 3600 из config/celery_config.py.
+        # Замер по журналам воркера 2026-09-22: это САМАЯ долгая задача сети —
+        # 1750 с (29 минут) против 368 с у второй по длительности. Она обходит
+        # все активные сообщества всех регионов через per-token тормоз ВК,
+        # поэтому растёт вместе с сетью: каждая новая порция районов её
+        # удлиняет. Общий лимит дал бы ей запас меньше двух раз, и в какой-то
+        # момент недельная проверка начала бы обрываться — раз в неделю, в
+        # 04:00, то есть незаметно.
+        #
+        # Мягкого лимита нет здесь по той же причине, что и в общем конфиге:
+        # задача идёт через общий персистентный event loop, и мягкий лимит
+        # оставил бы на нём недобитую корутину.
+        time_limit=3 * 3600,
+    )
     def recheck_all_active_regions():
         """Celery beat task: weekly recheck по всем активным регионам."""
         return _run_coro(recheck_all_active_regions_async())

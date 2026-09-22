@@ -77,8 +77,15 @@ def _maybe_send_telegram_notifications_alert() -> None:
     """
     Send Telegram alert if there are any notifications and the payload is NEW.
 
-    Triggered from `check_recent_comments` (last task in the hourly chain),
-    so that suggested/messages/comments are aggregated into a single alert.
+    Зовут ВСЕ ТРИ часовые проверки (предложка :15, сообщения :24, комментарии
+    :57). «Последней в цепочке», от которой алёрт уходил раньше, больше нет:
+    тройку разнесли по минутам ради памяти (2026-09-22), и привязка к одной
+    задаче означала бы, что находка предложки ждёт оповещения 40 минут.
+
+    Дублей от этого не будет: ниже стоит дедуп по sha1 полного payload'а из
+    Redis — если с прошлого раза ничего не изменилось, сообщение не уходит.
+    Три оповещения за час случатся ровно тогда, когда все три проверки нашли
+    новое, то есть когда их и хочется получить.
     """
     try:
         from config.runtime import TELEGRAM_ALERT_CHAT_ID, TELEGRAM_TOKENS
@@ -248,6 +255,66 @@ def _setka_apply_json_logging(**_kwargs) -> None:
         install_log_redaction()
     except Exception:
         logger.debug("install_log_redaction failed", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Прибор памяти: КАКАЯ задача поднимает потолок RSS дочернего процесса.
+#
+# Зачем он вообще. По P164 ядро убивало воркер примерно раз в сутки на 390–518
+# МБ, причём в `journalctl` этих убийств нет ни одного — они видны только в
+# `dmesg`. Оба порога переработки ребёнка (по числу задач и по памяти,
+# `config/celery_config.py`) лечат НАКОПЛЕНИЕ, но виновника не называют: до сих
+# пор про течь известно единственное — окно HH:17–19, то есть догадка по
+# соседству с расписанием. Строкой в логе вопрос решается, состязательным
+# чтением кода — нет.
+#
+# Что именно печатается. `ru_maxrss` — ПИК за жизнь процесса, и он не убывает.
+# Поэтому «дельта» здесь читается как «эта задача подняла потолок», а не «эта
+# задача столько занимает прямо сейчас». Для поиска того, кто растит память,
+# нужен именно потолок; мгновенный снимок показал бы шум.
+#
+# Печатаем только при РОСТЕ потолка — иначе выше порога пола строка повторяла
+# бы одно и то же число после каждой задачи. `ru_maxrss` монотонен, значит
+# число строк на одного ребёнка ограничено числом настоящих ступеней роста.
+# ---------------------------------------------------------------------------
+_MEM_PROBE_STEP_KB = 32 * 1024  # ступень роста, с которой пишем в лог
+_MEM_PROBE_FLOOR_KB = 300 * 1024  # …а выше этого пика пишем любой рост
+_last_peak_rss_kb = 0
+
+
+@signals.task_postrun.connect  # type: ignore[has-type]
+def _setka_log_peak_rss(task=None, **_kwargs) -> None:
+    """Пик RSS после каждой задачи + сборка мусора.
+
+    Прибор не имеет права уронить задачу: всё внутри одного ``try``, отказ
+    уходит в debug. ``resource`` есть только на POSIX — на Windows-машине
+    разработчика импорт упадёт и хук промолчит.
+    """
+    global _last_peak_rss_kb
+    try:
+        import gc
+        import resource
+
+        # Циклы держит персистентный event loop (utils/celery_asyncio), и на
+        # ~300 задачах в час полная сборка — это шум по времени.
+        gc.collect()
+
+        # На Linux ru_maxrss в килобайтах (на macOS — в байтах; прод Ubuntu).
+        peak_kb = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        delta_kb = peak_kb - _last_peak_rss_kb
+        if peak_kb > _last_peak_rss_kb and (
+            delta_kb >= _MEM_PROBE_STEP_KB or peak_kb >= _MEM_PROBE_FLOOR_KB
+        ):
+            logger.info(
+                "mem: task=%s peak_rss_mb=%d delta_mb=%d",
+                getattr(task, "name", None) or "unknown",
+                peak_kb // 1024,
+                delta_kb // 1024,
+            )
+        if peak_kb > _last_peak_rss_kb:
+            _last_peak_rss_kb = peak_kb
+    except Exception:
+        logger.debug("peak rss probe failed", exc_info=True)
 
 
 @app.task(name="tasks.celery_app.run_vk_monitoring")
@@ -476,11 +543,17 @@ def check_suggested_posts():
 
         notifications = run_coro(check())
 
+        # Агрегированный алёрт — из каждой проверки, см. докстринг функции.
+        _maybe_send_telegram_notifications_alert()
+
+        # Сам список в результат не кладём: его никто не читает (UI берёт из
+        # Redis, `web/api/notifications.py` дёргает задачу через `.delay()` и
+        # результата не ждёт), а в result backend он уезжал целиком — до
+        # тысяч словарей на задачу при `result_expires=3600`.
         return {
             "success": True,
             "timestamp": datetime.now().isoformat(),
             "notifications_count": len(notifications),
-            "notifications": notifications,
         }
 
     except Exception as e:
@@ -1205,8 +1278,13 @@ def check_unread_messages():
     """Проверка непрочитанных сообщений в главных группах регионов.
 
     Окно 8:00-22:00 MSK гарантируется beat-расписанием
-    `crontab(minute=16, hour='8-22')` в `beat_schedule`. Внутри таски доп.
+    `crontab(minute=28, hour='8-22')` в `beat_schedule`. Внутри таски доп.
     проверка часа не нужна — раньше она лишь дублировала фильтр.
+
+    Минута 28, а не 16: тройка проверок шла подряд в :15/:16/:17, каждая одной
+    задачей по всем регионам, и на одном ядре они наезжали друг на друга ровно
+    в окне OOM-убийств (P164). Почему именно 28, а не любая свободная минута —
+    в комментарии у beat-записи.
     """
     logger.info("=" * 80)
     logger.info("Checking unread messages in region groups...")
@@ -1309,11 +1387,14 @@ def check_unread_messages():
 
         notifications, denied_groups = run_coro(check())
 
+        # Агрегированный алёрт — из каждой проверки, см. докстринг функции.
+        _maybe_send_telegram_notifications_alert()
+
+        # Список в результат не кладём — см. `check_suggested_posts`.
         return {
             "success": True,
             "timestamp": datetime.now().isoformat(),
             "notifications_count": len(notifications),
-            "notifications": notifications,
             "denied_count": len(denied_groups),
         }
 
@@ -1327,8 +1408,12 @@ def check_recent_comments():
     """Проверка комментариев за последние 24 часа в главных ИНФО-группах регионов.
 
     Окно 8:00-22:00 MSK гарантируется beat-расписанием
-    `crontab(minute=17, hour='8-22')` в `beat_schedule`. Доп. inside-task
+    `crontab(minute=57, hour='8-22')` в `beat_schedule`. Доп. inside-task
     проверка часа удалена (этап 2 рефактора).
+
+    Минута 57, а не 17: это самая тяжёлая из трёх проверок (все ИНФО-группы ×
+    до 50 постов × все комментарии с ветками), и она уведена дальше всех — и
+    от соседок по тройке, и от волн на :20 (P164, разнос 2026-09-22).
     """
     from datetime import datetime, timedelta
 
@@ -1459,11 +1544,11 @@ def check_recent_comments():
         except Exception as _e:
             logger.debug("token health watchdog failed: %s", _e)
 
+        # Список в результат не кладём — см. `check_suggested_posts`.
         return {
             "success": True,
             "timestamp": datetime.now().isoformat(),
             "comments_count": len(notifications),
-            "notifications": notifications,
         }
 
     except Exception as e:
@@ -2094,19 +2179,35 @@ app.conf.beat_schedule = {
             "catchup": False,
         },
     },
-    # Проверка непрочитанных сообщений каждый час с 8:00 до 22:00 в X:16
+    # Проверка непрочитанных сообщений каждый час с 8:00 до 22:00 в X:28
+    #
+    # Минуты тройки проверок (:15 предложка, :28 сообщения, :57 комментарии)
+    # разведены сознательно и НЕ должны сближаться: каждая ходит в ВК по всем
+    # регионам одной задачей, а ядро на боксе одно — стоявшие подряд :15/:16/:17
+    # выстраивались в очередь в одном дочернем процессе ровно в окне OOM-убийств
+    # HH:17–19 (P164).
+    #
+    # Разводить надо не только тройку между собой, но и от чужих обходов по всем
+    # регионам. :28 выбран по карте занятости расписания: ближайшие тяжёлые
+    # соседи — :25 (`scan-suggested-ads`, свой обход предложки, замер 33 с) и
+    # :30 (опрос радара плюс волны), то есть у задачи с замеренным максимумом
+    # 51 с остаётся больше минуты чистого времени с обеих сторон. Минута :24,
+    # стоявшая здесь в первой редакции, оставляла до :25 девять секунд — и
+    # сводила на нет офсет, ради которого `scan-suggested-ads` и поставлен на
+    # :25/:55. Гейт — tests/test_notifications/test_beat_stagger.py.
     "check-unread-messages-hourly": {
         "task": "tasks.celery_app.check_unread_messages",
-        "schedule": crontab(minute=16, hour="8-22"),  # Каждый час 8-22 на 16-й минуте
+        "schedule": crontab(minute=28, hour="8-22"),  # Каждый час 8-22 на 28-й минуте
         "options": {
             "expires": 3000,
             "catchup": False,
         },
     },
-    # Проверка комментариев за сутки каждый час с 8:00 до 22:00 в X:17
+    # Проверка комментариев за сутки каждый час с 8:00 до 22:00 в X:57
+    # (самая тяжёлая из тройки — уведена дальше всех, см. комментарий выше)
     "check-recent-comments-hourly": {
         "task": "tasks.celery_app.check_recent_comments",
-        "schedule": crontab(minute=17, hour="8-22"),  # Каждый час 8-22 на 17-й минуте
+        "schedule": crontab(minute=57, hour="8-22"),  # Каждый час 8-22 на 57-й минуте
         "options": {
             "expires": 3000,
             "catchup": False,

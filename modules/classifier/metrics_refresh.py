@@ -65,8 +65,8 @@ def drop_already_published(
     return [(ref, lip) for ref, lip in candidates if lip not in published_lips]
 
 
-async def load_published_lips(session) -> Set[str]:
-    """Все lip'ы, опубликованные нами, из ``work_tables.lip`` (JSON-списки).
+async def load_published_lips(session, candidate_lips: Optional[Set[str]] = None) -> Set[str]:
+    """Опубликованные нами lip'ы из ``work_tables.lip`` (JSON-списки).
 
     В эту колонку пишут четыре разных модуля (``cascaded_bulletin``,
     ``copy_setka_network``, ``krugozor_broadcast``, ``telegram_gonba_mirror``),
@@ -75,22 +75,56 @@ async def load_published_lips(session) -> Set[str]:
     ``ok: False`` на КАЖДОМ круге раз в 3 часа — метрики перестали бы
     обновляться совсем, а заметно это было бы только в логе. Поэтому битую
     строку пропускаем с предупреждением, а круг доезжает на остальных.
+
+    ``candidate_lips`` — те lip'ы, про которые вопрос вообще задан. Без него
+    функция поднимала в память ВСЮ колонку: замер на проде 2026-09-22 —
+    **129 764 lip'а** в 643 строках, и всё это множество строилось каждые три
+    часа ради пересечения с ~7,8 тыс. кандидатов окна. На боксе с 1536 МБ и
+    без swap (P163/P164) разница заметная, а достаётся даром: ответ функции от
+    сужения не меняется — ``drop_already_published`` всё равно смотрит только
+    на кандидатов.
     """
     from sqlalchemy import select
 
     from database.models_extended import WorkTable
 
-    out: Set[str] = set()
+    # Спрашивать не про что — и запрос не нужен.
+    if candidate_lips is not None and not candidate_lips:
+        return set()
+
+    if candidate_lips is not None and _is_postgres(session):
+        try:
+            return await _published_lips_pg(session, candidate_lips)
+        except Exception:
+            # Откат, а не падение — и это не перестраховка «на всякий случай».
+            # Ошибка здесь прилетела бы внутрь ``try/except`` Celery-таски и
+            # стала бы ``ok: False`` каждые 3 часа: метрики перестали бы
+            # обновляться совсем, рейтинг застыл бы на старых числах, и видно
+            # это было бы только в логе — ровно тот отказ, против которого
+            # писана эта функция. Портируемая ветка медленнее, но верна всегда.
+            logger.warning(
+                "load_published_lips: быстрый путь PostgreSQL не сработал, "
+                "иду полным проходом по work_tables",
+                exc_info=True,
+            )
+            # Неудачный запрос оставляет транзакцию PostgreSQL в aborted, и
+            # следующий SELECT упал бы уже по этой причине. Читающая
+            # транзакция, откатывать нечего.
+            await session.rollback()
+
+    out = set()
     bad = 0
-    rows = (await session.execute(select(WorkTable.lip))).all()
-    for (lips,) in rows:
+    result = await session.stream(select(WorkTable.lip))
+    async for (lips,) in result:
         if lips is None:
             continue
         if not isinstance(lips, (list, tuple)):
             bad += 1
             continue
         for lip in lips:
-            out.add(str(lip))
+            lip_str = str(lip)
+            if candidate_lips is None or lip_str in candidate_lips:
+                out.add(lip_str)
     if bad:
         logger.warning(
             "load_published_lips: %d строк work_tables.lip не список — пропущены; "
@@ -98,6 +132,64 @@ async def load_published_lips(session) -> Set[str]:
             bad,
         )
     return out
+
+
+async def _published_lips_pg(session, candidate_lips: Set[str]) -> Set[str]:
+    """Быстрый путь: разворот JSON-массива и пересечение — на стороне БД.
+
+    ``::json`` стоит осознанно. Модель объявляет колонку как ``JSON``, но
+    ``json_array_elements_text`` принимает ровно ``json``, а неявного
+    приведения между ``json`` и ``jsonb`` в PostgreSQL нет: окажись колонка
+    на боксе ``jsonb`` — запрос падал бы каждые три часа. Явный каст верен для
+    обоих типов и для ``json`` бесплатен.
+
+    ``json_typeof`` держит то же обещание, что ``isinstance`` в портируемой
+    ветке: строка-не-массив пропускается, а не роняет круг.
+    """
+    from sqlalchemy import text as sa_text
+
+    rows = (
+        await session.execute(
+            sa_text(
+                "SELECT DISTINCT e.lip FROM work_tables wt "
+                "CROSS JOIN LATERAL json_array_elements_text(wt.lip::json) AS e(lip) "
+                "WHERE wt.lip IS NOT NULL AND json_typeof(wt.lip::json) = 'array' "
+                "AND e.lip = ANY(:cands)"
+            ),
+            {"cands": list(candidate_lips)},
+        )
+    ).all()
+    out = {str(lip) for (lip,) in rows}
+
+    # Сигнал о битых строках на этом пути не теряем: его цена — один счётчик
+    # по той же небольшой таблице, а молчащая порча данных дороже.
+    bad_rows = (
+        await session.execute(
+            sa_text(
+                "SELECT count(*) FROM work_tables "
+                "WHERE lip IS NOT NULL AND json_typeof(lip::json) <> 'array'"
+            )
+        )
+    ).scalar()
+    if bad_rows:
+        logger.warning(
+            "load_published_lips: %d строк work_tables.lip не список — пропущены; "
+            "их публикации не будут исключены из обновления метрик",
+            int(bad_rows),
+        )
+    return out
+
+
+def _is_postgres(session) -> bool:
+    """PostgreSQL ли под сессией. Не знаем — считаем, что нет.
+
+    Ветка с ``LATERAL`` — оптимизация, а не требование: тесты ходят по SQLite,
+    и ошибиться в определении диалекта здесь должно быть безопасно.
+    """
+    try:
+        return getattr(getattr(session.bind, "dialect", None), "name", "") == "postgresql"
+    except Exception:  # pragma: no cover - сессия без bind
+        return False
 
 
 async def select_refresh_candidates(
@@ -232,7 +324,9 @@ async def refresh_metrics(session, *, hours: int = AUDIT_WINDOW_HOURS) -> Dict[s
     from modules.vk_token_router import get_healthy_read_token
 
     candidates, unparsable = await select_refresh_candidates(session, hours=hours)
-    published = await load_published_lips(session)
+    # Спрашиваем только про кандидатов окна: ответ тот же, память — по числу
+    # кандидатов, а не по всей истории публикаций.
+    published = await load_published_lips(session, {lip for _, lip in candidates})
     live = drop_already_published(candidates, published)
     skipped = len(candidates) - len(live)
     if not live:
