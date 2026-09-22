@@ -52,8 +52,11 @@ def _fake_redis(monkeypatch):
     # PID-guard: помечаем клиент «своим», иначе _redis() сочтёт его
     # унаследованным после форка и пересоздаст.
     monkeypatch.setattr(wc, "_redis_pid", os.getpid())
-    monkeypatch.delenv("WALL_CACHE_TTL_SECONDS", raising=False)
     monkeypatch.delenv("WALL_HISTORY_CACHE_TTL_SECONDS", raising=False)
+    # Донорский кэш по умолчанию ВЫКЛЮЧЕН (замер: 2.3 % попаданий при семикратном
+    # росте пика памяти). Тесты самого механизма включают его явно — иначе они
+    # проверяли бы не кэш, а факт его отключения.
+    monkeypatch.setenv("WALL_CACHE_TTL_SECONDS", "300")
     return fake
 
 
@@ -150,7 +153,7 @@ def test_ttl_env_garbage_falls_back_to_defaults(monkeypatch):
     monkeypatch.setenv("WALL_CACHE_TTL_SECONDS", "пять минут")
     monkeypatch.setenv("WALL_HISTORY_CACHE_TTL_SECONDS", "час")
 
-    assert wc.wall_cache_ttl_seconds() == 300
+    assert wc.wall_cache_ttl_seconds() == 0
     assert wc.wall_history_ttl_seconds() == 1800
 
 
@@ -248,3 +251,30 @@ def test_oversized_rejection_is_visible_at_info(_fake_redis, monkeypatch, caplog
         wc.store_wall(-1, 20, [{"id": i, "text": "я" * 500} for i in range(20)])
 
     assert any("не кэширована" in r.getMessage() for r in caplog.records)
+
+
+def test_donor_cache_is_off_by_default(monkeypatch):
+    """Донорская половина кэша выключена по замеру, а не по вкусу.
+
+    2.3 % попаданий (11 против 474) при росте пика памяти Redis с 5.3 до
+    37.9 МБ. На боксе, где свободно 274 МБ и ядро убивает воркер по памяти,
+    это прямо противоречит остальной работе.
+    """
+    monkeypatch.delenv("WALL_CACHE_TTL_SECONDS", raising=False)
+
+    assert wc.wall_cache_ttl_seconds() == 0
+
+
+def test_history_cache_stays_on_by_default(monkeypatch):
+    """А работающая половина остаётся: 53 района из 57, ~2 КБ на запись."""
+    monkeypatch.delenv("WALL_HISTORY_CACHE_TTL_SECONDS", raising=False)
+
+    assert wc.wall_history_ttl_seconds() == 1800
+
+
+def test_donor_store_is_a_noop_while_off(_fake_redis, monkeypatch):
+    monkeypatch.setenv("WALL_CACHE_TTL_SECONDS", "0")
+
+    wc.store_wall(-1, 20, _posts(20))
+
+    assert _fake_redis.store == {}

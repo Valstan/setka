@@ -40,8 +40,11 @@ def _env(monkeypatch):
     fake = _FakeRedis()
     monkeypatch.setattr(wc, "_redis_client", fake)
     monkeypatch.setattr(wc, "_redis_pid", os.getpid())
-    monkeypatch.delenv("WALL_CACHE_TTL_SECONDS", raising=False)
     monkeypatch.delenv("WALL_HISTORY_CACHE_TTL_SECONDS", raising=False)
+    # Донорская половина кэша выключена по умолчанию (замер: 2.3 % попаданий при
+    # семикратном росте пика памяти). Здесь проверяется сам механизм врезки в
+    # клиент, поэтому включаем его явно — иначе тесты проверяли бы отключение.
+    monkeypatch.setenv("WALL_CACHE_TTL_SECONDS", "300")
     # Тормоз per-token — общий синглтон; в тестах он не нужен и только тянет время.
     VKClient._rate_limiter = None
     yield fake
