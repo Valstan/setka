@@ -244,3 +244,56 @@ def test_freshness_threshold_stays_inside_the_candidate_window(monkeypatch):
         f"порог свежести {fresh} ч не меньше окна кандидатов "
         f"{BULLETIN_MAX_POST_AGE_HOURS} ч — деление вырождается"
     )
+
+
+def _post_with(lip_owner, lip_id, *, views, age_hours, text="новость про район"):
+    import time
+
+    return {
+        "owner_id": lip_owner,
+        "id": lip_id,
+        "text": text,
+        "views": {"count": views},
+        "likes": {"count": 0},
+        "comments": {"count": 0},
+        "reposts": {"count": 0},
+        "date": time.time() - age_hours * 3600,
+    }
+
+
+def test_urgent_post_outranks_a_fresh_district_hit(monkeypatch):
+    """Срочное впереди рейтинга — решение владельца 2026-09-22.
+
+    У сообщения об аварии, вывешенного десять минут назад, нет ни просмотров,
+    ни лайков: по рейтингу оно проигрывает чему угодно. Ровно поэтому одного
+    рейтинга для срочного мало.
+    """
+    monkeypatch.setenv("BULLETIN_FRESH_HOURS", "6")
+    hit = _post_with(-1, 1, views=50000, age_hours=1, text="районный хит")
+    outage = _post_with(-2, 2, views=3, age_hours=0.2, text="отключение воды до вечера")
+
+    builder = BulletinBuilder(urgent_lips={"2_2"})
+    order = builder._sort_by_popularity([hit, outage])
+
+    assert order[0] is outage, "срочное обязано идти первым"
+
+
+def test_without_the_urgent_set_order_is_exactly_as_before(monkeypatch):
+    """Пустое множество (нет вердиктов, движок отказал) не меняет ничего."""
+    monkeypatch.setenv("BULLETIN_FRESH_HOURS", "6")
+    hit = _post_with(-1, 1, views=50000, age_hours=1, text="районный хит")
+    outage = _post_with(-2, 2, views=3, age_hours=0.2, text="отключение воды до вечера")
+
+    assert BulletinBuilder()._sort_by_popularity([hit, outage])[0] is hit
+    assert BulletinBuilder(urgent_lips=set())._sort_by_popularity([hit, outage])[0] is hit
+
+
+def test_urgent_beats_freshness_too(monkeypatch):
+    """Ступени именно в этом порядке: срочное → свежее → рейтинг."""
+    monkeypatch.setenv("BULLETIN_FRESH_HOURS", "6")
+    fresh = _post_with(-1, 1, views=100, age_hours=0.5, text="свежая новость")
+    stale_urgent = _post_with(-2, 2, views=1, age_hours=20, text="отключение света")
+
+    order = BulletinBuilder(urgent_lips={"2_2"})._sort_by_popularity([fresh, stale_urgent])
+
+    assert order[0] is stale_urgent

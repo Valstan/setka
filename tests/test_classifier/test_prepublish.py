@@ -63,8 +63,29 @@ def test_items_carry_the_wave_region():
             # В ссылке знак owner_id нужен, в отличие от lip.
             "url": "https://vk.com/wall-1_2",
             "media": [],
+            # Метрики и дата — в промпт (решение владельца 2026-09-22): модель
+            # решает срочность и важность. Прочерк-``None`` вместо нуля здесь
+            # значим: у поста без счётчиков ВК ничего не прислал.
+            "date": None,
+            "views": None,
+            "likes": None,
+            "comments": None,
+            "reposts": None,
         }
     ]
+
+
+def test_items_carry_vk_counters_in_both_shapes():
+    """ВК отдаёт счётчики то словарём, то голым числом — в промпт должны
+    доехать числа, а не структура."""
+    post = _vk_post(-1, 2, "новость")
+    post.update({"views": {"count": 120}, "likes": 4, "date": 1716200000})
+
+    item = prepublish.to_classifier_items([post], region_code="mi")[0]
+
+    assert item["views"] == 120
+    assert item["likes"] == 4
+    assert item["date"] == 1716200000
 
 
 @pytest.mark.asyncio

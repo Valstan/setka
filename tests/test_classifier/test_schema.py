@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modules.classifier.schema import ClassifierVerdict
+from modules.classifier.schema import ClassifierVerdict, parse_verdict_loose
 
 
 def test_normalizes_bad_action_to_hold():
@@ -52,4 +52,46 @@ def test_to_verdict_json_shape():
         "split": False,
         "confidence": 80,
         "reasoning": "матч",
+        # `urgent` пишется всегда, в том числе False: читатель вердиктов должен
+        # отличать «модель сказала не срочно» от «поля нет, вердикт старый».
+        # `importance` — наоборот, только когда задана.
+        "urgent": False,
     }
+
+
+def test_urgent_defaults_to_false_on_an_old_verdict():
+    """Вердикты, записанные до 2026-09-22, поля `urgent` не имеют.
+
+    Разбор обязан читать их как «не срочно», а не падать: в БД таких записей
+    десятки тысяч, и они по-прежнему участвуют в отборе.
+    """
+    v = parse_verdict_loose({"lip": "1_1", "theme": "новости", "action": "publish"})
+
+    assert v is not None
+    assert v.urgent is False
+    assert v.importance is None
+
+
+def test_urgent_accepts_the_string_forms_llm_actually_returns():
+    """Модель отдаёт то булев true, то строку — это её обычное поведение."""
+    for raw in ("true", "True", "да", "yes", "1"):
+        v = parse_verdict_loose({"lip": "1_1", "theme": "т", "urgent": raw})
+        assert v is not None and v.urgent is True, raw
+
+    for raw in ("false", "нет", "", "не знаю", None):
+        v = parse_verdict_loose({"lip": "1_1", "theme": "т", "urgent": raw})
+        assert v is not None and v.urgent is False, raw
+
+
+def test_importance_is_clamped_and_garbage_becomes_none():
+    assert parse_verdict_loose({"lip": "1_1", "theme": "т", "importance": 500}).importance == 100
+    assert parse_verdict_loose({"lip": "1_1", "theme": "т", "importance": -7}).importance == 0
+    assert parse_verdict_loose({"lip": "1_1", "theme": "т", "importance": "ой"}).importance is None
+
+
+def test_importance_reaches_the_verdict_json_only_when_set():
+    with_value = ClassifierVerdict(lip="1_1", theme="т", importance=42).to_verdict_json()
+    without = ClassifierVerdict(lip="1_1", theme="т").to_verdict_json()
+
+    assert with_value["importance"] == 42
+    assert "importance" not in without

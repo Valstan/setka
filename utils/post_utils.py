@@ -99,19 +99,68 @@ def post_rating_of(post: Dict[str, Any], *, alpha: float) -> Optional[float]:
     ``alpha`` — keyword, как у ``post_rating``: модуль на ``config/`` не завязан.
     """
 
-    def _count(field: str):
-        value = post.get(field)
-        if isinstance(value, dict):
-            return value.get("count")
-        return value
-
+    counts = post_counts(post)
     return post_rating(
-        views=_count("views"),
-        likes=_count("likes"),
-        comments=_count("comments"),
-        reposts=_count("reposts"),
+        views=counts["views"],
+        likes=counts["likes"],
+        comments=counts["comments"],
+        reposts=counts["reposts"],
         alpha=alpha,
     )
+
+
+def post_lip(post: Dict[str, Any]) -> str:
+    """lip сырого VK-словаря. Парсер отдаёт посты без готового ``lip``.
+
+    Считается ТЕМ ЖЕ :func:`lip_of_post`, что у парсера и аудита сбора (формат
+    ``abs(owner_id)_id``, знак группы теряется намеренно). Своя формула где бы
+    то ни было была бы тихой поломкой: сравнивались бы ключи, которых нет в БД,
+    и совпадений не находилось бы никогда, ничем этого не выдав.
+
+    Живёт здесь, а не в классификаторе, потому что нужна обеим сторонам: и
+    гейту вердиктов, и сборщику сводки (порядок публикации срочного). Вёрстке
+    незачем тянуть за собой классификатор ради одной строки.
+    """
+    existing = str(post.get("lip") or "").strip()
+    if existing:
+        return existing
+    try:
+        return lip_of_post(post.get("owner_id"), post.get("id"))
+    except Exception:  # noqa: BLE001 — битый пост не должен ронять волну
+        return ""
+
+
+def post_counts(post: Dict[str, Any]) -> Dict[str, Optional[int]]:
+    """Счётчики поста ВК в плоском виде: ``{"views": N|None, ...}``.
+
+    ВК отдаёт их то вложенным словарём (``{"views": {"count": 12}}``), то голым
+    числом — в зависимости от метода и версии API. Разбор один на проект
+    сознательно: кроме рейтинга те же числа теперь уходят в промпт
+    классификатора, и две копии разбора разошлись бы молча — модель судила бы
+    по одним числам, а отбор ранжировал по другим.
+
+    ``None`` означает «ВК не прислал», и это НЕ то же самое, что ноль: пост без
+    измеренных просмотров в рейтинге уезжает в хвост, а не получает нулевой
+    балл.
+    """
+
+    def _count(field: str) -> Optional[int]:
+        value = post.get(field)
+        if isinstance(value, dict):
+            value = value.get("count")
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "views": _count("views"),
+        "likes": _count("likes"),
+        "comments": _count("comments"),
+        "reposts": _count("reposts"),
+    }
 
 
 def vk_post_datetime(ts: Any) -> Optional[datetime]:

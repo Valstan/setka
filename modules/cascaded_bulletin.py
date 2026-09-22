@@ -491,6 +491,17 @@ async def run_cascaded_bulletin(
     )
     if selection_removed:
         debug_counters["filtered_posts_selection"] = selection_removed
+
+    # Срочное вперёд рейтинга — тем же правилом, что в районной волне
+    # (решение владельца 2026-09-22). Хедлайнера в каскаде нет, поэтому
+    # передавать множество нужно только сборщику. Fail-open внутри.
+    from utils.post_utils import post_lip as _post_lip
+
+    urgent_lips = await classifier_selection.fetch_urgent_lips(session, region_code=region_code)
+    urgent_in_wave = {_post_lip(p) for p in posts} & urgent_lips if urgent_lips else set()
+    if urgent_in_wave:
+        debug_counters["posts_urgent"] = len(urgent_in_wave)
+
     if selection_mode == classifier_selection.MODE_SKIP_WAVE:
         return {
             "success": True,
@@ -559,6 +570,7 @@ async def run_cascaded_bulletin(
             repost_mode=region_config.setka_regim_repost,
             max_posts_per_bulletin=pipeline_eff.get("max_posts_per_bulletin"),
             footer=footer,
+            urgent_lips=urgent_in_wave,
         )
         bulletin = builder.build_bulletin(regular_posts, group_names=group_names)
         if bulletin.post_count == 0 or not bulletin.text.strip():

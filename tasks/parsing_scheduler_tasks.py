@@ -424,6 +424,24 @@ def parse_and_publish_theme(
             )
             if selection_removed:
                 parser_stats["posts_filtered_selection"] = selection_removed
+
+            # Срочное вперёд рейтинга (решение владельца 2026-09-22): отключения
+            # света и воды, перекрытия, аварии на сетях, предупреждения МЧС.
+            # Читается СТРОГО после `apply_wave_selection`: вердикты по свежим
+            # постам записал prepublish парой шагов выше, до него их не было.
+            # Fail-open внутри: пустое множество = прежний порядок.
+            urgent_lips = await classifier_selection.fetch_urgent_lips(
+                session, region_code=region_code
+            )
+            urgent_in_wave = {post_lip(p) for p in posts} & urgent_lips if urgent_lips else set()
+            if urgent_in_wave:
+                parser_stats["posts_urgent"] = len(urgent_in_wave)
+                logger.info(
+                    "Срочное в волне %s/%s: %d пост(ов) идут вперёд рейтинга",
+                    region_code,
+                    theme,
+                    len(urgent_in_wave),
+                )
             if selection_mode == classifier_selection.MODE_SKIP_WAVE:
                 return {
                     "success": True,
@@ -474,7 +492,7 @@ def parse_and_publish_theme(
 
             headliner_post = None
             if regular_posts and headliner_enabled(getattr(region, "config", None)):
-                headliner_post = pick_headliner(regular_posts)
+                headliner_post = pick_headliner(regular_posts, exclude_lips=urgent_in_wave)
                 if headliner_post is not None:
                     regular_posts = [p for p in regular_posts if p is not headliner_post]
 
@@ -496,6 +514,7 @@ def parse_and_publish_theme(
                     repost_mode=region_config.setka_regim_repost,
                     max_posts_per_bulletin=pipeline_eff.get("max_posts_per_bulletin"),
                     footer=neighbor_footer,
+                    urgent_lips=urgent_in_wave,
                 )
                 bulletin = builder.build_bulletin(regular_posts, group_names=group_names)
                 if bulletin.post_count == 0 or not bulletin.text.strip():

@@ -28,6 +28,16 @@ class ClassifierVerdict(BaseModel):
     split: bool = False
     confidence: int = Field(default=0, ge=0, le=100)
     reasoning: str = Field(default="", max_length=500)
+    # Практическая срочность для жителей: отключения света/воды/тепла, перекрытия,
+    # ремонт коммуникаций, официальные предупреждения об опасности. Решение
+    # владельца 2026-09-22: такой пост идёт в ленту вперёд рейтинга — у свежего
+    # сообщения об аварии просто нет времени набрать просмотры, а нужно оно
+    # людям именно сейчас. Криминал, ДТП, война, смерти срочными НЕ считаются.
+    urgent: bool = False
+    # Значимость новости для района, 0..100. Пока только хранится и печатается:
+    # на порядок публикации не влияет, чтобы у срочности был один смысл и один
+    # эффект. Копится как сырьё под будущее решение владельца.
+    importance: Optional[int] = Field(default=None, ge=0, le=100)
     # Что модель увидела во вложениях (для постов без текста): «афиша концерта
     # в ДК 20 июля». Показывается оператору в ленте рядом с вердиктом.
     media_summary: str = Field(default="", max_length=500)
@@ -71,7 +81,13 @@ class ClassifierVerdict(BaseModel):
             "split": bool(self.split),
             "confidence": int(self.confidence),
             "reasoning": (self.reasoning or "").strip(),
+            # Пишется ВСЕГДА, в том числе False: читатели вердиктов
+            # (``selection.fetch_urgent_lips``) должны отличать «модель сказала
+            # не срочно» от «поле из старой версии схемы отсутствует».
+            "urgent": bool(self.urgent),
         }
+        if self.importance is not None:
+            out["importance"] = int(self.importance)
         if (self.media_summary or "").strip():
             out["media_summary"] = self.media_summary.strip()
         return out
@@ -104,6 +120,28 @@ def parse_verdict_loose(raw: object) -> Optional[ClassifierVerdict]:
     merge_with = raw.get("merge_with")
     if not isinstance(merge_with, (list, tuple)):
         merge_with = []
+
+    # Модель возвращает то булев `true`, то строку «true»/«да» — второе не
+    # исключение, а обычное поведение LLM на JSON без строгой схемы. Пустое
+    # поле (старый вердикт, промах модели) читается как «не срочно»: вперёд
+    # рейтинга пост подвинет только явное «да».
+    raw_urgent = raw.get("urgent")
+    if isinstance(raw_urgent, bool):
+        urgent = raw_urgent
+    elif raw_urgent is None:
+        urgent = False
+    else:
+        urgent = str(raw_urgent).strip().casefold() in ("true", "1", "да", "yes", "y")
+
+    importance = raw.get("importance")
+    if importance is None:
+        importance_val = None
+    else:
+        try:
+            importance_val = max(0, min(100, int(importance)))
+        except (TypeError, ValueError):
+            importance_val = None
+
     return ClassifierVerdict(
         lip=lip,
         theme=theme,
@@ -112,6 +150,8 @@ def parse_verdict_loose(raw: object) -> Optional[ClassifierVerdict]:
         split=bool(raw.get("split")),
         confidence=confidence,
         reasoning=_s("reasoning", 500),
+        urgent=urgent,
+        importance=importance_val,
         media_summary=_s("media_summary", 500),
         model=(_s("model", 100) or None),
         text=_s("text", 10000),
