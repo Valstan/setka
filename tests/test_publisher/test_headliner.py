@@ -82,3 +82,44 @@ def test_build_headliner_hide_attribution():
     )
     text, _ = build_headliner(post, group_name="Родник", local_hashtag="")
     assert "Родник" not in text and "vk.com" not in text
+
+
+def _rated(post_id, *, likes, views=100, text_len=300):
+    """Пост с предсказуемым рейтингом.
+
+    Формула делит отклик на просмотры (``post_rating``), поэтому «больше
+    просмотров» само по себе рейтинг НЕ поднимает — разводим посты лайками при
+    равных просмотрах.
+    """
+    return {
+        "owner_id": -post_id,
+        "id": post_id,
+        "text": "о" * text_len,
+        "views": {"count": views},
+        "likes": {"count": likes},
+        "comments": {"count": 0},
+        "reposts": {"count": 0},
+    }
+
+
+def test_without_exclusions_the_headliner_picks_the_top_rated():
+    posts = [_rated(1, likes=10), _rated(2, likes=100), _rated(3, likes=1)]
+
+    assert pick_headliner(posts)["id"] == 2
+
+
+def test_urgent_post_is_not_stolen_by_the_headliner():
+    """Хедлайнер ВЫНИМАЕТ пост из пула сводки.
+
+    При потолке в одну новость забрать срочное значило бы оставить сводку либо
+    пустой, либо с другой новостью вместо аварии. Срочное место — в сводке.
+
+    Взят ровно тот пост, который без исключения хедлайнер бы и выбрал (тест
+    выше это фиксирует), иначе проверка прошла бы сама собой.
+    """
+    posts = [_rated(1, likes=10), _rated(2, likes=100), _rated(3, likes=1)]
+
+    picked = pick_headliner(posts, exclude_lips={"2_2"})
+
+    assert picked is not None, "исключение срочного не должно отменять хедлайнер целиком"
+    assert picked["id"] == 1, "должен быть взят следующий по рейтингу, а не срочный"

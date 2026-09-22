@@ -41,7 +41,10 @@ import logging
 import os
 from typing import Any, Dict, List, Sequence, Set
 
-from utils.post_utils import lip_of_post
+# ``post_lip`` переехал в utils (нужен и сборщику сводки — порядок срочного),
+# но импортируется сюда ради прежнего пути `modules.classifier.prepublish.post_lip`:
+# им пользуются волна и десяток тестов.
+from utils.post_utils import post_lip  # noqa: F401  (ре-экспорт)
 
 logger = logging.getLogger(__name__)
 
@@ -54,23 +57,6 @@ def prepublish_enabled() -> bool:
         "yes",
         "on",
     )
-
-
-def post_lip(post: Dict[str, Any]) -> str:
-    """lip кандидата. Парсер отдаёт сырые VK-словари, lip в них не лежит.
-
-    Считаем ТЕМ ЖЕ ``lip_of_post``, что и парсер с аудитом сбора (формат
-    ``abs(owner_id)_id``, знак группы теряется намеренно). Своя формула здесь
-    была бы тихой поломкой: гейт сравнивал бы ключи, которых нет в БД, и
-    блокировал бы ровно ноль постов, ничем этого не выдав.
-    """
-    existing = str(post.get("lip") or "").strip()
-    if existing:
-        return existing
-    try:
-        return lip_of_post(post.get("owner_id"), post.get("id"))
-    except Exception:  # noqa: BLE001 — битый пост не должен ронять волну
-        return ""
 
 
 def _post_url(post: Dict[str, Any]) -> str:
@@ -90,21 +76,28 @@ def to_classifier_items(
     Регион проставляется один и тот же: волна идёт по одному району, а модель
     судит гео-относительными правилами («чужой район → delete») и обязана знать,
     от чьего лица смотрит.
+
+    Счётчики и дата едут вместе с текстом (решение владельца 2026-09-22): модель
+    решает ``urgent`` и ``importance``, и без них она судила бы о важности, не
+    видя ни отклика людей, ни того, свежий перед ней пост или вчерашний.
     """
+    from utils.post_utils import post_counts
+
     items: List[Dict[str, Any]] = []
     for post in posts:
         lip = post_lip(post)
         if not lip:
             continue
-        items.append(
-            {
-                "lip": lip,
-                "region_code": region_code,
-                "text": str(post.get("text") or "").strip(),
-                "url": _post_url(post),
-                "media": [],
-            }
-        )
+        item = {
+            "lip": lip,
+            "region_code": region_code,
+            "text": str(post.get("text") or "").strip(),
+            "url": _post_url(post),
+            "media": [],
+            "date": post.get("date"),
+        }
+        item.update(post_counts(post))
+        items.append(item)
     return items
 
 

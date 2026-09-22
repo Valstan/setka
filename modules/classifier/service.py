@@ -148,6 +148,15 @@ async def _recent_audit(
             "media": r.media or [],
             "decision": r.decision,
             "drop_reason": r.drop_reason,
+            # Метрики и дата поста — в промпт классификатора (решение владельца
+            # 2026-09-22). В аудите они уже лежат: их доливает
+            # ``refresh_post_metrics``, поэтому фоновый путь видит числа
+            # СВЕЖЕЕ, чем волна, где пост измерить ещё не успели.
+            "views": r.views,
+            "likes": r.likes,
+            "comments": r.comments,
+            "reposts": r.reposts,
+            "published_at": r.published_at,
         }
     return out
 

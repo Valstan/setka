@@ -24,8 +24,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+from utils.post_utils import post_lip
 from utils.vk_attachments import build_attachments_list, extract_vk_attachments
 
 logger = logging.getLogger(__name__)
@@ -54,18 +55,31 @@ def _rating(post: Dict[str, Any]) -> Optional[float]:
     return post_rating_of(post, alpha=get_rating_views_alpha())
 
 
-def pick_headliner(posts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def pick_headliner(
+    posts: List[Dict[str, Any]],
+    *,
+    exclude_lips: Optional[Set[str]] = None,
+) -> Optional[Dict[str, Any]]:
     """Лучший по рейтингу пост «одиночного» формата, либо ``None``.
 
     Кандидат обязан иметь текст в диапазоне и измеренный рейтинг (пост без
     ``views`` в сводке и так уезжает в хвост — хедлайнером ему не быть).
+
+    ``exclude_lips`` — посты, которые забирать нельзя. Туда волна кладёт
+    срочные (отключения, перекрытия, аварии): хедлайнер ВЫНИМАЕТ пост из пула
+    сводки, а при потолке в одну новость сводка после этого осталась бы пустой
+    или несла бы вместо срочного что-то другое. Срочное место — в сводке, под
+    заголовком ленты.
     """
     if len(posts) < MIN_POOL:
         return None
+    excluded = set(exclude_lips or ())
     best: Tuple[float, Optional[Dict[str, Any]]] = (-1.0, None)
     for post in posts:
         text = (post.get("text") or "").strip()
         if not (MIN_LEN <= len(text) <= MAX_LEN):
+            continue
+        if excluded and post_lip(post) in excluded:
             continue
         score = _rating(post)
         if score is None:

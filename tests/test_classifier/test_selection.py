@@ -362,3 +362,68 @@ async def test_no_text_counts_only_the_removed(monkeypatch, caplog):
     assert removed == 1
     line = next(r.getMessage() for r in caplog.records if "кандидатов=" in r.getMessage())
     assert "безтекста=0" in line
+
+
+@pytest.mark.asyncio
+async def test_fetch_urgent_lips_reads_only_this_region_and_only_true(db_session):
+    """Срочность читается по флагу вердикта и только в своём районе.
+
+    Регион здесь не формальность: `lip` уникален глобально, и вердикт соседа
+    про его аварию не должен двигать ленту нашего района.
+    """
+    from database.models_extended import ContentClassification
+    from modules.classifier.selection import fetch_urgent_lips
+
+    db_session.add_all(
+        [
+            ContentClassification(
+                lip="1_1",
+                region_code="mi",
+                model="t",
+                verdict={"action": "publish", "theme": "происшествия", "urgent": True},
+            ),
+            ContentClassification(
+                lip="1_2",
+                region_code="mi",
+                model="t",
+                verdict={"action": "publish", "theme": "новости", "urgent": False},
+            ),
+            # Старый вердикт — поля нет вовсе.
+            ContentClassification(
+                lip="1_3",
+                region_code="mi",
+                model="t",
+                verdict={"action": "publish", "theme": "новости"},
+            ),
+            # Срочное, но у соседа.
+            ContentClassification(
+                lip="1_4",
+                region_code="vp",
+                model="t",
+                verdict={"action": "publish", "theme": "происшествия", "urgent": True},
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    assert await fetch_urgent_lips(db_session, "mi") == {"1_1"}
+
+
+@pytest.mark.asyncio
+async def test_fetch_urgent_lips_is_fail_open(caplog):
+    """Сломанная БД не имеет права ронять волну: срочность — ускоритель.
+
+    Пустое множество означает «порядок публикации прежний, по рейтингу», а не
+    «публиковать нечего».
+    """
+    from modules.classifier.selection import fetch_urgent_lips
+
+    class _Broken:
+        async def execute(self, *a, **kw):
+            raise RuntimeError("БД недоступна")
+
+    with caplog.at_level("WARNING"):
+        out = await fetch_urgent_lips(_Broken(), "mi")
+
+    assert out == set()
+    assert any("срочност" in r.getMessage().lower() for r in caplog.records)

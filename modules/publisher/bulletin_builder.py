@@ -6,9 +6,9 @@ Builds formatted bulletins with headers, attribution, hashtags, and media attach
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
-from utils.post_utils import extract_source_attribution, lip_of_post
+from utils.post_utils import extract_source_attribution, lip_of_post, post_lip
 from utils.text_utils import truncate_text
 from utils.vk_attachments import build_attachments_list, extract_vk_attachments
 
@@ -73,6 +73,7 @@ class BulletinBuilder:
         repost_mode: bool = False,
         max_posts_per_bulletin: Optional[int] = None,
         footer: str = "",
+        urgent_lips: Optional[Set[str]] = None,
     ):
         """
         Args:
@@ -85,6 +86,10 @@ class BulletinBuilder:
             footer: Строка-футер между постами и хэштегами (например «Ленты
                 соседей: …» — этап 4 ребрендинга); пустая = без футера.
                 Участвует в бюджете длины наравне с хэштегами.
+            urgent_lips: lip'ы, которые нейро-вердикт признал практически
+                срочными для жителей (отключения, перекрытия, аварии,
+                предупреждения МЧС). Такие посты встают впереди всех остальных,
+                минуя рейтинг. Пусто = порядок прежний.
         """
         # Пустая строка = без заголовка (например траурная сводка); None = дефолтный заголовок
         if header is None:
@@ -102,6 +107,7 @@ class BulletinBuilder:
             else self.MAX_POSTS_PER_BULLETIN
         )
         self.max_posts_per_bulletin = max(1, min(self.max_posts_per_bulletin, 10))
+        self.urgent_lips: Set[str] = set(urgent_lips or ())
 
     def build_bulletin(
         self,
@@ -351,14 +357,29 @@ class BulletinBuilder:
             except (TypeError, ValueError):
                 return True
 
-        # СВЕЖЕЕ ВПЕРЕДИ (заказ владельца 2026-08-30): «свежак должен первым
-        # выходить, а если свежака нету — берутся слегка устаревшие». Раньше
-        # порядок задавал только рейтинг, и вчерашний хит обгонял сегодняшнюю
-        # новость. Внутри каждой группы порядок прежний — по рейтингу, поэтому
-        # для волны без устаревших постов поведение не меняется вовсе.
+        def is_urgent(post_data) -> bool:
+            """Нейро-вердикт признал пост практически срочным для жителей.
+
+            Срочность стоит ВПЕРЕДИ свежести, а свежесть впереди рейтинга —
+            порядок ступеней и есть решение владельца 2026-09-22. У сообщения
+            об аварии, вывешенного десять минут назад, нет ни просмотров, ни
+            лайков; по рейтингу оно проигрывает чему угодно, а прочитать его
+            людям нужно сегодня. Пустое множество (нет вердиктов, движок
+            отказал) → ступень всегда ложна и порядок ровно прежний.
+            """
+            if not self.urgent_lips:
+                return False
+            return post_lip(post_data) in self.urgent_lips
+
+        # СРОЧНОЕ, потом СВЕЖЕЕ ВПЕРЕДИ (заказ владельца 2026-08-30): «свежак
+        # должен первым выходить, а если свежака нету — берутся слегка
+        # устаревшие». Раньше порядок задавал только рейтинг, и вчерашний хит
+        # обгонял сегодняшнюю новость. Внутри каждой группы порядок прежний —
+        # по рейтингу, поэтому для волны без срочного и устаревшего поведение
+        # не меняется вовсе.
         return sorted(
             posts,
-            key=lambda p: (is_fresh(p), (s := get_score(p)) is not None, s or 0.0),
+            key=lambda p: (is_urgent(p), is_fresh(p), (s := get_score(p)) is not None, s or 0.0),
             reverse=True,
         )
 

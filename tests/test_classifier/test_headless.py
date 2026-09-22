@@ -237,3 +237,60 @@ def test_action_is_normalised_or_falls_back_to_hold(bad):
     payload = {"verdicts": [_verdict("1_10", action=bad)]}
     verdicts, _ = headless.parse_chunk_response(payload, POSTS[:1])
     assert verdicts[0].normalized_action() in ("publish", "hold")
+
+
+def test_user_prompt_carries_metrics_and_age():
+    """Модель решает срочность и важность — значит обязана видеть отклик и возраст.
+
+    До 2026-09-22 в промпт уходил только текст, а рейтинг считался отдельно и
+    после; два сигнала о посте нигде не встречались.
+    """
+    import time
+
+    from modules.classifier.headless import build_user_prompt
+
+    prompt = build_user_prompt(
+        [
+            {
+                "lip": "1_1",
+                "region_code": "mi",
+                "text": "отключение воды",
+                "views": 120,
+                "likes": 4,
+                "reposts": 1,
+                "comments": 2,
+                "date": time.time() - 3 * 3600,
+            }
+        ]
+    )
+
+    assert "просмотры 120" in prompt
+    assert "лайки 4" in prompt
+    assert "репосты 1" in prompt
+    assert "комментарии 2" in prompt
+    assert "возраст: 3.0 ч" in prompt
+
+
+def test_user_prompt_prints_a_dash_where_vk_sent_nothing():
+    """Прочерк, а не ноль: «не измерено» и «ноль просмотров» — разные сведения,
+    и свежий пост нельзя показывать модели как непопулярный."""
+    from modules.classifier.headless import build_user_prompt
+
+    prompt = build_user_prompt([{"lip": "1_1", "region_code": "mi", "text": "т"}])
+
+    assert "просмотры —" in prompt
+    assert "возраст: —" in prompt
+
+
+def test_system_prompt_states_what_urgent_means_and_what_it_is_not():
+    """Срочность двигает пост вперёд рейтинга, поэтому её границы — в промпте.
+
+    Без явного «криминал и война срочными НЕ считаются» модель охотно пометит
+    громкое как срочное, и лента района превратится в сводку происшествий.
+    """
+    from modules.classifier.headless import TASK_PROMPT
+
+    assert "urgent" in TASK_PROMPT
+    assert "отключения" in TASK_PROMPT
+    assert "НЕ считаются" in TASK_PROMPT
+    assert "importance" in TASK_PROMPT

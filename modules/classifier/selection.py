@@ -129,6 +129,47 @@ async def fetch_publish_map(session, region_code: str) -> Dict[str, Optional[str
         return {}
 
 
+async def fetch_urgent_lips(session, region_code: str) -> Set[str]:
+    """lip'ы, помеченные вердиктом как практически срочные для жителей.
+
+    Отключения света и воды, перекрытия, аварии на сетях, официальные
+    предупреждения. Решение владельца 2026-09-22: такой пост идёт в ленту
+    вперёд рейтинга, потому что свежему сообщению об аварии просто неоткуда
+    взять просмотры, а нужно оно людям именно сейчас.
+
+    Окно то же, что у ``fetch_publish_map`` — окно свежести классификатора.
+    Правки оператора здесь НЕ читаются: тип коррекции для срочности ещё не
+    заведён (``verdict_type`` знает только action/theme/merge), и молча
+    подставлять вместо него чужое поле значило бы врать о происхождении
+    решения. Хвост записан в PENDING.
+
+    Fail-open: любая ошибка → пустое множество, то есть порядок публикации
+    прежний, чисто по рейтингу. Срочность — ускоритель, и ломаться она обязана
+    в сторону обычного поведения, а не пропуска волны.
+    """
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    try:
+        from config.classifier import get_source_days
+        from database.models_extended import ContentClassification
+
+        cutoff = datetime.utcnow() - timedelta(days=get_source_days())
+        rows = (
+            await session.execute(
+                select(ContentClassification.lip, ContentClassification.verdict).where(
+                    ContentClassification.created_at >= cutoff,
+                    ContentClassification.region_code == region_code,
+                )
+            )
+        ).all()
+        return {lip for lip, verdict in rows if bool((verdict or {}).get("urgent"))}
+    except Exception as e:  # noqa: BLE001 — срочность не имеет права ронять волну
+        logger.warning("classifier selection: чтение срочности не удалось: %s", e)
+        return set()
+
+
 async def fetch_publish_lips(session, region_code: str) -> Set[str]:
     """Только lip'ы, разрешённые вердиктом. Тонкая обёртка над ``fetch_publish_map``.
 
