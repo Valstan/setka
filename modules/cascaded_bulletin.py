@@ -401,18 +401,25 @@ async def run_cascaded_bulletin(
         "regular_posts_ready": 0,
     }
     try:
-        # Своя стена — только ради текста вышедших сводок, счётчики не нужны:
-        # длинный TTL, сброс после публикации. Как в районной волне.
-        from modules.vk_monitor.wall_cache import wall_history_ttl_seconds
+        # Своя стена — только ради текста вышедших сводок. Кэшируется результат
+        # (список lip'ов), а не снимок стены. Как в районной волне.
+        from modules.vk_monitor.wall_cache import get_cached_history_lips, store_history_lips
 
-        target_group_posts = await asyncio.to_thread(
-            vk.get_wall_posts,
-            -abs(int(region.vk_group_id)),
-            TARGET_GROUP_POSTS_SCAN_LIMIT,
-            0,
-            cache_ttl=wall_history_ttl_seconds(),
-        )
-        region_lips.update(extract_source_lips_from_target_group_posts(target_group_posts))
+        own_wall_owner = -abs(int(region.vk_group_id))
+        cached_lips = await asyncio.to_thread(get_cached_history_lips, own_wall_owner)
+        if cached_lips is not None:
+            region_lips.update(cached_lips)
+        else:
+            target_group_posts = await asyncio.to_thread(
+                vk.get_wall_posts,
+                own_wall_owner,
+                TARGET_GROUP_POSTS_SCAN_LIMIT,
+                0,
+                cache_ttl=0,
+            )
+            history_lips = extract_source_lips_from_target_group_posts(target_group_posts)
+            region_lips.update(history_lips)
+            await asyncio.to_thread(store_history_lips, own_wall_owner, history_lips)
     except Exception as e:
         logger.warning(
             "Cascaded bulletin %s: failed to load target group history: %s",
